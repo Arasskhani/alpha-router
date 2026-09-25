@@ -56,6 +56,7 @@ from app.services.budget_reservation_service import (
     reservation_hold_usd,
     reservation_key,
     reserve,
+    spend_ceiling_usd,
 )
 from app.services.chat_tool_access_service import assert_tools_permitted
 from app.services.chat_tool_registry import requested_tool_keys
@@ -116,7 +117,13 @@ from app.services.private_mode_service import (
 )
 from app.services.prompt_cache_service import apply_prompt_cache_breakpoints
 from app.services.provider_http import build_provider_client
-from app.services.provider_stream import NonStreamRetry, ProviderAttempt, estimate_tokens
+from app.services.provider_stream import (
+    NonStreamRetry,
+    ProviderAttempt,
+    count_completion_tokens,
+    count_prompt_tokens,
+    estimate_tokens,
+)
 from app.services.provider_utils import (  # noqa: F401 -- re-exported under the historical names
     _apply_litellm_provider_kwargs,
     _close_upstream_stream,
@@ -171,56 +178,58 @@ settings = get_settings()
 BUDGET_RECHECK_CHARS = 400
 
 
-def turn_cost_exceeds_hold(
+def turn_cost_exceeds_ceiling(
     *,
     ai_model,
     provider_type: str | None,
     model: str,
     messages,
+    prompt_tokens: int,
     completion_text: str,
-    hold_usd: float | None,
+    ceiling_usd: float | None,
 ) -> bool:
-    """Has this turn already cost more than was reserved for it?
+    """Has this turn already cost more than its budget can bear?
 
-    The hold is an estimate. For chat it is sized from ``max_tokens``, which
-    reaches ``completion_kwargs`` only on the agent path - so an ordinary turn
-    asks the provider for an unbounded completion against a hold that assumed a
-    bounded one. Budget is otherwise checked only at admission, so the overrun
-    is charged in full and only the *next* request is refused.
+    Budget is checked at admission, against a hold that is an estimate: for
+    chat it is sized from ``max_tokens``, which reaches ``completion_kwargs``
+    only on the agent path, so an ordinary turn asks the provider for an
+    unbounded completion. Without a check while it runs, the overrun is charged
+    in full and only the *next* request is refused. The catalog carries
+    ``context_length`` and no ``max_output_tokens``, so there is no honest
+    number to send instead; watching the running cost is the control that
+    matches the problem.
 
-    There is no honest way to fix that with a better estimate: the catalog
-    carries ``context_length`` and no ``max_output_tokens``, so there is no
-    number to send. Watching the running cost is the control that matches the
-    problem.
+    The ceiling is what the budget had left when the turn was admitted (see
+    ``spend_ceiling_usd``), not the hold: the hold guesses at the reply's
+    length, and stopping there would cut answers the budget pays for easily.
+
+    ``prompt_tokens`` is counted once per turn by the caller: the prompt does
+    not change while the reply streams, and counting a long conversation again
+    at every check would stall the server.
 
     Returns False when anything is unknown - an unpriced model, a tokenizer
-    that could not count, no hold at all. A turn is never stopped on a guess.
+    that could not count, no ceiling at all. A turn is never stopped on a guess.
     """
 
-    if hold_usd is None or hold_usd <= 0 or ai_model is None:
+    if ceiling_usd is None or ceiling_usd <= 0 or ai_model is None or prompt_tokens <= 0:
         return False
-    est_prompt, est_completion = estimate_tokens(
-        provider_type=provider_type,
-        model=model,
-        messages=messages,
-        completion_text=completion_text,
-    )
-    if not est_completion:
+    completion_tokens = count_completion_tokens(provider_type=provider_type, model=model, text=completion_text)
+    if not completion_tokens:
         return False
     running = _compute_token_cost_usd(
         ai_model,
-        prompt_tokens=est_prompt,
-        completion_tokens=est_completion,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
         model_id=model,
         messages=messages,
         completion_text=completion_text,
         provider_type=provider_type,
     )
-    return running > hold_usd
+    return running > ceiling_usd
 
 
 BUDGET_EXCEEDED_MESSAGE = (
-    "This reply was stopped because it passed the budget reserved for it. "
+    "This reply was stopped because it used up the budget you had left. "
     "The part already generated has been billed. Try a shorter request, or ask an administrator to raise your budget."
 )
 
@@ -239,11 +248,12 @@ class ResolvedStreamContext:
     provider_type: str
     model_id: str
     budget_reservation_id: str | None = None
-    #: What the hold is worth. The stream watches its own running cost against
-    #: this: the hold is an estimate, and a chat turn's completion length is not
-    #: knowable in advance, so without a check the turn can outgrow what was
-    #: reserved and the overspend is only noticed by the *next* request.
-    budget_hold_usd: float | None = None
+    #: What the turn may spend: the budget left when it was admitted. The
+    #: stream watches its own running cost against this, since a chat turn's
+    #: completion length is not knowable in advance; without a check the turn
+    #: can outgrow the budget and the overspend is only noticed by the *next*
+    #: request. None when nothing bounds the turn.
+    budget_ceiling_usd: float | None = None
     code_interpreter_workspace_files: WorkspaceFiles | None = None
     #: Why an attachment is missing from the workspace (too large, not this
     #: user's); surfaced to the model with the inventory.
@@ -740,6 +750,7 @@ async def preflight_stream_chat(  # noqa: C901 -- Phase 4 split; complexity must
             lease_id=_code_interpreter_capacity_lease_id(body, capacity_subject),
         )
     hold = None
+    ceiling: float | None = None
     try:
         if alpha_router_api_key_id or (not skip_budget and user_id):
             estimate = await reservation_hold_usd(
@@ -763,6 +774,7 @@ async def preflight_stream_chat(  # noqa: C901 -- Phase 4 split; complexity must
                 # is priced from a known input size, so it stays strict.
                 cost_is_estimated=operation != "embedding",
             )
+            ceiling = await spend_ceiling_usd(db, hold)
     except BaseException:
         if capacity_permit is not None:
             await asyncio.shield(release_code_interpreter_turn(capacity_permit))
@@ -774,7 +786,7 @@ async def preflight_stream_chat(  # noqa: C901 -- Phase 4 split; complexity must
         provider_type=provider_type or ai_model.provider_type or "",
         model_id=litellm_model_for_provider(ai_model.external_id, provider_type or ai_model.provider_type),
         budget_reservation_id=hold.id if hold else None,
-        budget_hold_usd=float(hold.reserved_usd) if hold is not None else None,
+        budget_ceiling_usd=ceiling,
         code_interpreter_workspace_files=workspace_files,
         code_interpreter_workspace_notes=workspace_notes,
         code_interpreter_capacity_permit=capacity_permit,
@@ -857,7 +869,7 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
         project_memory_project_id = ctx.project_memory_project_id
         injected_memory_ids = ctx.injected_memory_ids
         injected_project_memory_ids = ctx.injected_project_memory_ids
-        budget_hold_usd = ctx.budget_hold_usd
+        budget_ceiling_usd = ctx.budget_ceiling_usd
 
         prompt_tokens = completion_tokens = cached_tokens = 0
         total_cost = 0.0
@@ -933,14 +945,21 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
         # while it is still small, and costs almost nothing.
         budget_checked_at_len = 0
 
+        #: The prompt's tokens, counted at the first check and kept for the turn.
+        prompt_count: int | None = None
+
         def _over_budget(text: str) -> bool:
-            return turn_cost_exceeds_hold(
+            nonlocal prompt_count
+            if prompt_count is None:
+                prompt_count = count_prompt_tokens(provider_type=provider_type, model=model, messages=messages)
+            return turn_cost_exceeds_ceiling(
                 ai_model=ai_model,
                 provider_type=provider_type,
                 model=model,
                 messages=messages,
+                prompt_tokens=prompt_count,
                 completion_text=text,
-                hold_usd=budget_hold_usd,
+                ceiling_usd=budget_ceiling_usd,
             )
 
         async def _client_stopped() -> bool:
@@ -1056,7 +1075,7 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
                         attempt.record_text(delta)
                         collected_content += delta
                     if (
-                        budget_hold_usd is not None
+                        budget_ceiling_usd is not None
                         and len(collected_content) - budget_checked_at_len >= BUDGET_RECHECK_CHARS
                     ):
                         budget_checked_at_len = len(collected_content)

@@ -35,6 +35,31 @@ from app.services.usage_accounting_service import PendingUsageEvent, capture_usa
 logger = logging.getLogger(__name__)
 
 
+def count_prompt_tokens(*, provider_type: str | None, model: str, messages: list[dict] | None) -> int:
+    """Prompt tokens by LiteLLM's tokenizer for this model; 0 when it cannot count. Never raises."""
+    try:
+        prompt_kwargs: dict = {"messages": messages or []}
+        apply_litellm_provider_kwargs(prompt_kwargs, provider_type, model)
+        return int(litellm.token_counter(**prompt_kwargs) or 0)
+    except Exception:
+        logger.debug("prompt token count failed for %s", model, exc_info=True)
+        return 0
+
+
+def count_completion_tokens(*, provider_type: str | None, model: str, text: str) -> int:
+    """Tokens of generated text by LiteLLM's tokenizer for this model; 0 when it cannot count. Never raises."""
+    try:
+        completion_kwargs: dict = {"text": text}
+        completion_kwargs["model"] = apply_litellm_provider_kwargs({}, provider_type, model)
+        llm_provider = resolve_litellm_provider(provider_type)
+        if llm_provider:
+            completion_kwargs["custom_llm_provider"] = llm_provider
+        return int(litellm.token_counter(**completion_kwargs) or 0)
+    except Exception:
+        logger.debug("completion token count failed for %s", model, exc_info=True)
+        return 0
+
+
 def estimate_tokens(
     *,
     provider_type: str | None,
@@ -47,19 +72,11 @@ def estimate_tokens(
     Used only when the provider reported no usage. Never raises: a tokenizer
     hiccup must not turn a billable turn into an error.
     """
-    try:
-        prompt_kwargs: dict = {"messages": messages or []}
-        litellm_model = apply_litellm_provider_kwargs(prompt_kwargs, provider_type, model)
-        prompt_tokens = int(litellm.token_counter(**prompt_kwargs) or 0)
-        completion_kwargs: dict = {"model": litellm_model, "text": completion_text}
-        llm_provider = resolve_litellm_provider(provider_type)
-        if llm_provider:
-            completion_kwargs["custom_llm_provider"] = llm_provider
-        completion_tokens = int(litellm.token_counter(**completion_kwargs) or 0)
-        return prompt_tokens, completion_tokens
-    except Exception:
-        logger.debug("token estimate failed for %s", model, exc_info=True)
+    prompt_tokens = count_prompt_tokens(provider_type=provider_type, model=model, messages=messages)
+    completion_tokens = count_completion_tokens(provider_type=provider_type, model=model, text=completion_text)
+    if not prompt_tokens or (completion_text and not completion_tokens):
         return 0, 0
+    return prompt_tokens, completion_tokens
 
 
 class ProviderAttempt:

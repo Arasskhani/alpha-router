@@ -522,6 +522,41 @@ async def reserve(
     return row
 
 
+async def spend_ceiling_usd(db: AsyncSession, hold: BudgetReservation | None) -> float | None:
+    """What a running chat turn may spend before it is stopped: the budget its subject had left at admission.
+
+    A chat hold is an estimate of the reply, not of what the budget can bear,
+    so a reply that outgrows its hold is not over budget: stopping it there
+    would cut answers the budget pays for easily. The balance left when the
+    hold was taken is the real bound - the hold plus whatever was still free
+    beside it. Read right after ``reserve`` in the same session, so the
+    subject's counters already include this hold. None when nothing bounds the
+    turn: no hold, or an API key without a credit limit.
+    """
+    if hold is None:
+        return None
+    amount = float(hold.reserved_usd or 0)
+    if hold.subject_type == SUBJECT_ALPHA_ROUTER_KEY:
+        key = await db.get(AlphaRouterApiKey, int(hold.subject_id))
+        if key is None:
+            return amount
+        limit = float(key.credit_limit_usd or 0)
+        if limit <= 0:
+            # ``ensure_key_usable`` lets a key without a limit through only when it is unlimited.
+            return None
+        used = float(key.period_used_usd or 0)
+        held = float(key.period_reserved_usd or 0)
+    else:
+        user = await db.get(User, int(hold.subject_id))
+        if user is None:
+            return amount
+        limit = float(user.monthly_budget_usd or 0)
+        used = float(user.budget_used_usd or 0)
+        held = float(user.budget_reserved_usd or 0)
+    free_beside = limit - used - held
+    return round(amount + max(0.0, free_beside), 8)
+
+
 async def _lock_reservation(
     db: AsyncSession,
     reservation_id: str,

@@ -155,6 +155,32 @@ describe("the side panel, connected", () => {
     expect(host.textContent).toContain("Connect to Alpharouter");
   });
 
+  it("shows only the chat when the agent is not for this account", async () => {
+    routes["GET /api/extension/me"] = () => json(200, ME);
+    await render();
+    expect(host.querySelector('[role="tablist"]')).toBeNull();
+  });
+
+  it("offers the chat and the agent side by side, and goes back to the chat for a right-click action", async () => {
+    routes["GET /api/extension/me"] = () => json(200, { ...ME, features: { ...ME.features, agent: true } });
+    await render();
+    const tabs = [...host.querySelectorAll('[role="tab"]')] as HTMLButtonElement[];
+    expect(tabs.map((t) => t.textContent)).toEqual(["Chat", "Agent"]);
+    const agent = host.querySelector("main.agent") as HTMLElement;
+    expect(agent.hidden).toBe(true);
+    await act(async () => tabs[1].click());
+    expect(agent.hidden).toBe(false);
+    expect((host.querySelector(".shell__view") as HTMLElement).hidden).toBe(true);
+    expect(host.textContent).toContain("Tell Alpharouter what to do in your browser.");
+    // A right-click action or the shortcut left a question for the chat.
+    await act(async () => {
+      chromeFake.runtime.deliver({ type: "pending-action" });
+    });
+    await act(async () => undefined);
+    expect(agent.hidden).toBe(true);
+    expect((host.querySelector(".shell__view") as HTMLElement).hidden).toBe(false);
+  });
+
   it("says when the extension is switched off for the user", async () => {
     routes["GET /api/extension/me"] = () => json(200, { ...ME, features: { ...ME.features, chat: false }, policy: null });
     await render();

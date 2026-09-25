@@ -662,3 +662,189 @@ button {
   display: flex;
   gap: 0.4rem;
 }
+
+/* Chat and the browser agent, side by side in one panel. */
+[hidden] {
+  display: none !important;
+}
+
+.shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.shell__tabs {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.35rem 0.6rem 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.shell__tab {
+  min-height: 30px;
+  padding: 0.2rem 0.8rem;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.shell__tab--on {
+  border-bottom-color: var(--accent);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.shell__view {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.shell > .panel,
+.shell__view > .panel {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+}
+
+/* The browser agent */
+.agent__modes {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.agent__mode {
+  min-height: 30px;
+  padding: 0.15rem 0.6rem;
+  border: 0;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.agent__mode--on {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.agent__text {
+  margin: 0.4rem 0;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  unicode-bidi: plaintext;
+}
+
+.agent__step {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2rem 0.5rem;
+  margin: 0.3rem 0;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-size: 0.88rem;
+}
+
+.agent__step-summary {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  unicode-bidi: plaintext;
+}
+
+.agent__step-status {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.agent__step-detail {
+  flex-basis: 100%;
+  color: var(--muted);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+  unicode-bidi: plaintext;
+}
+
+.agent__step--denied .agent__step-status,
+.agent__step--blocked .agent__step-status,
+.agent__step--error .agent__step-status {
+  color: var(--danger);
+}
+
+.agent__step--waiting {
+  border-color: var(--accent);
+}
+
+.agent__card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin: 0.5rem 0;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.agent__card p {
+  margin: 0;
+}
+
+.agent__card-title {
+  font-weight: 650;
+}
+
+.agent__card-action {
+  overflow-wrap: anywhere;
+  unicode-bidi: plaintext;
+}
+
+.agent__card-why {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.agent__card textarea {
+  min-height: 2.4rem;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  unicode-bidi: plaintext;
+}
+
+.agent__result {
+  margin: 0.6rem 0;
+  padding: 0.55rem 0.7rem;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.agent__result--done {
+  border-color: var(--accent);
+}
+
+.agent__result--failed,
+.agent__result--errors {
+  border-color: var(--danger);
+}
+
+.agent__summary {
+  margin: 0.25rem 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  unicode-bidi: plaintext;
+}

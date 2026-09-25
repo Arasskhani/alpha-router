@@ -6,6 +6,7 @@ import { loadConfig } from "../lib/config";
 import { cancelConnect, disconnect, hasPendingConnect, startConnect } from "../lib/connect";
 import { broadcast, fromOwnPages, isExtensionMessage } from "../lib/messages";
 import { DisconnectedError, TemporaryError } from "../lib/tokens";
+import AgentView from "./AgentView";
 import Chat from "./Chat";
 import ConnectView from "./ConnectView";
 import type { Me } from "./types";
@@ -45,6 +46,8 @@ async function currentView(): Promise<View> {
 export default function App() {
   const [view, setView] = useState<View>({ kind: "loading" });
   const [checks, setChecks] = useState(0);
+  /** Chat, or the browser agent when the account may use it. */
+  const [tab, setTab] = useState<"chat" | "agent">("chat");
 
   useEffect(() => {
     let active = true;
@@ -61,9 +64,10 @@ export default function App() {
 
   useEffect(() => {
     const listener = (message: unknown, sender: chrome.runtime.MessageSender) => {
-      if (fromOwnPages(sender) && isExtensionMessage(message) && message.type === "auth-changed") {
-        setChecks((n) => n + 1);
-      }
+      if (!fromOwnPages(sender) || !isExtensionMessage(message)) return;
+      if (message.type === "auth-changed") setChecks((n) => n + 1);
+      // A right-click action or the shortcut is a question for the chat.
+      if (message.type === "pending-action") setTab("chat");
     };
     chrome.runtime.onMessage.addListener(listener);
     return () => chrome.runtime.onMessage.removeListener(listener);
@@ -133,12 +137,36 @@ export default function App() {
     );
   }
 
-  return (
+  const chat = (
     <Chat
       me={view.me}
       server={view.server}
       onDisconnect={() => void signOut()}
       onDisconnected={() => setChecks((n) => n + 1)}
     />
+  );
+  if (!(view.me.features.chat && view.me.features.agent)) return chat;
+  // Both stay mounted: a run goes on while the chat is shown, and the chat keeps its place.
+  return (
+    <div className="shell">
+      <div className="shell__tabs" role="tablist" aria-label="Alpharouter">
+        {(["chat", "agent"] as const).map((name) => (
+          <button
+            key={name}
+            type="button"
+            role="tab"
+            aria-selected={tab === name}
+            className={`shell__tab${tab === name ? " shell__tab--on" : ""}`}
+            onClick={() => setTab(name)}
+          >
+            {name === "chat" ? "Chat" : "Agent"}
+          </button>
+        ))}
+      </div>
+      <div className="shell__view" hidden={tab !== "chat"}>
+        {chat}
+      </div>
+      <AgentView me={view.me} hidden={tab !== "agent"} onDisconnected={() => setChecks((n) => n + 1)} />
+    </div>
   );
 }

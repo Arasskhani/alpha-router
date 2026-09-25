@@ -134,12 +134,27 @@ export function installChromeFake(options: { version?: string } = {}) {
         for (const tab of tabs.values()) if (tab.windowId === chosen.windowId) tab.active = tab.id === tabId;
         onActivated.emit({ tabId, windowId: chosen.windowId });
       },
-      /** A tab loads another page, or its title changes. */
-      update(tabId: number, change: { url?: string; title?: string }) {
+      /**
+       * A tab loads another page, or its title changes - or, as chrome.tabs.update,
+       * the code under test makes it active or sends it somewhere.
+       */
+      update: vi.fn(async (tabId: number, change: { url?: string; title?: string; active?: boolean }) => {
         const tab = tabs.get(tabId)!;
+        if (change.active) for (const other of tabs.values()) if (other.windowId === tab.windowId) other.active = other.id === tabId;
         Object.assign(tab, change);
         onUpdated.emit(tabId, change, tab);
-      },
+        return tab;
+      }),
+      /** Tab groups: which group each grouped tab is in. */
+      groups: new Map<number, number>(),
+      group: vi.fn(async ({ tabIds, groupId }: { tabIds: number[]; groupId?: number }) => {
+        const id = groupId ?? 100 + fake.tabs.groups.size;
+        for (const tabId of tabIds) fake.tabs.groups.set(tabId, id);
+        return id;
+      }),
+    },
+    tabGroups: {
+      update: vi.fn(async (_groupId: number, _props: { title?: string; color?: string }) => ({})),
     },
     permissions: {
       granted: new Set<string>(),

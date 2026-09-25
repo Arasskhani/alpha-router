@@ -1,0 +1,136 @@
+/**
+ * The browser as the agent's loop uses it (agentRun.ts): the tab it works in,
+ * the other tabs of the panel's window, and the page actions of content.js.
+ *
+ * Tabs the agent opens go into one "Alpharouter" tab group, so the user sees
+ * which tabs are its work. Its banner with Stop is put on each page it works
+ * in, and taken off every one of them when the run ends.
+ */
+
+import { callPage, type PageMethod, type PageResult } from "../lib/pageAgent";
+import { readablePage } from "../lib/sites";
+import type { AgentBrowser, WorkTab } from "./agentRun";
+
+/** How long a page may take to load after an action before the agent looks anyway. */
+const SETTLE_LIMIT_MS = 10_000;
+const SETTLE_POLL_MS = 250;
+/** Time for a click or a key to start loading a page, if it is going to. */
+const SETTLE_START_MS = 400;
+const OVERLAY_LABEL = "Alpharouter is working on this page";
+
+function workTab(tab: chrome.tabs.Tab | undefined): WorkTab | null {
+  if (!tab || tab.id === undefined) return null;
+  return { id: tab.id, url: tab.url ?? "", host: readablePage(tab.url)?.host ?? null, title: tab.title ?? "" };
+}
+
+const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
+
+export type PanelBrowser = AgentBrowser & {
+  /** The tab the agent works in now, for the overlay's Stop. */
+  workingTab(): number | null;
+  /** Take the banner off every page it was put on. */
+  cleanup(): Promise<void>;
+};
+
+export function createAgentBrowser(options: { startTabId: number | null; runId: string; windowId?: number }): PanelBrowser {
+  let working = options.startTabId;
+  let groupId: number | null = null;
+  /** Where the banner is up: tab id → the page it was put on. */
+  const overlays = new Map<number, { url: string; host: string }>();
+
+  async function current(): Promise<WorkTab | null> {
+    if (working === null) return null;
+    return workTab(await chrome.tabs.get(working).catch(() => undefined));
+  }
+
+  async function inWindow(tabId: number): Promise<chrome.tabs.Tab | undefined> {
+    const tabs = await chrome.tabs.query({ currentWindow: true });
+    return tabs.find((tab) => tab.id === tabId);
+  }
+
+  async function group(tabId: number): Promise<void> {
+    try {
+      if (groupId === null) {
+        groupId = await chrome.tabs.group({ tabIds: [tabId] });
+        await chrome.tabGroups.update(groupId, { title: "Alpharouter", color: "cyan" });
+      } else {
+        await chrome.tabs.group({ groupId, tabIds: [tabId] });
+      }
+    } catch {
+      // A group is a courtesy: a browser or window without them still works.
+      groupId = null;
+    }
+  }
+
+  async function showOverlay(tab: WorkTab): Promise<void> {
+    if (!tab.host) return;
+    const shown = overlays.get(tab.id);
+    if (shown && shown.url === tab.url) return;
+    const result = await callPage(tab.id, tab.host, "show_overlay", { run: options.runId, label: OVERLAY_LABEL });
+    if (result.ok) overlays.set(tab.id, { url: tab.url, host: tab.host });
+  }
+
+  return {
+    current,
+    workingTab: () => working,
+
+    async listTabs() {
+      const tabs = await chrome.tabs.query({ currentWindow: true });
+      return tabs.flatMap((tab) => {
+        const info = workTab(tab);
+        return info ? [{ ...info, active: Boolean(tab.active) }] : [];
+      });
+    },
+
+    async openTab(url: string) {
+      const tab = await chrome.tabs.create({ url, active: true });
+      if (tab.id === undefined) throw new Error("The browser did not open the tab.");
+      working = tab.id;
+      await group(tab.id);
+      return workTab(tab) ?? { id: tab.id, url, host: readablePage(url)?.host ?? null, title: "" };
+    },
+
+    async switchTab(tabId: number) {
+      if (!Number.isInteger(tabId) || !(await inWindow(tabId))) return null;
+      const tab = await chrome.tabs.update(tabId, { active: true });
+      working = tabId;
+      return workTab(tab) ?? current();
+    },
+
+    async navigate(url: string) {
+      if (working === null) throw new Error("There is no tab to open the page in.");
+      const tab = await chrome.tabs.update(working, { url });
+      return workTab(tab) ?? { id: working, url, host: readablePage(url)?.host ?? null, title: "" };
+    },
+
+    async page(method: PageMethod, args: Record<string, unknown> = {}): Promise<PageResult> {
+      const tab = await current();
+      if (!tab?.host) return { ok: false, error: "failed", message: "The tab does not show a web page the agent can work on." };
+      await showOverlay(tab);
+      return callPage(tab.id, tab.host, method, args);
+    },
+
+    async hasAccess(url: string) {
+      const page = readablePage(url);
+      if (!page) return false;
+      return chrome.permissions.contains({ origins: [page.pattern] }).catch(() => false);
+    },
+
+    async settle() {
+      await sleep(SETTLE_START_MS);
+      const deadline = Date.now() + SETTLE_LIMIT_MS;
+      while (working !== null && Date.now() < deadline) {
+        const tab = await chrome.tabs.get(working).catch(() => undefined);
+        if (!tab || tab.status !== "loading") return;
+        await sleep(SETTLE_POLL_MS);
+      }
+    },
+
+    async cleanup() {
+      await Promise.all(
+        [...overlays].map(([tabId, where]) => callPage(tabId, where.host, "hide_overlay", { run: options.runId }).catch(() => undefined)),
+      );
+      overlays.clear();
+    },
+  };
+}

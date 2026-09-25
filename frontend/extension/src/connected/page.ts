@@ -44,9 +44,9 @@ export async function runConnectedPage(doc: Document, location: Location, histor
   }
   const { title, text } = words(result);
   show(doc, title, text);
-  if (result.kind !== "failed") {
-    await broadcast({ type: "auth-changed" });
-    deps.setTimeout(deps.closeTab, CLOSE_AFTER_MS);
-  }
+  // The panel looks again whatever the answer: a failed attempt is over too,
+  // and it would otherwise go on waiting for it.
+  await broadcast({ type: "auth-changed" }).catch(() => undefined);
+  if (result.kind !== "failed") deps.setTimeout(deps.closeTab, CLOSE_AFTER_MS);
   return result;
 }

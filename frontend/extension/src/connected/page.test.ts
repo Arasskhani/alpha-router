@@ -86,6 +86,15 @@ describe("connected.html", () => {
     expect(result.kind).toBe("failed");
     expect(document.querySelector('[role="status"]')?.textContent).toContain("does not belong to a connection");
     expect(timers).toHaveLength(0);
-    expect(chromeFake.runtime.sent).toEqual([]);
+  });
+
+  it("tells the panel when the attempt failed, so it stops waiting for it", async () => {
+    const state = await attemptState();
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ detail: "The code has expired." }), { status: 400 }));
+    const { result } = await run(`?code=abc&state=${state}`, fetchImpl);
+    expect(result).toEqual({ kind: "failed", message: "The code has expired." });
+    expect(chromeFake.runtime.sent).toEqual([{ type: "auth-changed" }]);
+    // The attempt is over: the panel offers to connect again.
+    expect(await chrome.storage.session.get("alpharouter.pending-connect")).toEqual({});
   });
 });

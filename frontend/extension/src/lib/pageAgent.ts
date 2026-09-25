@@ -81,6 +81,10 @@ export function cleanElement(raw: unknown): ElementInfo | null {
   if (v.submits === true) info.submits = true;
   const formAction = str(v.formAction, 4096);
   if (formAction) info.formAction = formAction;
+  if (Array.isArray(v.formButton)) {
+    const said = v.formButton.slice(0, 2).map((label) => str(label, 120) ?? "").filter(Boolean);
+    if (said.length) info.formButton = said;
+  }
   if (Array.isArray(v.options)) {
     info.options = v.options.slice(0, 20).map((option) => str(option, 80) ?? "");
   }

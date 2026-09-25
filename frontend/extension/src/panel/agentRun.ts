@@ -245,7 +245,7 @@ function describeAction(tool: string, a: Record<string, unknown>, element?: Elem
     case "press_key":
       return `Press ${clip(String(a.key ?? "a key"), 20)}`;
     case "submit_form":
-      return `Send the form${element?.name ? ` (${named(element, a.ref)})` : ""}`;
+      return `Send the form${element?.formAction ? ` to ${whereTo(element.formAction)}` : ""}${element?.name ? ` (from ${named(element, a.ref)})` : ""}`;
     case "scroll":
       return a.ref ? `Scroll to ${named(element, a.ref)}` : `Scroll ${typeof a.direction === "string" ? a.direction : "down"}`;
     case "wait_for":

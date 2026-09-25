@@ -56,6 +56,12 @@ export type ElementInfo = {
   submits?: boolean;
   /** Where its form sends what is in it. */
   formAction?: string;
+  /**
+   * What the button that sends its form says (its name, and its own words
+   * when they differ): sending the form from any of its fields presses that
+   * button. Only when the panel asks about one element.
+   */
+  formButton?: string[];
   /** A menu's choices, the first few. */
   options?: string[];
 };
@@ -541,8 +547,17 @@ function holdsText(el: Element): boolean {
   return Boolean((el as HTMLElement).isContentEditable);
 }
 
-/** Everything the panel's rules and the model need to know about one element. */
-function describeElement(el: Element, role: string, isVisible: Visibility): ElementInfo {
+/** The button that sends a form when it is sent from one of its fields: its first submit button. */
+function defaultButton(form: HTMLFormElement): Element | null {
+  return Array.from(form.elements).find((field) => submits(field)) ?? null;
+}
+
+/**
+ * Everything the panel's rules and the model need to know about one element;
+ * `forRules` adds what only the rules need about a single element (its
+ * form's destination and sending button).
+ */
+function describeElement(el: Element, role: string, isVisible: Visibility, forRules = false): ElementInfo {
   const info: ElementInfo = { ref: refFor(el), role, name: accessibleName(el, role), tag: el.tagName.toLowerCase() };
   if (el.tagName.toUpperCase() === "INPUT") info.type = inputType(el);
   // By the field, not its role: <input type="password" role="combobox"> still holds a password.
@@ -565,7 +580,14 @@ function describeElement(el: Element, role: string, isVisible: Visibility): Elem
   }
   if (submits(el)) info.submits = true;
   const action = formAction(el);
-  if (action && (info.submits || role === "textbox" || el.tagName.toUpperCase() === "FORM")) info.formAction = action;
+  if (action && (forRules || info.submits || role === "textbox" || el.tagName.toUpperCase() === "FORM")) info.formAction = action;
+  const form = forRules ? formOf(el) : null;
+  const button = form ? defaultButton(form) : null;
+  if (button) {
+    const buttonRole = roleOf(button) ?? "button";
+    const said = [accessibleName(button, buttonRole), ownWords(button, buttonRole, isVisible)].filter(Boolean);
+    if (said.length) info.formButton = [...new Set(said)];
+  }
   if (el.tagName.toUpperCase() === "SELECT") {
     info.options = Array.from((el as HTMLSelectElement).options)
       .slice(0, MAX_OPTIONS)
@@ -1003,5 +1025,5 @@ export function describe(ref: unknown, isVisible: Visibility, activates = false)
   if (isFailure(named)) return named;
   const el = activates ? activationTarget(named) : named;
   const role = roleOf(el) ?? (headingLevel(el) !== null ? "heading" : "text");
-  return { ok: true, element: describeElement(el, role, isVisible) };
+  return { ok: true, element: describeElement(el, role, isVisible, true) };
 }

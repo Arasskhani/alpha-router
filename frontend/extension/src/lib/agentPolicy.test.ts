@@ -232,6 +232,17 @@ describe("the rest", () => {
     expect(classify("press_key", { args: { key: "Enter" } })).toMatchObject({ class: "act" });
   });
 
+  it("sending a form is judged by the form: its sending button, and where it goes", () => {
+    const search = el({ role: "textbox", name: "Search", tag: "input" });
+    expect(classify("submit_form", { element: { ...search, formButton: ["Next", "Place order"] } })).toMatchObject({ class: "blocked", reason: "purchase_label" });
+    expect(classify("submit_form", { element: { ...search, formAction: "https://bank.example.com/collect" } }, RULES)).toMatchObject({ class: "blocked", reason: "site_blocked" });
+    expect(classify("submit_form", { element: { ...search, formAction: "https://shop.example.com/find?q=1", formButton: ["Go"] } })).toEqual({
+      class: "sensitive",
+      reason: "submit",
+      message: 'Sending the form to shop.example.com/find from "Search".',
+    });
+  });
+
   it("sending a form always asks, and buying through one is refused", () => {
     expect(classify("submit_form", { element: el({ role: "textbox", name: "Email" }) })).toMatchObject({ class: "sensitive", reason: "submit" });
     expect(classify("submit_form", { element: el({ name: "Pay now", submits: true }) })).toMatchObject({ class: "blocked", reason: "purchase_label" });

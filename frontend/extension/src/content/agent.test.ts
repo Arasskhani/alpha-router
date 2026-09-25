@@ -299,6 +299,17 @@ describe("acting", () => {
     expect(byName(shot.elements, "Partner")).toMatchObject({ role: "menuitem", href: "https://partner.org/deal" });
   });
 
+  it("tells the rules where a field's form goes and what its sending button says", () => {
+    page(`<form action="https://bank.example.com/collect"><input aria-label="Search"><label for="p">Next</label><button id="p">Place order</button></form>`);
+    const ref = snapshot(document, { isVisible: visible }).elements[0].ref;
+    expect(describeRef(ref, visible)).toMatchObject({
+      ok: true,
+      element: { role: "textbox", formAction: "https://bank.example.com/collect", formButton: ["Next", "Place order"] },
+    });
+    // The outline itself stays as it was: this is for the rules about one element.
+    expect(snapshot(document, { isVisible: visible }).elements[0].formButton).toBeUndefined();
+  });
+
   it("does not click what is disabled or hidden", () => {
     page(`<button disabled>Pay</button><button>Visible</button>`);
     const shot = snapshot(document, { isVisible: visible });

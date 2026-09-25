@@ -216,16 +216,29 @@ function typeVerdict(element: ElementInfo): Verdict {
   return verdict("act", "type", `Typing into ${named(element)}.`);
 }
 
+/** A form's destination for a message: its site and path, never its query. */
+function destination(url: string | undefined): string {
+  const target = url ? readablePage(url) : null;
+  if (!target || !url) return "";
+  const path = new URL(url).pathname;
+  return ` to ${target.host}${path === "/" ? "" : path}`;
+}
+
+/**
+ * Sending a form is judged by the form: sent from any of its fields, it
+ * presses the form's own sending button, and goes where the form sends.
+ */
 function submitVerdict(element: ElementInfo, ctx: PolicyContext): Verdict {
-  if (labels(element).some((label) => purchase(label, element.role === "link" ? "button" : element.role))) {
-    return blocked("purchase_label", `The agent never buys or pays: sending ${named(element)} is for the user.`);
+  const said = [...labels(element), ...(element.formButton ?? [])];
+  if (said.some((label) => purchase(label, "button"))) {
+    return blocked("purchase_label", `The agent never buys or pays: sending this form (its button says "${element.formButton?.[0] ?? element.name}") is for the user.`);
   }
   const target = element.formAction ? readablePage(element.formAction) : null;
   if (target) {
     const refused = siteVerdict(target.host, ctx);
     if (refused) return refused;
   }
-  return verdict("sensitive", "submit", `Sending the form${element.name ? ` with ${named(element)}` : ""}.`);
+  return verdict("sensitive", "submit", `Sending the form${destination(element.formAction)}${element.name ? ` from ${named(element)}` : ""}.`);
 }
 
 /** What kind of action this is, from the tool, the element, the addresses involved and the site rules. */

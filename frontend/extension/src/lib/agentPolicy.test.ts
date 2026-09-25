@@ -176,6 +176,10 @@ describe("typing", () => {
     });
   });
 
+  it.each(["Card number", "Security code", "رمز دوم", "One-time code", "cvv2"])("is refused in a field named for a secret: %s", (name) => {
+    expect(classify("type_text", { element: el({ role: "textbox", name }) })).toMatchObject({ class: "blocked", reason: "sensitive_field" });
+  });
+
   it.each(["National ID", "Passport number", "SSN", "کد ملی", "شماره شناسنامه"])("is refused in an identity field: %s", (name) => {
     expect(classify("type_text", { element: el({ role: "textbox", name }) })).toMatchObject({ class: "blocked", reason: "id_field" });
   });

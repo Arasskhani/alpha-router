@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setClient } from "../lib/client";
 import { resetConfigForTests } from "../lib/config";
 import { insertIntoFocusedField } from "../lib/insert";
+import { SENSITIVE_RULES } from "../lib/sensitive";
 import { SELECTION_PREAMBLE, pageMessage, type PageContext } from "../lib/pageContext";
 import { savePendingAction, type PendingAction } from "../lib/pendingAction";
 import { installChromeFake, type ChromeFake } from "../test/chromeFake";
@@ -1001,7 +1002,8 @@ describe("putting an answer into the page", () => {
     const [injection] = chromeFake.scripting.executeScript.mock.calls[0] as [{ target: unknown; func: unknown; args: unknown[] }];
     expect(injection.target).toEqual({ tabId: 1 });
     expect(injection.func).toBe(insertIntoFocusedField);
-    expect(injection.args).toEqual(["The report is ready.", "docs.example.com"]);
+    // The sensitive-field rules travel with it, as data: the function runs in the page and imports nothing.
+    expect(injection.args).toEqual(["The report is ready.", "docs.example.com", SENSITIVE_RULES]);
     expect(button("Insert answer into the page").textContent).toBe("Inserted");
   });
 

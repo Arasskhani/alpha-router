@@ -490,11 +490,23 @@ function checkedState(el: Element, role: string): boolean | undefined {
   return aria === "true" ? true : aria === "false" ? false : undefined;
 }
 
+/** Input types whose value is never text a person typed. */
+const NOT_TEXT_INPUTS = new Set(["hidden", "checkbox", "radio", "file", "submit", "image", "reset", "button", "range", "color"]);
+
+/** Whether the element holds text someone typed - a text-like input, a text area, an editor - whatever role it claims. */
+function holdsText(el: Element): boolean {
+  const tag = el.tagName.toUpperCase();
+  if (tag === "TEXTAREA") return true;
+  if (tag === "INPUT") return !NOT_TEXT_INPUTS.has(inputType(el));
+  return Boolean((el as HTMLElement).isContentEditable);
+}
+
 /** Everything the panel's rules and the model need to know about one element. */
 function describeElement(el: Element, role: string, isVisible: Visibility): ElementInfo {
   const info: ElementInfo = { ref: refFor(el), role, name: accessibleName(el, role, isVisible), tag: el.tagName.toLowerCase() };
   if (el.tagName.toUpperCase() === "INPUT") info.type = inputType(el);
-  const sensitive = (role === "textbox" || role === "searchbox" || role === "spinbutton") && isSensitiveField(el);
+  // By the field, not its role: <input type="password" role="combobox"> still holds a password.
+  const sensitive = holdsText(el) && isSensitiveField(el);
   if (sensitive) info.sensitive = true;
   else {
     const value = currentValue(el, role);

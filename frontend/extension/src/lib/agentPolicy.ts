@@ -26,6 +26,7 @@
  */
 
 import type { ElementInfo } from "../content/agent";
+import { sensitiveText } from "./sensitive";
 import { readablePage, siteRefusal, type SitePolicy } from "./sites";
 
 type ActionClass = "read" | "act" | "sensitive" | "blocked";
@@ -169,13 +170,14 @@ function clickVerdict(element: ElementInfo, page: { url: string; host: string },
 }
 
 function typeVerdict(element: ElementInfo): Verdict {
-  if (element.sensitive) {
-    return blocked("sensitive_field", `The agent never types into ${named(element)}: passwords, card numbers and codes are for the user to enter.`);
-  }
+  const secret = () => blocked("sensitive_field", `The agent never types into ${named(element)}: passwords, card numbers and codes are for the user to enter.`);
+  if (element.sensitive) return secret();
   const described = `${element.name} ${element.type ?? ""}`;
   if (ID_FIELD.test(described) || ID_FIELD_FA.test(described)) {
     return blocked("id_field", `The agent never types into ${named(element)}: identity numbers are for the user to enter.`);
   }
+  // The page judges the field by everything it says about it; its name is checked here as well.
+  if (sensitiveText(element.name)) return secret();
   return verdict("act", "type", `Typing into ${named(element)}.`);
 }
 

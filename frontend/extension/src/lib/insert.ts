@@ -9,13 +9,17 @@
  * pages built with React and the like see the change.
  */
 
+import type { SensitiveRules } from "./sensitive";
+
 export type InsertResult = "inserted" | "no_field" | "sensitive" | "moved";
 
 /**
  * Runs inside the page (chrome.scripting serializes it): it may use nothing
- * from this module, so everything it needs is written out here.
+ * from this module, so everything it needs is written out here, and the
+ * words of the sensitive-field rules come in `rules` (sensitive.ts's
+ * SENSITIVE_RULES).
  */
-export function insertIntoFocusedField(text: string, host: string): InsertResult {
+export function insertIntoFocusedField(text: string, host: string, rules: SensitiveRules): InsertResult {
   if (location.hostname.replace(/\.$/, "") !== host) return "moved";
   let el: Element | null = document.activeElement;
   // Follow focus into frames of the same site; another site's frame is out of reach.
@@ -31,13 +35,41 @@ export function insertIntoFocusedField(text: string, host: string): InsertResult
   }
   if (!el || el === document.body || el === document.documentElement) return "no_field";
 
-  const describe = [el.getAttribute("type"), el.getAttribute("name"), el.id, el.getAttribute("autocomplete"), el.getAttribute("aria-label")]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-  const sensitive =
-    /\b(password|passwd|pwd|pin|cvv|cvc|csc|iban|otp)\b/.test(describe) ||
-    /(^|[\s_-])cc-|\bcard|security.?code|one-time-code|current-password|new-password/.test(describe);
+  // The same judgement as sensitive.ts's isSensitiveField, written out again: this runs in the page.
+  const target = el;
+  const persian = new RegExp(rules.persian, "i");
+  const pairs = new Map(rules.pairs);
+  const namesSecret = (said: string): boolean => {
+    const form = said
+      .replace(/[يى]/g, "ی")
+      .replace(/ك/g, "ک")
+      .replace(/[\u200b-\u200d\u00ad\u0640\ufeff]/g, "")
+      .replace(/\p{M}/gu, "")
+      .replace(/\s+/g, " ");
+    if (persian.test(form) || /(^|[\s_-])cc-/.test(said.toLowerCase())) return true;
+    const words = said
+      .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+      .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+      .replace(/([A-Za-z])(\d)/g, "$1 $2")
+      .replace(/(\d)([A-Za-z])/g, "$1 $2")
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter(Boolean);
+    return words.some((word, index) => rules.words.includes(word) || Boolean(pairs.get(word)?.includes(words[index + 1] ?? "")));
+  };
+  const said = [
+    ...["type", "name", "id", "autocomplete", "aria-label", "placeholder", "aria-placeholder", "title"].map((name) => target.getAttribute(name)),
+    ...Array.from((target as HTMLInputElement).labels ?? [], (label) => label.textContent),
+    ...(target.getAttribute("aria-labelledby") ?? "")
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((id) => document.getElementById(id)?.textContent ?? ""),
+  ]
+    .filter((value): value is string => Boolean(value && value.trim()))
+    .map((value) => value.slice(0, 300));
+  const style = getComputedStyle(target);
+  const security = style.getPropertyValue("-webkit-text-security") || style.getPropertyValue("text-security");
+  const sensitive = Boolean(security && security.trim() !== "none") || said.some(namesSecret);
 
   const tag = el.tagName;
   if (tag === "INPUT" || tag === "TEXTAREA") {

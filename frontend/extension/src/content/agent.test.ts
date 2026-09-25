@@ -96,6 +96,19 @@ describe("what the agent sees", () => {
     expect(shot.outline).toContain("sensitive: the agent cannot type here");
   });
 
+  it("never reads the value of a field named for a secret however the page writes it, labels it or draws it", () => {
+    const shot = outline(`
+      <input name="x_card_num" value="4111 1111 1111 1111" aria-label="Number">
+      <label for="c">Card number</label><input id="c" value="5500 0000 0000 0004">
+      <input type="password" role="combobox" aria-label="PIN" value="4242">
+      <input name="loginPassword" value="hunter2-shown">
+      <input name="city" value="Tehran" aria-label="City">
+    `);
+    for (const secret of ["4111", "5500", "4242", "hunter2"]) expect(shot.outline).not.toContain(secret);
+    expect(shot.elements.filter((e) => e.sensitive).length).toBe(4);
+    expect(byName(shot.elements, "City").value).toBe("Tehran");
+  });
+
   it("tells the rules where links and forms go, and shows the model no query string", () => {
     const shot = outline(FORM);
     const help = byName(shot.elements, "Help question mark");

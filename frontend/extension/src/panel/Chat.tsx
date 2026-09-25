@@ -18,6 +18,7 @@ import {
 } from "../lib/pageContext";
 import { PENDING_ACTION_MAX_AGE_MS, takePendingAction, type PendingAction, type PendingActionKind } from "../lib/pendingAction";
 import { insertIntoFocusedField, plainText, type InsertResult } from "../lib/insert";
+import { SENSITIVE_RULES } from "../lib/sensitive";
 import { captureTab } from "../lib/screenshot";
 import { readablePage } from "../lib/sites";
 import { DisconnectedError, TemporaryError } from "../lib/tokens";
@@ -734,7 +735,7 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
       const [first] = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
         func: insertIntoFocusedField,
-        args: [text, tab.host],
+        args: [text, tab.host, SENSITIVE_RULES],
       });
       const result = first?.result as InsertResult | undefined;
       if (result === "inserted") {

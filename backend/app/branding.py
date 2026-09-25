@@ -11,6 +11,8 @@ DEFAULT_ADMIN_EMAIL = "alpharouter@alpharouter.net"
 
 APPLICATION_TITLE = f"{PRODUCT_NAME} Organizational AI Platform"
 CHAT_CLIENT_APP = f"{PRODUCT_NAME} Chat"
+#: Request logs name the browser extension's turns apart from the web app's.
+EXTENSION_CLIENT_APP = f"{PRODUCT_NAME} Extension"
 INTERNAL_DOMAIN = f"{PRODUCT_SLUG}.local"
 LOGGER_NAMESPACE = PRODUCT_SNAKE
 OUTBOUND_USER_AGENT = f"{PRODUCT_TOKEN}/1.0 (+https://{INTERNAL_DOMAIN})"

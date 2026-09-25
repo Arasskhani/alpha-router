@@ -19,12 +19,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.background import BackgroundTask
 
 from app.api.deps import get_current_user, require_active_user
-from app.branding import CHAT_CLIENT_APP
+from app.branding import CHAT_CLIENT_APP, EXTENSION_CLIENT_APP
 from app.config import get_settings
 from app.database import get_db
 from app.models.connection import Connection
 from app.models.model_catalog import AIModel
 from app.models.user import User
+from app.services.client_ip import resolve_client_ip
+from app.services.extension_page_context import (
+    MAX_PAGE_CHARS,
+    MAX_PAGE_SITES,
+    PageContextRefused,
+    PageShare,
+    check_page_shares,
+    page_share_events,
+    page_shares,
+)
+from app.services.extension_settings import load_extension_settings
 from app.services.attachment_extract import processed_attachment_payload_async
 from app.services.attachment_from_media_service import attachments_from_existing_media
 from app.services.attachment_policy import (
@@ -64,6 +75,7 @@ from app.services.media_authorization_service import (
     MediaAccessAction,
     load_authorized_media_asset,
 )
+from app.services.private_mode_service import effective_private_mode
 from app.services.model_access_service import (
     filter_models_for_subject,
     resolve_access_subject,
@@ -216,6 +228,17 @@ class ChatToolsIn(BaseModel):
     code_interpreter: bool = False
 
 
+class ExtensionPageSiteIn(BaseModel):
+    """A site whose page text the request carries: its host (``URL.hostname``) and how many characters."""
+
+    host: str = Field(..., min_length=1, max_length=253)
+    chars: int = Field(..., ge=0, le=MAX_PAGE_CHARS)
+
+
+class ExtensionPageContextIn(BaseModel):
+    sites: list[ExtensionPageSiteIn] = Field(..., min_length=1, max_length=MAX_PAGE_SITES)
+
+
 class ChatRequest(BaseModel):
     model: str | None = None
     messages: list[dict]
@@ -234,6 +257,74 @@ class ChatRequest(BaseModel):
     agent_version_id: str | None = None
     agent_auto_route: bool | None = None
     include_citations: bool | None = None
+    #: The browser extension's declaration of the pages in ``messages``; refused from anyone else.
+    extension_page_context: ExtensionPageContextIn | None = None
+
+
+#: Fields that hand a turn to an Agent Studio agent, which chooses its own model and tools.
+_AGENT_FIELDS = ("alpharouter", "agent_id", "agent_slug", "agent_version_id", "agent_auto_route", "include_citations")
+
+
+def _extension_session_id(request: Request) -> str | None:
+    return getattr(request.state, "extension_session_id", None)
+
+
+def _client_app(request: Request) -> str:
+    return EXTENSION_CLIENT_APP if _extension_session_id(request) else CHAT_CLIENT_APP
+
+
+def _page_context_conflict(body: ChatRequest, tools: dict) -> str | None:
+    """Why the declared pages cannot go with the rest of this request, if they cannot.
+
+    An agent picks its own model, which the page-content list would never see;
+    tools could carry page text to a search engine or a fetched URL; a project
+    chat is read by teammates. The extension sends none of these with a page.
+    """
+    if any(getattr(body, key) is not None for key in _AGENT_FIELDS):
+        return "Pages cannot be shared with an agent."
+    if body.project_id:
+        return "Pages cannot be shared in a project chat."
+    if body.web_search or any(value is True for value in tools.values()):
+        return "Pages cannot be shared together with tools."
+    return None
+
+
+async def _declared_page_shares(
+    db: AsyncSession,
+    request: Request,
+    body: ChatRequest,
+    payload: dict,
+    tools: dict,
+) -> list[PageShare]:
+    """The pages the extension says it sent, checked against the admin's rules before anything is spent.
+
+    The model is checked as the turn will resolve it and then pinned in the
+    payload, so the turn goes to exactly the model that was checked.
+    """
+    context = body.extension_page_context
+    if context is None:
+        return []
+    if not _extension_session_id(request):
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "extension_only", "message": "Only the browser extension can share pages."},
+        )
+    conflict = _page_context_conflict(body, tools)
+    if conflict:
+        raise HTTPException(status_code=400, detail={"code": "page_context_conflict", "message": conflict})
+    try:
+        shares = page_shares((site.host, site.chars) for site in context.sites)
+        model = await check_page_shares(
+            db,
+            shares,
+            model_ref=str(body.model or ""),
+            settings=await load_extension_settings(db),
+        )
+    except PageContextRefused as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.detail()) from None
+    if model is not None:
+        payload["model"] = f"model::{model.id}"
+    return shares
 
 
 class ChatTitleIn(BaseModel):
@@ -298,12 +389,13 @@ async def chat_tools(
 
 @router.post("/session-title")
 async def chat_session_title(
+    request: Request,
     body: ChatTitleIn,
     user: User = Depends(require_active_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Short overview title from conversation start (not the first user message verbatim)."""
-    title = await generate_chat_title(db, user, body.model, body.messages)
+    title = await generate_chat_title(db, user, body.model, body.messages, client_app=_client_app(request))
     return {"title": title}
 
 
@@ -374,14 +466,29 @@ async def chat_completions(
         value = getattr(body, key)
         if value is not None:
             payload[key] = value
+    client_app = _client_app(request)
+    shares = await _declared_page_shares(db, request, body, payload, tools)
     resolved = await preflight_stream_chat(
         db,
         payload,
         user_id=user.id,
         skip_budget=False,
         source="alpha_router_chat",
-        client_app=CHAT_CLIENT_APP,
+        client_app=client_app,
     )
+    if shares:
+        # Only once the turn is going ahead: a refused request shared nothing.
+        db.add_all(
+            page_share_events(
+                shares,
+                user=user,
+                ip=resolve_client_ip(request),
+                session_id=_extension_session_id(request),
+                model=resolved.ai_model,
+                model_ref=str(payload.get("model") or ""),
+                private=effective_private_mode(payload),
+            )
+        )
     try:
         await db.commit()
     except BaseException:
@@ -399,7 +506,7 @@ async def chat_completions(
         user_id=user.id,
         username=user.username,
         source="alpha_router_chat",
-        client_app=CHAT_CLIENT_APP,
+        client_app=client_app,
         skip_budget=False,
         resolved=resolved,
     )

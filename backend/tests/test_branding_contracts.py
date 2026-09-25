@@ -12,6 +12,8 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.branding import (
     API_KEY_PREFIX,
+    CHAT_CLIENT_APP,
+    EXTENSION_CLIENT_APP,
     OIDC_STATE_COOKIE_NAME,
     OUTBOUND_USER_AGENT,
     PRODUCT_NAME,
@@ -56,6 +58,8 @@ def test_application_identity_contracts():
     assert health_payload() == {"status": "ok", "service": "alpha-router"}
     assert format_app_source("alpha_router_key") == "Alpharouter API Key"
     assert format_app_source("alpha_router_chat") == "Alpharouter Chat"
+    assert CHAT_CLIENT_APP == "Alpharouter Chat"
+    assert EXTENSION_CLIENT_APP == "Alpharouter Extension"
 
 
 def test_infrastructure_identity_contracts():

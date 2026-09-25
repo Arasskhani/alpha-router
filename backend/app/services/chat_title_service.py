@@ -117,6 +117,8 @@ async def generate_chat_title(
     user: User,
     model_ref: str,
     messages: list[dict],
+    *,
+    client_app: str = CHAT_CLIENT_APP,
 ) -> str:
     budget, usage = await get_user_budget_state(db, user)
     if budget_request_blocked(budget, usage):
@@ -186,7 +188,7 @@ async def generate_chat_title(
             prompt=kwargs["messages"],
             completion=completion_text,
             operation_name="chat_title",
-            client_app=f"{CHAT_CLIENT_APP} (helper:title)",
+            client_app=f"{client_app} (helper:title)",
             budget_reservation_id=reservation_id,
             success=success,
             error_message=error_message,

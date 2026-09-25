@@ -23,6 +23,7 @@ Who may use the extension and its agent at all is the Chat Tools ACL
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
 import re
@@ -48,6 +49,7 @@ MAX_SITE_PATTERNS = 200
 MAX_MODEL_REFS = 500
 
 _LABEL_RE = re.compile(r"^(?!-)[a-z0-9-]{1,63}(?<!-)$")
+_PAGE_LABEL_RE = re.compile(r"^(?!-)[a-z0-9_-]{1,63}(?<!-)$")
 _MODEL_REF_RE = re.compile(r"^model::(\d{1,10})$")
 #: Model ids are INTEGER columns; a larger number fails in PostgreSQL itself.
 _MAX_MODEL_ID = 2**31 - 1
@@ -113,6 +115,29 @@ def normalize_site_pattern(raw: str) -> str:
     if not all(_LABEL_RE.match(label) for label in ascii_host.split(".")):
         raise ValueError("not a valid host name")
     return f"*.{ascii_host}" if wildcard else ascii_host
+
+
+def normalize_page_host(raw: str) -> str:
+    """A page's host as the extension reports it (``URL.hostname``), checked; raises ValueError.
+
+    Wider than a site pattern: no wildcard, but an IPv6 literal in brackets
+    and underscores in labels are real hosts a browser can be on.
+    """
+    text = (raw or "").strip().lower().rstrip(".")
+    if text.startswith("[") and text.endswith("]"):
+        try:
+            return f"[{ipaddress.IPv6Address(text[1:-1]).compressed}]"
+        except ValueError as exc:
+            raise ValueError("not a host name") from exc
+    if not text or len(text) > 253:
+        raise ValueError("not a host name")
+    try:
+        ascii_host = _to_ascii(text)
+    except (idna.IDNAError, UnicodeError) as exc:
+        raise ValueError("not a host name") from exc
+    if len(ascii_host) > 253 or not all(_PAGE_LABEL_RE.match(label) for label in ascii_host.split(".")):
+        raise ValueError("not a host name")
+    return ascii_host
 
 
 def host_matches(host: str, pattern: str) -> bool:

@@ -38,7 +38,7 @@ export type PageContext = {
 };
 
 /** Twelve random hex digits, for a page's wrapper tag. */
-export function pageNonce(): string {
+function pageNonce(): string {
   return Array.from(crypto.getRandomValues(new Uint8Array(6)), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 

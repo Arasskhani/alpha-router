@@ -132,7 +132,7 @@ export async function finishConnect(search: string, deps: FinishDeps): Promise<C
 }
 
 /** How long Disconnect waits for the server before it lets go of the tokens anyway. */
-export const REVOKE_TIMEOUT_MS = 10_000;
+const REVOKE_TIMEOUT_MS = 10_000;
 
 /**
  * End this browser's connection: the server first (best effort, and not for

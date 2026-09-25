@@ -18,6 +18,8 @@ from sqlalchemy import select
 
 from app.config import get_settings
 from app.core.security import create_access_token
+from app.models.connection import Connection
+from app.models.model_catalog import AIModel
 from app.models.security import SecurityAuditEvent
 from app.models.user import User
 from app.services import extension_distribution, extension_keys
@@ -26,6 +28,7 @@ from app.services.extension_distribution import resolve_extension_dist
 from app.services.extension_keys import load_or_create_signing_key
 from app.services.extension_settings import ExtensionSettings, load_extension_settings, save_extension_settings
 from app.services.resource_access_service import AccessGrant
+from app.services.secret_crypto import encrypt_secret
 from app.services.user_role_service import set_user_roles
 
 TEMPLATE = Path(__file__).resolve().parents[2] / "frontend" / "extension" / "manifest.template.json"
@@ -437,6 +440,29 @@ class TestGroupPolicyUpdates:
         assert (await client.get("/extension/alpharouter.crx")).status_code == 404
 
 
+#: A catalog entry that says the model only makes embeddings: it cannot chat.
+EMBEDDINGS_ONLY = json.dumps({"architecture": {"input_modalities": ["text"], "output_modalities": ["embeddings"]}})
+
+
+async def _model(db, external_id: str, *, enabled: bool = True, pricing_raw: str | None = None) -> AIModel:
+    connection = Connection(
+        name=f"c-{external_id}", provider_type="openai", api_key_encrypted=encrypt_secret("sk-x"), is_active=True
+    )
+    db.add(connection)
+    await db.flush()
+    row = AIModel(
+        connection_id=connection.id,
+        external_id=external_id,
+        display_name=f"Model {external_id}",
+        provider_type="openai",
+        is_enabled=enabled,
+        pricing_raw=pricing_raw,
+    )
+    db.add(row)
+    await db.commit()
+    return row
+
+
 class TestTheAdminCard:
     async def test_an_admin_reads_the_settings_and_the_distribution(self, client, admin, built_extension):
         _sign_in(client, admin)
@@ -498,6 +524,47 @@ class TestTheAdminCard:
         resp = await client.put("/api/admin/extension/settings", json=auto, headers=headers)
         assert resp.status_code == 400
         assert "review model" in resp.json()["detail"]
+
+    async def test_the_models_to_choose_from_come_with_the_settings(self, client, db_session, admin, built_extension):
+        """The card needs no other admin menu, and it is shown every model the settings name, usable or not."""
+        chat = await _model(db_session, "gpt-chat")
+        embedder = await _model(db_session, "embedder", pricing_raw=EMBEDDINGS_ONLY)
+        off = await _model(db_session, "gpt-off", enabled=False)
+        review = await _model(db_session, "gpt-review-off", enabled=False)
+        await _model(db_session, "gpt-off-unnamed", enabled=False)
+        await _model(db_session, "embedder-unnamed", pricing_raw=EMBEDDINGS_ONLY)
+        await save_extension_settings(
+            db_session,
+            ExtensionSettings(
+                page_content_models=(f"model::{off.id}", "model::999999"),
+                agent_models=(f"model::{embedder.id}",),
+                agent_review_model=f"model::{review.id}",
+            ),
+        )
+        await db_session.commit()
+
+        _sign_in(client, admin)
+        resp = await client.get("/api/admin/extension/settings")
+        assert resp.status_code == 200, resp.text
+        models = resp.json()["models"]
+        # By name; the unnamed disabled model and the unnamed embedder are not choices.
+        assert models == [
+            {"ref": "model::999999", "label": "Model 999999", "provider": None, "state": "deleted"},
+            {"ref": f"model::{embedder.id}", "label": "Model embedder", "provider": "openai", "state": "not_chat"},
+            {"ref": f"model::{chat.id}", "label": "Model gpt-chat", "provider": "openai", "state": "ok"},
+            {"ref": f"model::{off.id}", "label": "Model gpt-off", "provider": "openai", "state": "disabled"},
+            {"ref": f"model::{review.id}", "label": "Model gpt-review-off", "provider": "openai", "state": "disabled"},
+        ]
+
+    async def test_saving_answers_with_the_models_too(self, client, db_session, admin, built_extension):
+        chat = await _model(db_session, "gpt-chat")
+        headers = _sign_in(client, admin)
+        body = {"site_access": "per_site", "page_content_models": [f"model::{chat.id}"], "agent_max_steps": 25}
+        resp = await client.put("/api/admin/extension/settings", json=body, headers=headers)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["models"] == [
+            {"ref": f"model::{chat.id}", "label": "Model gpt-chat", "provider": "openai", "state": "ok"}
+        ]
 
     async def test_the_key_is_reported_on_its_own(self, client, admin, monkeypatch, tmp_path, session_factory):
         """Even without a build, the card says when the key cannot be read (DATA_ENCRYPTION_KEY changed)."""

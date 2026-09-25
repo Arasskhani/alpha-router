@@ -38,6 +38,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.model_catalog import AIModel
 from app.models.system import SystemSetting
 from app.services.extension_package import SITE_ACCESS_MODES, SITE_ACCESS_PER_SITE
+from app.services.list_bounds import ADMIN_LIST_HARD_CAP
+from app.services.system_default_models import model_supports_text_chat
 
 logger = logging.getLogger(__name__)
 
@@ -254,6 +256,64 @@ async def _model_list(
         state = "is not enabled or does not exist" if enabled_only else "does not exist"
         raise ExtensionSettingsError(f"{label}: model {missing[0]} {state}.")
     return tuple(f"model::{i}" for i in sorted(ids))
+
+
+#: What the settings page says about a model it lists.
+MODEL_OK = "ok"
+MODEL_DISABLED = "disabled"
+MODEL_NOT_CHAT = "not_chat"
+MODEL_DELETED = "deleted"
+
+
+def _named_model_ids(settings: ExtensionSettings) -> set[int]:
+    refs = (*settings.page_content_models, *settings.agent_models, settings.agent_review_model or "")
+    return {int(match.group(1)) for ref in refs if (match := _MODEL_REF_RE.match(ref))}
+
+
+async def model_choices(db: AsyncSession, settings: ExtensionSettings) -> list[dict[str, Any]]:
+    """The models the settings page offers, and what it shows for those the settings name.
+
+    The choices are the enabled models that chat. A model the settings still
+    name that is not one of them any more - turned off, no longer a chat model,
+    deleted - is listed with its state, so the page can show it and let it be
+    removed: a restriction to a model nobody can see still restricts. Read with
+    the settings, under the Chat Tools permission, so the page needs no other
+    admin menu.
+    """
+    named = _named_model_ids(settings)
+    enabled = (
+        (await db.execute(select(AIModel).where(AIModel.is_enabled == True).limit(ADMIN_LIST_HARD_CAP)))  # noqa: E712
+        .scalars()
+        .all()
+    )
+    by_id = {int(row.id): row for row in enabled}
+    if named - set(by_id):
+        rows = (await db.execute(select(AIModel).where(AIModel.id.in_(named - set(by_id))))).scalars().all()
+        by_id.update({int(row.id): row for row in rows})
+    choices: list[dict[str, Any]] = []
+    for model_id, row in by_id.items():
+        if not row.is_enabled:
+            state = MODEL_DISABLED
+        elif not model_supports_text_chat(row):
+            state = MODEL_NOT_CHAT
+        else:
+            state = MODEL_OK
+        if state != MODEL_OK and model_id not in named:
+            continue
+        choices.append(
+            {
+                "ref": f"model::{model_id}",
+                "label": str(row.display_name or row.external_id or f"Model {model_id}"),
+                "provider": row.provider_type,
+                "state": state,
+            }
+        )
+    choices.extend(
+        {"ref": f"model::{model_id}", "label": f"Model {model_id}", "provider": None, "state": MODEL_DELETED}
+        for model_id in sorted(named - set(by_id))
+    )
+    choices.sort(key=lambda choice: (choice["label"].casefold(), choice["ref"]))
+    return choices
 
 
 async def validated_update(

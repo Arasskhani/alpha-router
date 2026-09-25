@@ -26,6 +26,7 @@ from app.services.extension_settings import (
     MIN_MAX_STEPS,
     ExtensionSettingsError,
     load_extension_settings,
+    model_choices,
     save_extension_settings,
     validated_update,
 )
@@ -64,7 +65,7 @@ async def _overview(db: AsyncSession, request: Request) -> dict:
     except ExtensionUnavailable as exc:
         build, unavailable = None, exc
     distribution = {**distribution_payload(build, unavailable), **await _key_status(db)}
-    return {"settings": settings.to_json(), "distribution": distribution}
+    return {"settings": settings.to_json(), "models": await model_choices(db, settings), "distribution": distribution}
 
 
 @router.get("/settings")

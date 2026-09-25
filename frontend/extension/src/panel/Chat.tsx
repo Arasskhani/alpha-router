@@ -91,6 +91,8 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
   const modelRef = useRef("");
   const busyRef = useRef(false);
   const waitingAction = useRef<PendingAction | null>(null);
+  /** Right-click actions already taken here: each runs once, however often the panel is told. */
+  const takenActions = useRef(new Set<string>());
   const actionHandler = useRef<(action: PendingAction) => void>(() => undefined);
   const composer = useRef<HTMLTextAreaElement | null>(null);
   // Raised by Stop, New chat and Private: a page still being read for the
@@ -166,7 +168,9 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
         .getCurrent()
         .then((win) => (win.id === undefined ? null : takePendingAction(win.id)))
         .then((action) => {
-          if (!active || !action) return;
+          // Two checks at once can both find the action before either takes it away.
+          if (!active || !action || takenActions.current.has(action.id)) return;
+          takenActions.current.add(action.id);
           if (modelRef.current) actionHandler.current(action);
           else waitingAction.current = action;
         })

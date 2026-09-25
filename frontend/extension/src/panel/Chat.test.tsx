@@ -742,6 +742,20 @@ describe("right-click actions", () => {
     expect(completions()).toHaveLength(1);
   });
 
+  it("runs an action once when told about it twice at the same moment", async () => {
+    answerWith([textFrame("Done.")]);
+    await render();
+    await savePendingAction(action({ kind: "explain", selection: "Text." }));
+    await act(async () => {
+      chromeFake.runtime.deliver({ type: "pending-action" });
+      chromeFake.runtime.deliver({ type: "pending-action" });
+    });
+    await act(async () => undefined);
+    await act(async () => undefined);
+    expect(completions()).toHaveLength(1);
+    expect(host.textContent).not.toContain("still answering");
+  });
+
   it("ignores the same message from a web page's content script", async () => {
     answerWith([textFrame("Done.")]);
     await render();

@@ -2,11 +2,11 @@
  * The side panel's line to the agent's hands in a page (content.js).
  *
  * Each call injects content.js into the tab - only now, and only there - and
- * runs one action. The tab may have moved to another site since the agent
- * last looked, so the call checks the site inside the page, where no
- * navigation can come between the check and the action. What comes back is
- * built from the page, so it is checked and cut to size before the panel uses
- * it: nothing in it is taken on trust.
+ * runs one action. The tab may have moved to another site since the rules
+ * judged the page, so the call checks the page's origin inside the page,
+ * where no navigation can come between the check and the action. What comes
+ * back is built from the page, so it is checked and cut to size before the
+ * panel uses it: nothing in it is taken on trust.
  */
 
 import type { ElementInfo } from "../content/agent";
@@ -140,21 +140,29 @@ export function cleanPageResult(method: PageMethod, raw: unknown): PageResult {
 type AgentScope = { __alpharouter?: { agent?: (method: unknown, args: unknown) => unknown } };
 
 /**
- * Run one agent action in the tab `tabId`, which should be showing a page on
- * `host`. Never throws: every outcome is a PageResult.
+ * Where a call goes: the tab, and the page in it the rules judged - its host
+ * and its origin, as `readablePage` names them.
  */
-export async function callPage(tabId: number, host: string, method: PageMethod, args: Record<string, unknown> = {}): Promise<PageResult> {
+export type PageTarget = { tabId: number; host: string; origin: string };
+
+/**
+ * Run one agent action in the tab `target.tabId`, only while it shows a page
+ * of `target.origin`. Never throws: every outcome is a PageResult.
+ */
+export async function callPage(target: PageTarget, method: PageMethod, args: Record<string, unknown> = {}): Promise<PageResult> {
+  const { tabId, host, origin } = target;
   let results: Array<{ result?: unknown }>;
   try {
     await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
     results = await chrome.scripting.executeScript({
       target: { tabId },
-      // Serialized into the page: it may use nothing from this module.
+      // Serialized into the page: it may use nothing from this module. The
+      // origin, not the host: another port or scheme of a host is another site.
       func: (expected: string, name: string, input: Record<string, unknown>) =>
-        location.hostname.replace(/\.$/, "") === expected
+        location.origin === expected
           ? ((globalThis as AgentScope).__alpharouter?.agent?.(name, input) ?? { ok: false, error: "failed", message: "The page's helper is missing." })
           : { ok: false, error: "moved", message: `The tab left ${expected}.` },
-      args: [host, method, args],
+      args: [origin, method, args],
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "";

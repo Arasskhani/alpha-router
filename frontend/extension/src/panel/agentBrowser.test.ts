@@ -41,6 +41,21 @@ describe("the browser the agent uses", () => {
     expect(pageCalls.at(-1)).toMatchObject({ tabId: tab.id, method: "hide_overlay", args: { run: "run-1" } });
   });
 
+  it("acts only on the page the rules judged: a tab gone to another site answers moved", async () => {
+    const tab = chromeFake.tabs.add({ url: "https://shop.example.com/cart", title: "Cart", active: true });
+    const browser = createAgentBrowser({ startTabId: tab.id!, runId: "run-1" });
+    const judged = (await browser.current())!;
+    // The same site, another page (a single-page app moving on): still the page judged.
+    chromeFake.tabs.update(tab.id!, { url: "https://shop.example.com/cart#step2" });
+    await expect(browser.page("click", { ref: "e1" }, judged)).resolves.toMatchObject({ ok: true });
+    for (const url of ["https://bank.example.com/", "https://shop.example.com:8443/cart", "http://shop.example.com/cart"]) {
+      pageCalls.length = 0;
+      chromeFake.tabs.update(tab.id!, { url });
+      await expect(browser.page("press_key", { key: "Enter" }, judged)).resolves.toMatchObject({ ok: false, error: "moved" });
+      expect(pageCalls).toEqual([]);
+    }
+  });
+
   it("puts the tabs it opens in one Alpharouter group, and works in the newest", async () => {
     const start = chromeFake.tabs.add({ url: "https://shop.example.com/", active: true });
     const browser = createAgentBrowser({ startTabId: start.id!, runId: "run-1" });

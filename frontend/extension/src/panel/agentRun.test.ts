@@ -136,11 +136,12 @@ describe("a run", () => {
     expect(result).toEqual({ outcome: "done", summary: "Applied SAVE10 and moved on.", steps: 3 });
     // Reading asked nobody; typing and clicking asked the user, each with what exactly it does.
     expect(h.approvals.map((a) => a.summary)).toEqual(['Type "SAVE10" into "Coupon"', 'Click "Next"']);
-    expect(h.browser.page).toHaveBeenCalledWith("type_text", { ref: "e3", text: "SAVE10" });
-    expect(h.browser.page).toHaveBeenCalledWith("click", { ref: "e1" });
+    // Every page call names the page the rules judged, so a tab gone elsewhere since is not acted on.
+    expect(h.browser.page).toHaveBeenCalledWith("type_text", { ref: "e3", text: "SAVE10" }, TAB);
+    expect(h.browser.page).toHaveBeenCalledWith("click", { ref: "e1" }, TAB);
     // A click is judged by the control it works on (the button around the words named); typing by the field itself.
-    expect(h.browser.page).toHaveBeenCalledWith("describe", { ref: "e1", activates: true });
-    expect(h.browser.page).toHaveBeenCalledWith("describe", { ref: "e3" });
+    expect(h.browser.page).toHaveBeenCalledWith("describe", { ref: "e1", activates: true }, TAB);
+    expect(h.browser.page).toHaveBeenCalledWith("describe", { ref: "e3" }, TAB);
     expect(h.deps.onText).toHaveBeenCalledWith("I will look at the page.");
     expectEveryCallAnswered(h.sent[2]);
   });
@@ -315,6 +316,17 @@ describe("going somewhere", () => {
     expect(h.browser.navigate).not.toHaveBeenCalled();
   });
 
+  it("asks nothing of a page it may not work on, not even to describe an element", async () => {
+    const browser = fakeBrowser();
+    browser.current.mockResolvedValue({ id: 2, url: "https://bank.example.com/", host: "bank.example.com", title: "Bank" });
+    const h = harness([{ text: "", toolCalls: [call("click", { ref: "e1" }), call("press_key", { key: "Enter" })] }, { text: "", toolCalls: [call("done", { summary: "ok" })] }], {
+      browser,
+    });
+    await run(h);
+    expect(browser.page).not.toHaveBeenCalled();
+    expect(h.reports.filter((r) => r.kind === "agent_step" && r.action !== "done").map((r) => r.outcome)).toEqual(["blocked", "blocked"]);
+  });
+
   it("refuses to switch to a tab it may not work on, and never tells the model that tab's title", async () => {
     const h = harness([{ text: "", toolCalls: [call("tab_switch", { tab_id: 2 }, "c1")] }, { text: "", toolCalls: [call("done", { summary: "ok" })] }]);
     await run(h);
@@ -361,7 +373,7 @@ describe("Auto mode", () => {
       expect.objectContaining({ task: options().task, tool: "click", site: "shop.example.com", target: "button: Next", arguments: { ref: "e1" } }),
       expect.anything(),
     );
-    expect(h.browser.page).toHaveBeenCalledWith("click", { ref: "e1" });
+    expect(h.browser.page).toHaveBeenCalledWith("click", { ref: "e1" }, TAB);
     expect(h.reports.find((r) => r.action === "click")).toMatchObject({ detail: expect.objectContaining({ approval: "review", review: "allow" }) });
   });
 

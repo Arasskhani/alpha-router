@@ -33,8 +33,12 @@ export type AgentBrowser = {
   openTab(url: string): Promise<WorkTab>;
   switchTab(tabId: number): Promise<WorkTab | null>;
   navigate(url: string): Promise<WorkTab>;
-  /** One action in the page of the tab the agent works in. */
-  page(method: PageMethod, args?: Record<string, unknown>): Promise<PageResult>;
+  /**
+   * One action in the page of the tab the agent works in - only on `judged`,
+   * the page the rules judged, when it is given: a tab that has gone to
+   * another site since answers "moved".
+   */
+  page(method: PageMethod, args?: Record<string, unknown>, judged?: WorkTab): Promise<PageResult>;
   /** Whether the browser lets the extension work on the pages of this address's site. */
   hasAccess(url: string): Promise<boolean>;
   /** After an action that may load a page: wait until the tab has settled. */
@@ -313,9 +317,9 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
   });
   stopped.catch(() => undefined);
 
-  async function page(method: PageMethod, a: Record<string, unknown> = {}): Promise<PageResult> {
+  async function page(method: PageMethod, a: Record<string, unknown>, judged: WorkTab): Promise<PageResult> {
     check();
-    const result = await Promise.race([deps.browser.page(method, a), stopped]);
+    const result = await Promise.race([deps.browser.page(method, a, judged), stopped]);
     check();
     return result;
   }
@@ -372,7 +376,8 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
         site: next.host ?? undefined,
       };
     }
-    const result = await page(tool as PageMethod, a);
+    if (!tab) return { content: "The tab does not show a web page the agent can work on.", status: "error", outcome: "error", extra: { error: "no_page" } };
+    const result = await page(tool as PageMethod, a, tab);
     if (!result.ok) {
       return {
         content: "",
@@ -431,17 +436,19 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     const tab = await deps.browser.current();
     check();
     const pageNow = tab?.host ? { url: tab.url, host: tab.host } : undefined;
+    // Nothing is asked of a page the agent may not work on, not even a description: the rules refuse the action below.
+    const workable = Boolean(tab && pageNow && classifyAction({ tool: "read_page", args: {}, page: pageNow }, options.rules).class !== "blocked");
     let element: ElementInfo | undefined;
-    if (name === "press_key" && pageNow) {
+    if (name === "press_key" && workable && tab) {
       // A key goes to the focused element, which decides what it does: Enter in a message box sends it.
-      const focus = await page("describe_focus");
+      const focus = await page("describe_focus", {}, tab);
       if (focus.ok && focus.element) element = focus.element as ElementInfo;
     } else if (ELEMENT_TOOLS.has(name) || (name === "scroll" && typeof a.ref === "string")) {
-      if (!pageNow) {
+      if (!workable || !tab || !pageNow) {
         // The rules refuse it below, with the reason.
       } else {
         // For a click, the control it works on: the button around the words, the field of a label.
-        const described = await page("describe", { ref: a.ref, ...(name === "click" ? { activates: true } : {}) });
+        const described = await page("describe", { ref: a.ref, ...(name === "click" ? { activates: true } : {}) }, tab);
         if (!described.ok) {
           return { content: "", page: wrapPage(options.nonce, pageNow.host, `${described.message}`), status: "error", detail: described.message, outcome: "error", site: pageNow.host, extra: { error: described.error } };
         }

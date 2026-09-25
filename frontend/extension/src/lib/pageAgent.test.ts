@@ -18,32 +18,37 @@ afterEach(() => {
 
 type Injection = { target: { tabId: number }; files?: string[]; func?: (...args: unknown[]) => unknown; args?: unknown[] };
 
+const SHOP = { tabId: 7, host: "shop.example.com", origin: "https://shop.example.com" };
+
 describe("a call to the page", () => {
-  it("injects content.js, then runs the action with the site it expects", async () => {
+  it("injects content.js, then runs the action with the origin it expects", async () => {
     chromeFake.scripting.executeScript
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([{ result: { ok: true, note: "Typed 5 characters." } }]);
-    await expect(callPage(7, "shop.example.com", "type_text", { ref: "e3", text: "hello" })).resolves.toEqual({
+    await expect(callPage(SHOP, "type_text", { ref: "e3", text: "hello" })).resolves.toEqual({
       ok: true,
       note: "Typed 5 characters.",
     });
     const [inject, run] = chromeFake.scripting.executeScript.mock.calls.map(([injection]) => injection as Injection);
     expect(inject).toEqual({ target: { tabId: 7 }, files: ["content.js"] });
     expect(run.target).toEqual({ tabId: 7 });
-    expect(run.args).toEqual(["shop.example.com", "type_text", { ref: "e3", text: "hello" }]);
+    expect(run.args).toEqual(["https://shop.example.com", "type_text", { ref: "e3", text: "hello" }]);
   });
 
-  it("checks the site inside the page, where no navigation comes between", async () => {
+  it("checks the origin inside the page, where no navigation comes between", async () => {
     chromeFake.scripting.executeScript.mockResolvedValue([]);
-    await callPage(7, "shop.example.com", "click", { ref: "e1" });
+    await callPage(SHOP, "click", { ref: "e1" });
     const run = chromeFake.scripting.executeScript.mock.calls[1][0] as Injection;
     const agent = vi.fn(() => ({ ok: true }));
-    vi.stubGlobal("location", { hostname: "evil.example.net" });
     vi.stubGlobal("__alpharouter", { agent });
-    expect(run.func!("shop.example.com", "click", { ref: "e1" })).toMatchObject({ ok: false, error: "moved" });
+    // Another site, and the same host on another port or scheme: not the page the rules judged.
+    for (const origin of ["https://evil.example.net", "https://shop.example.com:8443", "http://shop.example.com"]) {
+      vi.stubGlobal("location", { origin });
+      expect(run.func!("https://shop.example.com", "click", { ref: "e1" })).toMatchObject({ ok: false, error: "moved" });
+    }
     expect(agent).not.toHaveBeenCalled();
-    vi.stubGlobal("location", { hostname: "shop.example.com." });
-    expect(run.func!("shop.example.com", "click", { ref: "e1" })).toEqual({ ok: true });
+    vi.stubGlobal("location", { origin: "https://shop.example.com" });
+    expect(run.func!("https://shop.example.com", "click", { ref: "e1" })).toEqual({ ok: true });
     expect(agent).toHaveBeenCalledWith("click", { ref: "e1" });
   });
 
@@ -53,7 +58,7 @@ describe("a call to the page", () => {
     ["Frame with ID 0 is showing error page", "failed"],
   ])("turns %s into %s", async (message, error) => {
     chromeFake.scripting.executeScript.mockRejectedValueOnce(new Error(message));
-    await expect(callPage(7, "shop.example.com", "read_page")).resolves.toMatchObject({ ok: false, error });
+    await expect(callPage(SHOP, "read_page")).resolves.toMatchObject({ ok: false, error });
   });
 });
 

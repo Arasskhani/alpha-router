@@ -242,6 +242,10 @@ class TestTheBrowserExtensionTrail:
 
         result = await purge_expired_admin_logs(db)
         assert result["events_deleted"] == 2
+        assert result["trails"] == {
+            "security_audit_events": {"details_redacted": 0, "events_deleted": 1},
+            "extension_events": {"details_redacted": 0, "events_deleted": 1},
+        }
         assert len((await db.execute(select(ExtensionEvent))).scalars().all()) == 1
 
     async def test_the_page_counts_it(self, db):
@@ -338,6 +342,11 @@ async def test_the_retention_run_records_itself_where_it_cannot_prune(db, sessio
     )
     assert len(recorded) == 1
     assert recorded[0].payload_json["events_deleted"] == 1
+    # Each trail says what it lost.
+    assert recorded[0].payload_json["trails"] == {
+        "security_audit_events": {"details_redacted": 0, "events_deleted": 1},
+        "extension_events": {"details_redacted": 0, "events_deleted": 0},
+    }
 
 
 async def test_permanent_deletion_is_audited_before_the_row_disappears(db):

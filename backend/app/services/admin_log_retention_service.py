@@ -141,11 +141,10 @@ async def set_admin_log_retention(
 
 
 async def purge_expired_admin_logs(db: AsyncSession) -> dict[str, int]:
-    """Blank aged detail, then delete rows past the longer window.
+    """Delete rows past the longer window, then blank the detail of aged rows that remain.
 
-    Order matters only for the reported counts: a row deleted by the second
-    step is not also counted as redacted by the first, because the detail
-    window is clamped to be no longer than the row window.
+    In that order, so a row that goes is not first rewritten, and each row is
+    counted once: as deleted or as redacted.
     """
     detail_days = await get_detail_retention_days(db)
     event_days = await get_event_retention_days(db)
@@ -153,23 +152,24 @@ async def purge_expired_admin_logs(db: AsyncSession) -> dict[str, int]:
     detail_cutoff = now - datetime.timedelta(days=detail_days)
     event_cutoff = now - datetime.timedelta(days=event_days)
 
-    redacted = 0
-    deleted = 0
+    trails: dict[str, dict[str, int]] = {}
     for model, blank in _PRUNED_TRAILS:
+        deleted = await _delete_before(db, model, event_cutoff)
         result = await db.execute(
             update(model)
             .where(model.detail_redacted_at.is_(None), model.created_at < detail_cutoff)
             .values(detail_json=blank, detail_redacted_at=now)
         )
-        redacted += int(result.rowcount or 0)
-        deleted += await _delete_before(db, model, event_cutoff)
+        trails[model.__tablename__] = {"details_redacted": int(result.rowcount or 0), "events_deleted": deleted}
 
     await db.commit()
     return {
         "detail_retention_days": detail_days,
         "event_retention_days": event_days,
-        "details_redacted": redacted,
-        "events_deleted": deleted,
+        "details_redacted": sum(counts["details_redacted"] for counts in trails.values()),
+        "events_deleted": sum(counts["events_deleted"] for counts in trails.values()),
+        # Per table, so the run's record in the governance chain says what each trail lost.
+        "trails": trails,
     }
 
 

@@ -21,17 +21,23 @@ from app.services.model_tool_compatibility_service import is_auto_router_model_i
 from app.services.secret_crypto import decrypt_secret
 
 
-async def resolve_model_and_key(
+async def resolve_model_row(
     db: AsyncSession,
     model_id: str,
     *,
     allowed_connection_ids: set[int] | None = None,
     allowed_model_ids: set[int] | None = None,
-) -> tuple[AIModel | None, str | None, str | None, str | None]:
+) -> tuple[AIModel, Connection] | None:
+    """The enabled model on an active connection that ``model_id`` names, as a chat turn would use it.
+
+    ``model::<id>`` or an external id (the lowest id wins among twins). Policy
+    checks use this rather than their own lookup, so they judge the very model
+    a turn will be sent to, without decrypting its connection's key.
+    """
     if allowed_connection_ids is not None and not allowed_connection_ids:
-        return None, None, None, None
+        return None
     if allowed_model_ids is not None and not allowed_model_ids:
-        return None, None, None, None
+        return None
 
     connection_filter: tuple[Any, ...] = ()
     if allowed_connection_ids is not None:
@@ -92,14 +98,33 @@ async def resolve_model_and_key(
                 .first()
             )
     if not row:
-        return None, None, None, None
+        return None
     if allowed_connection_ids is not None and int(row.connection_id) not in allowed_connection_ids:
-        return None, None, None, None
+        return None
     if allowed_model_ids is not None and int(row.id) not in allowed_model_ids:
-        return None, None, None, None
+        return None
     conn = await db.get(Connection, row.connection_id)
     if not conn or not conn.is_active:
+        return None
+    return row, conn
+
+
+async def resolve_model_and_key(
+    db: AsyncSession,
+    model_id: str,
+    *,
+    allowed_connection_ids: set[int] | None = None,
+    allowed_model_ids: set[int] | None = None,
+) -> tuple[AIModel | None, str | None, str | None, str | None]:
+    found = await resolve_model_row(
+        db,
+        model_id,
+        allowed_connection_ids=allowed_connection_ids,
+        allowed_model_ids=allowed_model_ids,
+    )
+    if found is None:
         return None, None, None, None
+    row, conn = found
     return (
         row,
         decrypt_secret(conn.api_key_encrypted),

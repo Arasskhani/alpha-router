@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_active_user
 from app.branding import PRODUCT_NAME
-from app.config import application_version, get_settings
+from app.config import get_settings
 from app.database import get_db
 from app.models.extension import ExtensionSession
 from app.models.user import User
@@ -204,26 +204,36 @@ async def extension_me(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Who the connected browser works for, and what it may offer them."""
+    """Who the connected browser works for, and what it may offer them.
+
+    Open to any signed-in caller (a browser with the extension switched off
+    asks it to learn why), so it says no more than that caller may know: not
+    the server's exact build, which only administrators see, and the site and
+    model rules only to someone who may use the extension.
+    """
     settings = await load_extension_settings(db)
+    features = await extension_features(db, user, settings)
     try:
         build = await current_build(db, request_host=request.url.hostname, client_ip=resolve_client_ip(request))
         latest: str | None = build.version
     except ExtensionUnavailable:
         latest = None
-    return {
-        "user": {"username": user.username, "display_name": user.display_name, "email": user.email},
-        "server": {"name": PRODUCT_NAME, "url": _server_url(), "version": application_version()},
-        "extension": {"latest_version": latest, "min_version": MIN_SUPPORTED_VERSION},
-        "features": await extension_features(db, user, settings),
-        "policy": {
+    policy = None
+    if features["chat"]:
+        policy = {
             "site_access": settings.site_access,
             "allowed_sites": list(settings.allowed_sites),
             "blocked_sites": list(settings.blocked_sites),
             "page_content_models": list(settings.page_content_models),
             "agent_models": list(settings.agent_models),
             "agent_max_steps": settings.agent_max_steps,
-        },
+        }
+    return {
+        "user": {"username": user.username, "display_name": user.display_name, "email": user.email},
+        "server": {"name": PRODUCT_NAME, "url": _server_url()},
+        "extension": {"latest_version": latest, "min_version": MIN_SUPPORTED_VERSION},
+        "features": features,
+        "policy": policy,
     }
 
 

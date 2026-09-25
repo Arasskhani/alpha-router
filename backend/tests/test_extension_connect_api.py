@@ -474,7 +474,8 @@ class TestMe:
         tokens = await _connect(client, browser, user, redirect)
         me = (await browser.get("/api/extension/me", headers=_bearer(tokens["access_token"]))).json()
         assert me["user"] == {"username": user.username, "display_name": None, "email": user.email}
-        assert me["server"] == {"name": "Alpharouter", "url": SERVER, "version": "v1.4.0"}
+        # Not the build: only administrators see that (/api/admin/version).
+        assert me["server"] == {"name": "Alpharouter", "url": SERVER}
         assert me["extension"] == {"latest_version": None, "min_version": "1.0.0.0"}
         assert me["features"] == {
             "chat": True,
@@ -509,6 +510,8 @@ class TestMe:
         resp = await browser.get("/api/extension/me", headers=_bearer(tokens["access_token"]))
         assert resp.status_code == 200
         assert not any(resp.json()["features"].values())
+        # The site and model rules are for people who may use the extension.
+        assert resp.json()["policy"] is None
 
     async def test_the_latest_version_is_the_package_this_server_hands_out(
         self, client, browser, user, redirect, tmp_path, monkeypatch

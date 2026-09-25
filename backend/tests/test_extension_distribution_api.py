@@ -315,13 +315,73 @@ class TestTheVersionFollowsThePackage:
         background.write_text(first, encoding="utf-8")
         assert await self._version(client) == "1.0.0.5"
 
+    async def test_going_back_to_per_site_is_a_newer_version_still(self, client, db_session, built_extension):
+        """Chrome and Edge never install a lower version: the old number would leave every copy on all sites."""
+        ns = "{http://www.google.com/update2/response}"
+        offered = []
+        for site_access in ("per_site", "all_sites", "per_site"):
+            await save_extension_settings(db_session, ExtensionSettings(site_access=site_access))
+            await db_session.commit()
+            xml = await client.get("/extension/update.xml")
+            offered.append(ElementTree.fromstring(xml.text).find(f"{ns}app/{ns}updatecheck").get("version"))
+        assert offered == ["1.0.0.1", "1.0.0.2", "1.0.0.3"]
+
+        crx = (await client.get(f"/extension/alpharouter.crx?v={offered[-1]}")).content
+        header_size = struct.unpack("<I", crx[8:12])[0]
+        manifest = json.loads(zipfile.ZipFile(io.BytesIO(crx[12 + header_size :])).read("manifest.json"))
+        assert manifest["version"] == "1.0.0.3"
+        assert manifest["host_permissions"] == [f"{SERVER}/*"]
+        assert manifest["optional_host_permissions"] == ["<all_urls>"]
+
+    async def test_going_back_to_an_origin_is_a_newer_version_still(self, client, user, built_extension, monkeypatch):
+        _sign_in(client, user)
+        versions = []
+        for url in (f"{SERVER}/", "https://ai2.example.com", f"{SERVER}/"):
+            monkeypatch.setattr(get_settings(), "frontend_url", url)
+            versions.append(await self._version(client))
+        assert versions == ["1.0.0.1", "1.0.0.2", "1.0.0.3"]
+        assert await self._version(client) == "1.0.0.3"
+
+    async def test_two_builds_keep_their_numbers_after_a_settings_change(
+        self, client, db_session, user, built_extension
+    ):
+        """Only the settings of the latest revision count: an upgrade after a change still keeps its numbers."""
+        _sign_in(client, user)
+        background = built_extension / "background.js"
+        old = background.read_text(encoding="utf-8")
+        assert await self._version(client) == "1.0.0.1"
+        await save_extension_settings(db_session, ExtensionSettings(site_access="all_sites"))
+        await db_session.commit()
+        assert await self._version(client) == "1.0.0.2"
+        background.write_text("// new build\n", encoding="utf-8")
+        assert await self._version(client) == "1.0.0.3"
+        background.write_text(old, encoding="utf-8")
+        assert await self._version(client) == "1.0.0.2"
+        background.write_text("// new build\n", encoding="utf-8")
+        assert await self._version(client) == "1.0.0.3"
+
     async def test_the_counter_by_fingerprint(self):
         from app.services.extension_distribution import package_revision
 
-        assert await package_revision("fp-a") == 1
-        assert await package_revision("fp-b") == 2
-        assert await package_revision("fp-b") == 2
-        assert await package_revision("fp-a") == 1
+        assert await package_revision("fp-a", "settings") == 1
+        assert await package_revision("fp-b", "settings") == 2
+        assert await package_revision("fp-b", "settings") == 2
+        assert await package_revision("fp-a", "settings") == 1
+
+    async def test_a_counter_saved_without_the_settings_steps_forward_once(self, session_factory):
+        """Saved before the settings were kept, its latest revision may be for settings the admin has since left."""
+        from app.models.system import SystemSetting
+        from app.services.extension_distribution import PACKAGE_KEY, package_revision
+
+        legacy = json.dumps({"latest": 2, "recent": {"fp-a": 1, "fp-b": 2}}, sort_keys=True)
+        async with session_factory() as session:
+            session.add(SystemSetting(key=PACKAGE_KEY, value=legacy))
+            await session.commit()
+        assert await package_revision("fp-a", "settings") == 3
+        assert await package_revision("fp-a", "settings") == 3
+        async with session_factory() as session:
+            stored = json.loads((await session.get(SystemSetting, PACKAGE_KEY)).value)
+        assert stored == {"latest": 3, "recent": {"fp-a": 3, "fp-b": 2}, "settings": "settings"}
 
 
 class TestTwoWorkersSeeANewBuildAtOnce:
@@ -331,7 +391,7 @@ class TestTwoWorkersSeeANewBuildAtOnce:
         from app.models.system import SystemSetting
         from app.services.extension_distribution import PACKAGE_KEY, package_revision
 
-        assert await package_revision("fp-a") == 1
+        assert await package_revision("fp-a", "settings") == 1
 
         class _Racing:
             """A session whose first UPDATE finds another worker already moved the counter on."""
@@ -355,15 +415,16 @@ class TestTwoWorkersSeeANewBuildAtOnce:
                     self.raced = True
                     async with session_factory() as other:
                         row = await other.get(SystemSetting, PACKAGE_KEY)
-                        row.value = json.dumps({"latest": 2, "recent": {"fp-a": 1, "fp-b": 2}}, sort_keys=True)
+                        moved_on = {"latest": 2, "recent": {"fp-a": 1, "fp-b": 2}, "settings": "settings"}
+                        row.value = json.dumps(moved_on, sort_keys=True)
                         await other.commit()
                 return await self._inner.execute(statement, *args, **kwargs)
 
         monkeypatch.setattr(extension_distribution, "AsyncSessionLocal", lambda: _Racing(session_factory()))
-        assert await package_revision("fp-c") == 3
+        assert await package_revision("fp-c", "settings") == 3
         async with session_factory() as session:
             stored = json.loads((await session.get(SystemSetting, PACKAGE_KEY)).value)
-        assert stored == {"latest": 3, "recent": {"fp-a": 1, "fp-b": 2, "fp-c": 3}}
+        assert stored == {"latest": 3, "recent": {"fp-a": 1, "fp-b": 2, "fp-c": 3}, "settings": "settings"}
 
 
 class TestBuildingOnce:

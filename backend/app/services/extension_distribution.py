@@ -40,6 +40,7 @@ from app.services.extension_package import (
     normalize_origin,
     package_files,
     package_fingerprint,
+    package_settings_key,
     read_dist,
     update_manifest_xml,
     update_url,
@@ -50,12 +51,15 @@ UNAVAILABLE_NOT_BUILT = "not_built"
 UNAVAILABLE_KEY_UNREADABLE = "key_unreadable"
 UNAVAILABLE_FRONTEND_URL = "frontend_url"
 
-#: ``{"latest": n, "recent": {fingerprint: revision}}``: the package's revision
-#: counter, and the revisions of the last few fingerprints seen.
+#: ``{"latest": n, "recent": {fingerprint: revision}, "settings": key}``: the
+#: package's revision counter, the revisions of the last few fingerprints seen,
+#: and the settings key (extension_package.package_settings_key) of revision n.
 PACKAGE_KEY = "extension.package"
 #: Fingerprints remembered with their revision. Two builds answering at once
 #: (old and new workers during an upgrade) then keep their numbers instead of
-#: bumping the counter on every request.
+#: bumping the counter on every request. Their files differ, their settings do
+#: not: a number is reused only under the settings of the latest revision, so
+#: going back to earlier settings still gives a higher version.
 _RECENT_FINGERPRINTS = 3
 
 
@@ -131,18 +135,36 @@ def server_origin(request_host: str | None, client_ip: str | None = None) -> str
     return origin
 
 
-def _parse_package_state(raw: str | None) -> tuple[int, dict[str, int]]:
+def _parse_package_state(raw: str | None) -> tuple[int, dict[str, int], str | None]:
+    """The counter, the remembered fingerprints and the settings key of the latest revision.
+
+    A state saved before the settings key was kept has none, and nothing says
+    which settings its latest revision was made with: it may well be the
+    package of settings the admin has since left, which every policy-installed
+    copy is then stuck on. None matches no settings, so the counter steps
+    forward once.
+    """
     try:
         data = json.loads(raw or "")
         latest = int(data["latest"])
         recent = {str(fp): int(rev) for fp, rev in dict(data["recent"]).items()}
     except (ValueError, TypeError, KeyError):
-        return 0, {}
-    return latest, recent
+        return 0, {}, None
+    settings = data.get("settings")
+    return latest, recent, settings if isinstance(settings, str) else None
 
 
-async def package_revision(fingerprint: str) -> int:
-    """The revision of the package with this fingerprint; a new fingerprint gets the next number.
+async def package_revision(fingerprint: str, settings_key: str) -> int:
+    """The revision of the package with this fingerprint; a new package gets the next number.
+
+    A fingerprint seen lately keeps its number while ``settings_key`` is still
+    the latest revision's: that is old and new workers answering at once during
+    an upgrade, with different files. Going back to earlier settings (per site,
+    all sites, per site again; one FRONTEND_URL, another, the first again)
+    takes the next number instead. The number that package had is lower than
+    the latest, and Chrome and Edge never install a lower version:
+    policy-installed copies would keep the package made for the settings just
+    left, and copies installed from the ZIP would be offered no update.
 
     Committed in a session of its own (a version handed out must not be rolled
     back with the request) and with a compare-and-set update, so two workers
@@ -152,15 +174,15 @@ async def package_revision(fingerprint: str) -> int:
         for _ in range(8):
             row = await session.get(SystemSetting, PACKAGE_KEY, populate_existing=True)
             stored = cast("str | None", row.value) if row is not None else None
-            latest, recent = _parse_package_state(stored)
-            if fingerprint in recent:
+            latest, recent, latest_settings = _parse_package_state(stored)
+            if fingerprint in recent and settings_key == latest_settings:
                 return recent[fingerprint]
             revision = latest + 1
             if revision > MAX_PACKAGE_REVISION:
                 raise ExtensionUnavailable(UNAVAILABLE_NOT_BUILT, "The extension's version counter is exhausted.")
             recent[fingerprint] = revision
             kept = dict(sorted(recent.items(), key=lambda item: item[1])[-_RECENT_FINGERPRINTS:])
-            value = json.dumps({"latest": revision, "recent": kept}, sort_keys=True)
+            value = json.dumps({"latest": revision, "recent": kept, "settings": settings_key}, sort_keys=True)
             if row is None:
                 session.add(SystemSetting(key=PACKAGE_KEY, value=value))
                 try:
@@ -255,7 +277,9 @@ async def current_build(db: AsyncSession, *, request_host: str | None, client_ip
         raise ExtensionUnavailable(UNAVAILABLE_KEY_UNREADABLE, str(exc)) from exc
     settings = await load_extension_settings(db)
     fingerprint = package_fingerprint(files, origin=origin, site_access=settings.site_access, server_name=PRODUCT_NAME)
-    version = extension_version(await package_revision(fingerprint))
+    # And the settings on their own: going back to earlier ones must give a newer version, not the old number.
+    settings_key = package_settings_key(origin=origin, site_access=settings.site_access, server_name=PRODUCT_NAME)
+    version = extension_version(await package_revision(fingerprint, settings_key))
     manifest = build_manifest(
         template,
         version=version,

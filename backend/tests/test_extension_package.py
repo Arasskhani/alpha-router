@@ -27,6 +27,7 @@ from app.services.extension_package import (
     normalize_origin,
     package_files,
     package_fingerprint,
+    package_settings_key,
     read_dist,
     update_manifest_xml,
     update_url,
@@ -101,6 +102,13 @@ class TestTheFingerprint:
     )
     def test_anything_that_changes_the_package_changes_it(self, change):
         assert self._fp(**change) != self._fp()
+
+    @pytest.mark.parametrize(
+        "change", [{"origin": "https://other.example"}, {"site_access": "all_sites"}, {"server_name": "Another"}]
+    )
+    def test_the_settings_key_changes_with_every_setting(self, change):
+        settings = {"origin": "https://ai.example.com", "site_access": "per_site", "server_name": "Alpharouter"}
+        assert package_settings_key(**{**settings, **change}) != package_settings_key(**settings)
 
 
 class TestTheOrigin:

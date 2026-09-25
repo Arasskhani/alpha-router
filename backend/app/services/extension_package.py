@@ -71,13 +71,23 @@ def extension_version(revision: int) -> str:
     return f"{VERSION_MAJOR}.0.{int(revision) // 65536}.{int(revision) % 65536}"
 
 
+def package_settings_key(*, origin: str, site_access: str, server_name: str) -> str:
+    """The part of the fingerprint the server patches in: the origin, the site access and the name.
+
+    Kept apart so the revision counter can tell a change of settings from a
+    change of files (extension_distribution.package_revision).
+    """
+    inputs = {"origin": origin, "site_access": site_access, "server_name": server_name}
+    return hashlib.sha256(json.dumps(inputs, sort_keys=True).encode("utf-8")).hexdigest()
+
+
 def package_fingerprint(files: Mapping[str, bytes], *, origin: str, site_access: str, server_name: str) -> str:
     """What the package is made from: the built files and everything the server patches in."""
     digest = hashlib.sha256()
     for name in sorted(files):
         digest.update(name.encode("utf-8") + b"\0" + hashlib.sha256(files[name]).digest())
-    inputs = {"origin": origin, "site_access": site_access, "server_name": server_name}
-    digest.update(json.dumps(inputs, sort_keys=True).encode("utf-8"))
+    settings_key = package_settings_key(origin=origin, site_access=site_access, server_name=server_name)
+    digest.update(settings_key.encode("ascii"))
     return digest.hexdigest()
 
 

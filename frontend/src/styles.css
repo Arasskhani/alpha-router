@@ -18934,3 +18934,9 @@ p.error,
 .extension-admin .api-key-conn-picker__option {
   font-size: 0.8125rem;
 }
+
+/* A selected model that is no longer on offer, and a review model that is not. */
+.extension-admin__stale-model,
+.extension-admin__warning {
+  color: var(--danger);
+}

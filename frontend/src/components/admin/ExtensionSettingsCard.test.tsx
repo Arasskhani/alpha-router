@@ -34,26 +34,37 @@ const DISTRIBUTION = {
   key_status: "ok",
   key_message: null,
 };
+// As the server lists them: the enabled chat models, and any other model the settings name.
 const MODELS = [
-  { id: 1, external_id: "gpt-a", display_name: "GPT A", enabled: true, provider: "openai", kinds: ["text"] },
-  { id: 2, external_id: "gpt-b", display_name: "GPT B", enabled: true, provider: "openai", kinds: ["text"] },
-  { id: 3, external_id: "dall-e", display_name: "Images", enabled: true, provider: "openai", kinds: ["image"] },
-  { id: 4, external_id: "old", display_name: "Old", enabled: false, provider: "openai", kinds: ["text"] },
+  { ref: "model::1", label: "GPT A", provider: "openai", state: "ok" },
+  { ref: "model::2", label: "GPT B", provider: "openai", state: "ok" },
 ];
 
 let host: HTMLDivElement;
 let root: Root;
 let lastPut: Record<string, unknown> | null;
 
-function serve(overrides: { settings?: object; distribution?: object; put?: (body: Record<string, unknown>) => unknown } = {}) {
+function serve(
+  overrides: {
+    settings?: object;
+    models?: object[];
+    distribution?: object;
+    put?: (body: Record<string, unknown>) => unknown;
+  } = {},
+) {
+  const models = overrides.models ?? MODELS;
   vi.mocked(api).mockImplementation((async (path: string, init?: RequestInit) => {
-    if (path === "/api/admin/models") return MODELS;
+    if (path !== "/api/admin/extension/settings") throw new Error(`unexpected request to ${path}`);
     if (init?.method === "PUT") {
       lastPut = JSON.parse(String(init.body));
       if (overrides.put) return overrides.put(lastPut!);
-      return { settings: { ...SETTINGS, ...lastPut }, distribution: DISTRIBUTION };
+      return { settings: { ...SETTINGS, ...lastPut }, models, distribution: DISTRIBUTION };
     }
-    return { settings: { ...SETTINGS, ...overrides.settings }, distribution: { ...DISTRIBUTION, ...overrides.distribution } };
+    return {
+      settings: { ...SETTINGS, ...overrides.settings },
+      models,
+      distribution: { ...DISTRIBUTION, ...overrides.distribution },
+    };
   }) as never);
 }
 
@@ -74,6 +85,11 @@ afterEach(() => {
 async function render() {
   await act(async () => root.render(<ExtensionSettingsCard />));
   await act(async () => undefined);
+}
+
+function checklist(label: string): Array<[string | null, boolean]> {
+  const group = host.querySelector(`[role=group][aria-label='${label}']`)!;
+  return [...group.querySelectorAll("label")].map((l) => [l.textContent, (l.querySelector("input") as HTMLInputElement).checked]);
 }
 
 function field(label: string): HTMLTextAreaElement | HTMLInputElement {
@@ -104,13 +120,55 @@ describe("the browser extension card", () => {
     expect((host.querySelector("input[type=radio]:checked")?.closest("label")?.textContent ?? "").startsWith("Ask per site")).toBe(true);
     expect(field("Allowed sites").value).toBe("wiki.example.com");
     expect(field("Blocked sites").value).toBe("*.bank.example");
-    const pageModels = host.querySelector("[role=group][aria-label='Models that may receive page content']")!;
-    const boxes = [...pageModels.querySelectorAll("label")].map((l) => [l.textContent, (l.querySelector("input") as HTMLInputElement).checked]);
-    // Enabled text models only.
-    expect(boxes).toEqual([
+    expect(checklist("Models that may receive page content")).toEqual([
       ["GPT A · openai", false],
       ["GPT B · openai", true],
     ]);
+  });
+
+  it("needs nothing but its own settings, which come with the models to choose from", async () => {
+    serve();
+    await render();
+    // Not the Models menu's list: an administrator of Chat Tools alone may lack it.
+    expect(vi.mocked(api).mock.calls.map(([path]) => path)).toEqual(["/api/admin/extension/settings"]);
+  });
+
+  it("shows a selected model that is no longer on offer, and lets it be removed", async () => {
+    serve({
+      settings: { page_content_models: ["model::2", "model::4", "model::9"] },
+      models: [
+        ...MODELS,
+        { ref: "model::4", label: "Old", provider: "openai", state: "disabled" },
+        { ref: "model::9", label: "Model 9", provider: null, state: "deleted" },
+      ],
+    });
+    await render();
+    expect(checklist("Models that may receive page content")).toEqual([
+      ["Old · openai — turned off; still limits the choice until removed", true],
+      ["Model 9 — no longer exists; still limits the choice until removed", true],
+      ["GPT A · openai", false],
+      ["GPT B · openai", true],
+    ]);
+    const old = [...host.querySelectorAll("[aria-label='Models that may receive page content'] label")].find((l) =>
+      l.textContent?.startsWith("Old"),
+    )!;
+    await act(async () => (old.querySelector("input") as HTMLInputElement).click());
+    expect(checklist("Models that may receive page content").map(([text]) => text)).not.toContain(
+      "Old · openai — turned off; still limits the choice until removed",
+    );
+    await save();
+    expect(lastPut?.page_content_models).toEqual(["model::2", "model::9"]);
+  });
+
+  it("shows a review model that is no longer on offer by name, and says it has to change", async () => {
+    serve({
+      settings: { agent_review_model: "model::4" },
+      models: [...MODELS, { ref: "model::4", label: "Old", provider: "openai", state: "disabled" }],
+    });
+    await render();
+    const review = host.querySelector("input[aria-label='Review model']") as HTMLInputElement;
+    expect(review.value).toBe("Old · openai (turned off)");
+    expect(host.textContent).toContain("The review model is turned off: choose another, or None.");
   });
 
   it("saves what the administrator changed, with the site lists as lists", async () => {

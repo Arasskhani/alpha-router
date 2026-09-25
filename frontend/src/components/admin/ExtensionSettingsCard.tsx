@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 
 import { api, formatApiError } from "../../api";
 import { useReadOnly } from "../../context/ReadOnlyContext";
@@ -38,16 +38,15 @@ type Distribution = {
   key_message: string | null;
 };
 
-type Overview = { settings: ExtensionSettings; distribution: Distribution };
-
-type AdminModel = {
-  id: number;
-  external_id: string;
-  display_name?: string | null;
-  enabled: boolean;
-  provider: string;
-  kinds?: string[];
+/** A model the card can offer, or one the settings name that is no longer on offer. */
+type ModelChoice = {
+  ref: string;
+  label: string;
+  provider: string | null;
+  state: "ok" | "disabled" | "not_chat" | "deleted";
 };
+
+type Overview = { settings: ExtensionSettings; models: ModelChoice[]; distribution: Distribution };
 
 /** The form keeps the site lists as the text the administrator types, one pattern per line. */
 type Form = Omit<ExtensionSettings, "allowed_sites" | "blocked_sites"> & { allowed_sites: string; blocked_sites: string };
@@ -70,10 +69,34 @@ export function siteLines(text: string): string[] {
 function isOverview(value: unknown): value is Overview {
   if (!value || typeof value !== "object") return false;
   const v = value as Partial<Overview>;
-  return Boolean(v.settings && typeof v.settings === "object" && v.distribution && typeof v.distribution === "object");
+  return Boolean(
+    v.settings &&
+      typeof v.settings === "object" &&
+      Array.isArray(v.models) &&
+      v.distribution &&
+      typeof v.distribution === "object",
+  );
 }
 
-const modelRef = (id: number) => `model::${id}`;
+/** Why a model the settings name is not on offer any more. */
+const UNAVAILABLE: Record<Exclude<ModelChoice["state"], "ok">, string> = {
+  disabled: "turned off",
+  not_chat: "not a chat model",
+  deleted: "no longer exists",
+};
+
+function choiceLabel(choice: ModelChoice): string {
+  return choice.provider ? `${choice.label} · ${choice.provider}` : choice.label;
+}
+
+/** The choice a selected ref stands for, even when the server no longer lists it. */
+function choiceFor(ref: string, models: ModelChoice[]): ModelChoice {
+  return models.find((m) => m.ref === ref) ?? { ref, label: ref, provider: null, state: "deleted" };
+}
+
+function unavailableNote(choice: ModelChoice): string | null {
+  return choice.state === "ok" ? null : UNAVAILABLE[choice.state];
+}
 
 function ModelChecklist({
   label,
@@ -83,20 +106,23 @@ function ModelChecklist({
   onChange,
 }: {
   label: string;
-  models: AdminModel[];
+  models: ModelChoice[];
   selected: string[];
   disabled: boolean;
   onChange: (next: string[]) => void;
 }) {
   const [query, setQuery] = useState("");
   const chosen = new Set(selected);
+  const offered = models.filter((m) => m.state === "ok");
+  // Selected but no longer on offer: shown first, whatever the search, so a
+  // restriction nobody could see can be seen and removed.
+  const stale = selected.filter((ref) => !offered.some((m) => m.ref === ref)).map((ref) => choiceFor(ref, models));
   const q = query.trim().toLowerCase();
-  const shown = q
-    ? models.filter((m) => `${m.display_name ?? ""} ${m.external_id} ${m.provider}`.toLowerCase().includes(q))
-    : models;
+  const shown = q ? offered.filter((m) => `${m.label} ${m.ref} ${m.provider ?? ""}`.toLowerCase().includes(q)) : offered;
+  const toggle = (ref: string) => onChange(chosen.has(ref) ? selected.filter((x) => x !== ref) : [...selected, ref]);
   return (
     <div className="api-key-conn-picker">
-      {models.length > 8 ? (
+      {offered.length > 8 ? (
         <input
           type="search"
           className="input-block"
@@ -108,26 +134,27 @@ function ModelChecklist({
         />
       ) : null}
       <div className="api-key-conn-picker__list" role="group" aria-label={label}>
+        {stale.map((m) => (
+          <label key={m.ref} className="api-key-conn-picker__option extension-admin__stale-model">
+            <input type="checkbox" checked disabled={disabled} onChange={() => toggle(m.ref)} />
+            <span>
+              {choiceLabel(m)}
+              <span className="muted-text"> — {unavailableNote(m)}; still limits the choice until removed</span>
+            </span>
+          </label>
+        ))}
         {shown.length === 0 ? (
-          <p className="muted-text api-key-form__hint">{models.length ? "No models match this search." : "No enabled text models."}</p>
+          <p className="muted-text api-key-form__hint">{offered.length ? "No models match this search." : "No enabled chat models."}</p>
         ) : (
-          shown.map((m) => {
-            const ref = modelRef(m.id);
-            return (
-              <label key={m.id} className="api-key-conn-picker__option">
-                <input
-                  type="checkbox"
-                  checked={chosen.has(ref)}
-                  disabled={disabled}
-                  onChange={() => onChange(chosen.has(ref) ? selected.filter((x) => x !== ref) : [...selected, ref])}
-                />
-                <span>
-                  {m.display_name || m.external_id}
-                  <span className="muted-text"> · {m.provider}</span>
-                </span>
-              </label>
-            );
-          })
+          shown.map((m) => (
+            <label key={m.ref} className="api-key-conn-picker__option">
+              <input type="checkbox" checked={chosen.has(m.ref)} disabled={disabled} onChange={() => toggle(m.ref)} />
+              <span>
+                {m.label}
+                {m.provider ? <span className="muted-text"> · {m.provider}</span> : null}
+              </span>
+            </label>
+          ))
         )}
       </div>
     </div>
@@ -138,20 +165,20 @@ export default function ExtensionSettingsCard() {
   const readOnly = useReadOnly();
   const [overview, setOverview] = useState<Overview | null>(null);
   const [form, setForm] = useState<Form | null>(null);
-  const [models, setModels] = useState<AdminModel[]>([]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
 
+  // One request: the models come with the settings, so the card works for an
+  // administrator who may manage Chat Tools but not the Models menu.
   useEffect(() => {
     let cancelled = false;
-    Promise.all([api<Overview>(SETTINGS_PATH), api<AdminModel[]>("/api/admin/models")])
-      .then(([loaded, catalog]) => {
+    api<Overview>(SETTINGS_PATH)
+      .then((loaded) => {
         if (cancelled) return;
         if (!isOverview(loaded)) throw new Error("The browser extension settings could not be read.");
         setOverview(loaded);
         setForm(toForm(loaded.settings));
-        setModels(Array.isArray(catalog) ? catalog : []);
       })
       .catch((err: unknown) => {
         if (!cancelled) setError(formatApiError(err));
@@ -161,10 +188,7 @@ export default function ExtensionSettingsCard() {
     };
   }, []);
 
-  const textModels = useMemo(
-    () => models.filter((m) => m.enabled && (!m.kinds?.length || m.kinds.includes("text"))),
-    [models],
-  );
+  const models = overview?.models ?? [];
 
   function patch(values: Partial<Form>) {
     setForm((current) => (current ? { ...current, ...values } : current));
@@ -201,6 +225,15 @@ export default function ExtensionSettingsCard() {
 
   const locked = readOnly || saving;
   const distribution = overview?.distribution;
+  const offered = models.filter((m) => m.state === "ok");
+  const review = form?.agent_review_model ? choiceFor(form.agent_review_model, models) : null;
+  const reviewNote = review ? unavailableNote(review) : null;
+  const reviewOptions = [
+    // A review model that is no longer on offer is still shown by name, so the
+    // administrator sees what is set and why it has to change.
+    ...(review && reviewNote ? [{ value: review.ref, label: `${choiceLabel(review)} (${reviewNote})` }] : []),
+    ...offered.map((m) => ({ value: m.ref, label: choiceLabel(m) })),
+  ];
 
   return (
     <section className="settings-section extension-admin" aria-labelledby="extension-admin-title">
@@ -288,7 +321,7 @@ export default function ExtensionSettingsCard() {
             <span className="settings-row__title">Models that may receive page content</span>
             <ModelChecklist
               label="Models that may receive page content"
-              models={textModels}
+              models={models}
               selected={form.page_content_models}
               disabled={locked}
               onChange={(next) => patch({ page_content_models: next })}
@@ -301,7 +334,7 @@ export default function ExtensionSettingsCard() {
             <span className="settings-row__title">Models the agent may use</span>
             <ModelChecklist
               label="Models the agent may use"
-              models={textModels}
+              models={models}
               selected={form.agent_models}
               disabled={locked}
               onChange={(next) => patch({ agent_models: next })}
@@ -345,12 +378,14 @@ export default function ExtensionSettingsCard() {
               disabled={locked}
               emptyLabel="None"
               placeholder="Search models…"
-              options={textModels.map((m) => ({
-                value: modelRef(m.id),
-                label: `${m.display_name || m.external_id} · ${m.provider}`,
-              }))}
+              options={reviewOptions}
               onChange={(next) => patch({ agent_review_model: next || null })}
             />
+            {reviewNote ? (
+              <span className="settings-row__hint extension-admin__warning">
+                The review model is {reviewNote}: choose another, or None.
+              </span>
+            ) : null}
             <span className="settings-row__hint">Required for Auto mode. Its cost is billed to the person.</span>
           </div>
 

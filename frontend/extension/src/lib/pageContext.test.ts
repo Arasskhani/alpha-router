@@ -1,7 +1,7 @@
 /**
  * @vitest-environment node
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
 import { installChromeFake, type ChromeFake } from "../test/chromeFake";
 import {
@@ -11,9 +11,11 @@ import {
   PageReadError,
   SCREENSHOT_PREAMBLE,
   declaredSites,
+  isPdfUrl,
   pageMessage,
   pageMessageContent,
   readPage,
+  readPdf,
   screenshotContext,
   selectionContext,
   type PageContext,
@@ -278,5 +280,81 @@ describe("reading the page in a tab", () => {
     expect(read.page.truncated).toBe(true);
     expect(read.page.title).toHaveLength(300);
     expect(read.selection).toHaveLength(MAX_SELECTION_CHARS);
+  });
+});
+
+describe("reading a PDF tab", () => {
+  const PDF_URL = "https://docs.example.com/files/Q3%20report.pdf?token=secret";
+  const PDF = new TextEncoder().encode("%PDF-1.4\n...\n%%EOF\n");
+  let chromeFake: ChromeFake;
+  let upload: Mock<(form: FormData) => Promise<{ text: string }>>;
+
+  beforeEach(() => {
+    chromeFake = installChromeFake();
+    chromeFake.tabs.add({ id: 7, url: PDF_URL });
+    upload = vi.fn(async (_form: FormData) => ({ text: "Revenue grew twelve percent." }));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function serve(response: Response | Error) {
+    const fetchImpl = vi.fn(async () => {
+      if (response instanceof Error) throw response;
+      return response;
+    });
+    vi.stubGlobal("fetch", fetchImpl);
+    return fetchImpl;
+  }
+
+  it("is known by its address", () => {
+    expect(isPdfUrl(PDF_URL)).toBe(true);
+    expect(isPdfUrl("https://docs.example.com/pdf-viewer")).toBe(false);
+    expect(isPdfUrl(undefined)).toBe(false);
+  });
+
+  it("downloads the file with the site's cookies, has the server read it, and takes its text", async () => {
+    const fetchImpl = serve(new Response(PDF, { status: 200, headers: { "content-type": "application/pdf" } }));
+    const page = await readPdf({ id: 7, url: PDF_URL, title: "Q3 report.pdf" }, OPEN, upload);
+    expect(fetchImpl).toHaveBeenCalledWith(PDF_URL, { credentials: "include", cache: "no-store" });
+    const form = upload.mock.calls[0][0] as FormData;
+    const file = form.get("files") as File;
+    expect(file.name).toBe("Q3 report.pdf");
+    expect(file.type).toBe("application/pdf");
+    expect(page).toMatchObject({
+      host: "docs.example.com",
+      url: "https://docs.example.com/files/Q3%20report.pdf",
+      title: "Q3 report.pdf",
+      text: "Revenue grew twelve percent.",
+      truncated: false,
+      part: "pdf",
+    });
+  });
+
+  it.each([
+    ["the site refuses it", () => new Response("no", { status: 403 }), "answered 403"],
+    ["it is not a PDF", () => new Response("<html>login</html>", { status: 200 }), "does not hold a PDF"],
+    ["it is too large", () => new Response(PDF, { status: 200, headers: { "content-length": String(26 * 1024 * 1024) } }), "too large"],
+    ["the network fails", () => new TypeError("Failed to fetch"), "could not download this PDF"],
+  ])("says so when %s", async (_name, make, message) => {
+    serve(make());
+    await expect(readPdf({ id: 7, url: PDF_URL }, OPEN, upload)).rejects.toThrow(message);
+    expect(upload).not.toHaveBeenCalled();
+  });
+
+  it("says so when the server finds no text in it", async () => {
+    serve(new Response(PDF, { status: 200 }));
+    upload.mockResolvedValueOnce({ text: "(No extractable text in PDF.)" });
+    await expect(readPdf({ id: 7, url: PDF_URL }, OPEN, upload)).rejects.toThrow("no text Alpharouter can read");
+  });
+
+  it("refuses a blocked site, or a tab that moved, without downloading anything", async () => {
+    const fetchImpl = serve(new Response(PDF, { status: 200 }));
+    const blocked = { ...OPEN, policy: { allowed_sites: [], blocked_sites: ["docs.example.com"] } };
+    await expect(readPdf({ id: 7, url: PDF_URL }, blocked, upload)).rejects.toThrow("does not allow");
+    chromeFake.tabs.update(7, { url: "https://elsewhere.example/x.pdf" });
+    await expect(readPdf({ id: 7, url: PDF_URL }, OPEN, upload)).rejects.toThrow("The page changed");
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });

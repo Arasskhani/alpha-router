@@ -7,8 +7,10 @@ import { fromOwnPages, isExtensionMessage } from "../lib/messages";
 import {
   MAX_PAGE_SITES,
   PageReadError,
+  isPdfUrl,
   pageRefusal,
   readPage,
+  readPdf,
   screenshotContext,
   selectionContext,
   type PageContext,
@@ -53,6 +55,9 @@ const NOT_INSERTED: Record<Exclude<InsertResult, "inserted">, string> = {
   sensitive: "Alpharouter does not type into password, card or code fields.",
   moved: "The page changed. Try again.",
 };
+
+const NO_PDF_IN_PRIVATE =
+  "A PDF is read by keeping it in your Media, which a Private chat never does. Leave Private to ask about it.";
 
 const NO_IMAGES = "This model does not read images. Choose another model.";
 const NO_IMAGES_IN_CHAT = "This chat has a screenshot, which this model cannot read. Choose a model that reads images, or start a new chat.";
@@ -446,6 +451,15 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
       .catch(() => setBanner("Chrome could not ask for permission. Try again."));
   }
 
+  /** Have the server read a PDF, as a chat attachment; its text comes back. */
+  async function uploadForReading(form: FormData): Promise<{ text: string }> {
+    const response = await getClient().api.request("/api/chat/attachments/process", { method: "POST", body: form });
+    if (!response.ok) throw new PageReadError((await ApiError.from(response)).message);
+    const body = (await response.json()) as { attachments?: Array<{ text?: unknown }> };
+    const text = body.attachments?.[0]?.text;
+    return { text: typeof text === "string" ? text : "" };
+  }
+
   /**
    * Read the tabs' pages for the question about to go; the banner says why
    * not, and null comes back - also when the user stopped or moved on meanwhile.
@@ -460,11 +474,15 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
       const pages: PageContext[] = [];
       for (const tab of tabs) {
         current = tab;
-        pages.push((await readPage(tab, rules)).page);
+        pages.push(isPdfUrl(tab.url) ? await readPdf(tab, rules, uploadForReading) : (await readPage(tab, rules)).page);
         if (started !== generation.current) return null;
       }
       return pages;
     } catch (err) {
+      if (err instanceof DisconnectedError) {
+        disconnected.current();
+        return null;
+      }
       if (started === generation.current) {
         const reason = err instanceof PageReadError ? err.message : "Alpharouter could not read this page.";
         // With several tabs, which one could not be read.
@@ -499,8 +517,12 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
     ];
     const hosts = [...pages.map((page) => page.host), ...toRead.map((item) => item.host)];
     const imagesRefused = readsImages ? null : shot ? NO_IMAGES : carriesScreenshots(pagesIn(turns)) ? NO_IMAGES_IN_CHAT : null;
+    const pdfRefused = privateMode && toRead.some((item) => isPdfUrl(item.url)) ? NO_PDF_IN_PRIVATE : null;
     const refused =
-      imagesRefused ?? hosts.map((host) => pageBlockFor(host, modelId)).find(Boolean) ?? (hosts.length ? siteLimitError(hosts) : null);
+      imagesRefused ??
+      pdfRefused ??
+      hosts.map((host) => pageBlockFor(host, modelId)).find(Boolean) ??
+      (hosts.length ? siteLimitError(hosts) : null);
     if (refused) {
       setBanner(refused);
       return;
@@ -583,6 +605,10 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
       return;
     }
     if (action.kind === "summarize") {
+      if (privateMode && isPdfUrl(action.pageUrl)) {
+        setBanner(NO_PDF_IN_PRIVATE);
+        return;
+      }
       const read = await readForQuestion([{ id: action.tabId, url: action.pageUrl }]);
       if (read) await sendTurn(ACTION_QUESTIONS.summarize, read, model);
       return;
@@ -810,7 +836,10 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
                       <span className="turn__page-title">
                         {shared.part === "selection" ? "Selected text" : shared.title || shared.host}
                       </span>
-                      <span className="turn__page-site">{shared.truncated ? `${shared.host}, first part` : shared.host}</span>
+                      <span className="turn__page-site">
+                        {shared.truncated ? `${shared.host}, first part` : shared.host}
+                        {shared.part === "pdf" ? " · PDF, kept in your Media" : ""}
+                      </span>
                     </p>
                   ),
                 )}
@@ -896,7 +925,15 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
                     title={activePage.url}
                   >
                     <PageIcon />
-                    <span className="chip__label">{attached ? "Sending this page" : "This page"}</span>
+                    <span className="chip__label">
+                      {isPdfUrl(activePage.url)
+                        ? attached
+                          ? "Sending this PDF"
+                          : "This PDF"
+                        : attached
+                          ? "Sending this page"
+                          : "This page"}
+                    </span>
                     <span className="chip__site">{activePage.title || target.host}</span>
                   </button>
                 )}

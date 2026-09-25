@@ -920,6 +920,48 @@ describe("screenshots", () => {
   });
 });
 
+describe("a PDF in the tab", () => {
+  const PDF_URL = "https://docs.example.com/files/report.pdf";
+  const PDF = new TextEncoder().encode("%PDF-1.4\n...\n%%EOF\n");
+
+  beforeEach(() => {
+    server.routes["POST /api/chat/session-title"] = () => json(200, { title: "" });
+    server.routes[`GET ${PDF_URL}`] = () => new Response(PDF, { status: 200, headers: { "content-type": "application/pdf" } });
+    server.routes["POST /api/chat/attachments/process"] = () =>
+      json(200, { attachments: [{ name: "report.pdf", kind: "document", text: "Revenue grew twelve percent." }] });
+    chromeFake.tabs.add({ url: PDF_URL, title: "report.pdf", active: true });
+    chromeFake.permissions.granted.add("https://docs.example.com/*");
+    answerWith([textFrame("It grew.")]);
+  });
+
+  it("is read through the server and sent as the page's text", async () => {
+    await render();
+    const chip = host.querySelector<HTMLButtonElement>("button.chip")!;
+    expect(chip.textContent).toContain("This PDF");
+    await act(async () => chip.click());
+    await send("How did revenue do?");
+    const uploads = server.callsTo("POST", "/api/chat/attachments/process");
+    expect(uploads).toHaveLength(1);
+    expect(uploads[0].body).toBeInstanceOf(FormData);
+    expect(chromeFake.scripting.executeScript).not.toHaveBeenCalled();
+    const [body] = server.callsTo("POST", "/api/chat/completions").map((c) => c.body as Record<string, unknown>);
+    const messages = body.messages as Array<{ content: string }>;
+    expect(messages[0].content).toContain("Revenue grew twelve percent.");
+    expect(body.extension_page_context).toEqual({ sites: [{ host: "docs.example.com", chars: 28 }] });
+    expect(host.querySelector(".turn--user .turn__page-site")?.textContent).toBe("docs.example.com · PDF, kept in your Media");
+  });
+
+  it("is not read in a Private chat, which keeps nothing", async () => {
+    await render();
+    await act(async () => button("Private chat").click());
+    await act(async () => host.querySelector<HTMLButtonElement>("button.chip")!.click());
+    await send("How did revenue do?");
+    expect(host.querySelector('.chat__notice[role="alert"]')?.textContent).toContain("Leave Private to ask about it.");
+    expect(server.callsTo("POST", "/api/chat/attachments/process")).toHaveLength(0);
+    expect(server.callsTo("POST", "/api/chat/completions")).toHaveLength(0);
+  });
+});
+
 describe("putting an answer into the page", () => {
   const GUIDE = { url: "https://docs.example.com/guide", title: "The guide" };
   const PATTERN = "https://docs.example.com/*";

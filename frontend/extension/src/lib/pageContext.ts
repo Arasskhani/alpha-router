@@ -38,8 +38,11 @@ export type PageContext = {
   title: string;
   text: string;
   truncated: boolean;
-  /** Only the text the user selected, or a screenshot (then `text` is empty and `image` holds it). */
-  part?: "selection" | "screenshot";
+  /**
+   * Only the text the user selected; a screenshot (then `text` is empty and
+   * `image` holds it); or the text of a PDF, which the server read.
+   */
+  part?: "selection" | "screenshot" | "pdf";
   /** The screenshot, as a JPEG or PNG data URL taken in this browser. */
   image?: string;
   /** The wrapper tag's random suffix: fixed per page, so each turn sends it the same. */
@@ -59,6 +62,18 @@ export type PageRead = { page: PageContext; selection: string };
 export class PageReadError extends Error {}
 
 const MOVED = "The page changed while it was being read. Try again.";
+
+/** The biggest PDF the panel downloads to have read. */
+const MAX_PDF_BYTES = 25 * 1024 * 1024;
+
+/** A tab showing a PDF: Chrome's viewer, which no script can read, so the file is read instead. */
+export function isPdfUrl(url: string | undefined): boolean {
+  try {
+    return /\.pdf$/i.test(new URL(url ?? "").pathname);
+  } catch {
+    return false;
+  }
+}
 
 export type SiteRules = { policy: SitePolicy; serverHost: string | null };
 
@@ -144,6 +159,61 @@ export async function readPage(tab: { id: number; url?: string }, rules: SiteRul
       nonce: pageNonce(),
     },
     selection: extract.selection,
+  };
+}
+
+/**
+ * Read the PDF in a tab: download it with the site's permission (and the
+ * user's cookies there, as the tab did), have the server extract its text
+ * through `upload` - a chat attachment, so it is kept in the user's Media -
+ * and take that text as the page's.
+ */
+export async function readPdf(
+  tab: { id: number; url?: string; title?: string },
+  rules: SiteRules,
+  upload: (form: FormData) => Promise<{ text: string }>,
+): Promise<PageContext> {
+  const target = readablePage(tab.url);
+  if (!target || !tab.url) throw new PageReadError("Alpharouter cannot read this kind of page.");
+  const refused = pageRefusal(target.host, rules);
+  if (refused) throw new PageReadError(refused);
+  const current = await chrome.tabs.get(tab.id).catch(() => undefined);
+  if (readablePage(current?.url)?.host !== target.host) throw new PageReadError(MOVED);
+  let response: Response;
+  try {
+    response = await fetch(tab.url, { credentials: "include", cache: "no-store" });
+  } catch {
+    throw new PageReadError(`Alpharouter could not download this PDF. Check that you can open it, and that it is allowed on ${target.host}.`);
+  }
+  if (!response.ok) throw new PageReadError(`${target.host} answered ${response.status} for this PDF.`);
+  if (Number(response.headers.get("content-length") || 0) > MAX_PDF_BYTES) throw new PageReadError("This PDF is too large to read (25 MB at most).");
+  const bytes = await response.arrayBuffer();
+  if (bytes.byteLength > MAX_PDF_BYTES) throw new PageReadError("This PDF is too large to read (25 MB at most).");
+  if (String.fromCharCode(...new Uint8Array(bytes.slice(0, 5))) !== "%PDF-") {
+    throw new PageReadError("This tab does not hold a PDF Alpharouter can read.");
+  }
+  const name = (() => {
+    const last = new URL(tab.url).pathname.split("/").pop() || "document.pdf";
+    try {
+      return decodeURIComponent(last).slice(0, 200);
+    } catch {
+      return last.slice(0, 200);
+    }
+  })();
+  const form = new FormData();
+  form.append("files", new Blob([bytes], { type: "application/pdf" }), name);
+  const { text } = await upload(form);
+  if (!text.trim() || text.trim() === "(No extractable text in PDF.)") {
+    throw new PageReadError("This PDF has no text Alpharouter can read. It may be scanned pages.");
+  }
+  return {
+    host: target.host,
+    url: modelUrl(tab.url),
+    title: (tab.title || name).replace(/\s+/g, " ").trim().slice(0, MAX_TITLE_CHARS),
+    text: text.slice(0, MAX_PAGE_CHARS),
+    truncated: text.length > MAX_PAGE_CHARS,
+    part: "pdf",
+    nonce: pageNonce(),
   };
 }
 

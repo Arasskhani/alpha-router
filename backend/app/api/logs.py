@@ -2,7 +2,7 @@
 
 import json
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
@@ -95,7 +95,7 @@ def _log_row(
     operation_type: str | None = None,
 ) -> dict:
     source_code = (r.source or "").strip().lower()
-    app = request_log_app(r.source, r.client_app)
+    app = request_log_app(cast("str | None", r.source), cast("str | None", r.client_app))
     is_personal_key = bool(r.user_api_key_id) or source_code == "user_key"
     if r.alpha_router_api_key_id:
         identity_type = "api_key"

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import csv
 import io
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd
 from sqlalchemy import select
@@ -131,7 +131,7 @@ def _format_user(
 
 
 def _format_app(r: RequestLog) -> str:
-    return request_log_app(r.source, r.client_app)
+    return request_log_app(cast("str | None", r.source), cast("str | None", r.client_app))
 
 
 def _money(value: Any) -> float | str:

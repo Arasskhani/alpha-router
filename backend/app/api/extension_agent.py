@@ -1,9 +1,9 @@
 """What a connected browser's agent reports, and the reviewer it asks in Auto mode.
 
 Both are for the extension's own token and for users the administrator lets
-use the agent. ``events`` records steps and runs for Admin Logs; ``review-action``
-answers ``allow`` or ``ask`` for one proposed action, and ``ask`` whenever it
-cannot answer.
+use the agent. ``events`` records steps and runs for Admin Logs, each checked
+on its own; ``review-action`` answers ``allow`` or ``ask`` for one proposed
+action, and ``ask`` whenever it cannot answer.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import json
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
@@ -22,6 +22,7 @@ from app.services.client_ip import resolve_client_ip
 from app.services.extension_access import AGENT_TOOL, permitted_extension_tools
 from app.services.extension_agent import (
     MAX_EVENTS_PER_CALL,
+    AgentEvent,
     AgentEventError,
     ReviewVerdict,
     agent_event,
@@ -68,7 +69,20 @@ class AgentEventIn(BaseModel):
 class AgentEventsIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    events: list[AgentEventIn] = Field(..., min_length=1, max_length=MAX_EVENTS_PER_CALL)
+    #: Each event is checked on its own (``AgentEventIn``), so one that does not fit costs only itself.
+    events: list[Any] = Field(..., min_length=1, max_length=MAX_EVENTS_PER_CALL)
+
+
+def _checked_event(raw: Any) -> AgentEvent:
+    """One reported event as it will be recorded; raises AgentEventError when it cannot be."""
+    try:
+        event = AgentEventIn.model_validate(raw)
+    except ValidationError as exc:
+        first = exc.errors()[0]
+        where = ".".join(str(part) for part in first["loc"])
+        subject = f"An event's {where}" if where else "An event"
+        raise AgentEventError(f"{subject} does not fit: {first['msg']}.") from None
+    return agent_event(event.kind, event.site, event.action, event.outcome, event.detail)
 
 
 @router.post("/api/extension/events")
@@ -78,16 +92,27 @@ async def record_agent_events(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """The agent's steps and runs, for Admin Logs: only the fields it keeps, never typed text."""
+    """The agent's steps and runs, for Admin Logs: only the fields it keeps, never typed text.
+
+    Each event is checked on its own: one that does not fit is refused and the
+    rest are recorded, so a value the model made up in one step cannot erase
+    the other steps of its batch from the trail. The answer says how many of
+    each; a batch with nothing to record is refused as a whole, with why.
+    """
     session_id = await _agent_session(request, db, user)
     await check_rate_limit(f"extension:events:{session_id}", limit=EVENTS_CALLS_PER_MINUTE)
-    try:
-        events = [agent_event(e.kind, e.site, e.action, e.outcome, e.detail) for e in body.events]
-    except AgentEventError as exc:
-        raise _refusal(400, "invalid_request", str(exc)) from None
+    events: list[AgentEvent] = []
+    refusals: list[str] = []
+    for raw in body.events:
+        try:
+            events.append(_checked_event(raw))
+        except AgentEventError as exc:
+            refusals.append(str(exc))
+    if not events:
+        raise _refusal(400, "invalid_request", refusals[0])
     db.add_all(agent_event_rows(events, user=user, ip=resolve_client_ip(request), session_id=session_id))
     await db.commit()
-    return {"recorded": len(events)}
+    return {"recorded": len(events), "refused": len(refusals)}
 
 
 #: The size of a proposed action's arguments as JSON.

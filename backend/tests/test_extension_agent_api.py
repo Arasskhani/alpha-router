@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import re
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -19,7 +21,7 @@ from app.models.logging import RequestLog
 from app.models.model_catalog import AIModel
 from app.services import extension_agent, extension_tokens
 from app.services.chat_tool_access_service import set_chat_tool_access
-from app.services.extension_agent import clean_detail, parse_verdict
+from app.services.extension_agent import AGENT_KEYS, clean_detail, parse_verdict
 from app.services.extension_settings import ExtensionSettings, save_extension_settings
 from app.services.extension_tokens import create_session
 from app.services.secret_crypto import encrypt_secret
@@ -100,7 +102,7 @@ class TestEvents:
     async def test_steps_and_runs_are_recorded_for_admin_logs(self, client, browser, user, session_factory):
         resp = await client.post("/api/extension/events", json={"events": [STEP, TASK]}, headers=browser.headers)
         assert resp.status_code == 200, resp.text
-        assert resp.json() == {"recorded": 2}
+        assert resp.json() == {"recorded": 2, "refused": 0}
         step, task = await _events(session_factory)
         assert (step.kind, step.site, step.action, step.outcome) == (
             "agent_step",
@@ -151,32 +153,66 @@ class TestEvents:
         ("change", "message"),
         [
             (lambda e: e.update(site="https://shop.example.com/path"), "host name"),
+            (lambda e: e.update(site="x" * 300), "An event's site does not fit"),
             (lambda e: e.update(outcome="done"), "how an agent_step ends"),
             (lambda e: e.update(action="Click Me"), "tool name"),
-            (lambda e: e["detail"].update(label="x" * 5000), "at most 4096 bytes"),
+            (lambda e: e.update(action="a" * 5000), "An event's action does not fit"),
+            (lambda e: e.update(kind="page_context"), "An event's kind does not fit"),
+            (lambda e: e.update(extra=1), "An event's extra does not fit"),
+            (lambda e: e.update(detail=["not", "an", "object"]), "An event's detail does not fit"),
         ],
     )
-    async def test_an_event_that_does_not_fit_is_refused(self, client, browser, session_factory, change, message):
+    async def test_an_event_that_does_not_fit_is_refused_alone(self, client, browser, session_factory, change, message):
         event = json.loads(json.dumps(STEP))
         change(event)
         resp = await client.post("/api/extension/events", json={"events": [TASK, event]}, headers=browser.headers)
-        assert resp.status_code == 400, resp.text
-        assert message in resp.json()["detail"]["message"]
-        # Nothing of the batch is kept.
-        assert await _events(session_factory) == []
+        assert resp.status_code == 200, resp.text
+        assert resp.json() == {"recorded": 1, "refused": 1}
+        # The rest of the batch stays on the trail.
+        [kept] = await _events(session_factory)
+        assert (kept.kind, kept.outcome) == ("agent_task", "done")
+        # With nothing else to record, the batch is refused, and told why.
+        alone = await client.post("/api/extension/events", json={"events": [event]}, headers=browser.headers)
+        assert alone.status_code == 400, alone.text
+        assert message in alone.json()["detail"]["message"]
+        assert len(await _events(session_factory)) == 1
+
+    async def test_an_entry_that_is_not_an_event_is_refused_alone(self, client, browser, session_factory):
+        resp = await client.post(
+            "/api/extension/events", json={"events": ["click", 42, None, TASK]}, headers=browser.headers
+        )
+        assert resp.json() == {"recorded": 1, "refused": 3}
+        assert [e.kind for e in await _events(session_factory)] == ["agent_task"]
+
+    async def test_a_value_the_trail_drops_does_not_cost_the_event(self, client, browser, session_factory):
+        """A 5,000-character key the model made up, or an endless name, is cleaned away before measuring."""
+        event = json.loads(json.dumps(STEP))
+        event["detail"].update(key="K" * 5000, label="Pay " + "x" * 5000, note="y" * 10_000)
+        resp = await client.post("/api/extension/events", json={"events": [event, TASK]}, headers=browser.headers)
+        assert resp.json() == {"recorded": 2, "refused": 0}
+        step, _task = await _events(session_factory)
+        detail = json.loads(step.detail_json)
+        assert "key" not in detail
+        assert detail["label"] == ("Pay " + "x" * 5000)[:80]
+
+    async def test_the_size_limit_is_measured_on_what_is_kept(self, client, browser, session_factory, monkeypatch):
+        # The step's detail keeps 128 bytes; the run's keeps 81 of the 1,091 it was sent with.
+        monkeypatch.setattr(extension_agent, "MAX_DETAIL_BYTES", 100)
+        bulky_task = {**TASK, "detail": {**TASK["detail"], "note": "y" * 1000}}
+        resp = await client.post("/api/extension/events", json={"events": [STEP, bulky_task]}, headers=browser.headers)
+        assert resp.json() == {"recorded": 1, "refused": 1}
+        [task] = await _events(session_factory)
+        assert task.kind == "agent_task"
+        assert "note" not in json.loads(task.detail_json)
 
     @pytest.mark.parametrize(
         "body",
-        [
-            {"events": []},
-            {"events": [STEP] * 51},
-            {"events": [{**STEP, "kind": "page_context"}]},
-            {"events": [{**STEP, "extra": 1}]},
-        ],
+        [{"events": []}, {"events": [STEP] * 51}, {"events": STEP}, {"events": [STEP], "extra": 1}, {}],
     )
-    async def test_a_batch_that_does_not_fit_is_refused(self, client, browser, body):
+    async def test_a_request_that_is_not_a_batch_is_refused(self, client, browser, body, session_factory):
         resp = await client.post("/api/extension/events", json=body, headers=browser.headers)
         assert resp.status_code == 422
+        assert await _events(session_factory) == []
 
     async def test_from_the_web_app(self, client, user):
         headers = _sign_in(client, user)
@@ -215,6 +251,83 @@ class TestTheDetail:
                 "reason": "purchase",
             }
         ) == {"key": "Enter", "to_site": "other.example.org", "label": "Pay  now", "reason": "purchase"}
+
+    @pytest.mark.parametrize(
+        "label",
+        [
+            "https://shop.example.com/reset?token=abc123",
+            "HTTP://INTRANET/RESET",
+            "shop.example.com/account/reset?token=abc123",
+            "Reset your password: example.com/r/abc",
+            "www.example.com",
+            "10.0.0.5/admin",
+            "example.com:8443/login",
+            "//cdn.example.com/avatar.png",
+            "/reset?token=abc123",
+            "../account",
+            "reset?session=9f8e7d6c",
+            "#access_token=abc123",
+            "/account/reset/9f8e7d6c5b4a3928",
+            "reset/9F8E7D6C5B4A39281706F5E4D3C2B1A0",
+            "mailto:someone@example.com",
+            "tel:+15551234567",
+            "javascript:void(0)",
+            "chrome-extension://abcdefghijklmnop/panel.html",
+            "_https://intranet/reset",
+            "Open " + "x" * 90 + " https://sso.example.com/?ticket=abc",
+        ],
+    )
+    def test_a_name_that_reads_like_an_address_is_left_out(self, label):
+        """A link's accessible name can be its URL, token and all; the trail keeps no URL beyond its host."""
+        assert clean_detail({"label": label, "role": "link"}) == {"role": "link"}
+
+    @pytest.mark.parametrize(
+        "label",
+        [
+            "Delivery address",
+            "Pay now",
+            "Issue #123",
+            "Yes/No",
+            "TCP/IP settings",
+            "Page 2/10",
+            "Q&A",
+            "Terms & Conditions",
+            "What's new?",
+            "shop.example.com",
+            "Price: $5/month",
+            "Add to cart - $19.99",
+            "Order #A1B2C3D4E5F6G7H8",
+            "Data: 5 items",
+            "Hotel: Grand",
+        ],
+    )
+    def test_an_ordinary_name_is_kept(self, label):
+        assert clean_detail({"label": label}) == {"label": label}
+
+    def test_only_the_start_of_a_long_name_is_kept(self):
+        assert clean_detail({"label": "Accept " + "all " * 100}) == {"label": ("Accept " + "all " * 100)[:80]}
+
+    @pytest.mark.parametrize(
+        ("key", "kept"),
+        [("Enter", "Enter"), ("PageDown", "PageDown"), (" ", "Space"), ("Space", "Space")],
+    )
+    def test_a_key_the_page_runtime_presses_is_kept(self, key, kept):
+        assert clean_detail({"key": key}) == {"key": kept}
+
+    @pytest.mark.parametrize("key", ["enter", "F5", "Control", "a", "Tab+Enter", "K" * 5000, "", 13, None])
+    def test_any_other_key_is_left_out(self, key):
+        assert clean_detail({"key": key}) == {}
+
+    def test_the_keys_are_the_page_runtime_s(self):
+        """``pressKey`` in the extension's page runtime decides which keys exist; the two lists must not drift."""
+        source = (
+            Path(__file__).resolve().parents[2] / "frontend" / "extension" / "src" / "content" / "agent.ts"
+        ).read_text(encoding="utf-8")
+        block = re.search(r"const KEYS: Record<string, \{[^}]*\}> = \{\n(.*?)\n\};", source, re.DOTALL)
+        assert block is not None, "pressKey's KEYS moved: update this test and AGENT_KEYS together"
+        names = {quoted or bare for quoted, bare in re.findall(r'^[ \t]*(?:"([^"]+)"|(\w+)):', block.group(1), re.M)}
+        assert 'key === "Space" ? " " : key' in source, "pressKey no longer reads Space as the space bar"
+        assert names | {"Space"} == AGENT_KEYS
 
 
 # --- the reviewer ---------------------------------------------------------------------

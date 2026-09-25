@@ -6,7 +6,9 @@ step, and every run's end, to ``/api/extension/events``; they go to Admin Logs
 as ``agent_step`` and ``agent_task`` rows. Only the fields below are kept, each
 checked - the tool, the site, how it ended, who approved it, the element's role
 and label - and never what the agent typed: a typed text is recorded as its
-length.
+length. An element's label that reads like an address is left out, and a key
+is kept only when it is one the page runtime can press. Each reported event
+is checked on its own, so one that does not fit is refused without the rest.
 
 In Auto mode (an administrator's choice, which needs a review model) the panel
 asks ``/api/extension/review-action`` before an action instead of asking the
@@ -53,9 +55,53 @@ TASK_OUTCOMES = frozenset({"done", "stopped", "max_steps", "errors", "failed"})
 
 _ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
-_KEY_RE = re.compile(r"^[A-Za-z0-9+_ -]{1,32}$")
 _MODEL_REF_RE = re.compile(r"^model::\d{1,10}$")
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]+")
+
+#: The keys the page runtime presses: ``KEYS`` in ``pressKey``
+#: (frontend/extension/src/content/agent.ts), plus "Space", which it reads as
+#: " ". A test fails when the two lists drift apart.
+AGENT_KEYS = frozenset(
+    {
+        "Enter",
+        "Tab",
+        "Escape",
+        "Backspace",
+        "Delete",
+        "ArrowUp",
+        "ArrowDown",
+        "ArrowLeft",
+        "ArrowRight",
+        "Home",
+        "End",
+        "PageUp",
+        "PageDown",
+        " ",
+        "Space",
+    }
+)
+
+#: An element's name as the trail keeps it, and how much of a name is read to judge it.
+MAX_LABEL_CHARS = 80
+_LABEL_SCAN_CHARS = 512
+
+#: What in an element's name reads as an address rather than a name: a scheme
+#: (``https://``, anything with ``://``, ``mailto:x``), a web host (``www.``),
+#: a host followed by a path (``example.com/``, ``10.0.0.5/``), a name that
+#: starts with a path, a query or fragment parameter (``?token=``,
+#: ``#access_token=``), or a token-like segment of a path. Every repetition is
+#: bounded, so judging a name costs time in proportion to its length.
+_ADDRESS_RE = re.compile(
+    r"://"
+    r"|(?<![a-z0-9+.-])(?:mailto|tel|sms|javascript|data|blob|file):(?=\S)"
+    r"|(?<![a-z0-9-])www\."
+    r"|\.[a-z]{2,63}(?::\d{1,5})?/"
+    r"|(?<![\d.])\d{1,3}(?:\.\d{1,3}){3}(?::\d{1,5})?/"
+    r"|^\.{0,2}/{1,3}[^\s/]"
+    r"|[?#&;][\w.~%-]{1,64}="
+    r"|/(?=[\w~%-]{16})(?=[\w~%-]{0,256}\d)(?=[\w~%-]{0,256}[a-z])",
+    re.IGNORECASE,
+)
 
 
 class AgentEventError(ValueError):
@@ -93,6 +139,29 @@ def _host(value: Any) -> str | None:
         return None
 
 
+def _label(value: Any) -> str | None:
+    """An element's accessible name, unless it reads like an address.
+
+    A link's name can be its URL, token and all (``…/reset?token=…``), and the
+    trail keeps no URL beyond its host, so such a name is dropped. The first
+    80 characters are kept and the first 512 read to judge the name, which is
+    enough to judge any address that starts in the part kept.
+    """
+    if not isinstance(value, str):
+        return None
+    text = _text(value.lstrip()[:_LABEL_SCAN_CHARS], _LABEL_SCAN_CHARS)
+    if text is None or _ADDRESS_RE.search(text):
+        return None
+    return text[:MAX_LABEL_CHARS]
+
+
+def _key(value: Any) -> str | None:
+    """A key the page runtime can press, with " " named "Space"; anything else is not a key."""
+    if not isinstance(value, str) or value not in AGENT_KEYS:
+        return None
+    return "Space" if value == " " else value
+
+
 #: What a step's or a run's detail may hold, and how each value is checked.
 #: Everything else is dropped. Never a URL beyond its host, never typed text.
 _DETAIL_FIELDS: dict[str, Any] = {
@@ -106,12 +175,12 @@ _DETAIL_FIELDS: dict[str, Any] = {
     "review": _one_of("allow", "ask"),
     #: The element acted on: its role and accessible name, never its value.
     "role": lambda value: _text(value, 32),
-    "label": lambda value: _text(value, 80),
+    "label": _label,
     "reason": _matching(_CODE_RE),
     "error": _matching(_CODE_RE),
     #: How much was typed - the text itself is never recorded.
     "chars": lambda value: _count(value, 1_000_000),
-    "key": _matching(_KEY_RE),
+    "key": _key,
     "to_site": _host,
     "model": _matching(_MODEL_REF_RE),
     "duration_ms": lambda value: _count(value, 86_400_000),
@@ -139,10 +208,15 @@ class AgentEvent:
 
 
 def agent_event(kind: str, site: str | None, action: str | None, outcome: str | None, detail: dict) -> AgentEvent:
-    """One reported step or run, checked; raises AgentEventError when it cannot be recorded."""
+    """One reported step or run, checked; raises AgentEventError when it cannot be recorded.
+
+    The detail is measured as it would be kept, after cleaning: a value the
+    trail drops anyway, however long, does not cost the event its record.
+    """
     if kind not in (EVENT_AGENT_STEP, EVENT_AGENT_TASK):
         raise AgentEventError(f"{kind!r} is not an agent event.")
-    if len(json.dumps(detail, separators=(",", ":"), default=str).encode()) > MAX_DETAIL_BYTES:
+    kept = clean_detail(detail)
+    if len(json.dumps(kept, separators=(",", ":"), default=str).encode()) > MAX_DETAIL_BYTES:
         raise AgentEventError(f"An event's detail is at most {MAX_DETAIL_BYTES} bytes.")
     host = None
     if site:
@@ -154,7 +228,7 @@ def agent_event(kind: str, site: str | None, action: str | None, outcome: str | 
         raise AgentEventError(f"{outcome!r} is not how an {kind} ends.")
     if action is not None and not _CODE_RE.match(action):
         raise AgentEventError(f"{action!r} is not a tool name.")
-    return AgentEvent(kind=kind, site=host, action=action, outcome=outcome, detail=clean_detail(detail))
+    return AgentEvent(kind=kind, site=host, action=action, outcome=outcome, detail=kept)
 
 
 def agent_event_rows(

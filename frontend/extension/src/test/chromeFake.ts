@@ -65,6 +65,7 @@ export function installChromeFake(options: { version?: string } = {}) {
   const onActivated = event<(info: { tabId: number; windowId: number }) => void>();
   const onUpdated = event<(tabId: number, change: Record<string, unknown>, tab: chrome.tabs.Tab) => void>();
   const onRemoved = event<(tabId: number, info: { windowId: number; isWindowClosing: boolean }) => void>();
+  const onCreated = event<(tab: chrome.tabs.Tab) => void>();
   const onPermissionsAdded = event<(permissions: { origins?: string[] }) => void>();
   const onPermissionsRemoved = event<(permissions: { origins?: string[] }) => void>();
   const tabs = new Map<number, chrome.tabs.Tab>();
@@ -119,10 +120,12 @@ export function installChromeFake(options: { version?: string } = {}) {
       onActivated,
       onUpdated,
       onRemoved,
+      onCreated,
       /** Put a tab in place for the code under test to find. */
       add(tab: Partial<chrome.tabs.Tab>) {
         const full = { id: nextTab++, active: false, windowId: CURRENT_WINDOW, ...tab } as chrome.tabs.Tab;
         tabs.set(full.id!, full);
+        onCreated.emit(full);
         return full;
       },
       /** The user switches to this tab. */

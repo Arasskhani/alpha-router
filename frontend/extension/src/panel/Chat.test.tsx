@@ -735,6 +735,19 @@ describe("other tabs", () => {
     expect(sentBodies()).toHaveLength(1);
   });
 
+  it("keeps the list current while it is open: a tab that finishes loading shows its title", async () => {
+    const loading = chromeFake.tabs.add({ url: "https://news.example.com/today", title: "" }).id!;
+    await render();
+    await openList();
+    expect(rows().map((row) => row.textContent)).toContain("news.example.comnews.example.com");
+    await act(async () => chromeFake.tabs.update(loading, { title: "Today's news" }));
+    await act(async () => undefined);
+    expect(rows().map((row) => row.textContent)).toContain("Today's newsnews.example.com");
+    await act(async () => chromeFake.tabs.add({ url: "https://late.example.com/", title: "Opened late" }));
+    await act(async () => undefined);
+    expect(rows().map((row) => row.textContent)).toContain("Opened latelate.example.com");
+  });
+
   it("moves through the list with the arrow keys and closes it with Escape", async () => {
     await render();
     await typeAtEnd("@");

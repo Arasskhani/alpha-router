@@ -122,6 +122,9 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
   const [selections, setSelections] = useState<PageContext[]>([]);
   /** Other tabs added to the next question. */
   const otherTabs = useChosenTabs();
+  // What the tab list leaves out, as of the latest render: read when a tab changes while it is open.
+  const pickerExclusions = useRef<{ page: number | null; chosen: number[] }>({ page: null, chosen: [] });
+  pickerExclusions.current = { page: activePage?.tabId ?? null, chosen: otherTabs.chosen.map((tab) => tab.tabId) };
   /** A screenshot of the page, sent with the next question. */
   const [shot, setShot] = useState<PageContext | null>(null);
   /** The user's saved prompts, and the list shown while a /part is typed. */
@@ -204,6 +207,25 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
     const el = log.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [turns]);
+
+  // A tab that loads, opens or closes while the list is open shows up in it as it is now.
+  const pickerOpen = picker !== null;
+  useEffect(() => {
+    if (!pickerOpen) return;
+    const onUpdated = (_tabId: number, change: chrome.tabs.OnUpdatedInfo) => {
+      if (change.url !== undefined || change.title !== undefined) loadPickerTabs();
+    };
+    const onChanged = () => loadPickerTabs();
+    chrome.tabs.onUpdated.addListener(onUpdated);
+    chrome.tabs.onRemoved.addListener(onChanged);
+    chrome.tabs.onCreated.addListener(onChanged);
+    return () => {
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+      chrome.tabs.onRemoved.removeListener(onChanged);
+      chrome.tabs.onCreated.removeListener(onChanged);
+    };
+    // loadPickerTabs reads the latest exclusions through a ref.
+  }, [pickerOpen]);
 
   useEffect(() => {
     let active = true;
@@ -304,12 +326,18 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
   const pickerTabs = picker?.tabs ? matchingTabs(picker.tabs, picker.mention?.query ?? "") : null;
   const canAddTab = me.features.page_context && otherTabs.chosen.length < MAX_OTHER_TABS;
 
-  function openPicker(mention: { start: number; query: string } | null) {
-    setPicker({ tabs: null, mention, active: 0 });
-    const excluded = new Set([...(activePage ? [activePage.tabId] : []), ...otherTabs.chosen.map((tab) => tab.tabId)]);
+  /** Load the tabs the list offers: all but the page next to the panel and those already chosen. */
+  function loadPickerTabs() {
+    const { page, chosen } = pickerExclusions.current;
+    const excluded = new Set([...(page !== null ? [page] : []), ...chosen]);
     tabCandidates(excluded)
       .then((tabs) => setPicker((open) => (open ? { ...open, tabs } : open)))
-      .catch(() => setPicker((open) => (open ? { ...open, tabs: [] } : open)));
+      .catch(() => setPicker((open) => (open ? { ...open, tabs: open.tabs ?? [] } : open)));
+  }
+
+  function openPicker(mention: { start: number; query: string } | null) {
+    setPicker({ tabs: null, mention, active: 0 });
+    loadPickerTabs();
   }
 
   const shownPrompts = promptPicker ? matchingPrompts([...BUILT_IN_PROMPTS, ...savedPrompts], promptPicker.query) : [];

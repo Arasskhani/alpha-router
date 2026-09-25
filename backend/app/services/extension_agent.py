@@ -301,13 +301,26 @@ def parse_verdict(text: str) -> ReviewVerdict:
     return _ask(reason or "The reviewer wants you to decide.")
 
 
+def _quoted(value: str) -> str:
+    """A string as JSON: whatever it holds - new lines, 'Proposed action:' - stays inside its quotes."""
+    return json.dumps(value, ensure_ascii=False)
+
+
 def review_prompt(task: str, tool: str, site: str, target: str | None, arguments: dict, history: list[str]) -> str:
-    steps = "\n".join(f"- {line}" for line in history) or "- (none yet)"
+    """The reviewer's view of one action.
+
+    The element's name, the site and the steps so far carry a page's words
+    and the agent's own, so each is quoted as a JSON string: a line break or
+    a line such as "Proposed action: ..." inside them cannot pass for the
+    prompt's own structure. The request is the user's, and is given as
+    written.
+    """
+    steps = "\n".join(f"- {_quoted(line)}" for line in history) or "- (none yet)"
     return (
         f"Request: {task}\n\n"
         f"Steps so far:\n{steps}\n\n"
-        f"Proposed action: {tool} on {site}\n"
-        f"Element: {target or '(none)'}\n"
+        f"Proposed action: {tool} on {_quoted(site)}\n"
+        f"Element: {_quoted(target) if target else '(none)'}\n"
         f"Arguments: {json.dumps(arguments, ensure_ascii=False, sort_keys=True)}"
     )
 

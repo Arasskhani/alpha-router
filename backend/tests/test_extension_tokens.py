@@ -436,6 +436,42 @@ class TestAuthenticate:
         assert (await _row(session_factory, pair.session_id)).revoked_reason == "token_version"
 
 
+class TestOwnTransactions:
+    """SQLite runs these tests on one shared connection, so reading "from another
+    session" cannot show that a write was committed; PostgreSQL can, and this
+    checks the commit itself on both."""
+
+    async def test_a_revocation_found_while_authenticating_is_committed(
+        self, db_session, session_factory, user, clock, monkeypatch
+    ):
+        commits: list[str] = []
+
+        class _CountingFactory:
+            def __init__(self):
+                self._inner = session_factory()
+
+            async def __aenter__(self):
+                session = await self._inner.__aenter__()
+                real_commit = session.commit
+
+                async def commit():
+                    commits.append("commit")
+                    await real_commit()
+
+                session.commit = commit
+                return session
+
+            async def __aexit__(self, *exc):
+                return await self._inner.__aexit__(*exc)
+
+        pair = await _connect(db_session, user)
+        user.token_version = 1
+        await db_session.commit()
+        monkeypatch.setattr(tokens, "AsyncSessionLocal", _CountingFactory)
+        await _grant_error(authenticate(_NoCommit(db_session), pair.access_token))
+        assert commits == ["commit"]
+
+
 class TestRefresh:
     async def test_rotation_gives_a_new_pair_and_retires_the_old_one(self, db_session, session_factory, user, clock):
         pair = await _connect(db_session, user)

@@ -13,7 +13,7 @@ import {
   type PageContext,
   type SiteRules,
 } from "../lib/pageContext";
-import { takePendingAction, type PendingAction, type PendingActionKind } from "../lib/pendingAction";
+import { PENDING_ACTION_MAX_AGE_MS, takePendingAction, type PendingAction, type PendingActionKind } from "../lib/pendingAction";
 import { readablePage } from "../lib/sites";
 import { DisconnectedError, TemporaryError } from "../lib/tokens";
 import { compareVersions } from "../lib/version";
@@ -64,6 +64,9 @@ function describe(err: unknown): string {
 
 export default function Chat({ me, server, onDisconnect, onDisconnected }: Props) {
   const [models, setModels] = useState<ChatModel[] | null>(null);
+  /** The models could not be loaded; "Try again" loads them again. */
+  const [modelsFailed, setModelsFailed] = useState(false);
+  const [modelLoads, setModelLoads] = useState(0);
   const [modelId, setModelId] = useState("");
   const [turns, setTurns] = useState<Turn[]>([]);
   const [privateMode, setPrivateMode] = useState(false);
@@ -113,13 +116,15 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
         const usable = textModels(rows);
         const picked = pickModel(usable, typeof stored[MODEL_KEY] === "string" ? stored[MODEL_KEY] : null)?.id ?? "";
         setModels(usable);
+        setModelsFailed(false);
         setModelId(picked);
         modelRef.current = picked;
-        // A right-click action that opened the panel waited for the models.
+        // A right-click action that opened the panel waited for the models -
+        // across a failed load too, while it is still fresh.
         const waiting = waitingAction.current;
         if (waiting && picked) {
           waitingAction.current = null;
-          actionHandler.current(waiting);
+          if (Date.now() - waiting.createdAt <= PENDING_ACTION_MAX_AGE_MS) actionHandler.current(waiting);
         }
       })
       .catch((err: unknown) => {
@@ -129,12 +134,20 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
           return;
         }
         setModels([]);
+        setModelsFailed(true);
         setBanner(describe(err));
       });
     return () => {
       active = false;
     };
-  }, []);
+  }, [modelLoads]);
+
+  function loadModelsAgain() {
+    setModels(null);
+    setModelsFailed(false);
+    setBanner("");
+    setModelLoads((n) => n + 1);
+  }
 
   useEffect(() => {
     const el = log.current;
@@ -475,6 +488,11 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
             </option>
           ))}
         </select>
+        {modelsFailed && (
+          <button type="button" className="btn btn--quiet" onClick={loadModelsAgain}>
+            Try again
+          </button>
+        )}
         {privateMode && <span className="chat__private">Private</span>}
         <button type="button" className="btn btn--quiet" onClick={newChat}>
           New chat

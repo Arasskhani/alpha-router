@@ -773,6 +773,44 @@ describe("right-click actions", () => {
     expect(completions()[0].model).toBe("model::3");
   });
 
+  it("keeps waiting when the models fail to load, and runs once they load again", async () => {
+    let fail = true;
+    server.routes["GET /api/chat/models"] = () => (fail ? json(503, { detail: "Try later." }) : json(200, MODELS));
+    answerWith([textFrame("Done.")]);
+    await savePendingAction(action({ kind: "explain", selection: "Text." }));
+    await render();
+    await act(async () => undefined);
+    expect(host.textContent).toContain("Try later.");
+    expect(completions()).toHaveLength(0);
+    fail = false;
+    await act(async () => button("Try again").click());
+    await act(async () => undefined);
+    await act(async () => undefined);
+    expect(completions()).toHaveLength(1);
+    expect(host.textContent).not.toContain("Try later.");
+    expect([...host.querySelectorAll("button")].some((b) => b.textContent === "Try again")).toBe(false);
+  });
+
+  it("drops an action that went stale while the models failed to load", async () => {
+    let fail = true;
+    server.routes["GET /api/chat/models"] = () => (fail ? json(503, { detail: "Try later." }) : json(200, MODELS));
+    await savePendingAction(action({ kind: "explain", selection: "Text." }));
+    await render();
+    await act(async () => undefined);
+    fail = false;
+    const later = Date.now() + 3 * 60_000;
+    const clock = vi.spyOn(Date, "now").mockReturnValue(later);
+    try {
+      await act(async () => button("Try again").click());
+      await act(async () => undefined);
+      await act(async () => undefined);
+      expect(completions()).toHaveLength(0);
+      expect(host.querySelector("select")?.value).toBe("model::3");
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   it("respects the site rules", async () => {
     await savePendingAction(action({ kind: "explain", selection: "Text." }));
     await render({ ...ME, policy: { ...ME.policy!, blocked_sites: ["docs.example.com"] } });

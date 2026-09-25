@@ -1,6 +1,6 @@
 """Human-readable labels for stored enum-like codes."""
 
-from app.branding import CHAT_CLIENT_APP, PRODUCT_NAME
+from app.branding import CHAT_CLIENT_APP, EXTENSION_CLIENT_APP, PRODUCT_NAME
 
 #: ``request_logs.source`` for automatic memory extraction. Activity, the
 #: app filter and the reports all group on this field, so the constant and
@@ -26,3 +26,16 @@ def format_app_source(source: str | None) -> str:
     if key in APP_SOURCE_LABELS:
         return APP_SOURCE_LABELS[key]
     return str(source).replace("_", " ").strip().title()
+
+
+def request_log_app(source: str | None, client_app: str | None) -> str:
+    """The App column of a request log row.
+
+    Chat turns (and their helper calls, "… (helper:title)") read as the chat
+    itself, except the browser extension's, which say so; any other client is
+    named as it announced itself.
+    """
+    client = (client_app or "").strip()
+    if (source or "").strip().lower() == "alpha_router_chat":
+        return EXTENSION_CLIENT_APP if client.startswith(EXTENSION_CLIENT_APP) else format_app_source(source)
+    return client or format_app_source(source)

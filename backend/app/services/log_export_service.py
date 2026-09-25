@@ -15,7 +15,7 @@ from app.models.cost_accounting import CostLineItem, UsageEvent, UsageOperation
 from app.models.logging import RequestLog
 from app.models.model_catalog import AIModel
 from app.services.activity_service import _display_dt
-from app.utils.display import format_app_source
+from app.utils.display import request_log_app
 
 #: The provider payload can be large; a spreadsheet cell is not the place for
 #: all of it, and the detail modal shows the whole thing.
@@ -131,10 +131,7 @@ def _format_user(
 
 
 def _format_app(r: RequestLog) -> str:
-    source_code = (r.source or "").strip().lower()
-    if source_code == "alpha_router_chat":
-        return format_app_source(r.source)
-    return (r.client_app or "").strip() or format_app_source(r.source)
+    return request_log_app(r.source, r.client_app)
 
 
 def _money(value: Any) -> float | str:

@@ -61,3 +61,28 @@ def test_log_row_gateway_key_keeps_gateway_kind():
     )
     assert row["api_key_kind"] == "gateway"
     assert row["identity_type"] == "api_key"
+
+
+def test_the_app_column_names_the_browser_extension():
+    """Chat turns read as the chat, helper calls included - except the extension's, which say so."""
+    assert _log_row(_base_log(source="alpha_router_chat", client_app="Alpharouter Chat"))["app"] == "Alpharouter Chat"
+    assert _log_row(_base_log(source="alpha_router_chat", client_app="Alpharouter Chat (helper:title)"))["app"] == (
+        "Alpharouter Chat"
+    )
+    assert _log_row(_base_log(source="alpha_router_chat", client_app="Alpharouter Extension"))["app"] == (
+        "Alpharouter Extension"
+    )
+    assert _log_row(_base_log(source="alpha_router_chat", client_app="Alpharouter Extension (helper:title)"))[
+        "app"
+    ] == ("Alpharouter Extension")
+    assert _log_row(_base_log(source="user_key", client_app="Kilo Code"))["app"] == "Kilo Code"
+
+
+def test_the_export_names_the_browser_extension_too():
+    from app.services.log_export_service import _format_app
+
+    assert (
+        _format_app(_base_log(source="alpha_router_chat", client_app="Alpharouter Extension"))
+        == "Alpharouter Extension"
+    )
+    assert _format_app(_base_log(source="alpha_router_chat", client_app=None)) == "Alpharouter Chat"

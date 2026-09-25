@@ -49,7 +49,7 @@ from app.services.usage_accounting_service import (
     reconcile_usage_event,
 )
 from app.services.user_role_service import get_user_role_slugs
-from app.utils.display import format_app_source
+from app.utils.display import request_log_app
 
 router = APIRouter(prefix="/api", tags=["logs"])
 
@@ -95,10 +95,7 @@ def _log_row(
     operation_type: str | None = None,
 ) -> dict:
     source_code = (r.source or "").strip().lower()
-    if source_code == "alpha_router_chat":
-        app = format_app_source(r.source)
-    else:
-        app = (r.client_app or "").strip() or format_app_source(r.source)
+    app = request_log_app(r.source, r.client_app)
     is_personal_key = bool(r.user_api_key_id) or source_code == "user_key"
     if r.alpha_router_api_key_id:
         identity_type = "api_key"

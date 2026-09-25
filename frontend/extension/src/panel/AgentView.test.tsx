@@ -287,6 +287,20 @@ describe("a run", () => {
     expect(sent[1].length).toBeGreaterThan(sent[0].length);
   });
 
+  it("asks the user instead of the reviewer when an action is too long for the reviewer to see whole", async () => {
+    server.routes["POST /api/extension/review-action"] = () => json(200, { decision: "allow", reason: "ok" });
+    replies = [
+      toolFrame([{ id: "c1", name: "click", args: { ref: "e1", note: "ی".repeat(3000) } }]),
+      toolFrame([{ id: "c2", name: "done", args: { summary: "Done." } }]),
+    ];
+    await render({ ...ME, features: { ...ME.features, auto_mode: true } });
+    await act(async () => [...host.querySelectorAll('[role="radio"]')].find((b) => b.textContent === "Auto")!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await start("Go on.");
+    await until(() => Boolean(host.querySelector('[role="alertdialog"]')), "the approval card");
+    expect(host.textContent).toContain("too long for the reviewer");
+    expect(server.calls.some((c) => c.path === "/api/extension/review-action")).toBe(false);
+  });
+
   it("puts a question from the agent to the user", async () => {
     replies = [toolFrame([{ id: "c1", name: "ask_user", args: { question: "Which size?" } }]), toolFrame([{ id: "c2", name: "done", args: { summary: "Chose M." } }])];
     await render();

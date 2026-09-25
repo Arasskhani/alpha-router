@@ -31,8 +31,9 @@ const DEFAULT_MAX_STEPS = 25;
 const EVENT_BATCH = 10;
 /** Events kept while the server cannot take them: the newest this many. */
 const MAX_QUEUED_EVENTS = 200;
-/** Each argument a review sees, cut to fit the reviewer's limit. */
-const REVIEW_ARGUMENT_CHARS = 1500;
+/** What the reviewer takes (the server's limits): an action's arguments as JSON, in bytes, and a task, in characters. */
+const REVIEW_ARGUMENT_BYTES = 4096;
+const MAX_TASK_CHARS = 4000;
 /** When the server's per-minute limit is reached: how long to wait, and how often, before the run gives up. */
 const RATE_LIMIT_WAIT_MS = 15_000;
 const RATE_LIMIT_RETRIES = 3;
@@ -296,13 +297,15 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
           setQuestion({ text, resolve: settle });
         }),
       async review(input, stepSignal) {
-        const clipped = Object.fromEntries(
-          Object.entries(input.arguments).map(([key, value]) => [key, typeof value === "string" ? value.slice(0, REVIEW_ARGUMENT_CHARS) : value]),
-        );
+        // Cut short, an action would be judged on its start alone: one too long for the reviewer is the user's to judge.
+        if (new TextEncoder().encode(JSON.stringify(input.arguments)).length > REVIEW_ARGUMENT_BYTES || input.task.length > MAX_TASK_CHARS) {
+          return { decision: "ask", reason: "The action is too long for the reviewer to check in full." };
+        }
         try {
           const verdict = await api.json<{ decision?: string; reason?: string }>("/api/extension/review-action", {
             method: "POST",
-            body: JSON.stringify({ ...input, arguments: clipped }),
+            // A tab that shows no web page still names a place for the reviewer.
+            body: JSON.stringify({ ...input, site: input.site || "no web page" }),
             signal: stepSignal,
           });
           return verdict.decision === "allow"
@@ -310,7 +313,9 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
             : { decision: "ask", reason: verdict.reason || "The reviewer wants you to decide." };
         } catch (err) {
           if (err instanceof DOMException && err.name === "AbortError") throw err;
-          return { decision: "ask", reason: "The reviewer could not be reached." };
+          if (err instanceof DisconnectedError) disconnected.current();
+          const refused = err instanceof ApiError && err.status >= 400 && err.status < 500 && err.status !== 429;
+          return { decision: "ask", reason: refused ? `The reviewer did not take the request: ${err.message}` : "The reviewer could not be reached." };
         }
       },
       report(event) {
@@ -551,6 +556,7 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
           aria-label="Task"
           value={draft}
           rows={2}
+          maxLength={MAX_TASK_CHARS}
           disabled={running || starting}
           placeholder="What should Alpharouter do in your browser?"
           onChange={(event) => setDraft(event.target.value)}

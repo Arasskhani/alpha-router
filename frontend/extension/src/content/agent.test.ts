@@ -399,6 +399,17 @@ describe("acting", () => {
     expect(selectOption(ref, "Italy", visible)).toMatchObject({ ok: false, error: "disabled" });
   });
 
+  it("tells which option a value would choose, as choosing it would", () => {
+    page(`<label for="s">Size</label><select id="s"><option value="m">M - medium</option><option value="xl">XL - extra large</option></select>`);
+    const ref = snapshot(document, { isVisible: visible }).elements[0].ref;
+    expect(describeRef(ref, visible, false, "L")).toMatchObject({ ok: true, element: { choice: "XL - extra large" } });
+    expect(describeRef(ref, visible, false, "m")).toMatchObject({ ok: true, element: { choice: "M - medium" } });
+    const none = describeRef(ref, visible, false, "S");
+    expect(none.ok && none.element.choice).toBeUndefined();
+    selectOption(ref, "L", visible);
+    expect((document.querySelector("select") as HTMLSelectElement).value).toBe("xl");
+  });
+
   it("sends a form only when it is complete, through its own submit", () => {
     page(`<form><input aria-label="Email" required><button type="submit">Send</button></form><button>Outside</button>`);
     const form = document.querySelector("form")!;

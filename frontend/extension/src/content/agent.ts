@@ -64,6 +64,8 @@ export type ElementInfo = {
   formButton?: string[];
   /** A menu's choices, the first few. */
   options?: string[];
+  /** The option select_option would choose for the value asked about (describe's `choose`), as the menu shows it. */
+  choice?: string;
 };
 
 type AgentError =
@@ -884,6 +886,17 @@ export function typeText(ref: unknown, text: unknown, clear: unknown, isVisible:
   return { ok: true, note: `Typed ${text.length} characters.` };
 }
 
+/** The option a menu would take for `value`: by its value, then its exact label, then a label containing it. */
+function matchOption(select: HTMLSelectElement, value: string): HTMLOptionElement | undefined {
+  const wanted = squash(value).toLowerCase();
+  const options = Array.from(select.options);
+  return (
+    options.find((o) => o.value === value) ??
+    options.find((o) => squash(o.label || o.text).toLowerCase() === wanted) ??
+    options.find((o) => squash(o.label || o.text).toLowerCase().includes(wanted))
+  );
+}
+
 export function selectOption(ref: unknown, value: unknown, isVisible: Visibility): Result<{ note: string }> {
   if (typeof value !== "string" || !value.trim() || value.length > 500) {
     return { ok: false, error: "bad_request", message: "Say which option to choose." };
@@ -894,12 +907,8 @@ export function selectOption(ref: unknown, value: unknown, isVisible: Visibility
     return { ok: false, error: "not_select", message: `Element ${ref as string} is not a menu: click it, then click the option.` };
   }
   const select = el as HTMLSelectElement;
-  const wanted = squash(value).toLowerCase();
   const options = Array.from(select.options);
-  const option =
-    options.find((o) => o.value === value) ??
-    options.find((o) => squash(o.label || o.text).toLowerCase() === wanted) ??
-    options.find((o) => squash(o.label || o.text).toLowerCase().includes(wanted));
+  const option = matchOption(select, value);
   if (!option) {
     const names = options.slice(0, MAX_OPTIONS).map((o) => squash(o.label || o.text)).join(" | ");
     return { ok: false, error: "no_option", message: `No option matches "${clip(value, 60)}". The options are: ${names}` };
@@ -1037,10 +1046,16 @@ export async function waitFor(doc: Document, text: unknown, seconds: unknown): P
  * control the click works on: the button around the words named, the field
  * of a label.
  */
-export function describe(ref: unknown, isVisible: Visibility, activates = false): Result<{ element: ElementInfo }> {
+export function describe(ref: unknown, isVisible: Visibility, activates = false, choose?: unknown): Result<{ element: ElementInfo }> {
   const named = resolve(ref);
   if (isFailure(named)) return named;
   const el = activates ? activationTarget(named) : named;
   const role = roleOf(el) ?? (headingLevel(el) !== null ? "heading" : "text");
-  return { ok: true, element: describeElement(el, role, isVisible, true) };
+  const element = describeElement(el, role, isVisible, true);
+  // What choosing `choose` would really pick, for the card: a menu matches by value and by part of a label.
+  if (typeof choose === "string" && choose.trim() && choose.length <= 500 && el.tagName.toUpperCase() === "SELECT") {
+    const option = matchOption(el as HTMLSelectElement, choose);
+    if (option) element.choice = clip(option.label || option.text, VALUE_CHARS);
+  }
+  return { ok: true, element };
 }

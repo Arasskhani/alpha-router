@@ -805,6 +805,10 @@ button {
 }
 
 .agent__card-action {
+  /* The whole of what will happen - a long address, all the text to be typed - scrolls rather than being cut. */
+  max-height: 14rem;
+  overflow: auto;
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
   unicode-bidi: plaintext;
 }

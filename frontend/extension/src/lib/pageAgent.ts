@@ -89,6 +89,8 @@ export function cleanElement(raw: unknown): ElementInfo | null {
   if (Array.isArray(v.options)) {
     info.options = v.options.slice(0, 20).map((option) => str(option, 80) ?? "");
   }
+  const choice = str(v.choice, 120);
+  if (choice) info.choice = choice;
   return info;
 }
 

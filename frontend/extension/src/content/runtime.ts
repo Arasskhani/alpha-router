@@ -69,7 +69,7 @@ export async function runAgentCall(
       case "find":
         return find(doc, args.query, isVisible);
       case "describe":
-        return describe(args.ref, isVisible, args.activates === true);
+        return describe(args.ref, isVisible, args.activates === true, args.choose);
       case "describe_focus":
         return describeFocus(doc, isVisible);
       case "click":

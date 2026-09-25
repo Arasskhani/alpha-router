@@ -205,6 +205,27 @@ function named(element: ElementInfo | undefined, ref: unknown): string {
   return typeof ref === "string" ? `element ${ref}` : "an element";
 }
 
+/** Past this, a card's address shows its start and its end, and its length. */
+const MAX_SHOWN_ADDRESS = 300;
+/** Past this, a card shows the start of the text to be typed, and its length. */
+const MAX_SHOWN_TEXT = 2000;
+
+/**
+ * An address in full, for the card and the reviewer: the query and the
+ * fragment are where data taken from a page would travel, so they are shown,
+ * not dropped.
+ */
+function address(url: unknown): string {
+  if (typeof url !== "string" || !readablePage(url)) return "a page";
+  const href = new URL(url).href;
+  return href.length <= MAX_SHOWN_ADDRESS ? href : `${href.slice(0, 240)}…${href.slice(-40)} (${href.length} characters)`;
+}
+
+/** The text to be typed, in full up to a size, then its start and its length. */
+function typed(text: string): string {
+  return text.length <= MAX_SHOWN_TEXT ? `"${text}"` : `"${text.slice(0, MAX_SHOWN_TEXT)}…" (${text.length} characters in all)`;
+}
+
 function whereTo(url: unknown): string {
   const page = typeof url === "string" ? readablePage(url) : null;
   if (!page) return "a page";
@@ -219,7 +240,7 @@ function whereTo(url: unknown): string {
 /** The element as the reviewer sees it: its role, its name and the words it shows, and where a link goes. */
 function reviewTarget(element: ElementInfo): string {
   const shows = element.text ? ` (it shows "${element.text}")` : "";
-  const goes = element.href ? ` - a link to ${readablePage(element.href) ? whereTo(element.href) : "another program"}` : "";
+  const goes = element.href ? ` - a link to ${readablePage(element.href) ? address(element.href) : "another program"}` : "";
   return clip(`${element.role}: ${element.name || "(no name)"}${shows}${goes}`, 300);
 }
 
@@ -232,7 +253,7 @@ function describeAction(tool: string, a: Record<string, unknown>, element?: Elem
     case "tabs_list":
       return "List the open tabs";
     case "tab_open":
-      return `Open ${whereTo(a.url)} in a new tab`;
+      return `Open ${address(a.url)} in a new tab`;
     case "tab_switch":
       if (!target) return `Switch to tab ${String(a.tab_id)}`;
       if (!target.host) return `Switch to tab ${target.id}, which shows no web page`;
@@ -240,7 +261,7 @@ function describeAction(tool: string, a: Record<string, unknown>, element?: Elem
         ? `Switch to tab ${target.id}: "${clip(target.title || target.host, 80)}" on ${target.host}`
         : `Switch to tab ${target.id} (a tab the agent may not work on)`;
     case "navigate":
-      return `Open ${whereTo(a.url)}`;
+      return `Open ${address(a.url)}`;
     case "read_page":
       return "Read the page";
     case "find":
@@ -250,13 +271,16 @@ function describeAction(tool: string, a: Record<string, unknown>, element?: Elem
     case "click":
       return `Click ${named(element, a.ref)}`;
     case "type_text":
-      return `Type "${clip(String(a.text ?? ""), 200)}" into ${named(element, a.ref)}${a.clear === true ? ", replacing what is there" : ""}`;
+      return `Type ${typed(String(a.text ?? ""))} into ${named(element, a.ref)}${a.clear === true ? ", replacing what is there" : ""}`;
     case "select_option":
-      return `Choose "${clip(String(a.value ?? ""), 60)}" in ${named(element, a.ref)}`;
+      // The option the menu will really take, which the model's words only point at.
+      return element?.choice
+        ? `Choose "${element.choice}" in ${named(element, a.ref)}`
+        : `Choose "${clip(String(a.value ?? ""), 60)}" in ${named(element, a.ref)}${element ? " (no option matches)" : ""}`;
     case "press_key":
       return `Press ${clip(String(a.key ?? "a key"), 20)}${element ? ` in ${named(element, undefined)}` : ""}`;
     case "submit_form":
-      return `Send the form${element?.formAction ? ` to ${whereTo(element.formAction)}` : ""}${element?.name ? ` (from ${named(element, a.ref)})` : ""}`;
+      return `Send the form${element?.formAction ? ` to ${address(element.formAction)}` : ""}${element?.name ? ` (from ${named(element, a.ref)})` : ""}`;
     case "scroll":
       return a.ref ? `Scroll to ${named(element, a.ref)}` : `Scroll ${typeof a.direction === "string" ? a.direction : "down"}`;
     case "wait_for":
@@ -461,7 +485,11 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
         // The rules refuse it below, with the reason.
       } else {
         // For a click, the control it works on: the button around the words, the field of a label.
-        const described = await page("describe", { ref: a.ref, ...(name === "click" ? { activates: true } : {}) }, tab);
+        const described = await page(
+          "describe",
+          { ref: a.ref, ...(name === "click" ? { activates: true } : {}), ...(name === "select_option" ? { choose: a.value } : {}) },
+          tab,
+        );
         if (!described.ok) {
           return { content: "", page: wrapPage(options.nonce, pageNow.host, `${described.message}`), status: "error", detail: described.message, outcome: "error", site: pageNow.host, extra: { error: described.error } };
         }

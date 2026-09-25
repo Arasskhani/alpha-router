@@ -7,7 +7,8 @@ Kept as one JSON document in ``system_settings`` (``extension.settings``):
   silently). It changes the extension's permissions, so it changes the
   package, and policy-installed copies update to the new permissions.
 - ``allowed_sites`` / ``blocked_sites``: host patterns (``example.com``, or
-  ``*.example.com`` for the domain and all its subdomains). Blocked always
+  ``*.example.com`` for the domain and all its subdomains, or an IPv6 literal
+  such as ``[fd00::1]``). Blocked always
   wins; a non-empty allowed list means every other site is off limits. The extension checks them before it reads
   or does anything, and the server checks the sites it is told about.
 - ``page_content_models`` / ``agent_models``: ``model::<id>`` lists (empty
@@ -48,8 +49,8 @@ MAX_MAX_STEPS = 100
 MAX_SITE_PATTERNS = 200
 MAX_MODEL_REFS = 500
 
-_LABEL_RE = re.compile(r"^(?!-)[a-z0-9-]{1,63}(?<!-)$")
-_PAGE_LABEL_RE = re.compile(r"^(?!-)[a-z0-9_-]{1,63}(?<!-)$")
+#: A host label as browsers accept it: underscores included (intranet hosts have them).
+_LABEL_RE = re.compile(r"^(?!-)[a-z0-9_-]{1,63}(?<!-)$")
 _MODEL_REF_RE = re.compile(r"^model::(\d{1,10})$")
 #: Model ids are INTEGER columns; a larger number fails in PostgreSQL itself.
 _MAX_MODEL_ID = 2**31 - 1
@@ -96,11 +97,21 @@ def _ascii_host(host: str) -> str:
         return text
 
 
+def _ipv6_literal(text: str) -> str:
+    """``[fd00::1]`` as ``URL.hostname`` writes it: brackets, compressed, lower-case."""
+    try:
+        return f"[{ipaddress.IPv6Address(text[1:-1]).compressed}]"
+    except ValueError as exc:
+        raise ValueError("not a host name") from exc
+
+
 def normalize_site_pattern(raw: str) -> str:
-    """``example.com`` or ``*.example.com``, lower-case and IDNA-encoded; raises ValueError otherwise."""
+    """``example.com``, ``*.example.com`` or ``[fd00::1]``, normalized; raises ValueError otherwise."""
     text = (raw or "").strip().lower().rstrip(".")
     if not text:
         raise ValueError("empty")
+    if text.startswith("[") and text.endswith("]"):
+        return _ipv6_literal(text)
     if "://" in text or "/" in text or ":" in text or "@" in text or " " in text:
         raise ValueError("a host name only: no scheme, port or path")
     wildcard = text.startswith("*.")
@@ -120,22 +131,19 @@ def normalize_site_pattern(raw: str) -> str:
 def normalize_page_host(raw: str) -> str:
     """A page's host as the extension reports it (``URL.hostname``), checked; raises ValueError.
 
-    Wider than a site pattern: no wildcard, but an IPv6 literal in brackets
-    and underscores in labels are real hosts a browser can be on.
+    The same hosts a site pattern can name, without the wildcard, so every
+    host a page can come from can also be blocked.
     """
     text = (raw or "").strip().lower().rstrip(".")
     if text.startswith("[") and text.endswith("]"):
-        try:
-            return f"[{ipaddress.IPv6Address(text[1:-1]).compressed}]"
-        except ValueError as exc:
-            raise ValueError("not a host name") from exc
+        return _ipv6_literal(text)
     if not text or len(text) > 253:
         raise ValueError("not a host name")
     try:
         ascii_host = _to_ascii(text)
     except (idna.IDNAError, UnicodeError) as exc:
         raise ValueError("not a host name") from exc
-    if len(ascii_host) > 253 or not all(_PAGE_LABEL_RE.match(label) for label in ascii_host.split(".")):
+    if len(ascii_host) > 253 or not all(_LABEL_RE.match(label) for label in ascii_host.split(".")):
         raise ValueError("not a host name")
     return ascii_host
 

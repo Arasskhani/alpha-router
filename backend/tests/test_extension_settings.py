@@ -17,6 +17,7 @@ from app.services.extension_settings import (
     ExtensionSettingsError,
     host_matches,
     load_extension_settings,
+    normalize_page_host,
     normalize_site_pattern,
     parse_settings,
     save_extension_settings,
@@ -68,6 +69,10 @@ class TestSitePatterns:
             # A zero-width non-joiner kept, as browsers do (non-transitional UTS #46).
             ("می\u200cخواهم.ir", "xn--mgbn2ecje63gr19l.ir"),
             ("example.com.", "example.com"),
+            # Every host a page can come from can be named, so it can be blocked.
+            ("My_Server.corp", "my_server.corp"),
+            ("*.dev_lab.corp", "*.dev_lab.corp"),
+            ("[FD00:0::1]", "[fd00::1]"),
         ],
     )
     def test_host_names_and_subdomain_wildcards_are_accepted(self, raw, normalized):
@@ -84,6 +89,10 @@ class TestSitePatterns:
             "a.*.example.com",
             "-bad.example",
             "user@example.com",
+            "[fd00::1]:8443",
+            "*.[fd00::1]",
+            "[not-an-address]",
+            "fd00::1",
         ],
     )
     def test_anything_else_is_refused(self, raw):
@@ -105,6 +114,13 @@ class TestSitePatterns:
         assert site_refusal("AI.example.com", settings, server_host="ai.example.com") is None
         blocked = ExtensionSettings(blocked_sites=("ai.example.com",))
         assert site_refusal("ai.example.com", blocked, server_host="ai.example.com") == SITE_BLOCKED
+
+    def test_an_ipv6_host_or_one_with_underscores_can_be_blocked(self):
+        blocked = ExtensionSettings(
+            blocked_sites=(normalize_site_pattern("[fd00::1]"), normalize_site_pattern("my_host.corp"))
+        )
+        assert site_refusal(normalize_page_host("[FD00:0:0::1]"), blocked) == SITE_BLOCKED
+        assert site_refusal(normalize_page_host("My_Host.corp"), blocked) == SITE_BLOCKED
 
     def test_blocking_a_wildcard_blocks_the_site_itself(self):
         """An admin who blocks *.bank.example means the bank's own site too."""

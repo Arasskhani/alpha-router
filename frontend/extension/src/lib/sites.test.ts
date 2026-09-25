@@ -35,6 +35,15 @@ describe("pages the extension can read at all", () => {
     expect(readablePage(url)).toBeNull();
   });
 
+  it("names a host written with its final dot without it, for the rules and the server", () => {
+    expect(readablePage("https://docs.example.com./guide")).toEqual({
+      host: "docs.example.com",
+      origin: "https://docs.example.com.",
+      pattern: "https://docs.example.com./*",
+    });
+    expect(siteRefusal(readablePage("https://ai.example.com./")!.host, { allowed_sites: ["wiki.example.com"], blocked_sites: [] }, "ai.example.com")).toBeNull();
+  });
+
   it("reads Google's other sites", () => {
     expect(readablePage("https://chrome.google.com/intl/en/chrome/")).not.toBeNull();
   });

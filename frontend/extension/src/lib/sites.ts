@@ -17,7 +17,7 @@ export type SiteRefusal = "site_blocked" | "site_not_allowed";
 
 /** A page the extension could read, if the rules and the user allow it. */
 export type ReadablePage = {
-  /** `URL.hostname`: lower-case, punycode, IPv6 in brackets. */
+  /** `URL.hostname` without a trailing dot: lower-case, punycode, IPv6 in brackets. */
   host: string;
   origin: string;
   /** The match pattern Chrome grants per site, as in `chrome.permissions`. */
@@ -46,7 +46,9 @@ export function readablePage(rawUrl: string | undefined): ReadablePage | null {
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") return null;
   if (!url.hostname || url.username || url.password || isBrowserStore(url)) return null;
-  return { host: url.hostname, origin: url.origin, pattern: `${url.origin}/*` };
+  // "example.com." is example.com: the rules, the label and the server all
+  // name it without the dot. The origin keeps it, as Chrome grants it.
+  return { host: url.hostname.replace(/\.$/, ""), origin: url.origin, pattern: `${url.origin}/*` };
 }
 
 /** `*.example.com` covers example.com and every subdomain, as in Chrome's match patterns. */

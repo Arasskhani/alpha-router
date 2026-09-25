@@ -118,7 +118,8 @@ export default function ExtensionPanel() {
       <h2>Browser extension</h2>
       <p className="settings-section-desc">
         Use {PRODUCT_NAME} in Chrome or Edge: chat in a side panel next to any page, and ask about the page you
-        are on. Chats are saved to your history, as they are here.
+        are on. Chats are saved to your history, as they are here. Where your administrator allows it, an agent in
+        the side panel can also carry out tasks in your tabs, asking you before the steps that matter.
       </p>
 
       {infoError && (

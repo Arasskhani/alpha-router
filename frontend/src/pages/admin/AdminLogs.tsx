@@ -78,6 +78,8 @@ export function hasDetail(detail: AdminLogEvent["detail"]): boolean {
 /** Actions whose generic reading would be unclear. */
 const ACTION_WORDS: Record<string, string> = {
   page_context: "Page shared with a model",
+  agent_step: "Browser agent step",
+  agent_task: "Browser agent task",
 };
 
 /** "tls_activate" reads as machine output; "Tls activate" reads as an event. */

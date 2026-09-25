@@ -38,6 +38,8 @@ describe("action names", () => {
   it("read as events, and a page shared from the browser says so", () => {
     expect(humanAction("tls_activate")).toBe("Tls activate");
     expect(humanAction("page_context")).toBe("Page shared with a model");
+    expect(humanAction("agent_step")).toBe("Browser agent step");
+    expect(humanAction("agent_task")).toBe("Browser agent task");
   });
 });
 

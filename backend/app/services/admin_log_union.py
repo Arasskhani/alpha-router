@@ -11,7 +11,8 @@ Adding a trail is one more entry in ``SOURCES``.
 
 The tenth, ``browser_extension``, is what the browser extension did for each
 person: a page shared with a model (the site, how much text, which model, never
-the text), and later each step of the browser agent.
+the text), and each step and run of the browser agent (the tool, the site, how
+it ended and who approved it, never what it typed).
 
 The ninth, ``authentication``, is the one that was here before under another
 name: sign-ins used to be three ``action`` values in the security trail, and

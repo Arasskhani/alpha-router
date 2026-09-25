@@ -63,7 +63,7 @@ def count_prompt_tokens(
                 model=_tokenizer_model(provider_type, model),
                 messages=messages or [],
                 # OpenAI function tools: the shape LiteLLM's ChatCompletionToolParam describes.
-                tools=cast("list[ChatCompletionToolParam] | None", tools or None),
+                tools=cast(list[ChatCompletionToolParam] | None, tools or None),
             )
             or 0
         )

@@ -30,6 +30,7 @@ from app.api import (
     authentication,
     chat,
     extension,
+    extension_agent,
     extension_connect,
     gateway,
     groups,
@@ -806,6 +807,7 @@ app.include_router(chat.router)
 # Before the SPA fallback: /extension/update.xml and the CRX are served here.
 app.include_router(extension.router)
 app.include_router(extension_connect.router)
+app.include_router(extension_agent.router)
 app.include_router(projects.router)
 
 

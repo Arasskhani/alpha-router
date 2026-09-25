@@ -24,10 +24,7 @@ from app.services.extension_tokens import create_session, revoke_session
 
 CSRF = "csrf-token"
 #: Scope entries whose endpoints later steps of the extension work add.
-NOT_BUILT_YET = {
-    ("POST", "/api/extension/events"),
-    ("POST", "/api/extension/review-action"),
-}
+NOT_BUILT_YET: set[tuple[str, str]] = set()
 
 
 @pytest.fixture(autouse=True)

@@ -270,6 +270,23 @@ describe("a run", () => {
     await until(() => host.textContent!.includes("All done."), "the summary");
   });
 
+  it("keeps the steps the server could not take, and sends them with the next batch", async () => {
+    let tries = 0;
+    server.routes["POST /api/extension/events"] = () => (++tries === 1 ? json(503, { detail: "Busy." }) : json(200, { recorded: 1, refused: 0 }));
+    replies = [toolFrame([{ id: "c1", name: "read_page" }]), toolFrame([{ id: "c2", name: "done", args: { summary: "Read it." } }])];
+    await render();
+    await start("Read the page.");
+    await until(() => host.textContent!.includes("Read it."), "the first run");
+    await until(() => tries === 1, "the first flush");
+    replies = [toolFrame([{ id: "c3", name: "done", args: { summary: "Nothing to do." } }])];
+    await start("Nothing.");
+    await until(() => tries === 2, "the second flush");
+    const sent = server.calls.filter((c) => c.path === "/api/extension/events").map((c) => (c.body as { events: Array<{ kind: string; detail: { task_id: string } }> }).events);
+    // The second batch holds the first run's steps as well as the second's.
+    expect(new Set(sent[1].map((e) => e.detail.task_id)).size).toBe(2);
+    expect(sent[1].length).toBeGreaterThan(sent[0].length);
+  });
+
   it("puts a question from the agent to the user", async () => {
     replies = [toolFrame([{ id: "c1", name: "ask_user", args: { question: "Which size?" } }]), toolFrame([{ id: "c2", name: "done", args: { summary: "Chose M." } }])];
     await render();

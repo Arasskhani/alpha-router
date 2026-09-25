@@ -29,6 +29,8 @@ const MODE_KEY = "alpharouter.agentMode";
 const DEFAULT_MAX_STEPS = 25;
 /** Events go to the server in batches of this many, and whatever is left when a run ends. */
 const EVENT_BATCH = 10;
+/** Events kept while the server cannot take them: the newest this many. */
+const MAX_QUEUED_EVENTS = 200;
 /** Each argument a review sees, cut to fit the reviewer's limit. */
 const REVIEW_ARGUMENT_CHARS = 1500;
 /** When the server's per-minute limit is reached: how long to wait, and how often, before the run gives up. */
@@ -216,14 +218,24 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
     });
   }
 
+  /**
+   * Send the waiting events. A batch the server did not take - it could not
+   * be reached, it was busy (5xx, 429) - goes back in the queue for the next
+   * flush, so a hiccup does not erase steps from the trail; one it refused
+   * (another 4xx) could never be taken. Never throws: the trail never stops
+   * the agent.
+   */
   async function flush() {
     const batch = events.current.splice(0, 50);
     if (!batch.length) return;
+    let kept = false;
     try {
-      await getClient().api.request("/api/extension/events", { method: "POST", body: JSON.stringify({ events: batch }) });
-    } catch {
-      // The trail is best effort: a lost batch never stops the agent.
+      const response = await getClient().api.request("/api/extension/events", { method: "POST", body: JSON.stringify({ events: batch }) });
+      kept = response.status >= 500 || response.status === 429;
+    } catch (err) {
+      kept = !(err instanceof DisconnectedError);
     }
+    if (kept) events.current = [...batch, ...events.current].slice(-MAX_QUEUED_EVENTS);
   }
 
   function deps(model: string): AgentDeps {

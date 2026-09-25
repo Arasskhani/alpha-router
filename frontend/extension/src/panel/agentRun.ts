@@ -522,7 +522,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
         class: verdict.class,
         ...(element ? { role: element.role, label: element.name } : {}),
         ...(name === "type_text" && typeof a.text === "string" ? { chars: a.text.length } : {}),
-        ...(name === "press_key" && typeof a.key === "string" ? { key: a.key } : {}),
+        ...(name === "press_key" && typeof a.key === "string" ? { key: a.key.slice(0, 32) } : {}),
         ...(verdict.site ? { to_site: verdict.site } : {}),
       } as Record<string, unknown>,
     };

@@ -19,7 +19,7 @@ import {
 const RULES: PolicyContext = {
   policy: { allowed_sites: [], blocked_sites: ["bank.example.com"] },
   serverHost: "ai.example.com",
-  serverOrigin: "https://ai.example.com",
+  ownHosts: ["ai.example.com"],
 };
 const TAB = { id: 1, url: "https://shop.example.com/cart", host: "shop.example.com", title: "Cart" };
 const NONCE = "0123456789ab";

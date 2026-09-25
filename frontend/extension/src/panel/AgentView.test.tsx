@@ -80,7 +80,7 @@ afterEach(() => {
 
 async function render(me: Me = ME) {
   await act(async () => {
-    root.render(<AgentView me={me} onDisconnected={onDisconnected} />);
+    root.render(<AgentView me={me} server={SERVER} onDisconnected={onDisconnected} />);
   });
   await act(async () => undefined);
 }
@@ -249,6 +249,18 @@ describe("a run", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("keeps off Alpharouter's host on any port, even when the server gives no address", async () => {
+    const own = chromeFake.tabs.add({ url: `${SERVER.replace("https:", "http:")}:8080/admin`, title: "Admin" });
+    chromeFake.tabs.activate(own.id!);
+    chromeFake.permissions.granted.add("<all_urls>");
+    replies = [toolFrame([{ id: "c1", name: "read_page" }]), toolFrame([{ id: "c2", name: "done", args: { summary: "Could not read it." } }])];
+    await render({ ...ME, server: { name: "Alpharouter", url: null } });
+    await start("Read this page.");
+    await until(() => host.textContent!.includes("Could not read it."), "the summary");
+    expect(host.querySelector('[data-step-status="blocked"]')).not.toBeNull();
+    expect(pageCalls.some((c) => c.method === "read_page")).toBe(false);
   });
 
   it("shows what went wrong when the server refuses the step", async () => {

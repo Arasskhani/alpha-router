@@ -6,11 +6,11 @@ import { describe, expect, it } from "vitest";
 import type { ElementInfo } from "../content/agent";
 import { approvalFor, classifyAction, type PolicyContext, type ProposedAction } from "./agentPolicy";
 
-const OPEN: PolicyContext = { policy: { allowed_sites: [], blocked_sites: [] }, serverHost: "ai.example.com", serverOrigin: "https://ai.example.com" };
+const OPEN: PolicyContext = { policy: { allowed_sites: [], blocked_sites: [] }, serverHost: "ai.example.com", ownHosts: ["ai.example.com"] };
 const RULES: PolicyContext = {
   policy: { allowed_sites: ["*.example.com", "partner.org"], blocked_sites: ["bank.example.com"] },
   serverHost: "ai.example.com",
-  serverOrigin: "https://ai.example.com",
+  ownHosts: ["ai.example.com", "alpharouter.intranet"],
 };
 const SHOP = { url: "https://shop.example.com/cart", host: "shop.example.com" };
 
@@ -34,16 +34,17 @@ describe("reading", () => {
     expect(classify("get_page_text", { page: elsewhere }, RULES)).toMatchObject({ class: "blocked", reason: "site_not_allowed" });
   });
 
-  it("never happens on Alpharouter itself, told by its origin", () => {
+  it("never happens on Alpharouter itself, on any port or scheme of its host", () => {
     const own = { url: "https://ai.example.com/chat", host: "ai.example.com" };
     expect(classify("read_page", { page: own }, RULES)).toMatchObject({ class: "blocked", reason: "own_server" });
-    const dotted = { url: "https://AI.example.com./chat", host: "ai.example.com" };
-    expect(classify("read_page", { page: dotted }, RULES)).toMatchObject({ class: "blocked", reason: "own_server" });
-    const explicitPort = { url: "https://ai.example.com:443/chat", host: "ai.example.com" };
-    expect(classify("read_page", { page: explicitPort }, RULES)).toMatchObject({ class: "blocked", reason: "own_server" });
-    // Another program on the same host is not Alpharouter.
-    const otherPort = { url: "https://ai.example.com:8443/hr", host: "ai.example.com" };
-    expect(classify("read_page", { page: otherPort }, RULES)).toMatchObject({ class: "read" });
+    // The browser sends the session cookie to every port of the host: another port can be Alpharouter, signed in.
+    for (const url of ["https://ai.example.com:8443/admin", "http://ai.example.com/", "http://ai.example.com:8000/docs"]) {
+      expect(classify("read_page", { page: { url, host: "ai.example.com" } }, RULES)).toMatchObject({ class: "blocked", reason: "own_server" });
+    }
+    // The address the extension itself talks to counts as much as the one the server gives.
+    const intranet = { url: "http://alpharouter.intranet/chat", host: "alpharouter.intranet" };
+    expect(classify("read_page", { page: intranet }, RULES)).toMatchObject({ class: "blocked", reason: "own_server" });
+    expect(classify("navigate", { args: { url: "https://AI.example.com.:8443/x" } }, RULES)).toMatchObject({ class: "blocked", reason: "own_server" });
   });
 
   it("needs a web page", () => {

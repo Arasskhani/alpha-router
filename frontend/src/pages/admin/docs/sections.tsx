@@ -2108,8 +2108,9 @@ export const docSections: DocSection[] = [
               <td>
                 Host patterns: <code>example.com</code>, or <code>*.example.com</code> for the domain and its
                 subdomains. Blocked always wins; a non-empty allow list shuts out every other site except this
-                server, whose pages the agent never works on all the same. The extension checks them before it reads
-                or does anything, and the server checks every page a request declares again.
+                server. The agent never works on any address of this server&apos;s host, on any port - the browser
+                sends the session cookie to all of them. The extension checks the rules before it reads or does
+                anything, and the server checks every page a request declares again.
               </td>
             </tr>
             <tr>

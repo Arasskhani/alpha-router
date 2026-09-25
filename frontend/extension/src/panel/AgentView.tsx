@@ -11,10 +11,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ApiError } from "../lib/api";
-import { originOf, type AgentMode, type PolicyContext } from "../lib/agentPolicy";
+import type { AgentMode, PolicyContext } from "../lib/agentPolicy";
 import { ChatStreamError, readChatStream } from "../lib/chatStream";
 import { getClient } from "../lib/client";
 import { fromTabScript, isExtensionMessage } from "../lib/messages";
+import { readablePage } from "../lib/sites";
 import { DisconnectedError, TemporaryError } from "../lib/tokens";
 import { useActivePage, useSiteAccess } from "./activePage";
 import { createAgentBrowser, type PanelBrowser } from "./agentBrowser";
@@ -58,6 +59,8 @@ type LogItem =
 
 type Props = {
   me: Me;
+  /** The server this copy of the extension belongs to (its config.json). */
+  server: string;
   /** Whether this view is the one on screen: a run goes on while the chat is shown. */
   hidden?: boolean;
   /** The server ended the session. */
@@ -68,12 +71,9 @@ function randomHex(bytes: number): string {
   return Array.from(crypto.getRandomValues(new Uint8Array(bytes)), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-function serverHost(url: string | null): string | null {
-  try {
-    return url ? new URL(url).hostname : null;
-  } catch {
-    return null;
-  }
+/** A server address's host as the rules name hosts. */
+function hostOf(url: string | null | undefined): string | null {
+  return readablePage(url ?? undefined)?.host ?? null;
 }
 
 /** Models the agent may use: the text models this account may use, within both of the administrator's lists. */
@@ -109,7 +109,7 @@ function describeError(err: unknown): string {
   return "Something went wrong.";
 }
 
-export default function AgentView({ me, hidden = false, onDisconnected }: Props) {
+export default function AgentView({ me, server, hidden = false, onDisconnected }: Props) {
   const [models, setModels] = useState<ChatModel[] | null>(null);
   const [modelsFailed, setModelsFailed] = useState(false);
   const [modelLoads, setModelLoads] = useState(0);
@@ -133,14 +133,15 @@ export default function AgentView({ me, hidden = false, onDisconnected }: Props)
   const siteAccess = useSiteAccess(target?.pattern ?? null);
   const autoAllowed = me.features.auto_mode;
   const maxSteps = me.policy?.agent_max_steps ?? DEFAULT_MAX_STEPS;
-  const rules = useMemo<PolicyContext>(
-    () => ({
+  const rules = useMemo<PolicyContext>(() => {
+    // Both addresses: the server this copy talks to, and the one the server gives, if they differ.
+    const own = [hostOf(server), hostOf(me.server.url)].filter((host): host is string => host !== null);
+    return {
       policy: { allowed_sites: me.policy?.allowed_sites ?? [], blocked_sites: me.policy?.blocked_sites ?? [] },
-      serverHost: serverHost(me.server.url),
-      serverOrigin: originOf(me.server.url),
-    }),
-    [me],
-  );
+      serverHost: hostOf(me.server.url) ?? hostOf(server),
+      ownHosts: [...new Set(own)],
+    };
+  }, [me, server]);
 
   useEffect(() => {
     disconnected.current = onDisconnected;
@@ -330,6 +331,11 @@ export default function AgentView({ me, hidden = false, onDisconnected }: Props)
   function start() {
     const task = draft.trim();
     if (!task || running || !modelId) return;
+    if (!rules.ownHosts.length) {
+      // Without Alpharouter's own address the rules cannot keep the agent off its pages.
+      setBanner("The agent cannot tell Alpharouter's own pages from others. Download the extension again from Settings → Extension.");
+      return;
+    }
     if (target && siteAccess === false) {
       // Chrome asks only while a click is being handled: at once, nothing awaited first.
       chrome.permissions

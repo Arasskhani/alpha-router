@@ -166,7 +166,7 @@ export default function App() {
       <div className="shell__view" hidden={tab !== "chat"}>
         {chat}
       </div>
-      <AgentView me={view.me} hidden={tab !== "agent"} onDisconnected={() => setChecks((n) => n + 1)} />
+      <AgentView me={view.me} server={view.server} hidden={tab !== "agent"} onDisconnected={() => setChecks((n) => n + 1)} />
     </div>
   );
 }

@@ -364,7 +364,10 @@ export default function ExtensionSettingsCard() {
               disabled={locked}
               onChange={(next) => patch({ agent_models: next })}
             />
-            <span className="settings-row__hint">None selected: any model the person may use.</span>
+            <span className="settings-row__hint">
+              None selected: any model the person may use. The agent sends what it reads on pages to its model, so the
+              model must also be one that may receive page content.
+            </span>
           </div>
           <label className="extension-admin__field extension-admin__field--inline">
             <span className="settings-row__title">Most steps per task</span>

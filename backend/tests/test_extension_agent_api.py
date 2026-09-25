@@ -529,6 +529,22 @@ class TestReview:
         assert over.json()["decision"] == "ask"
         assert model.await_count == 60
 
+    async def test_arguments_are_measured_in_utf8_as_the_panel_measures_them(
+        self, client, browser, auto_mode, monkeypatch
+    ):
+        model = AsyncMock(return_value=_reply('{"decision": "allow", "reason": "ok"}'))
+        monkeypatch.setattr(extension_agent, "acompletion", model)
+        body = json.loads(json.dumps(REVIEW))
+        # 1,900 Persian letters: 3,800 bytes in UTF-8 (11,400 as ASCII escapes), and fits.
+        body["arguments"] = {"ref": "e3", "text": "\u0633" * 1900}
+        resp = await client.post("/api/extension/review-action", json=body, headers=browser.headers)
+        assert resp.status_code == 200
+        assert resp.json()["decision"] == "allow"
+        # 2,100 of them are 4,200 bytes, past the limit.
+        body["arguments"] = {"ref": "e3", "text": "\u0633" * 2100}
+        resp = await client.post("/api/extension/review-action", json=body, headers=browser.headers)
+        assert resp.status_code == 422
+
     @pytest.mark.parametrize(
         "change",
         [

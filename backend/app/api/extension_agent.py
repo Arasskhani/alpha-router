@@ -115,7 +115,7 @@ async def record_agent_events(
     return {"recorded": len(events), "refused": len(refusals)}
 
 
-#: The size of a proposed action's arguments as JSON.
+#: The size of a proposed action's arguments as JSON, in UTF-8: what the panel measures before it asks.
 MAX_ARGUMENTS_BYTES = 4096
 
 
@@ -135,7 +135,11 @@ class ReviewActionIn(BaseModel):
     @field_validator("arguments")
     @classmethod
     def _small_arguments(cls, value: dict[str, Any]) -> dict[str, Any]:
-        if len(json.dumps(value, separators=(",", ":"), default=str).encode()) > MAX_ARGUMENTS_BYTES:
+        # UTF-8, not ASCII escapes: \uXXXX would count a Persian letter as six bytes, and the panel counts two.
+        size = len(
+            json.dumps(value, separators=(",", ":"), ensure_ascii=False, default=str).encode("utf-8", "surrogatepass")
+        )
+        if size > MAX_ARGUMENTS_BYTES:
             raise ValueError(f"The arguments are at most {MAX_ARGUMENTS_BYTES} bytes.")
         return value
 

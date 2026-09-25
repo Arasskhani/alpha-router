@@ -38,14 +38,19 @@ export function handleMenuClick(info: chrome.contextMenus.OnClickData, tab?: chr
   if (!item || tab?.id === undefined || tab.windowId === undefined || tab.windowId < 0) return;
   // First, while Chrome still counts the click as the user's: nothing may come before it.
   chrome.sidePanel.open({ windowId: tab.windowId }).catch(() => undefined);
-  const selection = item.on === "selection" ? (info.selectionText ?? "").slice(0, MAX_MENU_SELECTION_CHARS) : "";
+  const onSelection = item.on === "selection";
+  // Text selected inside a frame comes from the frame's page, which can be
+  // another site than the tab's: the site rules and the label go by where the
+  // text came from, and the tab's title is not its title.
+  const fromFrame = onSelection && Boolean(info.frameUrl) && info.frameUrl !== info.pageUrl;
+  const selection = onSelection ? (info.selectionText ?? "").slice(0, MAX_MENU_SELECTION_CHARS) : "";
   void savePendingAction({
     id: crypto.randomUUID(),
     kind: item.kind,
     tabId: tab.id,
     windowId: tab.windowId,
-    pageUrl: info.pageUrl || tab.url || "",
-    title: tab.title ?? "",
+    pageUrl: (fromFrame ? info.frameUrl : info.pageUrl) || tab.url || "",
+    title: fromFrame ? "" : (tab.title ?? ""),
     selection,
     createdAt: Date.now(),
   }).then(() => broadcast({ type: "pending-action" }));

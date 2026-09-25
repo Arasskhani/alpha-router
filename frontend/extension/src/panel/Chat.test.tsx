@@ -696,6 +696,22 @@ describe("right-click actions", () => {
     expect(host.textContent).toContain("does not allow Alpharouter to read docs.example.com");
   });
 
+  it("says when text was selected in a part of the page it cannot read", async () => {
+    await savePendingAction(action({ kind: "explain", pageUrl: "about:srcdoc", title: "", selection: "Text." }));
+    await render();
+    await act(async () => undefined);
+    expect(completions()).toHaveLength(0);
+    expect(host.textContent).toContain("cannot read text selected in that part of the page");
+  });
+
+  it("goes by the site the text was selected on", async () => {
+    await savePendingAction(action({ kind: "explain", pageUrl: "https://widget.other.example/embed", title: "", selection: "Text." }));
+    await render({ ...ME, policy: { ...ME.policy!, blocked_sites: ["*.other.example"] } });
+    await act(async () => undefined);
+    expect(completions()).toHaveLength(0);
+    expect(host.textContent).toContain("does not allow Alpharouter to read widget.other.example");
+  });
+
   it("is not run for a user without page context", async () => {
     await savePendingAction(action({ kind: "explain", selection: "Text." }));
     await render({ ...ME, features: { ...ME.features, page_context: false } });

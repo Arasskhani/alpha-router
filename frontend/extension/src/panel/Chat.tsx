@@ -354,7 +354,11 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
     const model = modelRef.current;
     const page = me.features.page_context ? readablePage(action.pageUrl) : null;
     if (!page) {
-      setBanner("Alpharouter cannot read this page.");
+      setBanner(
+        action.kind === "summarize" || !me.features.page_context
+          ? "Alpharouter cannot read this page."
+          : "Alpharouter cannot read text selected in that part of the page.",
+      );
       return;
     }
     const refused = pageBlockFor(page.host, model) ?? siteLimitError([page.host]);

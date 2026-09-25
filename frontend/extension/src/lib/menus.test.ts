@@ -76,6 +76,31 @@ describe("a click on it", () => {
     expect(action.selection).toHaveLength(MAX_MENU_SELECTION_CHARS);
   });
 
+  it("takes a selection made inside a frame from the frame's page, without the tab's title", async () => {
+    const frameUrl = "https://widget.other.example/embed?id=1";
+    handleMenuClick(
+      { menuItemId: "alpharouter-explain", pageUrl: TAB.url, frameUrl, selectionText: "Hi", editable: false } as chrome.contextMenus.OnClickData,
+      TAB,
+    );
+    expect(await stored()).toMatchObject({ kind: "explain", pageUrl: frameUrl, title: "", selection: "Hi" });
+  });
+
+  it("keeps the page and its title for a selection in the page itself", async () => {
+    handleMenuClick(
+      { menuItemId: "alpharouter-explain", pageUrl: TAB.url, frameUrl: TAB.url, selectionText: "Hi", editable: false } as chrome.contextMenus.OnClickData,
+      TAB,
+    );
+    expect(await stored()).toMatchObject({ pageUrl: TAB.url, title: "The guide" });
+  });
+
+  it("summarizes the tab's page even when the click was in a frame", async () => {
+    handleMenuClick(
+      { menuItemId: "alpharouter-summarize", pageUrl: TAB.url, frameUrl: "https://ads.example/x", editable: false } as chrome.contextMenus.OnClickData,
+      TAB,
+    );
+    expect(await stored()).toMatchObject({ kind: "summarize", pageUrl: TAB.url, title: "The guide" });
+  });
+
   it.each([
     ["another extension's item", { menuItemId: "other" }, TAB],
     ["no tab", { menuItemId: "alpharouter-summarize" }, undefined],

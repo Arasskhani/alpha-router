@@ -15,6 +15,7 @@ export type PendingAction = {
   kind: PendingActionKind;
   tabId: number;
   windowId: number;
+  /** The page the action is about; for a selection, the page (or frame) the text was selected in. */
   pageUrl: string;
   title: string;
   /** The selected text, for the actions on a selection; empty otherwise. */

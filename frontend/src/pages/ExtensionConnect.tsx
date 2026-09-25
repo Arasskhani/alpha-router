@@ -22,7 +22,8 @@ export type ConnectRequest = {
   state: string;
 };
 
-const REDIRECT_RE = /^(?:chrome-extension|extension):\/\/([a-p]{32})\/connected\.html$/;
+// chrome-extension:// only (Edge's getURL gives it too); see the server's check.
+const REDIRECT_RE = /^chrome-extension:\/\/([a-p]{32})\/connected\.html$/;
 const CHALLENGE_RE = /^[A-Za-z0-9_-]{43}$/;
 const STATE_RE = /^[A-Za-z0-9_-]{16,128}$/;
 

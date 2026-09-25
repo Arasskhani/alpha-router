@@ -65,7 +65,10 @@ REFRESH_LIMIT_PER_TOKEN = 10
 TOKEN_FAILURES_PER_IP = 60
 
 _STATE_RE = r"^[A-Za-z0-9_-]{16,128}$"
-_EXTENSION_SCHEMES = ("chrome-extension", "extension")
+#: Chrome and Edge alike: chrome.runtime.getURL() gives chrome-extension:// in
+#: both. Never "extension://", which Chrome does not own: it would hand the
+#: code to whatever program registered that scheme with the system.
+_EXTENSION_SCHEMES = ("chrome-extension",)
 _TOKEN_HEADERS = {"Cache-Control": "no-store", "Pragma": "no-cache"}
 
 

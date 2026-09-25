@@ -233,10 +233,6 @@ class TestAuthorize:
         query = _query(target)
         assert query["state"] == STATE and len(query["code"]) >= 43
 
-    async def test_edge_style_addresses_work_too(self, client, user, extension_id):
-        resp = await _authorize(client, _sign_in(client, user), f"extension://{extension_id}/connected.html")
-        assert resp.status_code == 200
-
     async def test_deny_sends_the_refusal_back(self, client, user, redirect, session_factory):
         resp = await _authorize(client, _sign_in(client, user), redirect, deny=True)
         assert resp.status_code == 200
@@ -253,6 +249,8 @@ class TestAuthorize:
             lambda ext: f"chrome-extension://{ext}:80/connected.html",
             lambda ext: f"chrome-extension://user@{ext}/connected.html",
             lambda ext: f"https://{ext}/connected.html",
+            # Not a browser scheme: an app registered for it would get the code.
+            lambda ext: f"extension://{ext}/connected.html",
             lambda ext: "https://evil.example/connected.html",
         ],
     )

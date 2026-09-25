@@ -87,11 +87,11 @@ describe("reading the request", () => {
       codeChallenge: CHALLENGE,
       state: STATE,
     });
-    expect(parseConnectRequest(search({ redirect_uri: `extension://${ID}/connected.html` }))?.extensionId).toBe(ID);
   });
 
   it.each<Record<string, string>>([
     { redirect_uri: "https://evil.example/connected.html" },
+    { redirect_uri: `extension://${ID}/connected.html` },
     { redirect_uri: `chrome-extension://${ID}/sidepanel.html` },
     { redirect_uri: `chrome-extension://${ID.toUpperCase()}/connected.html` },
     { redirect_uri: `chrome-extension://${ID}/connected.html?x=1` },

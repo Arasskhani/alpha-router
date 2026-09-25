@@ -65,6 +65,14 @@ REFRESH_LIMIT_PER_TOKEN = 10
 #: on failures from that address are answered 429. Valid codes and refresh
 #: tokens from it are still served (extension_token says why).
 TOKEN_FAILURES_PER_IP = 60
+#: Every code exchange and refresh from one address in a minute, served or
+#: not: a ceiling no real address comes near (a browser refreshes once an
+#: hour, so 10,000 browsers behind one NAT make about three requests a
+#: second, and this is twenty). It bounds the database work a stream of junk
+#: can cost - an unknown refresh token is looked up, and walked back through
+#: 256 rotations in case it is an old one - which the failure window, now
+#: that valid tokens are always served, no longer does.
+TOKEN_REQUESTS_PER_IP = 1200
 
 _STATE_RE = r"^[A-Za-z0-9_-]{16,128}$"
 #: A refresh's attempt: the random name the extension gives one refresh and
@@ -188,9 +196,18 @@ async def extension_token(body: TokenIn, request: Request, db: AsyncSession = De
     out of the extension once their access tokens ran out. Codes and refresh
     tokens are 256-bit random values, so the window was never about guessing;
     when it is full, a failure is answered 429, which tells a client sending
-    junk to back off.
+    junk to back off. Above that, an address sending more requests than any
+    real one does (TOKEN_REQUESTS_PER_IP) is refused before any work.
     """
     ip = resolve_client_ip(request)
+    try:
+        await check_rate_limit(f"extension:token-requests:{ip or 'unknown'}", limit=TOKEN_REQUESTS_PER_IP)
+    except HTTPException:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many requests from this address. Try again shortly.",
+            headers=_TOKEN_HEADERS,
+        ) from None
     failures = f"extension:token-failures:{ip or 'unknown'}"
     # Whether earlier failures filled the window; it decides only how a failure is answered.
     window_full = await failure_limit_reached(failures, limit=TOKEN_FAILURES_PER_IP)

@@ -522,6 +522,35 @@ class TestRefresh:
             assert refused.json()["detail"] == "Too many failed attempts from this address. Try again shortly."
             assert refused.headers["cache-control"] == "no-store"
 
+    async def test_an_address_past_the_ceiling_is_refused_before_any_work(
+        self, client, browser, user, redirect, monkeypatch
+    ):
+        """Valid or not, requests past the per-address ceiling cost no lookup; other addresses go on."""
+        tokens = await _connect(client, browser, user, redirect)
+        monkeypatch.setattr(rate_limits, "TOKEN_REQUESTS_PER_IP", 3)
+        rate_limit._buckets.clear()
+        lookups = []
+        real_refresh = rate_limits.refresh_session
+
+        async def counted(*args, **kwargs):
+            lookups.append(1)
+            return await real_refresh(*args, **kwargs)
+
+        monkeypatch.setattr(rate_limits, "refresh_session", counted)
+        refresh = tokens["refresh_token"]
+        async with _from(("203.0.113.9", 7000)) as busy, _from(("203.0.113.10", 7000)) as other:
+            for i in range(3):
+                junk = {"grant_type": "refresh_token", "refresh_token": f"alpha-router-ext-rt-junk-{i}"}
+                assert (await busy.post("/api/extension/token", json=junk)).status_code == 400
+            valid = {"grant_type": "refresh_token", "refresh_token": refresh}
+            refused = await busy.post("/api/extension/token", json=valid)
+            assert refused.status_code == 429
+            assert refused.json()["detail"] == "Too many requests from this address. Try again shortly."
+            assert refused.headers["cache-control"] == "no-store"
+            assert len(lookups) == 3
+            served = await other.post("/api/extension/token", json=valid)
+            assert served.status_code == 200, served.text
+
     async def test_the_per_token_limit_follows_the_token_not_the_address(self, client):
         body = {"grant_type": "refresh_token", "refresh_token": "alpha-router-ext-rt-same"}
         async with _from(("10.0.0.8", 5000)) as first, _from(("10.0.0.9", 5000)) as second:

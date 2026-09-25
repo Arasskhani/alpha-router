@@ -2208,7 +2208,9 @@ export const docSections: DocSection[] = [
           <li>
             Limits: the generation limit per person (<code>GENERATION_RATE_LIMIT_PER_MIN</code>, 60 a minute by
             default — the agent waits and tries again), and 120 event reports and 60 reviews a minute per connected
-            browser.
+            browser. Connecting and refreshing: 10 refreshes a minute per browser; from one address, failures past
+            60 a minute are answered 429 (valid requests still go through), and nothing past 1,200 requests a
+            minute is served.
           </li>
         </ul>
         <h3>What is recorded</h3>

@@ -348,8 +348,12 @@ describe("sharing the page next to the panel", () => {
   it("asks Chrome for that one site, and turns on when the user allows it", async () => {
     chromeFake.tabs.add({ ...GUIDE, active: true });
     await render();
-    await click(chip()!);
-    expect(chromeFake.permissions.request).toHaveBeenCalledWith({ origins: [PATTERN] });
+    await act(async () => {
+      chip()!.click();
+      // In the click itself, before anything is awaited: Chrome prompts only then.
+      expect(chromeFake.permissions.request).toHaveBeenCalledWith({ origins: [PATTERN] });
+    });
+    await act(async () => undefined);
     expect(chip()?.getAttribute("aria-pressed")).toBe("true");
     expect(chip()?.textContent).toContain("Sending this page");
   });
@@ -544,6 +548,16 @@ describe("sharing the page next to the panel", () => {
     expect(host.querySelector('.chat__notice[role="alert"]')?.textContent).toContain("does not allow pages to be sent to this model");
     expect(server.callsTo("POST", "/api/chat/completions")).toHaveLength(0);
     expect(chromeFake.scripting.executeScript).not.toHaveBeenCalled();
+    // The page can be turned off, and the question then goes without it.
+    expect(chip()?.disabled).toBe(false);
+    await click(chip()!);
+    expect(chip()?.getAttribute("aria-pressed")).toBe("false");
+    expect(chip()?.disabled).toBe(true);
+    answerWith([textFrame("Without the page.")]);
+    await act(async () => button("Send").click());
+    await act(async () => undefined);
+    expect(server.callsTo("POST", "/api/chat/completions")).toHaveLength(1);
+    expect(server.callsTo("POST", "/api/chat/completions")[0].body).not.toHaveProperty("extension_page_context");
   });
 
   it("turns off when the user switches to another tab", async () => {

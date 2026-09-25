@@ -593,7 +593,8 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
                 type="button"
                 className={`chip${attached ? " chip--on" : ""}`}
                 aria-pressed={attached}
-                disabled={Boolean(pageBlock) || busy}
+                // A page that may not go any more can still be turned off.
+                disabled={busy || (Boolean(pageBlock) && !attached)}
                 onClick={togglePage}
                 title={activePage.url}
               >

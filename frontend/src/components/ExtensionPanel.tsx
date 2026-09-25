@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { api, formatApiError } from "../api";
 import { useConfirm } from "../context/ConfirmContext";
-import { copyTextToClipboard } from "../lib/clipboard";
 import { formatLocalDateTime } from "../lib/dateTime";
 import { PRODUCT_NAME } from "../lib/brand";
+import CopyValue from "./CopyValue";
 
 /**
  * Settings → Extension: download the browser extension, install it in Chrome
@@ -36,33 +36,6 @@ const DEVELOPER_MODE: Record<Browser, string> = {
   chrome: "Turn on Developer mode (top right).",
   edge: "Turn on Developer mode (in the left-hand menu).",
 };
-
-function CopyValue({ label, value }: { label: string; value: string }) {
-  const [copied, setCopied] = useState(false);
-  async function copy() {
-    if (await copyTextToClipboard(value)) {
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 2000);
-    }
-  }
-  return (
-    <label className="settings-field personal-api-key-field">
-      <span className="settings-label">{label}</span>
-      <div className="personal-api-key-field__row">
-        <input readOnly value={value} className="settings-row__control mono personal-api-key-field__input" aria-label={label} />
-        <button
-          type="button"
-          className="btn btn-sm btn-ghost personal-api-key-field__copy"
-          onClick={() => void copy()}
-          aria-label={`Copy ${label}`}
-          title={`Copy ${label}`}
-        >
-          {copied ? "✓" : "Copy"}
-        </button>
-      </div>
-    </label>
-  );
-}
 
 export default function ExtensionPanel() {
   const { confirm } = useConfirm();

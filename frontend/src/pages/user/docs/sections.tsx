@@ -831,6 +831,253 @@ export const userManualSections: DocSection[] = [
     ),
   },
 
+  // ── Browser extension ─────────────────────────────────────────────────────
+  {
+    id: "extension-install",
+    title: "Install the extension",
+    group: "Browser extension",
+    content: (
+      <>
+        <h2>Install the extension</h2>
+        <p>
+          The Alpharouter extension for <strong>Chrome</strong> and <strong>Edge</strong> puts Alpharouter in the
+          browser&apos;s side panel, next to whatever page you are on. It belongs to your organization&apos;s server:
+          a copy downloaded from one Alpharouter works only with that one.
+        </p>
+        <h3>If your organization installs it</h3>
+        <p>
+          IT can install it on managed computers with Group Policy. It then appears in the browser by itself and
+          updates by itself: pin it to the toolbar and choose <strong>Connect</strong>.
+        </p>
+        <h3>Installing it yourself</h3>
+        <ol>
+          <li>
+            Open <strong>Settings → Extension</strong> and choose <strong>Download</strong>. The page shows the steps
+            for Chrome or Edge.
+          </li>
+          <li>Unzip the file and keep the folder: the browser runs the extension from it.</li>
+          <li>
+            Open <code>chrome://extensions</code> (Edge: <code>edge://extensions</code>), turn on{" "}
+            <strong>Developer mode</strong>, choose <strong>Load unpacked</strong> and select the folder.
+          </li>
+          <li>Pin Alpharouter to the toolbar and open it.</li>
+        </ol>
+        <p>
+          The side panel tells you when a newer version is out. To update, download again, unzip over the same
+          folder, and press reload on the extension&apos;s card. <code>Alt+Shift+A</code> opens the panel.
+        </p>
+        <Note>
+          The Extension tab says so when the extension is not enabled for your account, or when the server cannot
+          hand it out yet. Both are for your administrator to change.
+        </Note>
+      </>
+    ),
+  },
+  {
+    id: "extension-connect",
+    title: "Connect and disconnect a browser",
+    group: "Browser extension",
+    content: (
+      <>
+        <h2>Connect and disconnect a browser</h2>
+        <p>
+          Choose <strong>Connect</strong> in the side panel. A tab opens on your Alpharouter; sign in there if you
+          need to, check that it names your account, and choose <strong>Connect</strong> again. The tab says{" "}
+          <em>Connected</em> and closes by itself, and the side panel is ready.
+        </p>
+        <ul>
+          <li>
+            The extension has its own sign-in, separate from the Alpharouter tabs in the same browser, and it can do
+            only what the extension does: chat, your chat history, and its own pages. Never settings, keys or
+            administration.
+          </li>
+          <li>
+            <strong>Settings → Extension → Connected browsers</strong> lists every browser you connected, when it was
+            last used and from where. <strong>Disconnect</strong> ends that browser&apos;s connection at once.
+          </li>
+          <li>
+            The side panel&apos;s <strong>⋯ → Disconnect</strong> ends its own connection.{" "}
+            <strong>Signing out of Alpharouter disconnects every browser too.</strong>
+          </li>
+          <li>A connection that is not used for 30 days ends by itself, and none lasts longer than 180 days.</li>
+        </ul>
+      </>
+    ),
+  },
+  {
+    id: "extension-chat",
+    title: "Chat and pages in the side panel",
+    group: "Browser extension",
+    content: (
+      <>
+        <h2>Chat and pages in the side panel</h2>
+        <p>
+          The side panel is a chat like the one in Alpharouter, with the models you may use. Its chats are saved to
+          your history and carry on in the web app; <strong>⋯ → Private chat</strong> keeps nothing, as{" "}
+          <a href="#private-mode">Private mode</a> does.
+        </p>
+        <h3>Asking about pages</h3>
+        <DocsTable>
+          <thead>
+            <tr>
+              <th>How</th>
+              <th>What goes with your question</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>
+                <strong>This page</strong> (below the message box)
+              </td>
+              <td>
+                The readable text of the page next to the panel. The first time on a site, Chrome may ask you to
+                allow Alpharouter there.
+              </td>
+            </tr>
+            <tr>
+              <td>
+                Right-click the page → <strong>Summarize this page</strong>; right-click selected text →{" "}
+                <strong>Explain</strong>, <strong>Translate … to Persian</strong> or{" "}
+                <strong>Ask Alpharouter about …</strong>
+              </td>
+              <td>The page, or the text you selected.</td>
+            </tr>
+            <tr>
+              <td>
+                <strong>+ Tab</strong>, or <code>@</code> and part of a tab&apos;s title
+              </td>
+              <td>Up to four other tabs of the window, with the next question only.</td>
+            </tr>
+            <tr>
+              <td>
+                Right-click → <strong>Send a screenshot to Alpharouter</strong>, or the <strong>Screenshot</strong>{" "}
+                button when your organization lets the extension read every site
+              </td>
+              <td>A picture of what the tab shows, for a model that reads images.</td>
+            </tr>
+            <tr>
+              <td>A PDF open in a tab</td>
+              <td>
+                Its text, read by the server. The PDF is kept in your <a href="#user-media">Media</a>, as a chat
+                attachment is, so this is not offered in a Private chat.
+              </td>
+            </tr>
+          </tbody>
+        </DocsTable>
+        <ul>
+          <li>
+            Only what you could see goes: hidden text, form fields and what you typed into them stay out, and so do
+            query strings in addresses.
+          </li>
+          <li>
+            Your administrator decides which sites may be read and which models may receive page content; the panel
+            says when a site or a model is not allowed.
+          </li>
+          <li>
+            A page is untrusted: whoever wrote it can write instructions for the model. So a turn that carries a
+            page is answered <strong>without your memory, work profile or project context</strong>, nothing is
+            learned from it, and later turns of that chat are treated the same way. In the web app such answers are
+            labelled <em>From a page on …</em>, and their images are shown as links, never loaded.
+          </li>
+        </ul>
+        <h3>More</h3>
+        <ul>
+          <li>
+            <strong>Insert</strong> under an answer types it into the field you left focused on the page — never
+            into a password, card or code field.
+          </li>
+          <li>
+            Type <code>/</code> at the start of the message box for quick prompts: a few built in, and your own from{" "}
+            <strong>⋯ → Saved prompts</strong>. Saved prompts stay in this browser.
+          </li>
+        </ul>
+      </>
+    ),
+  },
+  {
+    id: "extension-agent",
+    title: "The browser agent",
+    group: "Browser extension",
+    content: (
+      <>
+        <h2>The browser agent</h2>
+        <p>
+          When your administrator allows it, the side panel has an <strong>Agent</strong> tab: describe a task, and
+          Alpharouter carries it out in the tab next to the panel — reading the page, clicking, typing, choosing,
+          opening pages — one step at a time, each shown in the panel as it happens.
+        </p>
+        <h3>Who decides</h3>
+        <DocsTable>
+          <thead>
+            <tr>
+              <th>Kind of step</th>
+              <th>Examples</th>
+              <th>What happens</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Looking</td>
+              <td>Reading or searching the page, listing tabs, scrolling, waiting</td>
+              <td>Goes ahead.</td>
+            </tr>
+            <tr>
+              <td>Acting</td>
+              <td>A click, typing, choosing an option, a key, another page of the same site</td>
+              <td>
+                <strong>Ask</strong> mode: you are asked first. <strong>Auto</strong> mode (when your administrator
+                turned it on): a review model checks it against your task, and asks you when it is not sure.
+              </td>
+            </tr>
+            <tr>
+              <td>Sensitive</td>
+              <td>
+                Sending a form; a button that sends, submits, deletes, confirms, transfers, downloads or publishes;
+                going to another site
+              </td>
+              <td>Always asks you, in either mode.</td>
+            </tr>
+            <tr>
+              <td>Refused</td>
+              <td>
+                Typing into a password, card, one-time-code or identity field; buying or paying; a site your
+                administrator blocks; Alpharouter itself
+              </td>
+              <td>Never happens; the agent is told why.</td>
+            </tr>
+          </tbody>
+        </DocsTable>
+        <p>
+          The approval card says what will happen — the text that will be typed, the site that will open.{" "}
+          <strong>Deny</strong> refuses that action and any others the agent planned alongside it, and the agent is
+          told not to look for a way around your answer. When it needs something only you know, it asks in the
+          panel.
+        </p>
+        <h3>Stopping</h3>
+        <ul>
+          <li>
+            <strong>Stop</strong> in the panel, or on the banner the agent shows on the page it works on, ends the
+            run at once.
+          </li>
+          <li>
+            A run also ends when the agent says it is done, at your administrator&apos;s step limit, or after three
+            failed steps in a row. Closing the side panel ends it too.
+          </li>
+          <li>Tabs the agent opens are grouped under <strong>Alpharouter</strong> in the tab strip.</li>
+        </ul>
+        <Warn>
+          The agent acts in your own signed-in tabs, as you. Read the approval cards, and prefer Ask mode on sites
+          where a wrong click costs something. It works through the page&apos;s own events, so a few sites that
+          accept only real keyboard and mouse input will not react to it.
+        </Warn>
+        <p>
+          Agent runs are not saved to your chat history. Each step is recorded for your administrators — the tool,
+          the site, whether you approved it, and how it ended; for typing, only how many characters, never the
+          text.
+        </p>
+      </>
+    ),
+  },
   // ── Projects ──────────────────────────────────────────────────────────────
   {
     id: "user-projects",
@@ -1162,6 +1409,11 @@ export const userManualSections: DocSection[] = [
             your administrator. For SAML / OIDC accounts, signing out is recorded by the identity provider, not here.
           </li>
         </ul>
+        <h3>Extension</h3>
+        <p>
+          Download the browser extension, see the browsers you connected and disconnect them. See{" "}
+          <a href="#extension-install">Install the extension</a>.
+        </p>
         <h3>API Key</h3>
         <p>
           Create one <strong>personal API key</strong> for OpenAI-compatible tools (scripts, IDEs, Kilo Code). Usage debits your monthly budget (same

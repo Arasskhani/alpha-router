@@ -1995,8 +1995,9 @@ export const docSections: DocSection[] = [
         <h2>Chat Tools</h2>
         <p>
           Path: <code>/admin/chat-tools</code>. Each tool the chat composer can offer — web search, web fetch, image,
-          video and speech generation, voice messages, Code Interpreter, Private Mode — and who in the organization
-          may use it.
+          video and speech generation, voice messages, Code Interpreter, Private Mode — and the browser extension and
+          its agent (see <a href="#admin-browser-extension">Browser extension</a>), and who in the organization may
+          use each.
         </p>
         <h3>How access is decided</h3>
         <ul>
@@ -2049,6 +2050,198 @@ export const docSections: DocSection[] = [
           <code>chat_tool_access_changed</code>, and is visible in{" "}
           <a href="#admin-activity-logs">Admin Logs</a>.
         </p>
+      </>
+    ),
+  },
+  {
+    id: "admin-browser-extension",
+    title: "Browser extension",
+    group: "Chat experience",
+    content: (
+      <>
+        <h2>Browser extension</h2>
+        <p>
+          The Alpharouter extension for Chrome and Edge puts chat in the browser&apos;s side panel, lets people ask
+          about the pages they are on, and — for the people you allow — runs a browser agent that clicks and types
+          in their tabs. Each installation hands out its own copy, signed with its own key, and a copy works only
+          with the server it came from.
+        </p>
+        <h3>Who may use it</h3>
+        <p>
+          Two entries in <a href="#admin-chat-tools">Chat Tools</a> decide, with the usual editor and rules:
+        </p>
+        <ul>
+          <li>
+            <strong>Browser Extension</strong> — downloading it, connecting a browser, and every call a connected
+            browser makes. Open by default, like the other tools. Restricting it for someone keeps their browser
+            connected but refuses its calls until access comes back.
+          </li>
+          <li>
+            <strong>Browser Agent</strong> — the agent. <strong>Nobody has it</strong> until you grant it, and it
+            means nothing without the first.
+          </li>
+        </ul>
+        <h3>Settings</h3>
+        <p>
+          Path: <code>/admin/chat-tools</code>, the <strong>Browser extension</strong> card. Every save is audited
+          as <code>extension_settings_updated</code>.
+        </p>
+        <DocsTable>
+          <thead>
+            <tr>
+              <th>Setting</th>
+              <th>What it decides</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Site access</td>
+              <td>
+                <strong>Per site</strong> (the browser asks the person the first time a site is used) or{" "}
+                <strong>All sites</strong> (granted at install, which a Group Policy install does silently). It
+                changes the extension&apos;s permissions, so it gives the package a new version, and policy-installed
+                copies update to it.
+              </td>
+            </tr>
+            <tr>
+              <td>Allowed and blocked sites</td>
+              <td>
+                Host patterns: <code>example.com</code>, or <code>*.example.com</code> for the domain and its
+                subdomains. Blocked always wins; a non-empty allow list shuts out every other site except this
+                server, whose pages the agent never works on all the same. The extension checks them before it reads
+                or does anything, and the server checks every page a request declares again.
+              </td>
+            </tr>
+            <tr>
+              <td>Models that may receive page content</td>
+              <td>None selected: any model the person may use.</td>
+            </tr>
+            <tr>
+              <td>Models the agent may use</td>
+              <td>
+                None selected: any. The agent sends what it reads on pages to its model, so its model must also be
+                allowed page content: the two lists together decide.
+              </td>
+            </tr>
+            <tr>
+              <td>Most steps per task</td>
+              <td>5 to 100 (default 25): one step is one model call.</td>
+            </tr>
+            <tr>
+              <td>Auto mode and review model</td>
+              <td>
+                Auto mode lets the agent act on allowed sites without asking; the review model checks each action
+                against the person&apos;s task and asks them whenever it is not sure. Sensitive actions (sending,
+                deleting, other sites) always ask. Reviews are billed to the person.
+              </td>
+            </tr>
+          </tbody>
+        </DocsTable>
+        <h3>Handing it out</h3>
+        <ul>
+          <li>
+            People download it from <strong>Settings → Extension</strong>, which shows the install steps.
+          </li>
+          <li>
+            <strong>
+              <code>FRONTEND_URL</code> must be the address people use for this server
+            </strong>
+            : every copy talks to it, and the update address is built from it. The download is refused while it is
+            a loopback address and the request comes from elsewhere.
+          </li>
+          <li>
+            <strong>Group Policy.</strong> Settings → Extension shows IT the extension ID, the update URL and the
+            policy value <code>&lt;id&gt;;&lt;update URL&gt;</code> for <code>ExtensionInstallForcelist</code>{" "}
+            (Chrome: Google Chrome → Extensions; Edge: Microsoft Edge → Extensions). Browsers then install it from{" "}
+            <code>/extension/update.xml</code> and <code>/extension/alpharouter.crx</code> and keep it current.
+            Those two addresses are public on purpose — the browsers&apos; updaters have no session — and carry
+            nothing secret. Serve them over HTTPS.
+          </li>
+        </ul>
+        <h3>The signing key</h3>
+        <p>
+          The key is created once, the first time it is needed, and kept in the database encrypted with{" "}
+          <code>DATA_ENCRYPTION_KEY</code>; database backups carry it. The extension&apos;s ID comes from it, so it
+          must never change: a new key would be a new extension, and every copy already installed would stop being
+          this server&apos;s.
+        </p>
+        <Warn>
+          If <code>DATA_ENCRYPTION_KEY</code> changes, the card shows the key as unreadable and nothing is handed
+          out. Put the previous <code>DATA_ENCRYPTION_KEY</code> back. Do not delete the stored key to make a new
+          one.
+        </Warn>
+        <h3>Connections</h3>
+        <ul>
+          <li>
+            A browser connects through a consent page in the person&apos;s own session. Its tokens are random,
+            stored only as hashes, and good only for the extension&apos;s own calls: chat, the person&apos;s chat
+            history and its own endpoints, never settings, keys or administration.
+          </li>
+          <li>
+            The access token lasts an hour; the refresh token rotates on use, and reusing an old one ends the
+            connection (<code>extension_session_revoked</code>). A connection unused for 30 days ends, and none lasts
+            beyond 180 days.
+          </li>
+          <li>
+            Signing out, a forced sign-out and a deleted account end every connection of the account. People see
+            and disconnect their browsers in Settings → Extension. Connecting and disconnecting are audited (
+            <code>extension_connected</code>, <code>extension_disconnected</code>).
+          </li>
+        </ul>
+        <h3>What the server enforces</h3>
+        <ul>
+          <li>
+            A question that carries pages declares each site: the site rules and the page-content list are checked
+            on the model as the turn will resolve it, before anything is spent. Such a turn — and any later turn of
+            the same chat — gets no memory, work profile or project context, and nothing is learned from it.
+          </li>
+          <li>
+            An agent step is a chat completion with the agent&apos;s tools, accepted only from a connected browser
+            whose owner has Browser Agent, only for a model both lists allow, never together with an Agent Studio
+            agent, chat tools, Code Interpreter or a saved chat, and never saved to history. Its tool calls are
+            billed as output.
+          </li>
+          <li>
+            Limits: the generation limit per person (<code>GENERATION_RATE_LIMIT_PER_MIN</code>, 60 a minute by
+            default — the agent waits and tries again), and 120 event reports and 60 reviews a minute per connected
+            browser.
+          </li>
+        </ul>
+        <h3>What is recorded</h3>
+        <p>
+          <a href="#admin-activity-logs">Admin Logs</a> has a <strong>Browser extension</strong> trail:
+        </p>
+        <ul>
+          <li>
+            <code>page_context</code> — pages shared with a model, one row per site: who, from which browser, how
+            much text, how many screenshots, which model, and whether the chat was private. Never the text.
+          </li>
+          <li>
+            <code>agent_step</code> — each action of the agent: the tool, the site, how it ended (<code>ok</code>,{" "}
+            <code>blocked</code> by the rules, <code>denied</code> by the person, <code>error</code>,{" "}
+            <code>skipped</code>), who approved it (<code>user</code>, <code>review</code> or{" "}
+            <code>not_needed</code>), the element&apos;s role and label, and for typing the number of characters.
+            Never what was typed.
+          </li>
+          <li>
+            <code>agent_task</code> — each run: how it ended (<code>done</code>, <code>stopped</code>,{" "}
+            <code>max_steps</code>, <code>errors</code> for three failed actions in a row, <code>failed</code>), how
+            many steps, the model and how long it took.
+          </li>
+        </ul>
+        <p>
+          The trail follows the audit retention windows (<a href="#admin-retention">Retention Policy</a>): details
+          are blanked first, rows removed later. Chat turns from the extension appear in{" "}
+          <a href="#admin-logs">API Logs</a> as <strong>Alpharouter Extension</strong>.
+        </p>
+        <h3>Known limits</h3>
+        <ul>
+          <li>
+            The agent acts through the page&apos;s own events, without the debugger: sites that accept only trusted
+            input do not react. It does not reach into frames or closed shadow roots.
+          </li>
+          <li>The agent runs in the side panel: closing the panel ends the run.</li>
+        </ul>
       </>
     ),
   },

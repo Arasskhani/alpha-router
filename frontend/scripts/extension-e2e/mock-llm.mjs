@@ -10,6 +10,8 @@
  *   model to write, which the web app must never load;
  * - a question naming PLANT_IMAGE_MESSAGE is answered with one of the chat's
  *   own image messages pointing at `plantBase`, for the same reason;
+ * - a question that comes with a screenshot is answered with the screenshot's
+ *   site (the model reads images, as its catalog entry says);
  * - the chat title helper is answered with the question's words (chatTitle),
  *   so each chat the check makes has a title of its own;
  * - anything else with a fixed line.
@@ -24,8 +26,17 @@ export const PLANT_IMAGE_MESSAGE = "PLANT-IMAGE-MESSAGE";
 const IMAGE_MESSAGE_PREFIX = "__ALPHA_ROUTER_IMAGE_JSON__:";
 // The wrapper's tag may carry a per-message suffix (untrusted_page_content_1a2b…).
 const PAGE_WRAPPER = /<untrusted_page_content(?:_[0-9a-f]+)? [^>]*title="([^"]*)"/;
+const SCREENSHOT_WRAPPER = /<untrusted_page_screenshot_[0-9a-f]+ site="([^"]*)"/;
 
-const text = (message) => (typeof message?.content === "string" ? message.content : "");
+/** A message's text: the string, or its text parts. */
+const text = (message) =>
+  typeof message?.content === "string"
+    ? message.content
+    : Array.isArray(message?.content)
+      ? message.content.filter((part) => part?.type === "text").map((part) => part.text ?? "").join("\n")
+      : "";
+
+const hasImage = (message) => Array.isArray(message?.content) && message.content.some((part) => part?.type === "image_url");
 
 /** The title the mock gives a chat that starts with this question: its letters, digits and spaces. */
 export function chatTitle(question) {
@@ -51,6 +62,9 @@ function replyFor(messages, plantBase) {
   if (question.includes(PLANT_IMAGE_MESSAGE)) {
     return `${IMAGE_MESSAGE_PREFIX}${JSON.stringify({ url: `${plantBase}/image-message.png`, prompt: "planted", model: MOCK_MODEL })}`;
   }
+  const shot = messages.find((m) => m.role === "user" && hasImage(m));
+  const site = shot ? SCREENSHOT_WRAPPER.exec(text(shot))?.[1] : null;
+  if (site) return `The screenshot is of ${site}.`;
   const title = titleOf(messages);
   if (title !== null) return `The page is titled “${title}”. ![chart](${plantBase}/markdown-image.png)`;
   return PLAIN_REPLY;
@@ -77,7 +91,9 @@ export async function startMockLlm({ port = 0, plantBase = "https://planted.inva
     try {
       if (req.method === "GET" && req.url?.endsWith("/models")) {
         res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ object: "list", data: [{ id: MOCK_MODEL, object: "model", created: 1_700_000_000, owned_by: "e2e" }] }));
+        // It reads images: the catalog takes that from the architecture, as OpenRouter publishes it.
+        const architecture = { input_modalities: ["text", "image"], output_modalities: ["text"] };
+        res.end(JSON.stringify({ object: "list", data: [{ id: MOCK_MODEL, object: "model", created: 1_700_000_000, owned_by: "e2e", architecture }] }));
         return;
       }
       if (req.method === "POST" && req.url?.endsWith("/chat/completions")) {

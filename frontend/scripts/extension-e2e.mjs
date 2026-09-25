@@ -34,7 +34,11 @@
  *   9. the web app showing those answers labelled, as text: no image, video
  *      or audio element, and no request for the addresses the answers carry;
  *  10. the shares recorded in Admin Logs;
- *  11. disconnecting this browser from Settings → Extension in the web app,
+ *  11. the work assistant: another tab added to a question; a screenshot of
+ *      the page sent to the model (which reads images); an answer typed into
+ *      the field left focused on a page, and refused for a password field;
+ *      a PDF tab read through the server;
+ *  12. disconnecting this browser from Settings → Extension in the web app,
  *      after which the panel asks to connect again.
  *
  * The side panel is driven over its own DevTools connection: Playwright does
@@ -42,8 +46,9 @@
  * zlib.crc32).
  *
  * Run it from frontend/ against a development stack whose backend allows the
- * mock provider on 127.0.0.1 (ALLOW_SSRF_PRIVATE_RANGES=true) and whose
- * FRONTEND_URL is the address below:
+ * mock provider on 127.0.0.1 (ALLOW_SSRF_PRIVATE_RANGES=true), accepts
+ * uploads for the PDF step (a ClamAV it can reach, or CLAMAV_REQUIRED=false)
+ * and whose FRONTEND_URL is the address below:
  *
  *   EXT_E2E_USER=admin EXT_E2E_PASSWORD=... npm run e2e:extension
  *
@@ -90,6 +95,13 @@ const PROFILE_MARKER = `E2E-${NONCE}-job`;
 /** Where the answers' planted images point: the app's own origin, which the web app's CSP allows. */
 const PLANT_PATH = `/e2e-planted/${NONCE}`;
 const PAGE_SITE = "127.0.0.1";
+const OTHER_TITLE = `Other page ${NONCE}`;
+const OTHER_VISIBLE = "The other page lists three suppliers and their prices.";
+const PDF_NAME = `report-${NONCE}.pdf`;
+const PDF_TEXT = "Quarterly revenue grew twelve percent";
+const TAB_QUESTION = `Compare with the other tab (${NONCE})`;
+const SHOT_QUESTION = `What does the screenshot show? (${NONCE})`;
+const PDF_QUESTION = `What does the PDF say? (${NONCE})`;
 
 class SetupError extends Error {}
 const setupError = (message) => {
@@ -234,21 +246,68 @@ function freePort() {
   });
 }
 
-/** The page the side panel is asked about: an article, site navigation, and text hidden from people. */
+/** A one-page PDF whose only content is `text` (ASCII, no brackets), in a standard font. */
+function pdfWith(text) {
+  const stream = `BT /F1 18 Tf 72 720 Td (${text}) Tj ET`;
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+    `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+  ];
+  let out = "%PDF-1.4\n";
+  const offsets = [];
+  objects.forEach((body, index) => {
+    offsets.push(Buffer.byteLength(out, "latin1"));
+    out += `${index + 1} 0 obj\n${body}\nendobj\n`;
+  });
+  const xref = Buffer.byteLength(out, "latin1");
+  out += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  out += offsets.map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`).join("");
+  out += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(out, "latin1");
+}
+
+/**
+ * The pages the side panel is asked about: an article with site navigation
+ * and text hidden from people, another page, a form, and a PDF.
+ */
 async function startTestSite() {
-  const html = `<!doctype html><html lang="en"><head><title>${PAGE_TITLE}</title></head><body>
+  const pages = {
+    "/report.html": `<!doctype html><html lang="en"><head><title>${PAGE_TITLE}</title></head><body>
 <nav>Home · Reports · Contact</nav>
 <main><h1>Quarterly report</h1><p>${VISIBLE}</p>
 <p>Costs stayed flat, and the team expects the same next quarter.</p>
 <p style="display:none">${HIDDEN}</p>
 <p><span style="font-size:0">${HIDDEN}</span>A visible closing remark.</p></main>
-<footer>© Example Corp</footer></body></html>`;
-  const server = http.createServer((_req, res) => {
-    res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-    res.end(html);
+<footer>© Example Corp</footer></body></html>`,
+    "/other.html": `<!doctype html><html lang="en"><head><title>${OTHER_TITLE}</title></head><body>
+<main><h1>Suppliers</h1><p>${OTHER_VISIBLE}</p><p>${"More about the suppliers. ".repeat(12)}</p></main></body></html>`,
+    "/form.html": `<!doctype html><html lang="en"><head><title>Form ${NONCE}</title></head><body>
+<form><label>Notes <textarea id="notes"></textarea></label>
+<label>Password <input id="password" type="password"></label></form></body></html>`,
+  };
+  const pdf = pdfWith(PDF_TEXT);
+  const server = http.createServer((req, res) => {
+    const path = new URL(req.url ?? "/", "http://site").pathname;
+    if (path === `/${PDF_NAME}`) {
+      res.writeHead(200, { "content-type": "application/pdf", "content-length": pdf.length });
+      res.end(pdf);
+      return;
+    }
+    res.writeHead(pages[path] ? 200 : 404, { "content-type": "text/html; charset=utf-8" });
+    res.end(pages[path] ?? "not found");
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  return { url: `http://${PAGE_SITE}:${server.address().port}/report.html`, close: () => server.close() };
+  const base = `http://${PAGE_SITE}:${server.address().port}`;
+  return {
+    url: `${base}/report.html`,
+    otherUrl: `${base}/other.html`,
+    formUrl: `${base}/form.html`,
+    pdfUrl: `${base}/${PDF_NAME}`,
+    close: () => server.close(),
+  };
 }
 
 // ---------------------------------------------------------------- the side panel, over DevTools
@@ -325,8 +384,11 @@ async function connectPanel(target) {
       if (await run(expression).catch(() => false)) return;
       await sleep(200);
     }
-    const says = await run("document.body.innerText").catch((err) => `(unreadable: ${err.message})`);
-    throw new Error(`timed out waiting for ${what}; the panel says: ${String(says).slice(0, 300)}`);
+    // What the user would read: the alerts, the chips, the list and the conversation, not the model picker.
+    const says = await run(
+      `[...document.querySelectorAll('[role=alert], .chat__context, .tab-picker, .chat__log')].map((el) => el.innerText.trim()).filter(Boolean).join(" | ")`,
+    ).catch((err) => `(unreadable: ${err.message})`);
+    throw new Error(`timed out waiting for ${what}; the panel says: ${String(says).slice(-600)}`);
   };
   return { send, run, until, close: () => socket.close() };
 }
@@ -387,6 +449,7 @@ async function main() {
   localUndo.push({ name: "stop the test site", fn: () => site.close() });
   let context = null;
   let panel = null;
+  let article = null;
   let modelRef = "";
 
   const ready = await step("the admin API sets up a mock provider and the extension settings", async () => {
@@ -470,7 +533,7 @@ async function main() {
   if (!connected) return;
 
   const opened = await step("the side panel opens next to a page", async () => {
-    const article = await context.newPage();
+    article = await context.newPage();
     await article.goto(site.url);
     const target = await openPanelTarget(debugPort, setup);
     await article.bringToFront();
@@ -610,6 +673,106 @@ async function main() {
     expect(rows.length >= 2, `${rows.length} row(s) for the two turns that carried the page`);
     expect(rows.every((row) => row.action === "page_context" && row.actor_username === USER), `unexpected row: ${JSON.stringify(rows[0])}`);
     expect(!JSON.stringify(rows).includes(VISIBLE), "the page text is in the log");
+  });
+
+  /** Delete the saved chat that starts with `question`, at clean-up. */
+  const forgetChatAbout = (question) =>
+    serverUndo.push({
+      name: `delete the chat “${question}”`,
+      fn: async () => {
+        const chat = await findChat(question);
+        if (chat) await callJson(`/api/user/chats/sessions/${encodeURIComponent(chat.id)}`, { method: "DELETE" });
+      },
+    });
+
+  await step("another tab of the window goes with a question", async () => {
+    expect(panel && article, "no side panel");
+    const other = await context.newPage();
+    await other.goto(site.otherUrl);
+    await article.bringToFront();
+    forgetChatAbout(TAB_QUESTION);
+    await panel.run(clickButton("New chat"));
+    await panel.run(`document.querySelector('[aria-label="Add a tab"]').click()`);
+    await panel
+      .until(`[...document.querySelectorAll('.tab-picker__item')].some((b) => b.textContent.includes(${JSON.stringify(OTHER_TITLE)}))`, "the other tab in the list")
+      .catch(async (err) => {
+        const tabs = await panel.run("chrome.tabs.query({}).then((all) => all.map((t) => `${t.windowId}:${t.active ? '*' : ''}${t.title}`).join(', '))");
+        const mine = await panel.run("chrome.windows.getCurrent().then((w) => w.id)");
+        throw new Error(`${err.message} [panel window ${mine}; tabs ${tabs}]`);
+      });
+    await panel.run(`[...document.querySelectorAll('.tab-picker__item')].find((b) => b.textContent.includes(${JSON.stringify(OTHER_TITLE)})).click()`);
+    await panel.until(`[...document.querySelectorAll('.chip--static')].some((c) => c.textContent.includes(${JSON.stringify(OTHER_TITLE)}))`, "the tab's chip");
+    await ask(panel, TAB_QUESTION, `The page is titled “${OTHER_TITLE}”.`);
+    const everything = JSON.stringify(requestFor(mock, TAB_QUESTION).messages);
+    expect(everything.includes(OTHER_VISIBLE), "the other tab's text did not reach the model");
+    expect(!everything.includes(VISIBLE), "the page next to the panel went too, though it was not chosen");
+  });
+
+  await step("a screenshot of the page goes to a model that reads images", async () => {
+    expect(panel && article, "no side panel");
+    await article.bringToFront();
+    forgetChatAbout(SHOT_QUESTION);
+    await panel.run(clickButton("New chat"));
+    await panel.until(`document.querySelector('[aria-label="Take a screenshot of the page"]') && !document.querySelector('[aria-label="Take a screenshot of the page"]').disabled`, "the screenshot button");
+    await panel.run(`document.querySelector('[aria-label="Take a screenshot of the page"]').click()`);
+    await panel.until(`[...document.querySelectorAll('.chip--static')].some((c) => c.textContent.startsWith("Screenshot"))`, "the screenshot's chip");
+    await ask(panel, SHOT_QUESTION, `The screenshot is of ${PAGE_SITE}.`);
+    const sent = requestFor(mock, SHOT_QUESTION);
+    const image = sent.messages.flatMap((m) => (Array.isArray(m.content) ? m.content : [])).find((part) => part.type === "image_url");
+    expect(image?.image_url?.url?.startsWith("data:image/jpeg;base64,"), "no JPEG reached the model");
+    const logs = await callJson("/api/admin/admin-logs?source=browser_extension&limit=20");
+    expect(logs.items.some((item) => item.resource_id === PAGE_SITE && item.detail?.images === 1), "the screenshot is not in Admin Logs");
+  });
+
+  await step("an answer goes into the field left focused on a page, never into a password field", async () => {
+    expect(panel, "no side panel");
+    const form = await context.newPage();
+    await form.goto(site.formUrl);
+    await form.bringToFront();
+    await form.focus("#notes");
+    const insert = `(() => { const all = [...document.querySelectorAll('[aria-label="Insert answer into the page"]')]; all[all.length - 1].click(); })()`;
+    await panel.until(`document.querySelectorAll('[aria-label="Insert answer into the page"]').length > 0`, "the Insert button");
+    await panel.run(insert);
+    await panel.until(`[...document.querySelectorAll('[aria-label="Insert answer into the page"]')].some((b) => b.textContent === "Inserted")`, "the answer to go in");
+    const typed = await form.inputValue("#notes");
+    expect(typed === `The screenshot is of ${PAGE_SITE}.`, `the field holds “${typed}”`);
+    await form.focus("#password");
+    await panel.run(insert);
+    await panel.until("document.body.innerText.includes('does not type into password')", "the refusal");
+    expect((await form.inputValue("#password")) === "", "the answer went into the password field");
+    await form.close();
+  });
+
+  await step("a PDF tab is read through the server", async () => {
+    expect(panel, "no side panel");
+    serverUndo.push({
+      name: "delete the PDF from Media",
+      fn: async () => {
+        const found = await callJson(`/api/user/media?q=${encodeURIComponent(PDF_NAME)}`);
+        const items = found.items ?? found.assets ?? found;
+        for (const item of Array.isArray(items) ? items : []) {
+          if (String(item.file_name ?? item.filename ?? "").includes(PDF_NAME)) {
+            await callJson(`/api/user/media/${item.id}`, { method: "DELETE" });
+          }
+        }
+      },
+    });
+    forgetChatAbout(PDF_QUESTION);
+    const pdfTab = await context.newPage();
+    await pdfTab.goto(site.pdfUrl).catch(() => undefined);
+    await pdfTab.bringToFront();
+    await panel.run(clickButton("New chat"));
+    await panel.until(`document.querySelector('button.chip')?.innerText.includes("This PDF")`, "the PDF chip");
+    await panel.run("document.querySelector('button.chip').click()");
+    await panel.until("document.querySelector('button.chip').getAttribute('aria-pressed') === 'true'", "the chip to turn on");
+    await panel.run(typeInto("textarea", PDF_QUESTION));
+    await panel.run(clickButton("Send"));
+    await panel.until(
+      `document.body.innerText.includes("PDF, kept in your Media") && [...document.querySelectorAll('button')].some((b) => b.textContent === 'Send') && !document.body.innerText.includes('Thinking')`,
+      "the answer about the PDF",
+      40_000,
+    );
+    expect(JSON.stringify(requestFor(mock, PDF_QUESTION).messages).includes(PDF_TEXT), "the PDF's text did not reach the model");
   });
 
   await step("disconnecting this browser from Settings → Extension ends the panel's session", async () => {

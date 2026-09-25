@@ -35,7 +35,7 @@ let host: HTMLDivElement;
 let root: Root;
 let replies: string[][];
 let tabId: number;
-const pageCalls: Array<{ method: string; args: Record<string, unknown> }> = [];
+const pageCalls: Array<{ method: string; args: Record<string, unknown>; banner?: { run: string; label: string } | null }> = [];
 const onDisconnected = vi.fn();
 
 function toolFrame(calls: Array<{ id: string; name: string; args?: Record<string, unknown> }>): string[] {
@@ -57,10 +57,10 @@ beforeEach(() => {
   chromeFake.permissions.granted.add("https://shop.example.com/*");
   pageCalls.length = 0;
   chromeFake.scripting.executeScript.mockImplementation(async (injection: unknown) => {
-    const { files, args } = injection as { files?: string[]; args?: [string, string, Record<string, unknown>] };
+    const { files, args } = injection as { files?: string[]; args?: [string, string, Record<string, unknown>, { run: string; label: string } | null] };
     if (files) return [];
-    const [, method, input] = args!;
-    pageCalls.push({ method, args: input });
+    const [, method, input, banner] = args!;
+    pageCalls.push({ method, args: input, banner });
     if (method === "read_page") return [{ result: { ok: true, outline: OUTLINE, elements: Object.values(ELEMENTS), truncated: false, url: "", title: "" } }];
     if (method === "describe") return [{ result: { ok: true, element: ELEMENTS[input.ref as "e1"] } }];
     return [{ result: { ok: true, note: "Done." } }];
@@ -138,7 +138,7 @@ describe("a run", () => {
     await act(async () => button("Allow").click());
     await until(() => host.textContent!.includes("Moved to the next step."), "the summary");
     expect(host.textContent).toContain("Finished");
-    expect(pageCalls.filter((c) => c.method === "click")).toEqual([{ method: "click", args: { ref: "e1" } }]);
+    expect(pageCalls.filter((c) => c.method === "click")).toEqual([{ method: "click", args: { ref: "e1" }, banner: expect.objectContaining({ run: expect.any(String) }) }]);
     // Each step stands alone: never saved to a chat, never tied to an assistant message.
     const bodies = server.calls.filter((c) => c.path === "/api/chat/completions").map((c) => c.body as Record<string, unknown>);
     expect(bodies).toHaveLength(3);
@@ -150,8 +150,8 @@ describe("a run", () => {
       expect(body).not.toHaveProperty("chat_session_id");
       expect(body).not.toHaveProperty("private_mode");
     }
-    // The banner went up on the page, and came down at the end.
-    expect(pageCalls.some((c) => c.method === "show_overlay")).toBe(true);
+    // The banner went up with each action on the page, and came down at the end.
+    expect(pageCalls.filter((c) => c.method !== "hide_overlay").every((c) => c.banner?.run)).toBe(true);
     expect(pageCalls.at(-1)?.method).toBe("hide_overlay");
     // The trail reached the server.
     const events = server.calls.filter((c) => c.path === "/api/extension/events").flatMap((c) => (c.body as { events: unknown[] }).events);
@@ -175,7 +175,7 @@ describe("a run", () => {
     await start("Click next.");
     await until(() => Boolean(host.querySelector('[role="alertdialog"]')), "the approval card");
     // A Stop from another tab, or for another run, is not this run's.
-    const run = (pageCalls.find((c) => c.method === "show_overlay")?.args.run as string) ?? "";
+    const run = pageCalls.find((c) => c.banner)?.banner?.run ?? "";
     await act(async () => {
       chromeFake.runtime.deliver({ type: "agent-stop", run }, { url: "https://evil.example.net/", tab: { id: 999 } as chrome.tabs.Tab });
       chromeFake.runtime.deliver({ type: "agent-stop", run: "run-other" }, { url: "https://shop.example.com/cart", tab: { id: tabId } as chrome.tabs.Tab });

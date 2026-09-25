@@ -32,7 +32,24 @@ describe("a call to the page", () => {
     const [inject, run] = chromeFake.scripting.executeScript.mock.calls.map(([injection]) => injection as Injection);
     expect(inject).toEqual({ target: { tabId: 7 }, files: ["content.js"] });
     expect(run.target).toEqual({ tabId: 7 });
-    expect(run.args).toEqual(["https://shop.example.com", "type_text", { ref: "e3", text: "hello" }]);
+    expect(run.args).toEqual(["https://shop.example.com", "type_text", { ref: "e3", text: "hello" }, null]);
+  });
+
+  it("puts the run's banner up before the action, when asked to", async () => {
+    chromeFake.scripting.executeScript.mockResolvedValue([]);
+    await callPage(SHOP, "click", { ref: "e1" }, { run: "run-1", label: "Working" });
+    const run = chromeFake.scripting.executeScript.mock.calls[1][0] as Injection;
+    expect(run.args?.[3]).toEqual({ run: "run-1", label: "Working" });
+    const seen: string[] = [];
+    vi.stubGlobal("__alpharouter", { agent: vi.fn((method: string) => (seen.push(method), { ok: true })) });
+    vi.stubGlobal("location", { origin: "https://shop.example.com" });
+    run.func!(...run.args!);
+    expect(seen).toEqual(["show_overlay", "click"]);
+    // Not on a page that is no longer the one judged.
+    seen.length = 0;
+    vi.stubGlobal("location", { origin: "https://evil.example.net" });
+    expect(run.func!(...run.args!)).toMatchObject({ error: "moved" });
+    expect(seen).toEqual([]);
   });
 
   it("checks the origin inside the page, where no navigation comes between", async () => {
@@ -44,11 +61,11 @@ describe("a call to the page", () => {
     // Another site, and the same host on another port or scheme: not the page the rules judged.
     for (const origin of ["https://evil.example.net", "https://shop.example.com:8443", "http://shop.example.com"]) {
       vi.stubGlobal("location", { origin });
-      expect(run.func!("https://shop.example.com", "click", { ref: "e1" })).toMatchObject({ ok: false, error: "moved" });
+      expect(run.func!("https://shop.example.com", "click", { ref: "e1" }, null)).toMatchObject({ ok: false, error: "moved" });
     }
     expect(agent).not.toHaveBeenCalled();
     vi.stubGlobal("location", { origin: "https://shop.example.com" });
-    expect(run.func!("https://shop.example.com", "click", { ref: "e1" })).toEqual({ ok: true });
+    expect(run.func!("https://shop.example.com", "click", { ref: "e1" }, null)).toEqual({ ok: true });
     expect(agent).toHaveBeenCalledWith("click", { ref: "e1" });
   });
 

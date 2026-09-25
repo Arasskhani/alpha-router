@@ -7,15 +7,15 @@ import { installChromeFake, type ChromeFake } from "../test/chromeFake";
 import { createAgentBrowser } from "./agentBrowser";
 
 let chromeFake: ChromeFake;
-const pageCalls: Array<{ tabId: number; method: string; args: unknown }> = [];
+const pageCalls: Array<{ tabId: number; method: string; args: unknown; banner: unknown }> = [];
 
 beforeEach(() => {
   chromeFake = installChromeFake();
   pageCalls.length = 0;
   chromeFake.scripting.executeScript.mockImplementation(async (injection: unknown) => {
-    const { files, target, args } = injection as { files?: string[]; target: { tabId: number }; args?: [string, string, unknown] };
+    const { files, target, args } = injection as { files?: string[]; target: { tabId: number }; args?: [string, string, unknown, unknown] };
     if (files) return [];
-    pageCalls.push({ tabId: target.tabId, method: args![1], args: args![2] });
+    pageCalls.push({ tabId: target.tabId, method: args![1], args: args![2], banner: args![3] });
     return [{ result: { ok: true, note: "Done." } }];
   });
 });
@@ -25,20 +25,32 @@ afterEach(() => {
 });
 
 describe("the browser the agent uses", () => {
-  it("works in the tab next to the panel, and puts its banner up once per page", async () => {
+  it("works in the tab next to the panel, with its banner up for every action", async () => {
     const tab = chromeFake.tabs.add({ url: "https://shop.example.com/cart", title: "Cart", active: true });
     const browser = createAgentBrowser({ startTabId: tab.id!, runId: "run-1" });
     await expect(browser.current()).resolves.toEqual({ id: tab.id, url: "https://shop.example.com/cart", host: "shop.example.com", title: "Cart" });
     await browser.page("read_page");
     await browser.page("click", { ref: "e1" });
-    expect(pageCalls.map((c) => c.method)).toEqual(["show_overlay", "read_page", "click"]);
-    expect(pageCalls[0].args).toMatchObject({ run: "run-1" });
-    // Another page in the same tab: the banner goes up again there.
-    chromeFake.tabs.update(tab.id!, { url: "https://shop.example.com/checkout" });
-    await browser.page("read_page");
-    expect(pageCalls.map((c) => c.method)).toEqual(["show_overlay", "read_page", "click", "show_overlay", "read_page"]);
+    // Each action puts the banner up again: a page that removed it gets it back.
+    expect(pageCalls.map((c) => [c.method, c.banner])).toEqual([
+      ["read_page", { run: "run-1", label: "Alpharouter is working on this page" }],
+      ["click", { run: "run-1", label: "Alpharouter is working on this page" }],
+    ]);
+    expect(browser.bannerTabs()).toEqual([tab.id]);
     await browser.cleanup();
-    expect(pageCalls.at(-1)).toMatchObject({ tabId: tab.id, method: "hide_overlay", args: { run: "run-1" } });
+    expect(pageCalls.at(-1)).toMatchObject({ tabId: tab.id, method: "hide_overlay", args: { run: "run-1" }, banner: null });
+  });
+
+  it("takes its banner off a tab it leaves", async () => {
+    const start = chromeFake.tabs.add({ url: "https://shop.example.com/", active: true });
+    const other = chromeFake.tabs.add({ url: "https://docs.example.com/", title: "Docs" });
+    const browser = createAgentBrowser({ startTabId: start.id!, runId: "run-1" });
+    await browser.page("read_page");
+    await browser.switchTab(other.id!);
+    await vi.waitFor(() => expect(pageCalls.at(-1)).toMatchObject({ tabId: start.id, method: "hide_overlay" }));
+    expect(browser.bannerTabs()).toEqual([]);
+    await browser.page("read_page");
+    expect(browser.bannerTabs()).toEqual([other.id]);
   });
 
   it("acts only on the page the rules judged: a tab gone to another site answers moved", async () => {

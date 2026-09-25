@@ -16,7 +16,7 @@ type Styles = Record<string, string>;
 
 function styled<K extends keyof HTMLElementTagNameMap>(doc: Document, tag: K, styles: Styles): HTMLElementTagNameMap[K] {
   const el = doc.createElement(tag);
-  for (const [name, value] of Object.entries(styles)) el.style.setProperty(name, value, "important");
+  setStyles(el, styles);
   return el;
 }
 
@@ -29,7 +29,44 @@ export type StopSender = (message: { type: "agent-stop"; run: string }) => unkno
 /** After Stop, the side panel takes the banner off; if it cannot, the banner goes by itself after this. */
 const STOP_FALLBACK_MS = 5000;
 
-/** Show (or update) the banner for run `run`; Stop sends `agent-stop` for that run. */
+/**
+ * The banner's own box, set on the element itself with priority: a page's
+ * style sheet cannot hide, shrink, move or cover it (`#…{display:none
+ * !important}`, a transform, opacity), since a declaration on the element
+ * wins over the sheet's. Set again each time the banner is shown, in case
+ * the page's script changed them.
+ */
+const HOST_STYLES: Styles = {
+  display: "block",
+  visibility: "visible",
+  opacity: "1",
+  position: "fixed",
+  right: "16px",
+  bottom: "16px",
+  left: "auto",
+  top: "auto",
+  width: "auto",
+  height: "auto",
+  transform: "none",
+  filter: "none",
+  "clip-path": "none",
+  "pointer-events": "auto",
+  "z-index": "2147483647",
+  margin: "0",
+  padding: "0",
+  border: "0",
+  background: "transparent",
+};
+
+function setStyles(el: HTMLElement, styles: Styles): void {
+  for (const [name, value] of Object.entries(styles)) el.style.setProperty(name, value, "important");
+}
+
+/**
+ * Show (or update) the banner for run `run`; Stop sends `agent-stop` for that
+ * run. The panel shows it with every action, so a banner the page removed
+ * comes back.
+ */
 export function showOverlay(doc: Document, run: string, label: string, send: StopSender): void {
   let host = doc.getElementById(OVERLAY_ID);
   if (host && host.dataset.run !== run) {
@@ -37,21 +74,13 @@ export function showOverlay(doc: Document, run: string, label: string, send: Sto
     host = null;
   }
   if (host) {
+    setStyles(host, HOST_STYLES);
     const text = (host as HTMLElement & { __label?: HTMLElement }).__label;
     if (text) text.textContent = label;
     return;
   }
   const root = doc.body ?? doc.documentElement;
-  host = styled(doc, "div", {
-    position: "fixed",
-    right: "16px",
-    bottom: "16px",
-    "z-index": "2147483647",
-    margin: "0",
-    padding: "0",
-    border: "0",
-    background: "transparent",
-  });
+  host = styled(doc, "div", HOST_STYLES);
   host.id = OVERLAY_ID;
   host.dataset.run = run;
   const shadow = host.attachShadow({ mode: "closed" });

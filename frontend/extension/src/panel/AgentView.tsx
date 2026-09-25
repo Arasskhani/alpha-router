@@ -169,12 +169,12 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
     };
   }, [me, autoAllowed, modelLoads]);
 
-  // Stop from the banner on the page the agent works in: only from our own script there, for this run.
+  // Stop from a banner the run put on a page: only from our own script in one of those tabs, for this run.
   useEffect(() => {
     const listener = (message: unknown, sender: chrome.runtime.MessageSender) => {
-      const tabId = browser.current?.workingTab();
-      if (tabId === null || tabId === undefined || !isExtensionMessage(message) || message.type !== "agent-stop") return;
-      if (message.run === runId.current && fromTabScript(sender, tabId)) controller.current?.abort();
+      if (!isExtensionMessage(message) || message.type !== "agent-stop" || message.run !== runId.current) return;
+      const tabs = browser.current?.bannerTabs() ?? [];
+      if (tabs.some((tabId) => fromTabScript(sender, tabId))) controller.current?.abort();
     };
     chrome.runtime.onMessage.addListener(listener);
     return () => chrome.runtime.onMessage.removeListener(listener);

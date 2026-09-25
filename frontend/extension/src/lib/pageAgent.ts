@@ -145,11 +145,20 @@ type AgentScope = { __alpharouter?: { agent?: (method: unknown, args: unknown) =
  */
 export type PageTarget = { tabId: number; host: string; origin: string };
 
+/** The agent's banner, put up (again) on the page before the action: which run, and what it says. */
+export type OverlayRequest = { run: string; label: string };
+
 /**
  * Run one agent action in the tab `target.tabId`, only while it shows a page
- * of `target.origin`. Never throws: every outcome is a PageResult.
+ * of `target.origin`, with the run's banner shown first when `overlay` is
+ * given. Never throws: every outcome is a PageResult.
  */
-export async function callPage(target: PageTarget, method: PageMethod, args: Record<string, unknown> = {}): Promise<PageResult> {
+export async function callPage(
+  target: PageTarget,
+  method: PageMethod,
+  args: Record<string, unknown> = {},
+  overlay: OverlayRequest | null = null,
+): Promise<PageResult> {
   const { tabId, host, origin } = target;
   let results: Array<{ result?: unknown }>;
   try {
@@ -158,11 +167,14 @@ export async function callPage(target: PageTarget, method: PageMethod, args: Rec
       target: { tabId },
       // Serialized into the page: it may use nothing from this module. The
       // origin, not the host: another port or scheme of a host is another site.
-      func: (expected: string, name: string, input: Record<string, unknown>) =>
-        location.origin === expected
-          ? ((globalThis as AgentScope).__alpharouter?.agent?.(name, input) ?? { ok: false, error: "failed", message: "The page's helper is missing." })
-          : { ok: false, error: "moved", message: `The tab left ${expected}.` },
-      args: [origin, method, args],
+      func: (expected: string, name: string, input: Record<string, unknown>, banner: OverlayRequest | null) => {
+        if (location.origin !== expected) return { ok: false, error: "moved", message: `The tab left ${expected}.` };
+        const agent = (globalThis as AgentScope).__alpharouter?.agent;
+        if (!agent) return { ok: false, error: "failed", message: "The page's helper is missing." };
+        if (banner) agent("show_overlay", banner);
+        return agent(name, input);
+      },
+      args: [origin, method, args, overlay],
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "";

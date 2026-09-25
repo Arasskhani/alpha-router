@@ -7,7 +7,7 @@
  * in, and taken off every one of them when the run ends.
  */
 
-import { callPage, type PageMethod, type PageResult, type PageTarget } from "../lib/pageAgent";
+import { callPage, type OverlayRequest, type PageMethod, type PageResult, type PageTarget } from "../lib/pageAgent";
 import { readablePage } from "../lib/sites";
 import type { AgentBrowser, WorkTab } from "./agentRun";
 
@@ -32,8 +32,10 @@ function targetOf(tab: WorkTab): PageTarget | null {
 }
 
 export type PanelBrowser = AgentBrowser & {
-  /** The tab the agent works in now, for the overlay's Stop. */
+  /** The tab the agent works in now. */
   workingTab(): number | null;
+  /** Every tab the run put its banner on: a Stop from any of them stops the run. */
+  bannerTabs(): number[];
   /** Take the banner off every page it was put on. */
   cleanup(): Promise<void>;
 };
@@ -41,8 +43,9 @@ export type PanelBrowser = AgentBrowser & {
 export function createAgentBrowser(options: { startTabId: number | null; runId: string; windowId?: number }): PanelBrowser {
   let working = options.startTabId;
   let groupId: number | null = null;
-  /** Where the banner is up: tab id → the page it was put on. */
-  const overlays = new Map<number, { url: string; target: PageTarget }>();
+  /** Where the banner went up: tab id → the page it was put on. */
+  const overlays = new Map<number, PageTarget>();
+  const banner: OverlayRequest = { run: options.runId, label: OVERLAY_LABEL };
 
   async function current(): Promise<WorkTab | null> {
     if (working === null) return null;
@@ -68,18 +71,18 @@ export function createAgentBrowser(options: { startTabId: number | null; runId: 
     }
   }
 
-  async function showOverlay(tab: WorkTab): Promise<void> {
-    const target = targetOf(tab);
-    if (!target) return;
-    const shown = overlays.get(tab.id);
-    if (shown && shown.url === tab.url) return;
-    const result = await callPage(target, "show_overlay", { run: options.runId, label: OVERLAY_LABEL });
-    if (result.ok) overlays.set(tab.id, { url: tab.url, target });
+  /** Take the banner off a tab the agent no longer works in, so no banner claims a tab the run has left. */
+  function leave(tabId: number | null): void {
+    const where = tabId === null ? undefined : overlays.get(tabId);
+    if (tabId === null || !where) return;
+    overlays.delete(tabId);
+    void callPage(where, "hide_overlay", { run: options.runId }).catch(() => undefined);
   }
 
   return {
     current,
     workingTab: () => working,
+    bannerTabs: () => [...overlays.keys()],
 
     async listTabs() {
       const tabs = await chrome.tabs.query({ currentWindow: true });
@@ -92,6 +95,7 @@ export function createAgentBrowser(options: { startTabId: number | null; runId: 
     async openTab(url: string) {
       const tab = await chrome.tabs.create({ url, active: true });
       if (tab.id === undefined) throw new Error("The browser did not open the tab.");
+      leave(working);
       working = tab.id;
       await group(tab.id);
       return workTab(tab) ?? { id: tab.id, url, host: readablePage(url)?.host ?? null, title: "" };
@@ -100,6 +104,7 @@ export function createAgentBrowser(options: { startTabId: number | null; runId: 
     async switchTab(tabId: number) {
       if (!Number.isInteger(tabId) || !(await inWindow(tabId))) return null;
       const tab = await chrome.tabs.update(tabId, { active: true });
+      if (working !== tabId) leave(working);
       working = tabId;
       return workTab(tab) ?? current();
     },
@@ -119,8 +124,9 @@ export function createAgentBrowser(options: { startTabId: number | null; runId: 
       if (!expected || expected.tabId !== target.tabId || expected.origin !== target.origin) {
         return { ok: false, error: "moved", message: "The tab went to another page since the agent looked. Read the page again." };
       }
-      await showOverlay(tab);
-      return callPage(expected, method, args);
+      // The banner goes up with every action: a page that took it down gets it back.
+      overlays.set(tab.id, expected);
+      return callPage(expected, method, args, banner);
     },
 
     async hasAccess(url: string) {
@@ -141,7 +147,7 @@ export function createAgentBrowser(options: { startTabId: number | null; runId: 
 
     async cleanup() {
       await Promise.all(
-        [...overlays].map(([, where]) => callPage(where.target, "hide_overlay", { run: options.runId }).catch(() => undefined)),
+        [...overlays.values()].map((where) => callPage(where, "hide_overlay", { run: options.runId }).catch(() => undefined)),
       );
       overlays.clear();
     },

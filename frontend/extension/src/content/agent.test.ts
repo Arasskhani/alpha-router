@@ -503,6 +503,23 @@ describe("the overlay", () => {
     expect(document.getElementById(OVERLAY_ID)).toBeNull();
   });
 
+  it("keeps its box through the page's style sheets, and gets it back when shown again", () => {
+    page("<p>Page</p>");
+    showOverlay(document, "run-1", "Working", () => undefined);
+    const host = document.getElementById(OVERLAY_ID)!;
+    for (const property of ["display", "visibility", "opacity", "transform", "pointer-events"]) {
+      // On the element with priority: a sheet's `#alpharouter-agent-overlay { display: none !important }` loses to it.
+      expect(host.style.getPropertyPriority(property)).toBe("important");
+    }
+    host.style.setProperty("display", "none");
+    showOverlay(document, "run-1", "Still working", () => undefined);
+    expect(host.style.getPropertyValue("display")).toBe("block");
+    // Removed by the page, it comes back with the next action.
+    host.remove();
+    showOverlay(document, "run-1", "Working", () => undefined);
+    expect(document.getElementById(OVERLAY_ID)).not.toBeNull();
+  });
+
   it("is styled through the CSSOM only", () => {
     page("<p>Page</p>");
     showOverlay(document, "run-1", "Working", () => undefined);

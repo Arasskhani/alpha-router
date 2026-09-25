@@ -207,8 +207,9 @@ export default function ExtensionPanel() {
         <p className="settings-hint">No browser is connected.</p>
       ) : (
         <div className="settings-list">
+          {/* data-session-id lets the end-to-end check find the browser it connected. */}
           {browsers.map((row) => (
-            <div className="settings-row-block" key={row.id}>
+            <div className="settings-row-block" key={row.id} data-session-id={row.id}>
               <div className="settings-row">
                 <div className="settings-row__meta">
                   <span className="settings-row__title">{row.device_name || "Browser"}</span>

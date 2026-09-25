@@ -5,6 +5,7 @@ import {
   ATTACHMENT_MESSAGE_PREFIX,
   AUDIO_MESSAGE_PREFIX,
 } from "./chatMarkers";
+import type { SharedPages } from "./sharedPages";
 import {
   AUDIO_EXTENSIONS,
   IMAGE_EXTENSIONS,
@@ -79,13 +80,57 @@ export function attachmentMessage(payload: AttachmentMessagePayload): string {
   return `${ATTACHMENT_MESSAGE_PREFIX}${JSON.stringify(payload)}`;
 }
 
+const ATTACHMENT_KINDS: readonly string[] = ["image", "video", "audio", "document", "file"] satisfies AttachmentKind[];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isAttachmentKind(value: unknown): value is AttachmentKind {
+  return typeof value === "string" && ATTACHMENT_KINDS.includes(value);
+}
+
+function absentOr(value: unknown, type: "string" | "number" | "boolean"): boolean {
+  return value === undefined || typeof value === type;
+}
+
+/** One attachment as the chat writes it, or null when the value is not one. */
+function readAttachment(value: unknown): ProcessedAttachment | null {
+  if (!isRecord(value)) return null;
+  const { name, kind, mime_type = "", url = "", data_url, text, size_bytes, binary } = value;
+  if (typeof name !== "string" || !isAttachmentKind(kind)) return null;
+  if (typeof mime_type !== "string" || typeof url !== "string" || !absentOr(data_url, "string")) return null;
+  if (!(text === null || absentOr(text, "string")) || !absentOr(size_bytes, "number") || !absentOr(binary, "boolean")) {
+    return null;
+  }
+  return { ...value, name, kind, mime_type, url } as ProcessedAttachment;
+}
+
+/**
+ * The attachments a message carries, or null when it is not an attachment
+ * message. A marker whose payload is not the shape the chat writes - not
+ * JSON, not an object, attachments that are not a list of attachments - is
+ * plain text: every reader (the chat's rendering, what is sent to the model,
+ * storage) takes it as such rather than failing on it.
+ */
 export function readAttachmentMessage(content: string): AttachmentMessagePayload | null {
   if (!content.startsWith(ATTACHMENT_MESSAGE_PREFIX)) return null;
+  let payload: unknown;
   try {
-    return JSON.parse(content.slice(ATTACHMENT_MESSAGE_PREFIX.length)) as AttachmentMessagePayload;
+    payload = JSON.parse(content.slice(ATTACHMENT_MESSAGE_PREFIX.length));
   } catch {
     return null;
   }
+  if (!isRecord(payload) || !Array.isArray(payload.attachments)) return null;
+  const userText = payload.userText ?? "";
+  if (typeof userText !== "string") return null;
+  const attachments: ProcessedAttachment[] = [];
+  for (const value of payload.attachments) {
+    const attachment = readAttachment(value);
+    if (!attachment) return null;
+    attachments.push(attachment);
+  }
+  return { userText, attachments };
 }
 
 export function attachmentDisplayText(payload: AttachmentMessagePayload): string {
@@ -409,7 +454,8 @@ function attachmentTextForModel(attach: AttachmentMessagePayload): string {
   return appendAvAttachmentNotes(text, attach.attachments);
 }
 
-export async function buildApiMessageContentAsync(
+/** A message's content for the model, markers read. Callers go through `apiMessageContentAsync`. */
+async function buildApiMessageContentAsync(
   content: string,
   visionModel?: VisionModel,
 ): Promise<string | ApiContentPart[]> {
@@ -448,6 +494,22 @@ export async function buildApiMessageContentAsync(
     if (url) parts.push({ type: "image_url", image_url: { url } });
   }
   return parts.length ? parts : text;
+}
+
+/**
+ * What the model is sent for one message of a chat marked as the chat shows
+ * it (`withSharedPageMarks`). An answer built from shared pages, or one that
+ * follows such an answer, goes as the text it is and is never read as a
+ * marker: the page may have had the model write an attachment marker, which
+ * read as one would have the provider fetch an address of the page's
+ * choosing, or this browser fetch the user's own media and send it along.
+ */
+export async function apiMessageContentAsync(
+  message: { role: string; content: string; pageContext?: SharedPages },
+  visionModel?: VisionModel,
+): Promise<string | ApiContentPart[]> {
+  if (message.role === "assistant" && message.pageContext) return message.content;
+  return buildApiMessageContentAsync(message.content, visionModel);
 }
 
 export function buildApiMessageContent(

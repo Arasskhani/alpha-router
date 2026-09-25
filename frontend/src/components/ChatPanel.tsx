@@ -168,8 +168,8 @@ import { wavFromRecording } from "../lib/audioWav";
 import { fetchAttachmentPolicy } from "../lib/attachmentPolicy";
 import { useFileDrop } from "../hooks/useFileDrop";
 import {
+  apiMessageContentAsync,
   attachmentMessage,
-  buildApiMessageContentAsync,
   type ApiContentPart,
   cloneProcessedAttachments,
   compactChatMessagesForStorage,
@@ -2859,10 +2859,12 @@ export default function ChatPanel({
     history: ChatMessage[],
     forModel?: Model,
   ) {
-    const trimmed = historyForModelRequest(history);
+    // Marked before anything is left out, so an answer that follows one built
+    // from shared pages goes back as plain text even without the server's mark.
+    const trimmed = historyForModelRequest(withSharedPageMarks(history));
     const out: Array<{ role: string; content: string | ApiContentPart[] }> = [];
     for (const m of trimmed) {
-      const content = await buildApiMessageContentAsync(m.content, forModel);
+      const content = await apiMessageContentAsync(m, forModel);
       out.push({ role: m.role, content });
     }
     return out.filter((m) => hasApiContent(m.content));

@@ -7,27 +7,20 @@
 
 import { extractPage, isRendered, isTextRendered, type PageExtract } from "./extract";
 
-/** Raised whenever what the panel calls here changes shape. */
-const VERSION = 2;
-
 type ContentApi = {
-  version: number;
   extract: (limits: { maxChars: number; maxSelectionChars: number }) => PageExtract;
 };
 
 const scope = globalThis as typeof globalThis & { __alpharouter?: ContentApi };
 
-// Injecting again for the next question keeps what is there, unless an older
-// copy of the extension left it behind in this page.
-if (scope.__alpharouter?.version !== VERSION) {
-  scope.__alpharouter = {
-    version: VERSION,
-    extract: (limits) =>
-      extractPage(document, {
-        maxChars: limits.maxChars,
-        maxSelectionChars: limits.maxSelectionChars,
-        isVisible: isRendered,
-        isTextVisible: isTextRendered,
-      }),
-  };
-}
+// Every injection puts this copy in place, over whatever is there: a copy an
+// older version of the extension left in the page must never be what reads it.
+scope.__alpharouter = {
+  extract: (limits) =>
+    extractPage(document, {
+      maxChars: limits.maxChars,
+      maxSelectionChars: limits.maxSelectionChars,
+      isVisible: isRendered,
+      isTextVisible: isTextRendered,
+    }),
+};

@@ -15,6 +15,13 @@
  * is retried once; the server hands out the same pair for a retry within its
  * two-minute grace.
  *
+ * Each refresh sends a random `attempt`, the same on its retry. The server
+ * gives the replaced refresh token's pair again only to the attempt that
+ * replaced it: someone holding a copy of the tokens, who sees their access
+ * token stop working when this browser refreshes, ends the session by
+ * presenting the old refresh token instead of receiving this browser's new
+ * pair.
+ *
  * Outcomes: a token; DisconnectedError (the server refused the refresh token -
  * connect again); TemporaryError (network, 429, 5xx - the tokens are kept and
  * the caller tries later).
@@ -57,6 +64,13 @@ export class TemporaryError extends Error {
 /** An access token this close to its end is treated as ended. */
 const EXPIRY_MARGIN_MS = 60_000;
 const REFRESH_TIMEOUT_MS = 30_000;
+
+/** A new name for one refresh: 24 random bytes, base64url - 32 characters. */
+function newAttempt(): string {
+  let binary = "";
+  for (const byte of crypto.getRandomValues(new Uint8Array(24))) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_");
+}
 
 export type TokenManagerDeps = {
   storage: TokenStorage;
@@ -122,14 +136,14 @@ export function createTokenManager(deps: TokenManagerDeps) {
     return (await deps.storage.getAccess())?.sessionId ?? null;
   }
 
-  async function post(refreshToken: string): Promise<Response> {
+  async function post(refreshToken: string, attempt: string): Promise<Response> {
     const url = `${await deps.serverUrl()}/api/extension/token`;
     return deps.fetch(url, {
       method: "POST",
       credentials: "omit",
       cache: "no-store",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ grant_type: "refresh_token", refresh_token: refreshToken }),
+      body: JSON.stringify({ grant_type: "refresh_token", refresh_token: refreshToken, attempt }),
       signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS),
     });
   }
@@ -138,12 +152,15 @@ export function createTokenManager(deps: TokenManagerDeps) {
   async function refreshLocked(): Promise<string> {
     const refreshToken = await deps.storage.getRefresh();
     if (!refreshToken) throw new DisconnectedError();
+    // One name for this refresh, sent again with its retry: only the attempt
+    // that replaced the token gets its pair again.
+    const attempt = newAttempt();
     let response: Response | null = null;
-    for (let attempt = 0; attempt < 2 && !response; attempt += 1) {
+    for (let tries = 0; tries < 2 && !response; tries += 1) {
       try {
-        response = await post(refreshToken);
+        response = await post(refreshToken, attempt);
       } catch {
-        response = null; // A lost response: the same token gets the same pair again.
+        response = null; // A lost response: the same token and attempt get the same pair again.
       }
     }
     if (!response) throw new TemporaryError();

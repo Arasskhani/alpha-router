@@ -49,6 +49,16 @@ function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
+type RefreshBody = { grant_type: string; refresh_token: string; attempt: string };
+
+/** What each refresh request sent, oldest first. */
+function sent(fetchImpl: ReturnType<typeof vi.fn>): RefreshBody[] {
+  return fetchImpl.mock.calls.map(([, init]) => JSON.parse(String((init as RequestInit).body)) as RefreshBody);
+}
+
+/** 24 random bytes, base64url: what the server accepts, and hard to guess. */
+const AN_ATTEMPT = /^[A-Za-z0-9_-]{32}$/;
+
 const FRESH: StoredAccess = { token: "alpha-router-ext-at-0", expiresAt: NOW + 3_600_000, sessionId: "session-1" };
 const ENDED: StoredAccess = { token: "alpha-router-ext-at-0", expiresAt: NOW + 30_000, sessionId: "session-1" };
 
@@ -83,7 +93,11 @@ describe("the access token", () => {
     const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe(`${SERVER}/api/extension/token`);
     expect(init.credentials).toBe("omit");
-    expect(JSON.parse(String(init.body))).toEqual({ grant_type: "refresh_token", refresh_token: "alpha-router-ext-rt-0" });
+    expect(JSON.parse(String(init.body))).toEqual({
+      grant_type: "refresh_token",
+      refresh_token: "alpha-router-ext-rt-0",
+      attempt: expect.stringMatching(AN_ATTEMPT),
+    });
     expect(state.refresh).toBe("alpha-router-ext-rt-1");
     expect(state.access).toEqual({ token: "alpha-router-ext-at-1", expiresAt: NOW + 3_600_000, sessionId: "session-1" });
     // The refresh token is written first: a crash in between loses nothing.
@@ -103,6 +117,18 @@ describe("the access token", () => {
     release();
     expect(await both).toEqual(["alpha-router-ext-at-1", "alpha-router-ext-at-1"]);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("names every refresh anew", async () => {
+    const { storage } = memoryStorage(ENDED, "alpha-router-ext-rt-0");
+    const fetchImpl = vi.fn().mockResolvedValueOnce(json(200, pair(1))).mockResolvedValueOnce(json(200, pair(2)));
+    const { tokens } = manager(storage, fetchImpl as unknown as typeof fetch);
+    expect(await tokens.accessToken()).toBe("alpha-router-ext-at-1");
+    expect(await tokens.replaceRejected("alpha-router-ext-at-1")).toBe("alpha-router-ext-at-2");
+    const [first, second] = sent(fetchImpl);
+    expect([first.refresh_token, second.refresh_token]).toEqual(["alpha-router-ext-rt-0", "alpha-router-ext-rt-1"]);
+    expect(second.attempt).toMatch(AN_ATTEMPT);
+    expect(second.attempt).not.toBe(first.attempt);
   });
 });
 
@@ -158,7 +184,7 @@ describe("a refresh that cannot happen right now", () => {
     expect(onDisconnected).not.toHaveBeenCalled();
   });
 
-  it("retries a lost response once, with the same refresh token", async () => {
+  it("retries a lost response once, with the same refresh token and attempt", async () => {
     const { storage } = memoryStorage(ENDED, "alpha-router-ext-rt-0");
     const fetchImpl = vi
       .fn()
@@ -166,8 +192,11 @@ describe("a refresh that cannot happen right now", () => {
       .mockResolvedValueOnce(json(200, pair(1)));
     const { tokens } = manager(storage, fetchImpl as unknown as typeof fetch);
     expect(await tokens.accessToken()).toBe("alpha-router-ext-at-1");
-    const bodies = fetchImpl.mock.calls.map(([, init]) => JSON.parse(String((init as RequestInit).body)).refresh_token);
-    expect(bodies).toEqual(["alpha-router-ext-rt-0", "alpha-router-ext-rt-0"]);
+    const [first, retry] = sent(fetchImpl);
+    expect([first.refresh_token, retry.refresh_token]).toEqual(["alpha-router-ext-rt-0", "alpha-router-ext-rt-0"]);
+    // The server gives the pair again only to the attempt that replaced the token.
+    expect(first.attempt).toMatch(AN_ATTEMPT);
+    expect(retry.attempt).toBe(first.attempt);
   });
 
   it("keeps the tokens when the network stays down", async () => {

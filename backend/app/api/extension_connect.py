@@ -67,6 +67,10 @@ REFRESH_LIMIT_PER_TOKEN = 10
 TOKEN_FAILURES_PER_IP = 60
 
 _STATE_RE = r"^[A-Za-z0-9_-]{16,128}$"
+#: A refresh's attempt: the random name the extension gives one refresh and
+#: repeats on its retries, so that only that refresh gets the pair again
+#: (app.services.extension_tokens.next_pair).
+_ATTEMPT_RE = r"^[A-Za-z0-9_-]{16,128}$"
 #: Chrome and Edge alike: chrome.runtime.getURL() gives chrome-extension:// in
 #: both. Never "extension://", which Chrome does not own: it would hand the
 #: code to whatever program registered that scheme with the system.
@@ -133,6 +137,7 @@ class TokenIn(BaseModel):
     redirect_uri: str | None = Field(default=None, max_length=200)
     device_name: str | None = Field(default=None, max_length=256)
     refresh_token: str | None = Field(default=None, max_length=256)
+    attempt: str | None = Field(default=None, pattern=_ATTEMPT_RE)
 
 
 def _token_refusal(code: str, message: str) -> HTTPException:
@@ -168,7 +173,7 @@ async def _refresh(db: AsyncSession, body: TokenIn, ip: str | None) -> TokenPair
     if not body.refresh_token:
         raise ExtensionTokenError("invalid_request", "refresh_token is required.")
     await check_rate_limit(f"extension:refresh:{token_hash(body.refresh_token)[:32]}", limit=REFRESH_LIMIT_PER_TOKEN)
-    return await refresh_session(db, body.refresh_token, ip=ip)
+    return await refresh_session(db, body.refresh_token, attempt=body.attempt, ip=ip)
 
 
 @router.post("/api/extension/token")

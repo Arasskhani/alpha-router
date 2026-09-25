@@ -31,6 +31,9 @@ CSRF = "csrf-token"
 VERIFIER = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
 CHALLENGE = pkce_challenge(VERIFIER)
 STATE = "state-0123456789abcdef"
+#: The extension's name for one refresh, and someone else's.
+ATTEMPT = "attempt-of-the-extension-01"
+OTHER_ATTEMPT = "attempt-of-someone-else-02"
 TEMPLATE = Path(__file__).resolve().parents[2] / "frontend" / "extension" / "manifest.template.json"
 
 
@@ -181,7 +184,8 @@ class TestTheWholeFlow:
         assert me.json()["user"]["username"] == user.username
 
         refreshed = await browser.post(
-            "/api/extension/token", json={"grant_type": "refresh_token", "refresh_token": tokens["refresh_token"]}
+            "/api/extension/token",
+            json={"grant_type": "refresh_token", "refresh_token": tokens["refresh_token"], "attempt": ATTEMPT},
         )
         assert refreshed.status_code == 200, refreshed.text
         new = refreshed.json()
@@ -423,6 +427,34 @@ class TestRefresh:
         assert event.actor_user_id == user.id
         assert event.resource_id == tokens["session_id"]
         assert json.loads(event.detail_json) == {"reason": "refresh_reuse", "device_name": "Chrome on Windows"}
+
+    async def test_within_the_grace_only_the_refresh_that_replaced_the_token_gets_it_again(
+        self, client, browser, user, redirect, session_factory
+    ):
+        tokens = await _connect(client, browser, user, redirect)
+        body = {"grant_type": "refresh_token", "refresh_token": tokens["refresh_token"], "attempt": ATTEMPT}
+        first = await browser.post("/api/extension/token", json=body)
+        retry = await browser.post("/api/extension/token", json=body)
+        assert (first.status_code, retry.status_code) == (200, 200), retry.text
+        assert retry.json()["access_token"] == first.json()["access_token"]
+        assert retry.json()["refresh_token"] == first.json()["refresh_token"]
+        copy = await browser.post("/api/extension/token", json={**body, "attempt": OTHER_ATTEMPT})
+        assert copy.status_code == 400
+        assert copy.json()["detail"]["code"] == "invalid_grant"
+        (event,) = await _audit(session_factory, "extension_session_revoked")
+        assert event.resource_id == tokens["session_id"]
+        assert json.loads(event.detail_json) == {"reason": "refresh_reuse", "device_name": "Chrome on Windows"}
+        gone = await browser.get("/api/extension/me", headers=_bearer(first.json()["access_token"]))
+        assert gone.json()["detail"]["code"] == "revoked"
+
+    @pytest.mark.parametrize("attempt", ["short", "x" * 129, "has space in it!!", ""])
+    async def test_a_malformed_attempt_is_refused(self, client, browser, user, redirect, attempt):
+        tokens = await _connect(client, browser, user, redirect)
+        body = {"grant_type": "refresh_token", "refresh_token": tokens["refresh_token"], "attempt": attempt}
+        assert (await browser.post("/api/extension/token", json=body)).status_code == 422
+        # Refused before anything was spent: the token still refreshes.
+        del body["attempt"]
+        assert (await browser.post("/api/extension/token", json=body)).status_code == 200
 
     async def test_a_disabled_account_keeps_its_browsers_for_when_it_returns(
         self, client, browser, db_session, user, redirect

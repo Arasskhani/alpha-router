@@ -10,14 +10,22 @@ The connect flow is OAuth's authorization code with PKCE, run in a normal tab
    the API opens a session (:func:`create_session`): an access token (one
    hour) and a refresh token (30 days of disuse, 180 days at most).
 3. Refreshing rotates the refresh token (:func:`refresh_session`). The token
-   just replaced still works for two minutes, so a response lost on the way
-   can be retried; presented after that - or any older token of the same
-   session - it can only be a stolen copy, and the session ends.
+   just replaced still works for two minutes for the refresh that replaced
+   it, so a response lost on the way can be retried; presented by anyone
+   else, or after that - or any older token of the same session - it can only
+   be a stolen copy, and the session ends.
 
-A refresh token always turns into the same new pair (:func:`next_pair`, keyed
-with the server's secret). So a retry, or a second refresh racing the first,
-receives exactly the tokens the first one did: whichever response the
-extension keeps, it keeps a working pair, and a session never forks into two.
+Each refresh carries an ``attempt``: a random name the extension gives it and
+repeats on its own retries. A refresh token spent by the same attempt always
+turns into the same new pair (:func:`next_pair`, keyed with the server's
+secret). So a retry, or a retry racing the request it repeats, receives
+exactly the tokens the first one did: whichever response the extension keeps,
+it keeps a working pair, and a session never forks into two. Another attempt
+would get another access token, so the session's current one tells which
+refresh replaced the token. That is what gives a copy away: whoever else holds
+the tokens sees their access token stop working when the extension refreshes,
+and presenting the replaced refresh token then ends the session instead of
+handing them the extension's new pair.
 
 Tokens are opaque strings stored only as SHA-256 hashes - never JWTs, which
 this product checks for their signature alone. Every request looks its token
@@ -63,9 +71,9 @@ REFRESH_TOKEN_PREFIX = f"{PRODUCT_SLUG}-ext-rt-"
 ACCESS_TOKEN_LIFETIME = datetime.timedelta(hours=1)
 REFRESH_IDLE_LIFETIME = datetime.timedelta(days=30)
 SESSION_MAX_LIFETIME = datetime.timedelta(days=180)
-#: How long a replaced refresh token still works. Longer than the extension's
-#: refresh timeout plus a retry; since a token always turns into the same pair,
-#: a longer grace hands nobody anything the rightful holder does not also get.
+#: How long a replaced refresh token still works: longer than the extension's
+#: refresh timeout plus a retry. Only for the refresh that replaced it (the
+#: same attempt, see next_pair); anyone else presenting it ends the session.
 REFRESH_GRACE = datetime.timedelta(minutes=2)
 #: How many rotations back a returning refresh token is still recognised as
 #: this session's - weeks of normal use - so that any old token, not only the
@@ -143,17 +151,28 @@ def _derive(key: bytes, label: bytes, refresh_token: str) -> str:
     return _b64url(hmac.new(key, label + b"\0" + refresh_token.encode("utf-8"), hashlib.sha256).digest())
 
 
-def next_pair(refresh_token: str) -> tuple[str, str]:
-    """The access and refresh token that ``refresh_token`` turns into.
+def next_pair(refresh_token: str, attempt: str | None = None) -> tuple[str, str]:
+    """The access and refresh token that ``refresh_token`` turns into when refresh ``attempt`` spends it.
 
-    Always the same two for the same token, and keyed with ``SECRET_KEY``, so
-    nobody holding a token can work out its successor.
+    Always the same two for the same token and attempt, and keyed with
+    ``SECRET_KEY``, so nobody holding a token can work out its successor.
+
+    The access token depends on the attempt as well: spent by another attempt,
+    the token turns into another access token, so the session's current one
+    says whether a refresh presenting the replaced token is the one that
+    replaced it. The refresh token depends on the token alone, so that a
+    session's refresh tokens stay one chain an old token can be followed along
+    (:func:`_successor_hashes`), whichever attempts spent them. Without an
+    attempt - an extension from before there were attempts - the access token
+    comes from the token alone too.
     """
     key = _rotation_key()
-    return (
-        ACCESS_TOKEN_PREFIX + _derive(key, b"access", refresh_token),
-        REFRESH_TOKEN_PREFIX + _derive(key, b"refresh", refresh_token),
+    access = (
+        _derive(key, b"access", refresh_token)
+        if attempt is None
+        else _derive(key, b"access for attempt", f"{refresh_token}\0{attempt}")
     )
+    return ACCESS_TOKEN_PREFIX + access, REFRESH_TOKEN_PREFIX + _derive(key, b"refresh", refresh_token)
 
 
 def _successor_hashes(refresh_token: str, steps: int) -> list[str]:
@@ -452,12 +471,18 @@ async def _require_usable(db: AsyncSession, session: ExtensionSession, now: date
         raise _invalid_grant("You signed out; connect this browser again.")
 
 
-async def refresh_session(db: AsyncSession, refresh_token: str | None, *, ip: str | None = None) -> TokenPair:
-    """The next pair for a refresh token; raises ExtensionTokenError(invalid_grant). The caller commits."""
+async def refresh_session(
+    db: AsyncSession, refresh_token: str | None, *, attempt: str | None = None, ip: str | None = None
+) -> TokenPair:
+    """The next pair for a refresh token; raises ExtensionTokenError(invalid_grant). The caller commits.
+
+    ``attempt`` is the extension's name for this refresh, the same on each of
+    its retries; the pair depends on it (:func:`next_pair`).
+    """
     if not refresh_token or not refresh_token.startswith(REFRESH_TOKEN_PREFIX):
         raise _invalid_grant("Unknown refresh token.")
     presented = token_hash(refresh_token)
-    access, refresh = next_pair(refresh_token)
+    access, refresh = next_pair(refresh_token, attempt)
     for _ in range(3):
         current = await _session_where(db, ExtensionSession.refresh_token_hash == presented)
         if current is not None:
@@ -485,8 +510,10 @@ async def refresh_session(db: AsyncSession, refresh_token: str | None, *, ip: st
             )
             if _rowcount(result) == 1:
                 return TokenPair(str(current.id), access, refresh, _ACCESS_SECONDS)
-            # Another request with this token changed the row first. It issued
-            # this very pair, which the next pass hands out as the grace path.
+            # Another request with this token changed the row first. The next
+            # pass takes the grace path: this very pair when that request was
+            # the same attempt (a retry racing its first try), and the end of
+            # the session when it was anyone else.
             continue
         replaced = await _session_where(db, ExtensionSession.prior_refresh_token_hash == presented)
         if replaced is None:
@@ -503,9 +530,14 @@ async def refresh_session(db: AsyncSession, refresh_token: str | None, *, ip: st
             await _revoke_now(str(replaced.id), reason=REVOKED_REFRESH_REUSE, ip=ip)
             raise _invalid_grant("This browser's connection was ended for safety.")
         await _require_usable(db, replaced, now)
-        if replaced.refresh_token_hash != token_hash(refresh):
-            # Only if SECRET_KEY changed inside the grace window: not the pair issued.
-            raise _invalid_grant("Unknown refresh token.")
+        if (replaced.access_token_hash, replaced.refresh_token_hash) != (token_hash(access), token_hash(refresh)):
+            # Not the pair this attempt turns the token into: another attempt
+            # replaced it, so whoever presents it now holds a copy - likely
+            # someone who saw their copy of the access token stop working when
+            # the extension refreshed. (SECRET_KEY changing inside the grace
+            # window lands here too, and ends the session as well.)
+            await _revoke_now(str(replaced.id), reason=REVOKED_REFRESH_REUSE, ip=ip)
+            raise _invalid_grant("This browser's connection was ended for safety.")
         remaining = int((replaced.access_expires_at - now).total_seconds())  # type: ignore[operator]
         # Nothing is written: the grace window never extends itself.
         return TokenPair(str(replaced.id), access, refresh, max(0, remaining))

@@ -42,6 +42,9 @@ from app.services.extension_tokens import (
 VERIFIER = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
 CHALLENGE = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
 REDIRECT = "chrome-extension://abcdefghijklmnopabcdefghijklmnop/connected.html"
+#: The extension's name for one refresh, and someone else's.
+ATTEMPT = "attempt-of-the-extension-01"
+OTHER_ATTEMPT = "attempt-of-someone-else-02"
 
 
 class FakeRedis:
@@ -498,20 +501,57 @@ class TestRefresh:
         monkeypatch.setattr(tokens, "get_settings", lambda: SimpleNamespace(secret_key="another-secret"))
         assert next_pair(REFRESH_TOKEN_PREFIX + "one") != first
 
+    def test_the_access_token_depends_on_the_attempt_and_the_refresh_token_does_not(self):
+        token = REFRESH_TOKEN_PREFIX + "one"
+        mine = next_pair(token, ATTEMPT)
+        assert next_pair(token, ATTEMPT) == mine
+        theirs = next_pair(token, OTHER_ATTEMPT)
+        without = next_pair(token)
+        assert len({mine[0], theirs[0], without[0]}) == 3
+        assert mine[0].startswith(ACCESS_TOKEN_PREFIX) and len(mine[0]) - len(ACCESS_TOKEN_PREFIX) == 43
+        # One chain of refresh tokens, whichever attempt spent each of them.
+        assert mine[1] == theirs[1] == without[1]
+
+    @pytest.mark.parametrize("attempt", [ATTEMPT, None])
     async def test_a_retry_within_the_grace_gets_the_same_pair_and_writes_nothing(
-        self, db_session, session_factory, user, clock
+        self, db_session, session_factory, user, clock, attempt
     ):
         pair = await _connect(db_session, user)
-        new = await refresh_session(db_session, pair.refresh_token)
+        new = await refresh_session(db_session, pair.refresh_token, attempt=attempt)
         await db_session.commit()
         before = _columns(await _row(session_factory, pair.session_id))
         clock.value += tokens.REFRESH_GRACE
-        again = await refresh_session(db_session, pair.refresh_token)
+        again = await refresh_session(db_session, pair.refresh_token, attempt=attempt)
         await db_session.commit()
         assert again.access_token == new.access_token
         assert again.refresh_token == new.refresh_token
         assert again.expires_in == 3600 - int(tokens.REFRESH_GRACE.total_seconds())
         assert _columns(await _row(session_factory, pair.session_id)) == before
+
+    @pytest.mark.parametrize(("extension", "copy"), [(ATTEMPT, None), (ATTEMPT, OTHER_ATTEMPT), (None, OTHER_ATTEMPT)])
+    async def test_a_copy_presented_within_the_grace_ends_the_session_and_is_audited(
+        self, db_session, session_factory, user, clock, extension, copy
+    ):
+        # Whoever else holds the tokens sees their access token stop working
+        # when the extension refreshes, and presents the replaced refresh
+        # token at once, as a different attempt or none.
+        pair = await _connect(db_session, user)
+        new = await refresh_session(db_session, pair.refresh_token, attempt=extension)
+        await db_session.commit()
+        clock.advance(seconds=5)
+        error = await _grant_error(refresh_session(db_session, pair.refresh_token, attempt=copy, ip="203.0.113.7"))
+        assert error.code == "invalid_grant"
+        assert (await _row(session_factory, pair.session_id)).revoked_reason == "refresh_reuse"
+        async with session_factory() as fresh:
+            (event,) = (await fresh.execute(select(SecurityAuditEvent))).scalars().all()
+        assert (event.action, event.actor_ip, event.resource_id) == (
+            "extension_session_revoked",
+            "203.0.113.7",
+            pair.session_id,
+        )
+        # Whoever holds the new pair is out too: the copy could as well have come first.
+        assert (await _grant_error(authenticate(db_session, new.access_token))).code == "revoked"
+        assert (await _grant_error(refresh_session(db_session, new.refresh_token))).code == "invalid_grant"
 
     async def test_after_the_grace_the_old_token_ends_the_session(self, db_session, session_factory, user, clock):
         pair = await _connect(db_session, user)
@@ -559,8 +599,10 @@ class TestRefresh:
     async def test_any_older_token_ends_the_session_too(self, db_session, session_factory, user, clock, rotations):
         pair = await _connect(db_session, user)
         token = pair.refresh_token
-        for _ in range(rotations):
-            token = (await refresh_session(db_session, token)).refresh_token
+        for n in range(rotations):
+            # A new attempt for each refresh, as the extension makes them: the
+            # chain of refresh tokens does not depend on them.
+            token = (await refresh_session(db_session, token, attempt=f"attempt-of-refresh-{n:04d}")).refresh_token
             await db_session.commit()
         error = await _grant_error(refresh_session(db_session, pair.refresh_token, ip="203.0.113.7"))
         assert error.code == "invalid_grant"
@@ -657,22 +699,45 @@ class TestRefresh:
         assert (await _grant_error(refresh_session(db_session, pair.refresh_token))).code == "invalid_grant"
         assert (await _row(session_factory, pair.session_id)).revoked_reason == "token_version"
 
-    async def test_a_refresh_that_loses_the_race_gets_the_winners_pair(self, db_session, session_factory, user, clock):
+    @pytest.mark.parametrize("attempt", [ATTEMPT, None])
+    async def test_a_request_that_loses_the_race_to_its_own_retry_gets_the_same_pair(
+        self, db_session, session_factory, user, clock, attempt
+    ):
         pair = await _connect(db_session, user)
         winner: list[tokens.TokenPair] = []
 
-        async def refresh_elsewhere():
+        async def retry_elsewhere():
             async with session_factory() as other:
-                winner.append(await refresh_session(other, pair.refresh_token))
+                winner.append(await refresh_session(other, pair.refresh_token, attempt=attempt))
                 await other.commit()
 
-        loser = await refresh_session(_RaceBeforeUpdate(db_session, refresh_elsewhere), pair.refresh_token)
+        racing = _RaceBeforeUpdate(db_session, retry_elsewhere)
+        loser = await refresh_session(racing, pair.refresh_token, attempt=attempt)
         await db_session.commit()
         assert winner and loser == winner[0]
         # One session, still going.
         again = await refresh_session(db_session, loser.refresh_token)
         await db_session.commit()
         assert again.session_id == pair.session_id
+
+    async def test_a_request_that_loses_the_race_to_another_attempt_ends_the_session(
+        self, db_session, session_factory, user, clock
+    ):
+        pair = await _connect(db_session, user)
+        winner: list[tokens.TokenPair] = []
+
+        async def copy_elsewhere():
+            async with session_factory() as other:
+                winner.append(await refresh_session(other, pair.refresh_token, attempt=OTHER_ATTEMPT))
+                await other.commit()
+
+        racing = _RaceBeforeUpdate(db_session, copy_elsewhere)
+        assert (
+            await _grant_error(refresh_session(racing, pair.refresh_token, attempt=ATTEMPT))
+        ).code == "invalid_grant"
+        await db_session.commit()
+        assert (await _row(session_factory, pair.session_id)).revoked_reason == "refresh_reuse"
+        assert (await _grant_error(authenticate(db_session, winner[0].access_token))).code == "revoked"
 
     async def test_a_stale_request_cannot_roll_the_session_back(self, db_session, session_factory, user, clock):
         pair = await _connect(db_session, user)
@@ -708,12 +773,15 @@ class TestRefresh:
         assert row.revoked_reason == "user"
         assert row.refresh_token_hash == token_hash(pair.refresh_token)
 
-    async def test_two_refreshes_at_once_cannot_fork_the_session(self, db_session, session_factory, user, clock):
+    @pytest.mark.parametrize("attempt", [ATTEMPT, None])
+    async def test_a_refresh_and_its_retry_at_once_cannot_fork_the_session(
+        self, db_session, session_factory, user, clock, attempt
+    ):
         pair = await _connect(db_session, user)
 
         async def one() -> tokens.TokenPair:
             async with session_factory() as own:
-                result = await refresh_session(own, pair.refresh_token)
+                result = await refresh_session(own, pair.refresh_token, attempt=attempt)
                 await own.commit()
                 return result
 
@@ -724,6 +792,22 @@ class TestRefresh:
         assert len(rows) == 1
         assert rows[0].refresh_token_hash == token_hash(first.refresh_token)
         assert rows[0].revoked_at is None
+
+    async def test_two_attempts_at_once_end_the_session(self, db_session, session_factory, user, clock):
+        pair = await _connect(db_session, user)
+
+        async def one(attempt: str) -> tokens.TokenPair:
+            async with session_factory() as own:
+                result = await refresh_session(own, pair.refresh_token, attempt=attempt)
+                await own.commit()
+                return result
+
+        outcomes = await asyncio.gather(one(ATTEMPT), one(OTHER_ATTEMPT), return_exceptions=True)
+        granted = [o for o in outcomes if isinstance(o, tokens.TokenPair)]
+        refused = [o for o in outcomes if isinstance(o, ExtensionTokenError)]
+        assert len(granted) == len(refused) == 1 and refused[0].code == "invalid_grant"
+        assert (await _row(session_factory, pair.session_id)).revoked_reason == "refresh_reuse"
+        assert (await _grant_error(authenticate(db_session, granted[0].access_token))).code == "revoked"
 
 
 class TestRevoke:

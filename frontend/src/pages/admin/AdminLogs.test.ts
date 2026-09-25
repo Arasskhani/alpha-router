@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { AUDIT_SOURCES, hasDetail, sourceLabel } from "./AdminLogs";
+import { AUDIT_SOURCES, hasDetail, humanAction, sourceLabel } from "./AdminLogs";
 
 /**
  * The Admin Logs page reads eight audit trails through one server-side union.
@@ -21,6 +21,7 @@ describe("audit trail picker", () => {
       "api_keys",
       "connections",
       "authentication",
+      "browser_extension",
     ]);
   });
 
@@ -29,6 +30,14 @@ describe("audit trail picker", () => {
     expect(sourceLabel("governance")).toBe("Governance");
     // A trail added server-side before the picker learns it still shows *something*.
     expect(sourceLabel("billing")).toBe("billing");
+    expect(sourceLabel("browser_extension")).toBe("Browser extension");
+  });
+});
+
+describe("action names", () => {
+  it("read as events, and a page shared from the browser says so", () => {
+    expect(humanAction("tls_activate")).toBe("Tls activate");
+    expect(humanAction("page_context")).toBe("Page shared with a model");
   });
 });
 

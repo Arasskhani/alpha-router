@@ -57,6 +57,7 @@ export const AUDIT_SOURCES = [
   ["api_keys", "API keys"],
   ["connections", "Provider connections"],
   ["authentication", "Sign-in activity"],
+  ["browser_extension", "Browser extension"],
 ] as const;
 
 type AuditSource = (typeof AUDIT_SOURCES)[number][0];
@@ -74,8 +75,14 @@ export function hasDetail(detail: AdminLogEvent["detail"]): boolean {
   return Object.keys(detail).length > 0;
 }
 
+/** Actions whose generic reading would be unclear. */
+const ACTION_WORDS: Record<string, string> = {
+  page_context: "Page shared with a model",
+};
+
 /** "tls_activate" reads as machine output; "Tls activate" reads as an event. */
-function humanAction(value: string): string {
+export function humanAction(value: string): string {
+  if (ACTION_WORDS[value]) return ACTION_WORDS[value];
   const spaced = value.replace(/_/g, " ").trim();
   return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }

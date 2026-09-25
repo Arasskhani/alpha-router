@@ -566,8 +566,8 @@ export default function RetentionPolicy() {
       <form className="card" onSubmit={saveAdminLogSettings}>
         <h3>Admin logs — administrative audit trail</h3>
         <p className="muted-text" style={{ marginTop: 0 }}>
-          The events behind <Link to="/admin/admin-logs">Admin Logs</Link>: who changed what, from where. An
-          event has two halves. Who did what and when is a few short columns and is the part an audit asks
+          The security settings and browser extension events behind <Link to="/admin/admin-logs">Admin Logs</Link>:
+          who changed what, and what was shared from a browser, from where. An event has two halves. Who did what and when is a few short columns and is the part an audit asks
           for; the recorded detail is unbounded and is what makes an old event useful rather than merely
           countable. So the detail is cleared first, and the event itself is kept for longer.
         </p>

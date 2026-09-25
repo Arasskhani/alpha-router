@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import AdminPage from "../../components/AdminPage";
 import ChatToolIcon from "../../components/ChatToolIcon";
 import Modal from "../../components/Modal";
+import ExtensionSettingsCard from "../../components/admin/ExtensionSettingsCard";
 import ResourceAccessEditor from "../../components/admin/ResourceAccessEditor";
 import { api, formatApiError } from "../../api";
 import { useReadOnly } from "../../context/ReadOnlyContext";
@@ -115,8 +116,8 @@ export default function ChatTools() {
         Each tool in the chat composer, and who may use it. A tool left open is available to everyone; restrict one
         and only the people, groups, departments or roles granted it can turn it on. A denial always wins over a
         grant. Code Interpreter has settings of its own on{" "}
-        <Link to="/admin/code-interpreter">Code Interpreter</Link>; changes here are recorded in{" "}
-        <Link to="/admin/admin-logs">Admin Logs</Link>.
+        <Link to="/admin/code-interpreter">Code Interpreter</Link>, and the browser extension&apos;s are below the
+        table; changes here are recorded in <Link to="/admin/admin-logs">Admin Logs</Link>.
       </p>
 
       {error ? (
@@ -190,6 +191,8 @@ export default function ChatTools() {
           </tbody>
         </table>
       </div>
+
+      <ExtensionSettingsCard />
 
       <Modal
         open={editing !== null}

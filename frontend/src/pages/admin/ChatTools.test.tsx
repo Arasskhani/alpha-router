@@ -11,6 +11,8 @@ vi.mock("../../api", () => ({
   formatApiError: (e: unknown) => String(e),
 }));
 vi.mock("../../context/ReadOnlyContext", () => ({ useReadOnly: () => false }));
+// The browser extension card has its own tests (ExtensionSettingsCard.test.tsx) and its own requests.
+vi.mock("../../components/admin/ExtensionSettingsCard", () => ({ default: () => <div data-testid="extension-card" /> }));
 
 import { api } from "../../api";
 import ChatTools from "./ChatTools";
@@ -105,6 +107,12 @@ describe("the Chat Tools page", () => {
     await act(async () => manage?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
 
     expect(document.querySelector(".modal-panel--md")).not.toBeNull();
+  });
+
+  it("holds the browser extension's settings below the table", async () => {
+    vi.mocked(api).mockResolvedValueOnce([row()]);
+    await render();
+    expect(host.querySelector("[data-testid='extension-card']")).not.toBeNull();
   });
 
   it("reports a failed load instead of showing an empty table", async () => {

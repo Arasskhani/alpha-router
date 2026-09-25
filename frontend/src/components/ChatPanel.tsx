@@ -309,6 +309,7 @@ import AgentMenu from "./chat/AgentMenu";
 import { useBackOnline } from "../hooks/useBackOnline";
 import { CONNECTION_LOST_MESSAGE, isConnectionLostError } from "../lib/chatConnection";
 import { RECOVERY_RETRY_MS, createReplyRecovery } from "../lib/replyRecovery";
+import { answerImages, sharedPagesLabel } from "../lib/sharedPages";
 import {
   shortModelName,
   readAudioMessage,
@@ -6655,6 +6656,9 @@ export default function ChatPanel({
                   {m.agentName}
                 </div>
               ) : null}
+              {m.role === "assistant" && m.pageContext ? (
+                <div className="alpha-router-msg-page-label">{sharedPagesLabel(m.pageContext)}</div>
+              ) : null}
               {m.role === "assistant" && m.modelName ? (
                 <div className="alpha-router-msg-model-label" title={m.modelId}>
                   <ModelName
@@ -6796,7 +6800,8 @@ export default function ChatPanel({
                     );
                   }
                   const mdImage = extractMarkdownImage(m.content || "");
-                  if (mdImage.imageUrl) {
+                  // An answer about a shared page never loads an image: the page may have planted it.
+                  if (mdImage.imageUrl && answerImages(m) === "load") {
                     return (
                       <div className="alpha-router-generated-block">
                         <button
@@ -6847,6 +6852,7 @@ export default function ChatPanel({
                             content={displayContent}
                             className={`alpha-router-markdown${streamingThisMessage ? " alpha-router-markdown--streaming" : ""}`}
                             streaming={streamingThisMessage}
+                            images={answerImages(m)}
                           />
                         ) : null}
                       </>
@@ -6928,7 +6934,8 @@ export default function ChatPanel({
                 {(() => {
                   const imagePayload = readImageMessage(m.content);
                   const mdImage = extractMarkdownImage(m.content || "");
-                  const imageUrl = imagePayload?.url || mdImage.imageUrl || "";
+                  const imageUrl =
+                    imagePayload?.url || (answerImages(m) === "load" ? mdImage.imageUrl : null) || "";
                   if (!imageUrl) return null;
                   return (
                     <>

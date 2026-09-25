@@ -7,6 +7,14 @@ import { findMediaViewerIndex } from "./mediaViewer";
 import { IMAGE_PENDING_MARKER, VIDEO_PENDING_MARKER } from "./chatMarkers";
 
 describe("collectChatSlideshowItems", () => {
+  it("leaves out the images of an answer built from a shared page, which are never loaded", () => {
+    const items = collectChatSlideshowItems([
+      { content: "Chart: ![c](https://tracker.example/p.png?d=secret)", pageContext: { sites: ["docs.example.com"] } },
+      { content: "Here you go\n\n![out](https://cdn.example.test/out.png)" },
+    ]);
+    expect(items.map((item) => item.url)).toEqual(["https://cdn.example.test/out.png"]);
+  });
+
   it("walks the thread in order and mixes attachments, images, and videos", () => {
     const items = collectChatSlideshowItems([
       {

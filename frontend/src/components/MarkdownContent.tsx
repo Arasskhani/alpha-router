@@ -12,6 +12,11 @@ type Props = {
   className?: string;
   /** When true, code blocks stay plain text until streaming finishes (reduces layout jump). */
   streaming?: boolean;
+  /**
+   * "link" shows every image as a link instead of loading it: for an answer
+   * built from untrusted text, whose image address could carry data away.
+   */
+  images?: "load" | "link";
 };
 
 const MarkdownStreamingContext = createContext(false);
@@ -77,6 +82,20 @@ function SafeImage({
   return <img src={safeBrowserUrl(src, "image") ?? ""} alt={alt ?? ""} {...props} />;
 }
 
+function ImageAsLink({ src, alt }: ComponentPropsWithoutRef<"img"> & ExtraProps) {
+  const label = (alt ?? "").trim() || "open";
+  return (
+    <a
+      href={inertBrowserUrl(typeof src === "string" ? src : undefined, "navigation")}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="md-image-link"
+    >
+      Image: {label}
+    </a>
+  );
+}
+
 function MarkdownCode({
   className,
   children,
@@ -110,15 +129,19 @@ const MARKDOWN_COMPONENTS = {
   a: SafeLink,
   img: SafeImage,
 };
+const MARKDOWN_COMPONENTS_IMAGES_AS_LINKS = { ...MARKDOWN_COMPONENTS, img: ImageAsLink };
 
 /** Render assistant / AI text as GitHub-flavored Markdown. */
-function MarkdownContent({ content, className = "", streaming = false }: Props) {
+function MarkdownContent({ content, className = "", streaming = false, images = "load" }: Props) {
   if (!content) return null;
 
   return (
     <MarkdownStreamingContext.Provider value={streaming}>
       <div className={`markdown-body${className ? ` ${className}` : ""}`}>
-        <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={MARKDOWN_COMPONENTS}>
+        <ReactMarkdown
+          remarkPlugins={REMARK_PLUGINS}
+          components={images === "link" ? MARKDOWN_COMPONENTS_IMAGES_AS_LINKS : MARKDOWN_COMPONENTS}
+        >
           {content}
         </ReactMarkdown>
       </div>

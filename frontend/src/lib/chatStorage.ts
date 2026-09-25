@@ -20,6 +20,7 @@ import { getSessionUser } from "./session";
 import { normalizeVoiceLang, type VoiceLang } from "./voiceInput";
 import { isCachedTheme, loadCachedTheme, saveCachedTheme, type CachedTheme } from "./themeCache";
 import type { AgentCitation } from "./agentChat";
+import { readSharedPages, type SharedPages } from "./sharedPages";
 import {
   anyChatToolEnabled,
   copyFreshChatTools,
@@ -122,6 +123,8 @@ export type ChatMessage = {
   /** Display name of the member who sent this prompt in a project chat. */
   authorDisplayName?: string;
   citations?: AgentCitation[];
+  /** Server-owned: this answer was built from pages shared from the browser extension. */
+  pageContext?: SharedPages;
   feedback?: {
     rating: -1 | 1;
     reason?: string | null;
@@ -744,6 +747,7 @@ function mapApiMessage(raw: Record<string, unknown>): ChatMessage {
     citations: Array.isArray(raw.citations)
       ? (raw.citations as AgentCitation[])
       : undefined,
+    pageContext: readSharedPages(raw.pageContext),
     feedback:
       raw.feedback &&
       typeof raw.feedback === "object" &&

@@ -6853,6 +6853,20 @@ table.data-table--api-logs {
   letter-spacing: 0.02em;
 }
 
+/* An answer built from a page shared from the browser extension. */
+.alpha-router-msg-page-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 0.2rem;
+  overflow-wrap: anywhere;
+}
+
+/* An image in such an answer: a link to open, never loaded. */
+.md-image-link {
+  font-style: italic;
+}
+
 .alpha-router-msg-user .alpha-router-msg-author-label {
   align-self: flex-end;
   text-align: end;

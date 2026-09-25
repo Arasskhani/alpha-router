@@ -15,5 +15,5 @@ AUDIO_MESSAGE_PREFIX = "__ALPHA_ROUTER_AUDIO_JSON__:"
 PAGE_CONTEXT_BODY_KEY = "_page_context_sites"
 #: Assistant message meta, ``{"sites": [host, ...]}``: an answer built from
 #: pages shared from the browser. Page text is untrusted, so such an answer is
-#: never learned from as memory.
+#: never learned from as memory, and the web app never loads its images.
 PAGE_CONTEXT_META_KEY = "pageContext"

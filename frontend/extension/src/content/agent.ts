@@ -245,9 +245,40 @@ const INTERACTIVE_ROLES = new Set([
 
 const BUTTON_INPUTS = new Set(["button", "submit", "reset", "image"]);
 const TEXT_INPUTS = new Set(["", "text", "search", "email", "url", "tel", "password", "number"]);
+/** The input types a browser knows; any other value makes a text field. */
+const INPUT_TYPES = new Set([
+  "hidden",
+  "text",
+  "search",
+  "tel",
+  "url",
+  "email",
+  "password",
+  "date",
+  "month",
+  "week",
+  "time",
+  "datetime-local",
+  "number",
+  "range",
+  "color",
+  "checkbox",
+  "radio",
+  "file",
+  "submit",
+  "image",
+  "reset",
+  "button",
+]);
 
+/**
+ * An input's type as the browser reads it: the attribute in any case, but
+ * never trimmed - `type="submit "` is no type the browser knows, so the
+ * field is a text field.
+ */
 function inputType(el: Element): string {
-  return (el.getAttribute("type") ?? "text").trim().toLowerCase();
+  const raw = (el.getAttribute("type") ?? "").toLowerCase();
+  return INPUT_TYPES.has(raw) ? raw : "text";
 }
 
 /** The element's role when a person could use it; null for everything else. */
@@ -385,13 +416,44 @@ function formOf(el: Element): HTMLFormElement | null {
   return owner ?? (el.closest("form") as HTMLFormElement | null);
 }
 
+/**
+ * Whether activating it sends its form. A button is a submit button unless
+ * its type is exactly "button" or "reset" in some case: a missing, empty or
+ * unknown type ("", "bogus", "button ") submits, as the browser has it.
+ */
 function submits(el: Element): boolean {
   const tag = el.tagName.toUpperCase();
   if (tag === "BUTTON") {
-    const type = (el.getAttribute("type") ?? "submit").toLowerCase();
-    return type === "submit" && formOf(el) !== null;
+    const type = (el.getAttribute("type") ?? "").toLowerCase();
+    return type !== "button" && type !== "reset" && formOf(el) !== null;
   }
   return tag === "INPUT" && (inputType(el) === "submit" || inputType(el) === "image") && formOf(el) !== null;
+}
+
+function parentAcrossShadow(el: Element): Element | null {
+  if (el.parentElement) return el.parentElement;
+  const root = el.getRootNode();
+  return root instanceof ShadowRoot ? root.host : null;
+}
+
+/**
+ * The element a click on `el` works on: `el` itself, or its nearest
+ * ancestor across shadow roots that acts on a click - a link, a button, a
+ * form field, a summary, an element that says it is a control - and for a
+ * label, the field it labels. A click on the words inside a button is the
+ * button's click, and on a label for a submit button it sends the form, so
+ * that is the element the rules judge and the one clicked.
+ */
+function activationTarget(el: Element): Element {
+  for (let node: Element | null = el; node; node = parentAcrossShadow(node)) {
+    const tag = node.tagName.toUpperCase();
+    if ((tag === "A" || tag === "AREA") && node.hasAttribute("href")) return node;
+    if (tag === "BUTTON" || tag === "SUMMARY" || tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return node;
+    if (tag === "LABEL") return (node as HTMLLabelElement).control ?? node;
+    const role = (node.getAttribute("role") ?? "").trim().split(/\s+/)[0].toLowerCase();
+    if (role && INTERACTIVE_ROLES.has(role)) return node;
+  }
+  return el;
 }
 
 function formAction(el: Element): string | undefined {
@@ -441,7 +503,9 @@ function describeElement(el: Element, role: string, isVisible: Visibility): Elem
   const checked = checkedState(el, role);
   if (checked !== undefined) info.checked = checked;
   if (isDisabled(el)) info.disabled = true;
-  if (role === "link") {
+  // Every link's address, whatever role it claims: a menu item or a "button" that is a link still goes there.
+  const tag = el.tagName.toUpperCase();
+  if ((tag === "A" || tag === "AREA") && el.hasAttribute("href")) {
     const href = absoluteUrl(el, "href");
     if (href) info.href = href;
   }
@@ -648,8 +712,11 @@ function holds(outer: Element, el: Element): boolean {
 }
 
 export function click(ref: unknown, isVisible: Visibility): Result<{ note?: string }> {
-  const el = usable(ref, isVisible);
-  if (isFailure(el)) return el;
+  const named = usable(ref, isVisible);
+  if (isFailure(named)) return named;
+  // What the rules judged (describe with `activates`): the control the click works on.
+  const el = activationTarget(named);
+  if (el !== named && isDisabled(el)) return { ok: false, error: "disabled", message: `Element ${ref as string} is disabled.` };
   const html = el as HTMLElement;
   el.scrollIntoView?.({ block: "center", inline: "center" });
   const cover = coveredBy(el);
@@ -872,9 +939,15 @@ export async function waitFor(doc: Document, text: unknown, seconds: unknown): P
   return present() ? found : { ok: false, error: "not_found", message: `"${clip(said, 60)}" did not appear within ${limit} seconds.` };
 }
 
-export function describe(ref: unknown, isVisible: Visibility): Result<{ element: ElementInfo }> {
-  const el = resolve(ref);
-  if (isFailure(el)) return el;
+/**
+ * One element as the rules judge it. With `activates` (for a click), the
+ * control the click works on: the button around the words named, the field
+ * of a label.
+ */
+export function describe(ref: unknown, isVisible: Visibility, activates = false): Result<{ element: ElementInfo }> {
+  const named = resolve(ref);
+  if (isFailure(named)) return named;
+  const el = activates ? activationTarget(named) : named;
   const role = roleOf(el) ?? (headingLevel(el) !== null ? "heading" : "text");
   return { ok: true, element: describeElement(el, role, isVisible) };
 }

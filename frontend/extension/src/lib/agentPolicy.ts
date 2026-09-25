@@ -135,11 +135,13 @@ function named(element: ElementInfo): string {
 
 function clickVerdict(element: ElementInfo, page: { url: string; host: string }, ctx: PolicyContext): Verdict {
   const name = element.name.trim();
+  // A link is where it goes, whatever role it claims (a menu item, a "button").
+  const linkish = element.role === "link" || Boolean(element.href);
   const buttonish = BUTTON_ROLES.has(element.role) || element.submits === true;
-  if ((buttonish || element.role === "link") && purchase(name, element.role)) {
+  if ((buttonish || linkish) && purchase(name, linkish ? "link" : element.role)) {
     return blocked("purchase_label", `The agent never buys or pays: ${named(element)} is for the user to click.`);
   }
-  if (element.role === "link" && element.href) {
+  if (element.href) {
     let protocol = "";
     try {
       protocol = new URL(element.href).protocol;

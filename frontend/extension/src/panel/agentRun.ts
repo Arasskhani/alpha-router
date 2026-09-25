@@ -422,7 +422,8 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       if (!pageNow) {
         // The rules refuse it below, with the reason.
       } else {
-        const described = await page("describe", { ref: a.ref });
+        // For a click, the control it works on: the button around the words, the field of a label.
+        const described = await page("describe", { ref: a.ref, ...(name === "click" ? { activates: true } : {}) });
         if (!described.ok) {
           return { content: "", page: wrapPage(options.nonce, pageNow.host, `${described.message}`), status: "error", detail: described.message, outcome: "error", site: pageNow.host, extra: { error: described.error } };
         }

@@ -203,6 +203,63 @@ describe("acting", () => {
     expect(seen).toEqual(["pointerdown", "mousedown", "pointerup", "mouseup", "click"]);
   });
 
+  it("judges and clicks the control a click works on: the button around the words, the link around a heading", () => {
+    page(`
+      <form action="/orders"><button type="submit"><span>Place your order</span></button></form>
+      <a href="https://bank.example.com/statement"><h3>Statement</h3></a>
+    `);
+    const form = document.querySelector("form")!;
+    const sent = vi.fn((event: Event) => event.preventDefault());
+    form.addEventListener("submit", sent);
+    const words = find(document, "place your order", visible);
+    if (!words.ok) throw new Error(words.message);
+    const text = words.matches.find((m) => m.role === "text")!;
+    expect(describeRef(text.ref, visible)).toMatchObject({ ok: true, element: { role: "text", tag: "span" } });
+    const judged = describeRef(text.ref, visible, true);
+    expect(judged).toMatchObject({ ok: true, element: { role: "button", name: "Place your order", submits: true, formAction: expect.stringMatching(/\/orders$/) } });
+    const clicked = vi.fn();
+    document.querySelector("button")!.addEventListener("click", clicked);
+    expect(click(text.ref, visible)).toMatchObject({ ok: true });
+    expect(clicked).toHaveBeenCalledTimes(1);
+    const heading = find(document, "statement", visible);
+    if (!heading.ok) throw new Error(heading.message);
+    const inLink = heading.matches.find((m) => m.role === "heading")!;
+    expect(describeRef(inLink.ref, visible, true)).toMatchObject({ ok: true, element: { role: "link", href: "https://bank.example.com/statement" } });
+  });
+
+  it("clicks the field a label is for, as the browser does", () => {
+    page(`<form action="/buy"><label for="buy">Continue</label><button id="buy">Place order</button></form>
+      <input type="checkbox" id="keep" style="display:none"><label for="keep">Keep me signed in</label>`);
+    const label = find(document, "keep me signed in", visible);
+    if (!label.ok) throw new Error(label.message);
+    const ref = label.matches.find((m) => m.role === "text")!.ref;
+    expect(describeRef(ref, visible, true)).toMatchObject({ ok: true, element: { role: "checkbox", tag: "input" } });
+    expect(click(ref, visible)).toMatchObject({ ok: true });
+    expect((document.querySelector("#keep") as HTMLInputElement).checked).toBe(true);
+    const submitLabel = find(document, "continue", visible);
+    if (!submitLabel.ok) throw new Error(submitLabel.message);
+    const onLabel = submitLabel.matches.find((m) => m.role === "text")!.ref;
+    expect(describeRef(onLabel, visible, true)).toMatchObject({ ok: true, element: { tag: "button", submits: true } });
+  });
+
+  it("tells a submit button as the browser does, and records where any link goes", () => {
+    page(`<form action="/f">
+        <button type="">Empty</button><button type="bogus">Bogus</button><button type="Button">Plain</button>
+        <input type="SUBMIT" value="Upper"><input type="submit " value="Spaced">
+      </form>
+      <a role="menuitem" href="https://partner.org/deal">Partner</a>`);
+    const shot = snapshot(document, { isVisible: visible });
+    expect(byName(shot.elements, "Empty").submits).toBe(true);
+    expect(byName(shot.elements, "Bogus").submits).toBe(true);
+    expect(byName(shot.elements, "Plain").submits).toBeUndefined();
+    expect(byName(shot.elements, "Upper").submits).toBe(true);
+    // Not a type the browser knows: a text field, which submits nothing by being clicked.
+    const spaced = shot.elements.find((e) => e.value === "Spaced")!;
+    expect(spaced).toMatchObject({ role: "textbox" });
+    expect(spaced.submits).toBeUndefined();
+    expect(byName(shot.elements, "Partner")).toMatchObject({ role: "menuitem", href: "https://partner.org/deal" });
+  });
+
   it("does not click what is disabled or hidden", () => {
     page(`<button disabled>Pay</button><button>Visible</button>`);
     const shot = snapshot(document, { isVisible: visible });

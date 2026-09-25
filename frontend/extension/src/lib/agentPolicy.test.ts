@@ -141,6 +141,16 @@ describe("clicking", () => {
     expect(classify("click", { element: unlisted }, RULES)).toMatchObject({ class: "blocked", reason: "site_not_allowed" });
   });
 
+  it("judges a link by where it goes, whatever role it claims", () => {
+    const menuItem = el({ role: "menuitem", name: "Statement", tag: "a", href: "https://bank.example.com/" });
+    expect(classify("click", { element: menuItem }, RULES)).toMatchObject({ class: "blocked", reason: "site_blocked" });
+    const buttonLink = el({ role: "button", name: "Deals", tag: "a", href: "https://partner.org/deals" });
+    expect(classify("click", { element: buttonLink }, RULES)).toMatchObject({ class: "sensitive", reason: "other_site", site: "partner.org" });
+    // A link's Persian "سفارش" is usually "my orders"; buying words are refused on any link.
+    expect(classify("click", { element: el({ role: "tab", name: "سفارش‌های من", tag: "a", href: "https://shop.example.com/orders" }) })).toMatchObject({ class: "act" });
+    expect(classify("click", { element: el({ role: "menuitem", name: "Buy now", tag: "a", href: "https://shop.example.com/buy" }) })).toMatchObject({ class: "blocked" });
+  });
+
   it("asks before a link that opens another program, and lets script links act", () => {
     expect(classify("click", { element: el({ role: "link", name: "Email us", href: "mailto:a@b.c" }) })).toMatchObject({
       class: "sensitive",

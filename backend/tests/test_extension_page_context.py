@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -13,9 +14,11 @@ from sqlalchemy import select
 from app.api import chat as chat_api
 from app.config import get_settings
 from app.core.security import create_access_token
+from app.models.chat import ChatSession
 from app.models.connection import Connection
 from app.models.extension import ExtensionEvent
 from app.models.model_catalog import AIModel
+from app.models.project import Project
 from app.services import extension_tokens
 from app.services.chat_markers import PAGE_CONTEXT_BODY_KEY
 from app.services.extension_page_context import page_shares
@@ -328,6 +331,39 @@ class TestRefused:
         assert resp.json()["detail"]["code"] == "page_context_conflict"
         assert why in resp.json()["detail"]["message"]
         assert turn.preflights == []
+
+    async def test_not_in_a_project_chat_named_only_by_its_id(
+        self, client, browser, db_session, models, turn, user, session_factory
+    ):
+        project = Project(id=str(uuid.uuid4()), name="Team", created_by_user_id=user.id)
+        db_session.add(project)
+        await db_session.flush()
+        chat = ChatSession(id=str(uuid.uuid4()), user_id=user.id, title="Team chat", project_id=project.id)
+        db_session.add(chat)
+        await db_session.commit()
+        resp = await client.post(
+            "/api/chat/completions",
+            json=_body(f"model::{models.a.id}", ("example.com", 5), chat_session_id=chat.id, persist_chat=True),
+            headers=browser.headers,
+        )
+        assert resp.status_code == 400
+        assert resp.json()["detail"] == {
+            "code": "page_context_conflict",
+            "message": "Pages cannot be shared in a project chat.",
+        }
+        assert turn.preflights == []
+        assert await _events(session_factory) == []
+
+    async def test_a_personal_chat_named_by_its_id_is_fine(self, client, browser, db_session, models, turn, user):
+        chat = ChatSession(id=str(uuid.uuid4()), user_id=user.id, title="Mine")
+        db_session.add(chat)
+        await db_session.commit()
+        resp = await client.post(
+            "/api/chat/completions",
+            json=_body(f"model::{models.a.id}", ("example.com", 5), chat_session_id=chat.id),
+            headers=browser.headers,
+        )
+        assert resp.status_code == 200, resp.text
 
     async def test_tools_left_off_are_fine(self, client, browser, models, turn):
         resp = await client.post(

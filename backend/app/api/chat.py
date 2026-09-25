@@ -22,6 +22,7 @@ from app.api.deps import get_current_user, require_active_user
 from app.branding import CHAT_CLIENT_APP, EXTENSION_CLIENT_APP
 from app.config import get_settings
 from app.database import get_db
+from app.models.chat import ChatSession
 from app.models.connection import Connection
 from app.models.model_catalog import AIModel
 from app.models.user import User
@@ -290,6 +291,15 @@ def _page_context_conflict(body: ChatRequest, tools: dict) -> str | None:
     return None
 
 
+async def _project_chat_conflict(db: AsyncSession, chat_session_id: str | None) -> str | None:
+    """A project chat is read by teammates, whether the request names the project or only the chat."""
+    sid = (chat_session_id or "").strip()
+    if not sid:
+        return None
+    project_id = (await db.execute(select(ChatSession.project_id).where(ChatSession.id == sid))).scalar_one_or_none()
+    return "Pages cannot be shared in a project chat." if project_id else None
+
+
 async def _declared_page_shares(
     db: AsyncSession,
     request: Request,
@@ -310,7 +320,7 @@ async def _declared_page_shares(
             status_code=400,
             detail={"code": "extension_only", "message": "Only the browser extension can share pages."},
         )
-    conflict = _page_context_conflict(body, tools)
+    conflict = _page_context_conflict(body, tools) or await _project_chat_conflict(db, body.chat_session_id)
     if conflict:
         raise HTTPException(status_code=400, detail={"code": "page_context_conflict", "message": conflict})
     try:

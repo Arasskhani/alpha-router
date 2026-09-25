@@ -1019,7 +1019,7 @@ export const userManualSections: DocSection[] = [
             <tr>
               <td>Looking</td>
               <td>Reading or searching the page, listing tabs, scrolling, waiting</td>
-              <td>Goes ahead.</td>
+              <td>Goes ahead, except on a site the page went to by itself: you are asked first.</td>
             </tr>
             <tr>
               <td>Acting</td>

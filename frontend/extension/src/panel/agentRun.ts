@@ -541,8 +541,9 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       };
     }
     let approval = approvalFor(verdict, options.mode);
-    // A site the page went to by itself: the user decides before the agent acts there, in Auto mode too.
-    const arrived = pageNow && verdict.class !== "read" && !allowedSites.has(pageNow.host) ? pageNow.host : null;
+    // A site the page went to by itself: the user decides before the agent reads or acts there, in Auto mode too.
+    // Reading counts: with every site granted, nothing else would stop an inbox the tab was sent to going to the model.
+    const arrived = pageNow && (PAGE_TOOLS.has(name) || verdict.class !== "read") && !allowedSites.has(pageNow.host) ? pageNow.host : null;
     const judged: Verdict = arrived
       ? { ...verdict, message: `${verdict.message} The page went to ${arrived} without being asked to; allowing this lets the agent work there.` }
       : verdict;

@@ -456,6 +456,58 @@ describe("Auto mode", () => {
     expect(told).toContain("now on another site: webmail.example.org");
   });
 
+  it("asks the user before reading a site the page went to by itself, and reads nothing there when denied", async () => {
+    const WEBMAIL = { id: 1, url: "https://webmail.example.org/inbox", host: "webmail.example.org", title: "Inbox" };
+    let where = TAB;
+    const browser = fakeBrowser({
+      click: () => {
+        // The page's own script takes the tab to another site; with every site granted, the browser does not ask.
+        where = WEBMAIL;
+        return { ok: true, note: "Done." };
+      },
+    });
+    browser.current.mockImplementation(async () => where);
+    const h = harness(
+      [
+        { text: "", toolCalls: [call("click", { ref: "e1" }, "c1")] },
+        { text: "", toolCalls: [call("tabs_list", {}, "c2")] },
+        { text: "", toolCalls: [call("get_page_text", {}, "c3")] },
+        { text: "", toolCalls: [call("done", { summary: "ok" })] },
+      ],
+      { review: { decision: "allow", reason: "Fits." }, browser, approve: () => false },
+    );
+    await run(h, { mode: "auto" });
+    // Listing tabs reads no page; reading the new site's page is the user's to allow.
+    expect(h.approvals).toEqual([
+      expect.objectContaining({ tool: "get_page_text", verdict: expect.objectContaining({ message: expect.stringContaining("went to webmail.example.org") }) }),
+    ]);
+    expect(browser.page).not.toHaveBeenCalledWith("get_page_text", expect.anything(), expect.anything(), expect.anything());
+  });
+
+  it("reads a site the page went to by itself once the user allows it, without asking again", async () => {
+    const WEBMAIL = { id: 1, url: "https://webmail.example.org/inbox", host: "webmail.example.org", title: "Inbox" };
+    let where = TAB;
+    const browser = fakeBrowser({
+      click: () => {
+        where = WEBMAIL;
+        return { ok: true, note: "Done." };
+      },
+    });
+    browser.current.mockImplementation(async () => where);
+    const h = harness(
+      [
+        { text: "", toolCalls: [call("click", { ref: "e1" }, "c1")] },
+        { text: "", toolCalls: [call("read_page", {}, "c2")] },
+        { text: "", toolCalls: [call("get_page_text", {}, "c3")] },
+        { text: "", toolCalls: [call("done", { summary: "ok" })] },
+      ],
+      { review: { decision: "allow", reason: "Fits." }, browser },
+    );
+    await run(h, { mode: "auto" });
+    expect(h.approvals).toEqual([expect.objectContaining({ tool: "read_page" })]);
+    expect(browser.page).toHaveBeenCalledWith("get_page_text", expect.anything(), expect.anything(), expect.anything());
+  });
+
   it("always asks the user before a sensitive action, whatever the reviewer would say", async () => {
     const h = harness(
       [{ text: "", toolCalls: [call("click", { ref: "e4" })] }, { text: "", toolCalls: [call("done", { summary: "ok" })] }],

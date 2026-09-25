@@ -384,11 +384,17 @@ class TestTheCodeExchange:
         assert resp.status_code == 400
         assert resp.json()["detail"]["code"] == "invalid_request"
 
-    async def test_sixty_failures_a_minute_close_the_address(self, browser):
+    async def test_after_sixty_failures_a_minute_the_next_failure_is_429(self, browser):
         for _ in range(60):
             resp = await self._exchange(browser, code="nope", code_verifier=VERIFIER, redirect_uri="x")
             assert resp.status_code == 400
         assert (await self._exchange(browser, code="nope", code_verifier=VERIFIER, redirect_uri="x")).status_code == 429
+
+    async def test_a_valid_code_is_served_from_an_address_full_of_failures(self, client, browser, user, redirect):
+        for _ in range(rate_limits.TOKEN_FAILURES_PER_IP):
+            resp = await self._exchange(browser, code="nope", code_verifier=VERIFIER, redirect_uri="x")
+            assert resp.status_code == 400
+        await _connect(client, browser, user, redirect)
 
 
 class TestRefresh:
@@ -445,6 +451,23 @@ class TestRefresh:
             )
             assert resp.status_code == 200, resp.text
             refresh = resp.json()["refresh_token"]
+
+    async def test_junk_from_one_address_never_stops_a_valid_refresh_from_it(self, client, browser, user, redirect):
+        """Behind one NAT everyone has the same address: one host's junk must not lock the others out."""
+        tokens = await _connect(client, browser, user, redirect)
+        async with _from(("198.51.100.7", 40000)) as sender, _from(("198.51.100.7", 40001)) as colleague:
+            for i in range(rate_limits.TOKEN_FAILURES_PER_IP):
+                junk = {"grant_type": "refresh_token", "refresh_token": f"alpha-router-ext-rt-junk-{i}"}
+                assert (await sender.post("/api/extension/token", json=junk)).status_code == 400
+            valid = {"grant_type": "refresh_token", "refresh_token": tokens["refresh_token"]}
+            refreshed = await colleague.post("/api/extension/token", json=valid)
+            assert refreshed.status_code == 200, refreshed.text
+            assert refreshed.json()["session_id"] == tokens["session_id"]
+            more = {"grant_type": "refresh_token", "refresh_token": "alpha-router-ext-rt-junk-more"}
+            refused = await sender.post("/api/extension/token", json=more)
+            assert refused.status_code == 429
+            assert refused.json()["detail"] == "Too many failed attempts from this address. Try again shortly."
+            assert refused.headers["cache-control"] == "no-store"
 
     async def test_the_per_token_limit_follows_the_token_not_the_address(self, client):
         body = {"grant_type": "refresh_token", "refresh_token": "alpha-router-ext-rt-same"}

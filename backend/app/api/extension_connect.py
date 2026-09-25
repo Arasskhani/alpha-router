@@ -61,7 +61,9 @@ AUTHORIZE_LIMIT_PER_USER = 20
 REFRESH_LIMIT_PER_TOKEN = 10
 #: Failed code exchanges and refreshes from one address in a minute. Only
 #: failures count, so a whole office behind one NAT connecting and refreshing
-#: at once never fills it; a stream of junk from one host does.
+#: at once never fills it; a stream of junk from one host does, and from then
+#: on failures from that address are answered 429. Valid codes and refresh
+#: tokens from it are still served (extension_token says why).
 TOKEN_FAILURES_PER_IP = 60
 
 _STATE_RE = r"^[A-Za-z0-9_-]{16,128}$"
@@ -171,15 +173,22 @@ async def _refresh(db: AsyncSession, body: TokenIn, ip: str | None) -> TokenPair
 
 @router.post("/api/extension/token")
 async def extension_token(body: TokenIn, request: Request, db: AsyncSession = Depends(get_db)) -> JSONResponse:
-    """Trade a connect code, or a refresh token, for a new pair of tokens."""
+    """Trade a connect code, or a refresh token, for a new pair of tokens.
+
+    A valid code or refresh token is served however many failures its address
+    has behind it. Everyone behind one NAT or egress address, or behind a proxy
+    not configured as trusted, shares that address's window: refusing every
+    request once it is full would let one host there, with sixty junk refresh
+    tokens a minute, lock all the others out of refreshing and connecting, and
+    out of the extension once their access tokens ran out. Codes and refresh
+    tokens are 256-bit random values, so the window was never about guessing;
+    when it is full, a failure is answered 429, which tells a client sending
+    junk to back off.
+    """
     ip = resolve_client_ip(request)
     failures = f"extension:token-failures:{ip or 'unknown'}"
-    if await failure_limit_reached(failures, limit=TOKEN_FAILURES_PER_IP):
-        raise HTTPException(
-            status_code=429,
-            detail="Too many failed attempts from this address. Try again shortly.",
-            headers=_TOKEN_HEADERS,
-        )
+    # Whether earlier failures filled the window; it decides only how a failure is answered.
+    window_full = await failure_limit_reached(failures, limit=TOKEN_FAILURES_PER_IP)
     try:
         if body.grant_type == "authorization_code":
             pair = await _exchange_code(db, body, request, ip)
@@ -189,6 +198,12 @@ async def extension_token(body: TokenIn, request: Request, db: AsyncSession = De
             raise ExtensionTokenError("invalid_request", "grant_type must be authorization_code or refresh_token.")
     except ExtensionTokenError as exc:
         await record_failure(failures)
+        if window_full:
+            raise HTTPException(
+                status_code=429,
+                detail="Too many failed attempts from this address. Try again shortly.",
+                headers=_TOKEN_HEADERS,
+            ) from None
         raise _token_refusal(exc.code, exc.message) from None
     await db.commit()
     return JSONResponse(pair.as_response(), headers=_TOKEN_HEADERS)

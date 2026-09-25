@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { setClient } from "../lib/client";
 import { resetConfigForTests } from "../lib/config";
+import { insertIntoFocusedField } from "../lib/insert";
 import { SELECTION_PREAMBLE, pageMessage, type PageContext } from "../lib/pageContext";
 import { savePendingAction, type PendingAction } from "../lib/pendingAction";
 import { installChromeFake, type ChromeFake } from "../test/chromeFake";
@@ -916,6 +917,69 @@ describe("screenshots", () => {
     await act(async () => undefined);
     expect(host.textContent).toContain("Alpharouter could not take a screenshot of this page.");
     expect(host.querySelector(".chip--static")).toBeNull();
+  });
+});
+
+describe("putting an answer into the page", () => {
+  const GUIDE = { url: "https://docs.example.com/guide", title: "The guide" };
+  const PATTERN = "https://docs.example.com/*";
+
+  beforeEach(() => {
+    server.routes["POST /api/chat/session-title"] = () => json(200, { title: "" });
+    chromeFake.tabs.add({ ...GUIDE, active: true });
+    answerWith([textFrame("The **report** is ready.")]);
+  });
+
+  function answerFrom(result: string) {
+    chromeFake.scripting.executeScript.mockImplementation((async () => [{ result }]) as never);
+  }
+
+  it("types the answer, as plain text, into the field left focused on the page", async () => {
+    chromeFake.permissions.granted.add(PATTERN);
+    answerFrom("inserted");
+    await render();
+    await send("Draft a status line");
+    await act(async () => button("Insert answer into the page").click());
+    await act(async () => undefined);
+    const [injection] = chromeFake.scripting.executeScript.mock.calls[0] as [{ target: unknown; func: unknown; args: unknown[] }];
+    expect(injection.target).toEqual({ tabId: 1 });
+    expect(injection.func).toBe(insertIntoFocusedField);
+    expect(injection.args).toEqual(["The report is ready.", "docs.example.com"]);
+    expect(button("Insert answer into the page").textContent).toBe("Inserted");
+  });
+
+  it("asks Chrome for the site in the click when it was not granted", async () => {
+    answerFrom("inserted");
+    await render();
+    await send("Draft a status line");
+    await act(async () => {
+      button("Insert answer into the page").click();
+      expect(chromeFake.permissions.request).toHaveBeenCalledWith({ origins: [PATTERN] });
+    });
+    await act(async () => undefined);
+    expect(chromeFake.scripting.executeScript).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["sensitive", "Alpharouter does not type into password, card or code fields."],
+    ["no_field", "Click into a text field on the page first, then choose Insert."],
+  ])("says why when the page answers %s", async (result, message) => {
+    chromeFake.permissions.granted.add(PATTERN);
+    answerFrom(result);
+    await render();
+    await send("Draft a status line");
+    await act(async () => button("Insert answer into the page").click());
+    await act(async () => undefined);
+    expect(host.querySelector('.chat__notice[role="alert"]')?.textContent).toBe(message);
+  });
+
+  it("never types on a site the administrator blocked", async () => {
+    chromeFake.permissions.granted.add(PATTERN);
+    await render({ ...ME, policy: { ...ME.policy!, blocked_sites: ["docs.example.com"] } });
+    await send("Draft a status line");
+    await act(async () => button("Insert answer into the page").click());
+    expect(chromeFake.scripting.executeScript).not.toHaveBeenCalled();
+    expect(host.textContent).toContain("does not allow Alpharouter to read docs.example.com");
   });
 });
 

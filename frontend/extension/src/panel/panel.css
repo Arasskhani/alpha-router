@@ -558,3 +558,9 @@ button {
   object-fit: cover;
   object-position: top left;
 }
+
+/* Copy and Insert under an answer. */
+.turn__actions {
+  display: flex;
+  gap: 0.25rem;
+}

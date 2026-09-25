@@ -15,6 +15,7 @@ import {
   type SiteRules,
 } from "../lib/pageContext";
 import { PENDING_ACTION_MAX_AGE_MS, takePendingAction, type PendingAction, type PendingActionKind } from "../lib/pendingAction";
+import { insertIntoFocusedField, plainText, type InsertResult } from "../lib/insert";
 import { captureTab } from "../lib/screenshot";
 import { readablePage } from "../lib/sites";
 import { DisconnectedError, TemporaryError } from "../lib/tokens";
@@ -42,6 +43,13 @@ function hostOf(url: string): string | null {
     return null;
   }
 }
+
+/** Why an answer did not go into the page. */
+const NOT_INSERTED: Record<Exclude<InsertResult, "inserted">, string> = {
+  no_field: "Click into a text field on the page first, then choose Insert.",
+  sensitive: "Alpharouter does not type into password, card or code fields.",
+  moved: "The page changed. Try again.",
+};
 
 const NO_IMAGES = "This model does not read images. Choose another model.";
 const NO_IMAGES_IN_CHAT = "This chat has a screenshot, which this model cannot read. Choose a model that reads images, or start a new chat.";
@@ -90,6 +98,7 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
   const [busy, setBusy] = useState(false);
   const [banner, setBanner] = useState("");
   const [copied, setCopied] = useState<string | null>(null);
+  const [inserted, setInserted] = useState<string | null>(null);
   const controller = useRef<AbortController | null>(null);
   // A ref, not state: Stop right after the first Send must know the new id.
   const sessionId = useRef<string | null>(null);
@@ -587,6 +596,50 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
     setPrivateMode((on) => !on);
   }
 
+  /** Put an answer into the field the user left focused in the page next to the panel. */
+  function insertAnswer(turn: Turn) {
+    if (!target || !activePage) return;
+    const refused = pageRefusal(target.host, rules);
+    if (refused) {
+      setBanner(refused);
+      return;
+    }
+    const tab = { id: activePage.tabId, host: target.host };
+    const text = plainText(turn.content);
+    if (siteAccess) {
+      void insertInto(tab, text, turn.id);
+      return;
+    }
+    // Chrome asks the user only while the click is being handled: nothing may come first.
+    chrome.permissions
+      .request({ origins: [target.pattern] })
+      .then((granted) => {
+        if (granted) void insertInto(tab, text, turn.id);
+        else setBanner(`Alpharouter can type on ${tab.host} only if you allow it when Chrome asks.`);
+      })
+      .catch(() => setBanner("Chrome could not ask for permission. Try again."));
+  }
+
+  async function insertInto(tab: { id: number; host: string }, text: string, turnId: string) {
+    try {
+      const [first] = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: insertIntoFocusedField,
+        args: [text, tab.host],
+      });
+      const result = first?.result as InsertResult | undefined;
+      if (result === "inserted") {
+        setBanner("");
+        setInserted(turnId);
+        window.setTimeout(() => setInserted((id) => (id === turnId ? null : id)), 1500);
+      } else {
+        setBanner(result ? NOT_INSERTED[result] : "Alpharouter could not type into this page. Reload it and try again.");
+      }
+    } catch {
+      setBanner("Alpharouter could not type into this page. Reload it and try again.");
+    }
+  }
+
   async function copy(turn: Turn) {
     try {
       await navigator.clipboard.writeText(turn.content);
@@ -710,9 +763,22 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
               </p>
             )}
             {turn.role === "assistant" && !turn.streaming && turn.content && (
-              <button type="button" className="btn btn--quiet turn__copy" aria-label="Copy answer" onClick={() => void copy(turn)}>
-                {copied === turn.id ? "Copied" : "Copy"}
-              </button>
+              <div className="turn__actions">
+                <button type="button" className="btn btn--quiet turn__copy" aria-label="Copy answer" onClick={() => void copy(turn)}>
+                  {copied === turn.id ? "Copied" : "Copy"}
+                </button>
+                {me.features.page_context && target && activePage && (
+                  <button
+                    type="button"
+                    className="btn btn--quiet turn__copy"
+                    aria-label="Insert answer into the page"
+                    title={`Into the field you left selected on ${target.host}`}
+                    onClick={() => insertAnswer(turn)}
+                  >
+                    {inserted === turn.id ? "Inserted" : "Insert"}
+                  </button>
+                )}
+              </div>
             )}
           </article>
         ))}

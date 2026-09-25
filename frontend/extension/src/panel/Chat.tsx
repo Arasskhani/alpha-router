@@ -90,6 +90,9 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
   const waitingAction = useRef<PendingAction | null>(null);
   const actionHandler = useRef<(action: PendingAction) => void>(() => undefined);
   const composer = useRef<HTMLTextAreaElement | null>(null);
+  // Raised by Stop, New chat and Private: a page still being read for the
+  // question before is then dropped, not sent into what the user moved on to.
+  const generation = useRef(0);
   const rules = useMemo<SiteRules>(
     () => ({
       policy: { allowed_sites: me.policy?.allowed_sites ?? [], blocked_sites: me.policy?.blocked_sites ?? [] },
@@ -258,19 +261,27 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
       .catch(() => setBanner("Chrome could not ask for permission. Try again."));
   }
 
-  /** Read a tab's page for the question about to go; the banner says why not, and null comes back. */
+  /**
+   * Read a tab's page for the question about to go; the banner says why not,
+   * and null comes back - also when the user stopped or moved on meanwhile.
+   */
   async function readForQuestion(tab: { id: number; url: string }): Promise<PageContext | null> {
+    const started = generation.current;
     markBusy(true);
     setReading(true);
     setBanner("");
     try {
-      return (await readPage(tab, rules)).page;
+      const { page } = await readPage(tab, rules);
+      return started === generation.current ? page : null;
     } catch (err) {
-      setBanner(err instanceof PageReadError ? err.message : "Alpharouter could not read this page.");
+      if (started === generation.current) setBanner(err instanceof PageReadError ? err.message : "Alpharouter could not read this page.");
       return null;
     } finally {
-      setReading(false);
-      markBusy(false);
+      // After Stop the panel is already idle, and may be busy with something new.
+      if (started === generation.current) {
+        setReading(false);
+        markBusy(false);
+      }
     }
   }
 
@@ -386,7 +397,15 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
   }
 
   function stop() {
-    controller.current?.abort();
+    generation.current += 1;
+    const inFlight = controller.current;
+    if (!inFlight) {
+      // Only a page was being read: drop it, and the question stays in the composer.
+      setReading(false);
+      markBusy(false);
+      return;
+    }
+    inFlight.abort();
     const sid = sessionId.current;
     if (sid && !privateMode) {
       // The server keeps generating for a saved chat until told.
@@ -397,6 +416,7 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
   }
 
   function newChat() {
+    generation.current += 1;
     if (busy) stop();
     setTurns([]);
     setSelections([]);

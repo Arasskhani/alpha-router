@@ -418,6 +418,70 @@ describe("sharing the page next to the panel", () => {
     expect(next.extension_page_context).toEqual({ sites: [{ host: "docs.example.com", chars: 19 }] });
   });
 
+  describe("while the page is being read", () => {
+    let release: () => void;
+
+    beforeEach(() => {
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      chromeFake.permissions.granted.add(PATTERN);
+      chromeFake.tabs.add({ ...GUIDE, active: true });
+      chromeFake.scripting.executeScript.mockImplementation((async (injection: { files?: string[] }) => {
+        if (injection.files) return [];
+        await gate;
+        return [{ result: EXTRACT }];
+      }) as never);
+      answerWith([textFrame("Answer.")]);
+    });
+
+    async function startReading() {
+      await render();
+      await click(chip()!);
+      await send("Summarize it");
+      expect(host.textContent).toContain("Reading the page…");
+    }
+
+    async function finishReading() {
+      await act(async () => release());
+      await act(async () => undefined);
+      await act(async () => undefined);
+    }
+
+    it("Stop drops the page, sends nothing and keeps the question", async () => {
+      await startReading();
+      await act(async () => button("Stop").click());
+      expect(button("Send")).toBeTruthy();
+      await finishReading();
+      expect(server.callsTo("POST", "/api/chat/completions")).toHaveLength(0);
+      expect(server.calls.filter((c) => c.path.endsWith("/cancel-stream"))).toHaveLength(0);
+      expect((host.querySelector("textarea") as HTMLTextAreaElement).value).toBe("Summarize it");
+      expect(host.textContent).not.toContain("Reading the page…");
+    });
+
+    it("New chat drops it too", async () => {
+      await startReading();
+      await act(async () => button("New chat").click());
+      await finishReading();
+      expect(server.callsTo("POST", "/api/chat/completions")).toHaveLength(0);
+    });
+
+    it("switching to Private drops it: the question is never sent as a saved chat", async () => {
+      await startReading();
+      await act(async () => button("Private chat").click());
+      await finishReading();
+      expect(server.callsTo("POST", "/api/chat/completions")).toHaveLength(0);
+    });
+
+    it("a question sent after Stop is not disturbed when the old read ends", async () => {
+      await startReading();
+      await act(async () => button("Stop").click());
+      await act(async () => chip()!.click());
+      await send("Just this");
+      await finishReading();
+      const bodies = server.callsTo("POST", "/api/chat/completions").map((c) => c.body as Record<string, unknown>);
+      expect(bodies.map((b) => (b.user_message as { content: string }).content)).toEqual(["Just this"]);
+    });
+  });
+
   it("keeps the question when the page cannot be read", async () => {
     chromeFake.permissions.granted.add(PATTERN);
     chromeFake.tabs.add({ ...GUIDE, active: true });

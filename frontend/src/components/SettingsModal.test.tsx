@@ -69,6 +69,20 @@ function clickTab(label: string) {
   return act(async () => tab?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
 }
 
+describe("the Extension tab", () => {
+  it("is in the menu and opens the browser extension's panel", async () => {
+    vi.mocked(api).mockImplementation(async (path: string) => {
+      if (path === "/api/extension/info") return { available: false, permitted: false } as never;
+      if (path === "/api/extension/sessions") return { items: [] } as never;
+      return {} as never;
+    });
+    await openSettings();
+    await clickTab("Extension");
+    expect(document.body.textContent).toContain("Browser extension");
+    expect(api).toHaveBeenCalledWith("/api/extension/info");
+  });
+});
+
 describe("the settings tabs", () => {
   it("names the directory screen for what it is, not for something it cannot do", async () => {
     vi.mocked(api).mockResolvedValue({});

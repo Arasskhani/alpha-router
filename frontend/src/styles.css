@@ -13365,6 +13365,52 @@ body.login-route #root {
   max-width: none;
 }
 
+/* Settings → Extension (components/ExtensionPanel.tsx). */
+.extension-panel a.btn {
+  text-decoration: none;
+}
+
+.extension-panel__browsers {
+  max-width: 14rem;
+  margin-bottom: 0.6rem;
+}
+
+.extension-panel__steps {
+  display: grid;
+  gap: 0.3rem;
+  margin: 0 0 0.6rem;
+  padding-left: 1.2rem;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.extension-panel__heading {
+  margin: 1.1rem 0 0.4rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.extension-panel__it {
+  margin-top: 1rem;
+}
+
+.extension-panel__it summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.extension-panel__it[open] summary {
+  margin-bottom: 0.5rem;
+}
+
+@media (max-width: 768px) {
+  /* A finger's height; padding rather than flex keeps the disclosure marker. */
+  .extension-panel__it summary {
+    padding-block: 0.875rem;
+  }
+}
+
 .personal-api-key-field {
   margin-bottom: 0;
 }

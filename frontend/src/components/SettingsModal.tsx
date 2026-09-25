@@ -30,12 +30,13 @@ import {
 } from "../lib/userMemories";
 import { EMPTY_WORK_PROFILE, fetchWorkProfile, type WorkProfile } from "../lib/workProfile";
 import { useConfirm } from "../context/ConfirmContext";
+import ExtensionPanel from "./ExtensionPanel";
 import Modal from "./Modal";
 import PersonalApiKeyPanel from "./PersonalApiKeyPanel";
 import RecentSignInsModal from "./RecentSignInsModal";
 import ThemeSegmentedControl from "./ThemeSegmentedControl";
 
-type TabId = "general" | "work-profile" | "memory" | "data-control" | "security" | "api-keys";
+type TabId = "general" | "work-profile" | "memory" | "data-control" | "security" | "api-keys" | "extension";
 
 type SecurityStatus = {
   auth_provider: string;
@@ -65,6 +66,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "data-control", label: "Data Control" },
   { id: "security", label: "Security" },
   { id: "api-keys", label: "API Key" },
+  { id: "extension", label: "Extension" },
 ];
 
 const NAMED_THEME_OPTIONS: NamedTheme[] = ["default", "mint", "dark-mint"];
@@ -115,6 +117,7 @@ export default function SettingsModal({ open, onClose, theme, onThemeChange }: P
           {tab === "data-control" && <DataControlPanel />}
           {tab === "security" && <SecurityPanel />}
           {tab === "api-keys" && <PersonalApiKeyPanel />}
+          {tab === "extension" && <ExtensionPanel />}
         </section>
       </div>
     </Modal>

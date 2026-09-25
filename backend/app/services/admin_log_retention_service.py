@@ -140,7 +140,7 @@ async def set_admin_log_retention(
     return await get_admin_log_retention(db)
 
 
-async def purge_expired_admin_logs(db: AsyncSession) -> dict[str, int]:
+async def purge_expired_admin_logs(db: AsyncSession) -> dict[str, Any]:
     """Delete rows past the longer window, then blank the detail of aged rows that remain.
 
     In that order, so a row that goes is not first rewritten, and each row is

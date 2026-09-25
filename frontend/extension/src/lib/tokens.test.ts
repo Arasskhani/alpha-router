@@ -3,13 +3,21 @@
  */
 import { describe, expect, it, vi } from "vitest";
 
-import { DisconnectedError, TemporaryError, createTokenManager, type Lock, type StoredAccess, type TokenStorage } from "./tokens";
+import {
+  DisconnectedError,
+  TemporaryError,
+  createTokenManager,
+  type Lock,
+  type PendingAttempt,
+  type StoredAccess,
+  type TokenStorage,
+} from "./tokens";
 
 const SERVER = "https://ai.example.com";
 const NOW = 1_000_000_000_000;
 
-function memoryStorage(access: StoredAccess | null, refresh: string | null) {
-  const state = { access, refresh, writes: [] as string[] };
+function memoryStorage(access: StoredAccess | null, refresh: string | null, attempt: PendingAttempt | null = null) {
+  const state = { access, refresh, attempt, writes: [] as string[] };
   const storage: TokenStorage = {
     getAccess: async () => state.access,
     setAccess: async (value) => {
@@ -20,6 +28,11 @@ function memoryStorage(access: StoredAccess | null, refresh: string | null) {
     setRefresh: async (value) => {
       state.writes.push(value ? "refresh" : "refresh:cleared");
       state.refresh = value;
+    },
+    getAttempt: async () => state.attempt,
+    setAttempt: async (value) => {
+      state.writes.push(value ? "attempt" : "attempt:cleared");
+      state.attempt = value;
     },
   };
   return { state, storage };
@@ -100,8 +113,11 @@ describe("the access token", () => {
     });
     expect(state.refresh).toBe("alpha-router-ext-rt-1");
     expect(state.access).toEqual({ token: "alpha-router-ext-at-1", expiresAt: NOW + 3_600_000, sessionId: "session-1" });
-    // The refresh token is written first: a crash in between loses nothing.
-    expect(state.writes).toEqual(["refresh", "access"]);
+    // The attempt is stored before the request and dropped once the new pair
+    // is saved; the refresh token is written first. A crash anywhere in
+    // between loses nothing.
+    expect(state.writes).toEqual(["attempt", "refresh", "access", "attempt:cleared"]);
+    expect(state.attempt).toBeNull();
   });
 
   it("is refreshed once when two callers need it at the same time", async () => {
@@ -162,6 +178,7 @@ describe("a refresh the server refuses", () => {
     expect((error as Error).message).toBe("You signed out; connect this browser again.");
     expect(state.access).toBeNull();
     expect(state.refresh).toBeNull();
+    expect(state.attempt).toBeNull();
     expect(onDisconnected).toHaveBeenCalledOnce();
   });
 
@@ -211,6 +228,84 @@ describe("a refresh that cannot happen right now", () => {
   });
 });
 
+describe("the attempt of a refresh whose answer never came", () => {
+  /** Kept by a page that closed while its refresh was on the way. */
+  const KEPT: PendingAttempt = { refresh: "alpha-router-ext-rt-0", attempt: "kept-attempt-of-a-page-that-closed" };
+
+  it("is stored before the request goes out", async () => {
+    const { state, storage } = memoryStorage(ENDED, "alpha-router-ext-rt-0");
+    const stored: Array<PendingAttempt | null> = [];
+    const fetchImpl = vi.fn(async () => {
+      stored.push(state.attempt);
+      return json(200, pair(1));
+    });
+    const { tokens } = manager(storage, fetchImpl as unknown as typeof fetch);
+    await tokens.accessToken();
+    expect(stored).toEqual([{ refresh: "alpha-router-ext-rt-0", attempt: sent(fetchImpl)[0].attempt }]);
+  });
+
+  it("is sent again when the network lost the answer", async () => {
+    const { state, storage } = memoryStorage(ENDED, "alpha-router-ext-rt-0");
+    const timedOut = new DOMException("The operation timed out.", "TimeoutError");
+    const fetchImpl = vi
+      .fn()
+      .mockRejectedValueOnce(timedOut)
+      .mockRejectedValueOnce(timedOut)
+      .mockResolvedValueOnce(json(200, pair(1)));
+    const { tokens } = manager(storage, fetchImpl as unknown as typeof fetch);
+    await expect(tokens.accessToken()).rejects.toBeInstanceOf(TemporaryError);
+    const [first] = sent(fetchImpl);
+    expect(state.attempt).toEqual({ refresh: "alpha-router-ext-rt-0", attempt: first.attempt });
+    expect(await tokens.accessToken()).toBe("alpha-router-ext-at-1");
+    expect(sent(fetchImpl).map((body) => body.attempt)).toEqual([first.attempt, first.attempt, first.attempt]);
+    expect(state.attempt).toBeNull();
+  });
+
+  it("is sent again when a proxy answered 502", async () => {
+    const { storage } = memoryStorage(ENDED, "alpha-router-ext-rt-0");
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(json(502, { detail: "Bad Gateway" }))
+      .mockResolvedValueOnce(json(200, pair(1)));
+    const { tokens } = manager(storage, fetchImpl as unknown as typeof fetch);
+    await expect(tokens.accessToken()).rejects.toBeInstanceOf(TemporaryError);
+    expect(await tokens.accessToken()).toBe("alpha-router-ext-at-1");
+    const [first, again] = sent(fetchImpl);
+    expect(again.attempt).toBe(first.attempt);
+  });
+
+  it("is sent by the next page when the page that sent it closed", async () => {
+    const { storage } = memoryStorage(ENDED, "alpha-router-ext-rt-0", KEPT);
+    const fetchImpl = vi.fn(async () => json(200, pair(1)));
+    const { tokens } = manager(storage, fetchImpl as unknown as typeof fetch);
+    expect(await tokens.accessToken()).toBe("alpha-router-ext-at-1");
+    expect(sent(fetchImpl)[0].attempt).toBe(KEPT.attempt);
+  });
+
+  it.each([
+    ["when it was kept for another refresh token", { ...KEPT, refresh: "alpha-router-ext-rt-older" }],
+    ["when what was kept is no attempt", { ...KEPT, attempt: "not an attempt" }],
+  ])("is not sent %s", async (_, kept) => {
+    const { state, storage } = memoryStorage(ENDED, "alpha-router-ext-rt-0", kept);
+    const fetchImpl = vi.fn(async () => json(200, pair(1)));
+    const { tokens } = manager(storage, fetchImpl as unknown as typeof fetch);
+    expect(await tokens.accessToken()).toBe("alpha-router-ext-at-1");
+    const [body] = sent(fetchImpl);
+    expect(body.attempt).toMatch(AN_ATTEMPT);
+    expect(body.attempt).not.toBe(kept.attempt);
+    expect(state.writes[0]).toBe("attempt");
+  });
+
+  it("goes with the tokens when they are dropped", async () => {
+    const { state, storage } = memoryStorage(ENDED, "alpha-router-ext-rt-0", KEPT);
+    const { tokens } = manager(storage, vi.fn() as unknown as typeof fetch);
+    await tokens.clear();
+    expect(state.attempt).toBeNull();
+    // Before the refresh token, since it holds a copy of it.
+    expect(state.writes).toEqual(["access:cleared", "attempt:cleared", "refresh:cleared"]);
+  });
+});
+
 describe("connecting and disconnecting", () => {
   it("saves a connect response and forgets it on request", async () => {
     const { state, storage } = memoryStorage(null, null);
@@ -238,7 +333,8 @@ describe("connecting and disconnecting", () => {
     await clearing;
     expect(state.access).toBeNull();
     expect(state.refresh).toBeNull();
-    expect(state.writes.slice(-2)).toEqual(["access:cleared", "refresh:cleared"]);
+    expect(state.attempt).toBeNull();
+    expect(state.writes.slice(-3)).toEqual(["access:cleared", "attempt:cleared", "refresh:cleared"]);
   });
 
   it("refuses a response without tokens", async () => {

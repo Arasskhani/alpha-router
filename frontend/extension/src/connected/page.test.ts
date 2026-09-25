@@ -4,7 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { startConnect } from "../lib/connect";
-import { createTokenManager, type StoredAccess, type TokenStorage } from "../lib/tokens";
+import { createTokenManager, type PendingAttempt, type StoredAccess, type TokenStorage } from "../lib/tokens";
 import { installChromeFake, type ChromeFake } from "../test/chromeFake";
 import { runConnectedPage } from "./page";
 
@@ -22,12 +22,14 @@ afterEach(() => {
 });
 
 function memoryTokens() {
-  const state = { access: null as StoredAccess | null, refresh: null as string | null };
+  const state = { access: null as StoredAccess | null, refresh: null as string | null, attempt: null as PendingAttempt | null };
   const storage: TokenStorage = {
     getAccess: async () => state.access,
     setAccess: async (v) => void (state.access = v),
     getRefresh: async () => state.refresh,
     setRefresh: async (v) => void (state.refresh = v),
+    getAttempt: async () => state.attempt,
+    setAttempt: async (v) => void (state.attempt = v),
   };
   return { state, tokens: createTokenManager({ storage, lock: (fn) => fn(), serverUrl: async () => SERVER, fetch: vi.fn() as unknown as typeof fetch }) };
 }

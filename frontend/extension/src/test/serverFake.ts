@@ -7,7 +7,7 @@ import { vi } from "vitest";
 
 import { createApi } from "../lib/api";
 import { setClient } from "../lib/client";
-import { createTokenManager, type StoredAccess, type TokenStorage } from "../lib/tokens";
+import { createTokenManager, type PendingAttempt, type StoredAccess, type TokenStorage } from "../lib/tokens";
 
 export const SERVER = "https://ai.example.com";
 
@@ -53,9 +53,10 @@ export function createServerFake() {
   /** Routes matched by a pattern over "METHOD /path", for ids the code makes up. */
   const patterns: Array<[RegExp, Route]> = [];
   const calls: Array<{ method: string; path: string; body: unknown; headers: Headers }> = [];
-  const tokenState: { access: StoredAccess | null; refresh: string | null } = {
+  const tokenState: { access: StoredAccess | null; refresh: string | null; attempt: PendingAttempt | null } = {
     access: { token: "at", expiresAt: Date.now() + 3_600_000, sessionId: "s1" },
     refresh: "rt",
+    attempt: null,
   };
 
   const fetchImpl = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
@@ -83,6 +84,8 @@ export function createServerFake() {
     setAccess: async (v) => void (tokenState.access = v),
     getRefresh: async () => tokenState.refresh,
     setRefresh: async (v) => void (tokenState.refresh = v),
+    getAttempt: async () => tokenState.attempt,
+    setAttempt: async (v) => void (tokenState.attempt = v),
   };
   const serverUrl = async () => SERVER;
   const tokens = createTokenManager({ storage, lock: (fn) => fn(), serverUrl, fetch: fetchImpl as unknown as typeof fetch });

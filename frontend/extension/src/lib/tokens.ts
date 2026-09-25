@@ -22,6 +22,13 @@
  * presenting the old refresh token instead of receiving this browser's new
  * pair.
  *
+ * The attempt is stored beside the refresh token before the request goes out,
+ * and dropped once the new pair is saved. An answer that never arrives - the
+ * side panel closed mid-refresh, both tries timed out, a proxy answered 502
+ * after the server had rotated - leaves it there, and the next refresh of the
+ * same token sends it again: the server then hands the pair over even after
+ * its grace, as long as the new access token has not been used.
+ *
  * Outcomes: a token; DisconnectedError (the server refused the refresh token -
  * connect again); TemporaryError (network, 429, 5xx - the tokens are kept and
  * the caller tries later).
@@ -37,11 +44,16 @@ export type TokenResponse = {
   session_id: string;
 };
 
+/** The refresh under way, or whose answer never came: the refresh token it spends, and its attempt. */
+export type PendingAttempt = { refresh: string; attempt: string };
+
 export interface TokenStorage {
   getAccess(): Promise<StoredAccess | null>;
   setAccess(value: StoredAccess | null): Promise<void>;
   getRefresh(): Promise<string | null>;
   setRefresh(value: string | null): Promise<void>;
+  getAttempt(): Promise<PendingAttempt | null>;
+  setAttempt(value: PendingAttempt | null): Promise<void>;
 }
 
 /** Runs `fn` while holding the extension-wide token lock. */
@@ -72,6 +84,9 @@ function newAttempt(): string {
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_");
 }
 
+/** What the server takes for an attempt; anything else found in storage was not made here. */
+const ATTEMPT_PATTERN = /^[A-Za-z0-9_-]{16,128}$/;
+
 export type TokenManagerDeps = {
   storage: TokenStorage;
   lock: Lock;
@@ -101,10 +116,14 @@ export function createTokenManager(deps: TokenManagerDeps) {
       expiresAt: now() + Math.max(0, Number(response.expires_in) || 0) * 1000,
       sessionId: response.session_id,
     });
+    // Answered: the next refresh spends the new token, under a new attempt.
+    await deps.storage.setAttempt(null);
   }
 
   async function clearStored(): Promise<void> {
     await deps.storage.setAccess(null);
+    // Before the refresh token: the pending attempt holds a copy of it.
+    await deps.storage.setAttempt(null);
     await deps.storage.setRefresh(null);
   }
 
@@ -148,13 +167,27 @@ export function createTokenManager(deps: TokenManagerDeps) {
     });
   }
 
+  /**
+   * The attempt that spends `refreshToken`: the one already sent for it when
+   * no answer came, else a new one - stored before it is sent, so that the
+   * answer can be asked for again even if this page goes away first.
+   */
+  async function attemptFor(refreshToken: string): Promise<string> {
+    const pending = await deps.storage.getAttempt();
+    if (pending?.refresh === refreshToken && ATTEMPT_PATTERN.test(pending.attempt)) return pending.attempt;
+    const attempt = newAttempt();
+    await deps.storage.setAttempt({ refresh: refreshToken, attempt });
+    return attempt;
+  }
+
   /** Spend the refresh token. Only ever called while holding the lock. */
   async function refreshLocked(): Promise<string> {
     const refreshToken = await deps.storage.getRefresh();
     if (!refreshToken) throw new DisconnectedError();
-    // One name for this refresh, sent again with its retry: only the attempt
-    // that replaced the token gets its pair again.
-    const attempt = newAttempt();
+    // One name for this refresh, sent again with its retry and, if no answer
+    // comes, with the next refresh of this token: only the attempt that
+    // replaced the token gets its pair again.
+    const attempt = await attemptFor(refreshToken);
     let response: Response | null = null;
     for (let tries = 0; tries < 2 && !response; tries += 1) {
       try {

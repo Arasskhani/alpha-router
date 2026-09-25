@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createApi } from "../lib/api";
 import { setClient } from "../lib/client";
 import { resetConfigForTests } from "../lib/config";
-import { createTokenManager, type StoredAccess, type TokenStorage } from "../lib/tokens";
+import { createTokenManager, type PendingAttempt, type StoredAccess, type TokenStorage } from "../lib/tokens";
 import { EXTENSION_ID, installChromeFake, type ChromeFake } from "../test/chromeFake";
 import App from "./App";
 
@@ -27,7 +27,7 @@ let chromeFake: ChromeFake;
 let host: HTMLDivElement;
 let root: Root;
 let routes: Record<string, (init?: RequestInit) => Response | Promise<Response>>;
-let tokenState: { access: StoredAccess | null; refresh: string | null };
+let tokenState: { access: StoredAccess | null; refresh: string | null; attempt: PendingAttempt | null };
 
 function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -43,12 +43,14 @@ const serverFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =
 });
 
 function connectWith(access: StoredAccess | null, refresh: string | null) {
-  tokenState = { access, refresh };
+  tokenState = { access, refresh, attempt: null };
   const storage: TokenStorage = {
     getAccess: async () => tokenState.access,
     setAccess: async (v) => void (tokenState.access = v),
     getRefresh: async () => tokenState.refresh,
     setRefresh: async (v) => void (tokenState.refresh = v),
+    getAttempt: async () => tokenState.attempt,
+    setAttempt: async (v) => void (tokenState.attempt = v),
   };
   const serverUrl = async () => SERVER;
   const tokens = createTokenManager({ storage, lock: (fn) => fn(), serverUrl, fetch: serverFetch as unknown as typeof fetch });
@@ -241,6 +243,8 @@ describe("the side panel, when the answer does not come", () => {
           throw new Error("IndexedDB is broken");
         },
         setRefresh: async () => undefined,
+        getAttempt: async () => null,
+        setAttempt: async () => undefined,
       },
       lock: (fn) => fn(),
       serverUrl: async () => SERVER,

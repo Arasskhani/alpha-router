@@ -553,7 +553,11 @@ class TestRefresh:
         assert (await _grant_error(authenticate(db_session, new.access_token))).code == "revoked"
         assert (await _grant_error(refresh_session(db_session, new.refresh_token))).code == "invalid_grant"
 
-    async def test_after_the_grace_the_old_token_ends_the_session(self, db_session, session_factory, user, clock):
+    async def test_after_the_grace_the_old_token_without_an_attempt_ends_the_session(
+        self, db_session, session_factory, user, clock
+    ):
+        # Nothing tells an extension from before attempts from a copy of its
+        # tokens, so it gets the grace and no more, as it always did.
         pair = await _connect(db_session, user)
         new = await refresh_session(db_session, pair.refresh_token)
         await db_session.commit()
@@ -565,6 +569,65 @@ class TestRefresh:
         # Whoever holds the new pair is out too: it may be the thief.
         assert (await _grant_error(authenticate(db_session, new.access_token))).code == "revoked"
         assert (await _grant_error(refresh_session(db_session, new.refresh_token))).code == "invalid_grant"
+
+    @pytest.mark.parametrize(
+        ("later", "left"), [(datetime.timedelta(minutes=10), 3000), (datetime.timedelta(hours=2), 0)]
+    )
+    async def test_a_lost_answer_is_picked_up_after_the_grace_by_the_same_attempt(
+        self, db_session, session_factory, user, clock, later, left
+    ):
+        # The rotation was committed but the extension never saw the answer
+        # (its panel closed, or a proxy answered 502 after the backend had
+        # committed). It comes back later with the old token and the attempt
+        # it kept.
+        pair = await _connect(db_session, user)
+        new = await refresh_session(db_session, pair.refresh_token, attempt=ATTEMPT)
+        await db_session.commit()
+        before = _columns(await _row(session_factory, pair.session_id))
+        clock.value += later
+        again = await refresh_session(db_session, pair.refresh_token, attempt=ATTEMPT)
+        await db_session.commit()
+        assert (again.access_token, again.refresh_token) == (new.access_token, new.refresh_token)
+        assert again.expires_in == left
+        # Nothing is written, so picking it up never extends anything.
+        assert _columns(await _row(session_factory, pair.session_id)) == before
+
+    async def test_after_the_grace_the_same_attempt_ends_the_session_once_the_new_access_token_was_used(
+        self, db_session, session_factory, user, clock
+    ):
+        pair = await _connect(db_session, user)
+        clock.advance(minutes=50)
+        new = await refresh_session(db_session, pair.refresh_token, attempt=ATTEMPT)
+        await db_session.commit()
+        # The extension got its answer and works with the new access token
+        # (what the authentication dependency records, at most once a minute).
+        clock.advance(seconds=30)
+        await authenticate(db_session, new.access_token)
+        await touch_session(new.session_id, ip="10.0.0.5")
+        clock.value += tokens.REFRESH_GRACE
+        # So the old token and the attempt come from a copy made mid-refresh.
+        error = await _grant_error(refresh_session(db_session, pair.refresh_token, attempt=ATTEMPT, ip="203.0.113.7"))
+        assert error.code == "invalid_grant"
+        assert (await _row(session_factory, pair.session_id)).revoked_reason == "refresh_reuse"
+        async with session_factory() as fresh:
+            (event,) = (await fresh.execute(select(SecurityAuditEvent))).scalars().all()
+        assert (event.action, event.actor_ip) == ("extension_session_revoked", "203.0.113.7")
+        assert (await _grant_error(authenticate(db_session, new.access_token))).code == "revoked"
+
+    async def test_after_the_grace_another_attempt_ends_the_session(self, db_session, session_factory, user, clock):
+        pair = await _connect(db_session, user)
+        new = await refresh_session(db_session, pair.refresh_token, attempt=ATTEMPT)
+        await db_session.commit()
+        clock.advance(minutes=10)
+        # The new access token is unused, as after a lost answer; but this is
+        # not the attempt that was waiting for it.
+        error = await _grant_error(refresh_session(db_session, pair.refresh_token, attempt=OTHER_ATTEMPT))
+        assert error.code == "invalid_grant"
+        assert (await _row(session_factory, pair.session_id)).revoked_reason == "refresh_reuse"
+        async with session_factory() as fresh:
+            (event,) = (await fresh.execute(select(SecurityAuditEvent))).scalars().all()
+        assert event.action == "extension_session_revoked"
+        assert (await _grant_error(authenticate(db_session, new.access_token))).code == "revoked"
 
     async def test_the_grace_starts_when_the_token_is_replaced_not_when_the_request_began(
         self, db_session, session_factory, user, clock

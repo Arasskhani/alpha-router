@@ -10,10 +10,12 @@ The connect flow is OAuth's authorization code with PKCE, run in a normal tab
    the API opens a session (:func:`create_session`): an access token (one
    hour) and a refresh token (30 days of disuse, 180 days at most).
 3. Refreshing rotates the refresh token (:func:`refresh_session`). The token
-   just replaced still works for two minutes for the refresh that replaced
-   it, so a response lost on the way can be retried; presented by anyone
-   else, or after that - or any older token of the same session - it can only
-   be a stolen copy, and the session ends.
+   just replaced still works for the refresh that replaced it: for two
+   minutes, so a response lost on the way can be retried, and after that
+   until the new access token is used, so an extension that never saw the
+   answer can still pick it up. Presented by anyone else, or once the new
+   access token has been used - or any older token of the same session - it
+   can only be a stolen copy, and the session ends.
 
 Each refresh carries an ``attempt``: a random name the extension gives it and
 repeats on its own retries. A refresh token spent by the same attempt always
@@ -71,9 +73,11 @@ REFRESH_TOKEN_PREFIX = f"{PRODUCT_SLUG}-ext-rt-"
 ACCESS_TOKEN_LIFETIME = datetime.timedelta(hours=1)
 REFRESH_IDLE_LIFETIME = datetime.timedelta(days=30)
 SESSION_MAX_LIFETIME = datetime.timedelta(days=180)
-#: How long a replaced refresh token still works: longer than the extension's
-#: refresh timeout plus a retry. Only for the refresh that replaced it (the
-#: same attempt, see next_pair); anyone else presenting it ends the session.
+#: How long a replaced refresh token works for the refresh that replaced it
+#: (the same attempt, see next_pair) whatever else happens: longer than the
+#: extension's refresh timeout plus a retry. After it, only until the new
+#: access token is used (_answer_may_have_been_lost). Anyone else presenting
+#: it ends the session.
 REFRESH_GRACE = datetime.timedelta(minutes=2)
 #: How many rotations back a returning refresh token is still recognised as
 #: this session's - weeks of normal use - so that any old token, not only the
@@ -471,6 +475,40 @@ async def _require_usable(db: AsyncSession, session: ExtensionSession, now: date
         raise _invalid_grant("You signed out; connect this browser again.")
 
 
+def _answer_may_have_been_lost(session: ExtensionSession, now: datetime.datetime, *, attempt: str | None) -> bool:
+    """Whether the refresh that replaced the session's last refresh token may still be waiting for its answer.
+
+    Within the grace, yes: that is a retry. After it, as long as the access
+    token that refresh was given has not been used: an extension whose side
+    panel closed mid-refresh, whose tries both timed out, or whose answer a
+    proxy turned into a 502 after the rotation was committed comes back later
+    with the old token and the same attempt, and ending its session would be
+    a false alarm. Without an attempt (an extension from before there were
+    attempts) nothing tells the extension from a copy of its tokens, so it
+    gets the grace and no more.
+
+    Use is known from ``last_used_at`` alone, which misses some of it: a
+    request records it beside itself, at most once per TOUCH_INTERVAL per
+    session (:func:`needs_touch`), and a write that fails is dropped. So a new
+    access token used within a minute of the last recorded use leaves no
+    trace, and its pair is handed out again - though only ever to a holder of
+    the same attempt. Refreshing never writes it, so neither the rotation nor
+    this path counts as use. The old access token's last request can record
+    its use a moment after the rotation it raced; the new token then looks
+    used, and the session ends as it did before this check.
+    """
+    valid_until = cast("datetime.datetime | None", session.prior_refresh_valid_until)
+    if valid_until is None:
+        return False
+    if now <= valid_until:
+        return True
+    if attempt is None:
+        return False
+    rotated_at = valid_until - REFRESH_GRACE
+    last_used = cast("datetime.datetime | None", session.last_used_at)
+    return last_used is None or last_used <= rotated_at
+
+
 async def refresh_session(
     db: AsyncSession, refresh_token: str | None, *, attempt: str | None = None, ip: str | None = None
 ) -> TokenPair:
@@ -525,8 +563,9 @@ async def refresh_session(
         if replaced.revoked_at is not None:
             raise _invalid_grant("Unknown refresh token.")
         now = _now()
-        if replaced.prior_refresh_valid_until is None or replaced.prior_refresh_valid_until < now:  # type: ignore[operator]
-            # A replaced token, well after it was replaced: someone else holds a copy.
+        if not _answer_may_have_been_lost(replaced, now, attempt=attempt):
+            # A replaced token after the grace, and not from a refresh that may
+            # still be waiting for its answer: someone else holds a copy.
             await _revoke_now(str(replaced.id), reason=REVOKED_REFRESH_REUSE, ip=ip)
             raise _invalid_grant("This browser's connection was ended for safety.")
         await _require_usable(db, replaced, now)
@@ -534,12 +573,13 @@ async def refresh_session(
             # Not the pair this attempt turns the token into: another attempt
             # replaced it, so whoever presents it now holds a copy - likely
             # someone who saw their copy of the access token stop working when
-            # the extension refreshed. (SECRET_KEY changing inside the grace
-            # window lands here too, and ends the session as well.)
+            # the extension refreshed. (SECRET_KEY changing since the rotation
+            # lands here too, and ends the session as well.)
             await _revoke_now(str(replaced.id), reason=REVOKED_REFRESH_REUSE, ip=ip)
             raise _invalid_grant("This browser's connection was ended for safety.")
         remaining = int((replaced.access_expires_at - now).total_seconds())  # type: ignore[operator]
-        # Nothing is written: the grace window never extends itself.
+        # Nothing is written: neither the grace nor an answer picked up after
+        # it ever extends itself.
         return TokenPair(str(replaced.id), access, refresh, max(0, remaining))
     raise _invalid_grant("The connection changed while it was being refreshed; try again.")
 

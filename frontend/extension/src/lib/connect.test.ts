@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EXTENSION_ID, installChromeFake } from "../test/chromeFake";
 import { CONNECT_ATTEMPT_MS, deviceName, disconnect, finishConnect, hasPendingConnect, startConnect } from "./connect";
 import { challengeFor } from "./pkce";
-import { createTokenManager, type StoredAccess, type TokenStorage } from "./tokens";
+import { createTokenManager, type PendingAttempt, type StoredAccess, type TokenStorage } from "./tokens";
 
 const SERVER = "https://ai.example.com";
 const REDIRECT = `chrome-extension://${EXTENSION_ID}/connected.html`;
@@ -21,12 +21,14 @@ afterEach(() => {
 });
 
 function memoryTokens() {
-  const state = { access: null as StoredAccess | null, refresh: null as string | null };
+  const state = { access: null as StoredAccess | null, refresh: null as string | null, attempt: null as PendingAttempt | null };
   const storage: TokenStorage = {
     getAccess: async () => state.access,
     setAccess: async (v) => void (state.access = v),
     getRefresh: async () => state.refresh,
     setRefresh: async (v) => void (state.refresh = v),
+    getAttempt: async () => state.attempt,
+    setAttempt: async (v) => void (state.attempt = v),
   };
   const tokens = createTokenManager({
     storage,

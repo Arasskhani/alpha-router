@@ -447,6 +447,27 @@ class TestRefresh:
         gone = await browser.get("/api/extension/me", headers=_bearer(first.json()["access_token"]))
         assert gone.json()["detail"]["code"] == "revoked"
 
+    async def test_a_refresh_whose_answer_was_lost_is_answered_again_after_the_grace(
+        self, client, browser, user, redirect, session_factory, monkeypatch
+    ):
+        tokens = await _connect(client, browser, user, redirect)
+        body = {"grant_type": "refresh_token", "refresh_token": tokens["refresh_token"], "attempt": ATTEMPT}
+        lost = await browser.post("/api/extension/token", json=body)
+        assert lost.status_code == 200
+        # The extension never saw that answer (its panel closed) and asks again
+        # with the attempt it kept, well after the grace.
+        later = extension_tokens._now() + extension_tokens.REFRESH_GRACE + datetime.timedelta(minutes=5)
+        monkeypatch.setattr(extension_tokens, "_now", lambda: later)
+        again = await browser.post("/api/extension/token", json=body)
+        assert again.status_code == 200, again.text
+        assert again.json()["refresh_token"] == lost.json()["refresh_token"]
+        async with session_factory() as fresh:
+            row = await fresh.get(ExtensionSession, tokens["session_id"])
+        assert again.json()["expires_in"] == int((row.access_expires_at - later).total_seconds())
+        me = await browser.get("/api/extension/me", headers=_bearer(again.json()["access_token"]))
+        assert me.status_code == 200
+        assert await _audit(session_factory, "extension_session_revoked") == []
+
     @pytest.mark.parametrize("attempt", ["short", "x" * 129, "has space in it!!", ""])
     async def test_a_malformed_attempt_is_refused(self, client, browser, user, redirect, attempt):
         tokens = await _connect(client, browser, user, redirect)

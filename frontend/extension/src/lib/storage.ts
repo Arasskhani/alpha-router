@@ -1,13 +1,16 @@
 /**
  * Where the tokens live in a real browser (lib/tokens.ts says why each place).
+ * A refresh still waiting for its answer keeps its attempt beside the refresh
+ * token it spends.
  */
 
-import type { Lock, StoredAccess, TokenStorage } from "./tokens";
+import type { Lock, PendingAttempt, StoredAccess, TokenStorage } from "./tokens";
 
 const ACCESS_KEY = "alpharouter.access";
 const DB_NAME = "alpharouter";
 const STORE = "kv";
 const REFRESH_KEY = "refresh";
+const ATTEMPT_KEY = "refresh-attempt";
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -49,6 +52,17 @@ export const browserTokenStorage: TokenStorage = {
   async setRefresh(value) {
     if (value) await withStore("readwrite", (store) => store.put(value, REFRESH_KEY));
     else await withStore("readwrite", (store) => store.delete(REFRESH_KEY));
+  },
+  async getAttempt() {
+    const value = await withStore<unknown>("readonly", (store) => store.get(ATTEMPT_KEY));
+    const kept = value as Partial<PendingAttempt> | null | undefined;
+    return kept && typeof kept.refresh === "string" && typeof kept.attempt === "string"
+      ? { refresh: kept.refresh, attempt: kept.attempt }
+      : null;
+  },
+  async setAttempt(value) {
+    if (value) await withStore("readwrite", (store) => store.put(value, ATTEMPT_KEY));
+    else await withStore("readwrite", (store) => store.delete(ATTEMPT_KEY));
   },
 };
 

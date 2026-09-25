@@ -210,6 +210,41 @@ def _page_context_sites(body: dict) -> list[str]:
     return [str(site) for site in sites if isinstance(site, str) and site]
 
 
+async def _earlier_page_answers(db: AsyncSession, chat_session_id: Any) -> tuple[bool, list[str]]:
+    """Whether this chat already holds an answer about a shared page, and that page's sites.
+
+    Such an answer can restate what a page told the model, so a later turn in
+    the same chat - in the extension or in the web app - is treated like a
+    turn with the page itself: no personal context, and a marked answer.
+    """
+    sid = str(chat_session_id or "").strip()
+    if not sid:
+        return False, []
+    from app.models.chat import ChatMessage
+
+    rows = (
+        await db.execute(
+            select(ChatMessage.meta).where(
+                ChatMessage.session_id == sid,
+                ChatMessage.role == "assistant",
+                ChatMessage.meta[PAGE_CONTEXT_META_KEY].isnot(None),
+            )
+        )
+    ).scalars()
+    marked = False
+    sites: list[str] = []
+    for meta in rows:
+        mark = meta.get(PAGE_CONTEXT_META_KEY) if isinstance(meta, dict) else None
+        if mark is None:
+            continue
+        marked = True
+        listed = mark.get("sites") if isinstance(mark, dict) else None
+        for site in listed if isinstance(listed, list) else []:
+            if isinstance(site, str) and site and site not in sites:
+                sites.append(site)
+    return marked, sites
+
+
 async def resolve_session_project_id(db: AsyncSession, chat_session_id: str | None) -> str | None:
     """Server-side project of a chat session; the client value is never trusted."""
     sid = (chat_session_id or "").strip()
@@ -396,7 +431,14 @@ async def build_turn_context(  # noqa: C901 -- straight-line preparation moved o
                 raise
         private_mode = await resolve_private_mode_for_memory(db, body, user_id=user_id)
         page_sites = _page_context_sites(body)
-        if agent_turn is None and not page_sites:
+        # A chat that already holds an answer about a shared page carries that
+        # page's words in its history, wherever it is continued.
+        earlier, earlier_sites = (
+            await _earlier_page_answers(db, body.get("chat_session_id"))
+            if not page_sites and source == "alpha_router_chat"
+            else (False, [])
+        )
+        if agent_turn is None and not page_sites and not earlier:
             try:
                 chat_session_id = str(body.get("chat_session_id") or "").strip() or None
                 session_project_id = await resolve_session_project_id(db, chat_session_id)
@@ -476,6 +518,10 @@ async def build_turn_context(  # noqa: C901 -- straight-line preparation moved o
                 try:
                     if page_sites:
                         persister.set_message_metadata({PAGE_CONTEXT_META_KEY: {"sites": page_sites}})
+                    elif earlier:
+                        persister.set_message_metadata(
+                            {PAGE_CONTEXT_META_KEY: {"sites": earlier_sites, "inherited": True}}
+                        )
                     if agent_turn is not None:
                         persister.set_completion_metadata(
                             {

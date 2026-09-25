@@ -283,8 +283,24 @@ describe("the rest", () => {
     expect(classify("tab_open", { page: undefined, args: { url: "https://shop.example.com/" } })).toMatchObject({ class: "sensitive" });
   });
 
-  it("switching tabs acts", () => {
-    expect(classify("tab_switch", { args: { tab_id: 4 } })).toMatchObject({ class: "act" });
+  it("switching tabs is judged by the tab it goes to", () => {
+    const bank = { url: "https://bank.example.com/", host: "bank.example.com" };
+    expect(classify("tab_switch", { args: { tab_id: 2 }, target: bank }, RULES)).toMatchObject({ class: "blocked", reason: "site_blocked" });
+    expect(classify("tab_switch", { args: { tab_id: 3 }, target: { url: "https://shop.example.com/help", host: "shop.example.com" } })).toMatchObject({ class: "act" });
+    expect(classify("tab_switch", { args: { tab_id: 4 }, target: { url: "https://partner.org/", host: "partner.org" } }, RULES)).toMatchObject({
+      class: "sensitive",
+      reason: "other_site",
+      site: "partner.org",
+    });
+    expect(classify("tab_switch", { args: { tab_id: 5 }, target: { url: "https://ai.example.com/", host: "ai.example.com" } })).toMatchObject({ class: "blocked", reason: "own_server" });
+    expect(classify("tab_switch", { args: { tab_id: 6 }, target: { url: "chrome://settings", host: null } })).toMatchObject({ class: "act" });
+    expect(classify("tab_switch", { args: { tab_id: 7 } })).toMatchObject({ class: "blocked", reason: "no_tab" });
+  });
+
+  it("does not send away a tab it may not work on, and opens a new one instead", () => {
+    const bank = { url: "https://bank.example.com/", host: "bank.example.com" };
+    expect(classify("navigate", { page: bank, args: { url: "https://shop.example.com/" } }, RULES)).toMatchObject({ class: "blocked", reason: "tab_refused" });
+    expect(classify("tab_open", { page: bank, args: { url: "https://shop.example.com/" } }, RULES)).toMatchObject({ class: "sensitive", reason: "other_site" });
   });
 
   it("refuses a tool it does not know", () => {

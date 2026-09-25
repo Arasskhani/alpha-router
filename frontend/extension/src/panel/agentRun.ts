@@ -219,15 +219,22 @@ function reviewTarget(element: ElementInfo): string {
   return clip(`${element.role}: ${element.name || "(no name)"}${shows}${goes}`, 300);
 }
 
+/** The tab a tab_switch goes to, as the card names it. */
+type SwitchTarget = WorkTab & { readable: boolean };
+
 /** What an action does, in words for the step log and the approval card. */
-function describeAction(tool: string, a: Record<string, unknown>, element?: ElementInfo): string {
+function describeAction(tool: string, a: Record<string, unknown>, element?: ElementInfo, target?: SwitchTarget): string {
   switch (tool) {
     case "tabs_list":
       return "List the open tabs";
     case "tab_open":
       return `Open ${whereTo(a.url)} in a new tab`;
     case "tab_switch":
-      return `Switch to tab ${String(a.tab_id)}`;
+      if (!target) return `Switch to tab ${String(a.tab_id)}`;
+      if (!target.host) return `Switch to tab ${target.id}, which shows no web page`;
+      return target.readable
+        ? `Switch to tab ${target.id}: "${clip(target.title || target.host, 80)}" on ${target.host}`
+        : `Switch to tab ${target.id} (a tab the agent may not work on)`;
     case "navigate":
       return `Open ${whereTo(a.url)}`;
     case "read_page":
@@ -441,9 +448,18 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
         element = described.element as ElementInfo;
       }
     }
-    const summary = describeAction(name, a, element);
+    let target: SwitchTarget | undefined;
+    if (name === "tab_switch") {
+      const found = (await deps.browser.listTabs()).find((t) => t.id === Number(a.tab_id));
+      check();
+      if (found) {
+        const readable = found.host !== null && classifyAction({ tool: "read_page", args: {}, page: { url: found.url, host: found.host } }, options.rules).class !== "blocked";
+        target = { id: found.id, url: found.url, host: found.host, title: found.title, readable };
+      }
+    }
+    const summary = describeAction(name, a, element, target);
     const verdict = TOOL_NAMES.has(name)
-      ? classifyAction({ tool: name, args: a, page: pageNow, element }, options.rules)
+      ? classifyAction({ tool: name, args: a, page: pageNow, element, target: target && { url: target.url, host: target.host } }, options.rules)
       : ({ class: "blocked", reason: "unknown_tool", message: `The agent has no tool called ${clip(name, 40)}.` } as Verdict);
     const base = {
       site: verdict.site ?? pageNow?.host,
@@ -479,7 +495,9 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
           ? String(a.url)
           : name === "click" && element?.href && /^https?:/.test(element.href)
             ? element.href
-            : null;
+            : name === "tab_switch" && target?.host
+              ? target.url
+              : null;
     if (needs) {
       const origin = originPattern(needs);
       if (origin && !(await deps.browser.hasAccess(needs))) {

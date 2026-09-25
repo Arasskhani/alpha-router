@@ -53,6 +53,8 @@ export type ProposedAction = {
   page?: { url: string; host: string };
   /** The element `args.ref` names, as the page described it just now. */
   element?: ElementInfo;
+  /** For tab_switch: the tab it goes to (its host is null when it shows no web page). */
+  target?: { url: string; host: string | null };
 };
 
 export type PolicyContext = {
@@ -271,7 +273,7 @@ function keyVerdict(rawKey: unknown, element: ElementInfo | undefined, page: { u
 
 /** What kind of action this is, from the tool, the element, the addresses involved and the site rules. */
 export function classifyAction(action: ProposedAction, ctx: PolicyContext): Verdict {
-  const { tool, args, page, element } = action;
+  const { tool, args, page, element, target } = action;
   if (PAGE_TOOLS.has(tool)) {
     if (!page) return blocked("no_page", "The tab does not show a web page the agent can work on.");
     const refused = siteVerdict(page.host, ctx);
@@ -279,12 +281,23 @@ export function classifyAction(action: ProposedAction, ctx: PolicyContext): Verd
   }
   if (READ_TOOLS.has(tool)) return verdict("read", "read", "Looking, without changing anything.");
   switch (tool) {
-    case "navigate":
+    case "navigate": {
+      // A tab the agent may not work on is the user's: it is not sent elsewhere either.
+      const away = page ? siteVerdict(page.host, ctx) : null;
+      if (away) return blocked("tab_refused", `The agent does not send away a tab it may not work on (${page!.host}). Open the page in a new tab instead.`);
       return goingTo(args.url, page?.host, ctx, "Opening a page");
+    }
     case "tab_open":
       return goingTo(args.url, page?.host, ctx, "Opening a page in a new tab");
-    case "tab_switch":
-      return verdict("act", "tab_switch", "Switching to another tab.");
+    case "tab_switch": {
+      // Working in another tab is working on its site: the same rules as going there.
+      if (!target) return blocked("no_tab", "There is no such tab in this window.");
+      if (!target.host) return verdict("act", "tab_switch", "Switching to a tab that shows no web page.");
+      const refused = siteVerdict(target.host, ctx);
+      if (refused) return refused;
+      if (page && target.host === page.host) return verdict("act", "tab_switch", `Switching to another tab of ${target.host}.`);
+      return verdict("sensitive", "other_site", `Switching to a tab on another site: ${target.host}.`, target.host);
+    }
     case "press_key":
       return keyVerdict(args.key, element, page!, ctx);
     case "click":

@@ -315,6 +315,31 @@ describe("going somewhere", () => {
     expect(h.browser.navigate).not.toHaveBeenCalled();
   });
 
+  it("refuses to switch to a tab it may not work on, and never tells the model that tab's title", async () => {
+    const h = harness([{ text: "", toolCalls: [call("tab_switch", { tab_id: 2 }, "c1")] }, { text: "", toolCalls: [call("done", { summary: "ok" })] }]);
+    await run(h);
+    const answer = h.sent[1].find((m) => m.role === "tool") as { content: string };
+    expect(answer.content).toContain("Refused");
+    expect(JSON.stringify(h.sent)).not.toContain("balance");
+    expect(h.browser.switchTab).not.toHaveBeenCalled();
+    expect(h.deps.onStep).toHaveBeenCalledWith(expect.objectContaining({ summary: "Switch to tab 2 (a tab the agent may not work on)", status: "blocked" }));
+  });
+
+  it("names the tab it switches to, and asks when it is on another site", async () => {
+    const browser = fakeBrowser();
+    browser.listTabs.mockResolvedValue([
+      { ...TAB, active: true },
+      { id: 4, url: "https://partner.org/deals", host: "partner.org", title: "Partner deals", active: false },
+    ]);
+    browser.switchTab.mockImplementation(async (id: number) => (id === 4 ? { id: 4, url: "https://partner.org/deals", host: "partner.org", title: "Partner deals" } : null));
+    const h = harness([{ text: "", toolCalls: [call("tab_switch", { tab_id: 4 })] }, { text: "", toolCalls: [call("done", { summary: "ok" })] }], { browser });
+    await run(h, { mode: "auto" });
+    expect(h.approvals).toEqual([
+      expect.objectContaining({ summary: 'Switch to tab 4: "Partner deals" on partner.org', verdict: expect.objectContaining({ reason: "other_site" }) }),
+    ]);
+    expect(browser.switchTab).toHaveBeenCalledWith(4);
+  });
+
   it("asks for the site of the page it is on when the browser does not allow it yet", async () => {
     const browser = fakeBrowser();
     browser.hasAccess.mockResolvedValue(false);

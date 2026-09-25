@@ -113,8 +113,6 @@ function labelForm(text: string): string {
 const ID_FIELD = /\b(ssn|social security|passport|national id|national identity|tax id|id number|identity number)\b/i;
 const ID_FIELD_FA = /کد\s?ملی|شماره\s?ملی|شناسنامه|گذرنامه|پاسپورت/;
 
-const BUTTON_ROLES = new Set(["button", "menuitem", "menuitemcheckbox", "menuitemradio", "tab", "option", "switch", "treeitem"]);
-
 function verdict(cls: ActionClass, reason: string, message: string, site?: string): Verdict {
   return site ? { class: cls, reason, message, site } : { class: cls, reason, message };
 }
@@ -171,8 +169,8 @@ function clickVerdict(element: ElementInfo, page: { url: string; host: string },
   const said = labels(element);
   // A link is where it goes, whatever role it claims (a menu item, a "button").
   const linkish = element.role === "link" || Boolean(element.href);
-  const buttonish = BUTTON_ROLES.has(element.role) || element.submits === true;
-  if ((buttonish || linkish) && said.some((label) => purchase(label, linkish ? "link" : element.role))) {
+  // Whatever the element claims to be: a <div onclick> drawn as a button places an order as well as a <button> does.
+  if (said.some((label) => purchase(label, linkish ? "link" : element.role))) {
     return blocked("purchase_label", `The agent never buys or pays: ${named(element)} is for the user to click.`);
   }
   if (element.href) {

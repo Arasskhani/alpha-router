@@ -132,6 +132,19 @@ describe("clicking", () => {
     expect(classify("click", { element: el({ name }) })).toMatchObject({ class: "act" });
   });
 
+  it.each([
+    ["text", "div", "Place order"],
+    ["text", "span", "Buy now"],
+    ["heading", "h3", "Checkout"],
+    ["text", "div", "ثبت سفارش"],
+    ["img", "img", "Pay"],
+    ["checkbox", "input", "Pay with my saved card"],
+  ])("refuses buying through an element of role %s (<%s>) labelled %s, which a page can draw as a button", (role, tag, name) => {
+    expect(classify("click", { element: el({ role, tag, name }) })).toMatchObject({ class: "blocked", reason: "purchase_label" });
+    // Enter or Space on it works like the click.
+    expect(classify("press_key", { args: { key: "Enter" }, element: el({ role, tag, name }) })).toMatchObject({ class: "blocked", reason: "purchase_label" });
+  });
+
   it("refuses a link that buys, in English or Persian", () => {
     expect(classify("click", { element: el({ role: "link", name: "Buy now", href: "https://shop.example.com/buy" }) })).toMatchObject({
       class: "blocked",

@@ -21,9 +21,8 @@ from typing import Any
 import litellm
 
 from app.models.model_catalog import AIModel
-from app.services.llm_providers import resolve_litellm_provider
+from app.services.llm_providers import litellm_model_for_provider, normalize_model_id
 from app.services.provider_utils import (
-    apply_litellm_provider_kwargs,
     close_upstream_stream,
     extract_non_stream_content,
     merge_stream_usage,
@@ -35,12 +34,21 @@ from app.services.usage_accounting_service import PendingUsageEvent, capture_usa
 logger = logging.getLogger(__name__)
 
 
+def _tokenizer_model(provider_type: str | None, model: str) -> str:
+    """The model name LiteLLM picks a tokenizer by.
+
+    ``token_counter`` takes the model and nothing else: it has no
+    ``custom_llm_provider`` argument, and passing one - as the completion
+    kwargs carry it - raised TypeError, so every count for a mapped provider
+    type came back 0.
+    """
+    return litellm_model_for_provider(normalize_model_id(model), provider_type)
+
+
 def count_prompt_tokens(*, provider_type: str | None, model: str, messages: list[dict] | None) -> int:
     """Prompt tokens by LiteLLM's tokenizer for this model; 0 when it cannot count. Never raises."""
     try:
-        prompt_kwargs: dict = {"messages": messages or []}
-        apply_litellm_provider_kwargs(prompt_kwargs, provider_type, model)
-        return int(litellm.token_counter(**prompt_kwargs) or 0)
+        return int(litellm.token_counter(model=_tokenizer_model(provider_type, model), messages=messages or []) or 0)
     except Exception:
         logger.debug("prompt token count failed for %s", model, exc_info=True)
         return 0
@@ -49,12 +57,7 @@ def count_prompt_tokens(*, provider_type: str | None, model: str, messages: list
 def count_completion_tokens(*, provider_type: str | None, model: str, text: str) -> int:
     """Tokens of generated text by LiteLLM's tokenizer for this model; 0 when it cannot count. Never raises."""
     try:
-        completion_kwargs: dict = {"text": text}
-        completion_kwargs["model"] = apply_litellm_provider_kwargs({}, provider_type, model)
-        llm_provider = resolve_litellm_provider(provider_type)
-        if llm_provider:
-            completion_kwargs["custom_llm_provider"] = llm_provider
-        return int(litellm.token_counter(**completion_kwargs) or 0)
+        return int(litellm.token_counter(model=_tokenizer_model(provider_type, model), text=text) or 0)
     except Exception:
         logger.debug("completion token count failed for %s", model, exc_info=True)
         return 0

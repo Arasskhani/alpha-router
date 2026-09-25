@@ -1461,17 +1461,13 @@ async def create_embedding(
         if prompt_tokens == 0 and getattr(response, "usage", None):
             prompt_tokens = int(getattr(response.usage, "total_tokens", 0) or 0)
         if prompt_tokens == 0:
+            # token_counter takes the model alone; a custom_llm_provider argument made it raise.
             try:
-                count_kwargs: dict = {
-                    "model": model,
-                    "text": _embedding_input_text(body.get("input")),
-                }
-                llm_provider = resolve_litellm_provider(provider)
-                if llm_provider:
-                    count_kwargs["custom_llm_provider"] = llm_provider
-                prompt_tokens = int(litellm.token_counter(**count_kwargs) or 0)
-            except Exception:  # noqa: BLE001 -- best-effort side effect, failure intentionally ignored (Phase 4: log at DEBUG)
-                pass
+                prompt_tokens = int(
+                    litellm.token_counter(model=model, text=_embedding_input_text(body.get("input"))) or 0
+                )
+            except Exception:  # noqa: BLE001 -- a best-effort estimate; the usage event is recorded either way
+                logger.debug("embedding token count failed for %s", model, exc_info=True)
         cached_tokens = cache
         usage_events.append(
             capture_usage_event(

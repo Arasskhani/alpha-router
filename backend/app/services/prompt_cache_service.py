@@ -24,6 +24,11 @@ def apply_prompt_cache_breakpoints(messages: list[dict]) -> list[dict]:
         idx -= 1
     if idx < 0:
         return out
+    # A tool call or a tool's answer (the browser extension's agent) is left as
+    # it is: providers read those in shapes of their own, where a message-level
+    # marker has no agreed place.
+    if out[idx].get("role") not in ("user", "assistant") or out[idx].get("tool_calls"):
+        return out
 
     marked = copy.deepcopy(out[idx])
     marked["cache_control"] = {"type": "ephemeral"}

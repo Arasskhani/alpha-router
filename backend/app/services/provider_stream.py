@@ -16,9 +16,10 @@ from __future__ import annotations
 import datetime
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
-from typing import Any
+from typing import Any, cast
 
 import litellm
+from litellm.types.llms.openai import ChatCompletionToolParam
 
 from app.models.model_catalog import AIModel
 from app.services.llm_providers import litellm_model_for_provider, normalize_model_id
@@ -45,10 +46,27 @@ def _tokenizer_model(provider_type: str | None, model: str) -> str:
     return litellm_model_for_provider(normalize_model_id(model), provider_type)
 
 
-def count_prompt_tokens(*, provider_type: str | None, model: str, messages: list[dict] | None) -> int:
-    """Prompt tokens by LiteLLM's tokenizer for this model; 0 when it cannot count. Never raises."""
+def count_prompt_tokens(
+    *,
+    provider_type: str | None,
+    model: str,
+    messages: list[dict] | None,
+    tools: list[dict] | None = None,
+) -> int:
+    """Prompt tokens by LiteLLM's tokenizer for this model; 0 when it cannot count. Never raises.
+
+    ``tools`` are the function tools the request offers: the provider reads their schemas as prompt.
+    """
     try:
-        return int(litellm.token_counter(model=_tokenizer_model(provider_type, model), messages=messages or []) or 0)
+        return int(
+            litellm.token_counter(
+                model=_tokenizer_model(provider_type, model),
+                messages=messages or [],
+                # OpenAI function tools: the shape LiteLLM's ChatCompletionToolParam describes.
+                tools=cast("list[ChatCompletionToolParam] | None", tools or None),
+            )
+            or 0
+        )
     except Exception:
         logger.debug("prompt token count failed for %s", model, exc_info=True)
         return 0
@@ -69,13 +87,15 @@ def estimate_tokens(
     model: str,
     messages: list[dict] | None,
     completion_text: str,
+    tools: list[dict] | None = None,
 ) -> tuple[int, int]:
     """(prompt, completion) token estimate via LiteLLM's tokenizer; (0, 0) on any failure.
 
-    Used only when the provider reported no usage. Never raises: a tokenizer
-    hiccup must not turn a billable turn into an error.
+    Used only when the provider reported no usage. ``tools`` as for
+    ``count_prompt_tokens``. Never raises: a tokenizer hiccup must not turn a
+    billable turn into an error.
     """
-    prompt_tokens = count_prompt_tokens(provider_type=provider_type, model=model, messages=messages)
+    prompt_tokens = count_prompt_tokens(provider_type=provider_type, model=model, messages=messages, tools=tools)
     completion_tokens = count_completion_tokens(provider_type=provider_type, model=model, text=completion_text)
     if not prompt_tokens or (completion_text and not completion_tokens):
         return 0, 0
@@ -100,6 +120,8 @@ class ProviderAttempt:
         self.completion_kwargs = completion_kwargs
         self._completion_fn = completion_fn
         self.messages: list[dict] = list(completion_kwargs.get("messages", []))
+        #: Function tools the request offers (the browser extension's agent); None otherwise.
+        self.tools: list[dict] | None = completion_kwargs.get("tools") or None
         self.started_at: datetime.datetime = datetime.datetime.utcnow()
         self.response: Any = None
         self.last_usage_chunk: Any = None
@@ -108,6 +130,10 @@ class ProviderAttempt:
         self.cached_tokens = 0
         self.content = ""
         self.last_chunk_at: float | None = None
+        #: The model's tool calls as they stream in, by index: name and arguments so far.
+        self._tool_calls: dict[int, dict[str, str]] = {}
+        #: Characters of tool-call names and arguments received, for the running budget check.
+        self.tool_call_chars = 0
 
     async def start(self) -> None:
         self.response = await self._completion_fn(**self.completion_kwargs)
@@ -122,6 +148,7 @@ class ProviderAttempt:
             self.prompt_tokens, self.completion_tokens, self.cached_tokens = merge_stream_usage(
                 self.prompt_tokens, self.completion_tokens, self.cached_tokens, pt, ct, cache
             )
+            self._record_tool_calls(chunk)
             yield chunk
 
     @staticmethod
@@ -133,6 +160,43 @@ class ProviderAttempt:
     def record_text(self, delta: str) -> None:
         self.content += delta
 
+    def _record_tool_calls(self, chunk: Any) -> None:
+        """Add a chunk's tool-call deltas: the first names a call, the rest carry its arguments in pieces."""
+        try:
+            deltas = chunk.choices[0].delta.tool_calls if chunk.choices else None
+        except (AttributeError, IndexError, TypeError):
+            return
+        for position, delta in enumerate(deltas or ()):
+            index = _field(delta, "index")
+            call = self._tool_calls.setdefault(
+                index if isinstance(index, int) else position, {"name": "", "arguments": ""}
+            )
+            function = _field(delta, "function")
+            name = _field(function, "name")
+            arguments = _field(function, "arguments")
+            if isinstance(name, str) and name:
+                call["name"] += name
+                self.tool_call_chars += len(name)
+            if isinstance(arguments, str) and arguments:
+                call["arguments"] += arguments
+                self.tool_call_chars += len(arguments)
+
+    @property
+    def has_tool_calls(self) -> bool:
+        """Whether the model answered with tool calls (an answer without words, and not an empty one)."""
+        return any(call["name"] or call["arguments"] for call in self._tool_calls.values())
+
+    @property
+    def tool_call_text(self) -> str:
+        """The tool calls as text, for estimating what they cost: the provider bills them as output."""
+        return "\n".join(f"{call['name']}({call['arguments']})" for _, call in sorted(self._tool_calls.items()))
+
+    @property
+    def billable_text(self) -> str:
+        """Everything the model generated in this attempt: its words, then its tool calls."""
+        calls = self.tool_call_text
+        return f"{self.content}\n{calls}" if self.content and calls else (self.content or calls)
+
     async def close(self) -> None:
         """Stop consuming upstream (client gone): every further chunk is billed for nobody."""
         await close_upstream_stream(self.response)
@@ -143,12 +207,14 @@ class ProviderAttempt:
         self.prompt_tokens, self.completion_tokens, self.cached_tokens = merge_stream_usage(
             self.prompt_tokens, self.completion_tokens, self.cached_tokens, pt, ct, cache
         )
-        if self.prompt_tokens == 0 and self.content:
+        billable = self.billable_text
+        if self.prompt_tokens == 0 and billable:
             est_prompt, est_completion = estimate_tokens(
                 provider_type=self.provider_type,
                 model=self.model,
                 messages=self.messages,
-                completion_text=self.content,
+                completion_text=billable,
+                tools=self.tools,
             )
             self.prompt_tokens, self.completion_tokens = est_prompt, est_completion
 
@@ -177,9 +243,16 @@ class ProviderAttempt:
             completion_tokens=self.completion_tokens,
             cached_tokens=self.cached_tokens,
             prompt=self.messages,
-            completion=self.content if completion is None else completion,
+            completion=self.billable_text if completion is None else completion,
             error_message=error_message,
         )
+
+
+def _field(value: Any, name: str) -> Any:
+    """``value.name`` or ``value[name]``: LiteLLM hands tool-call deltas over as objects, some providers as dicts."""
+    if isinstance(value, dict):
+        return value.get(name)
+    return getattr(value, name, None)
 
 
 class NonStreamRetry:

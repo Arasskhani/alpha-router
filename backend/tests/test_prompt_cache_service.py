@@ -24,3 +24,33 @@ def test_skips_when_last_message_not_user():
         {"role": "assistant", "content": "hello"},
     ]
     assert apply_prompt_cache_breakpoints(msgs) == msgs
+
+
+def test_leaves_a_tool_answer_before_the_latest_user_turn_alone():
+    # The browser extension's agent: the user writes again after a tool answered.
+    msgs = [
+        {"role": "user", "content": "Fill in the form"},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "done", "arguments": "{}"}}],
+        },
+        {"role": "tool", "tool_call_id": "call_1", "content": "ok"},
+        {"role": "user", "content": "Now submit it"},
+    ]
+    out = apply_prompt_cache_breakpoints(msgs)
+    assert out == msgs
+    assert all("cache_control" not in message for message in out)
+
+
+def test_leaves_an_assistant_tool_call_before_the_latest_user_turn_alone():
+    msgs = [
+        {"role": "user", "content": "Open the page"},
+        {
+            "role": "assistant",
+            "content": "Opening it.",
+            "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "navigate", "arguments": "{}"}}],
+        },
+        {"role": "user", "content": "Stop"},
+    ]
+    assert apply_prompt_cache_breakpoints(msgs) == msgs

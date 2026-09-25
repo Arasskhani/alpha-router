@@ -209,6 +209,9 @@ def turn_cost_exceeds_ceiling(
 
     Returns False when anything is unknown - an unpriced model, a tokenizer
     that could not count, no ceiling at all. A turn is never stopped on a guess.
+
+    ``completion_text`` includes the model's tool calls: the provider bills them
+    as output.
     """
 
     if ceiling_usd is None or ceiling_usd <= 0 or ai_model is None or prompt_tokens <= 0:
@@ -949,9 +952,17 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
         prompt_count: int | None = None
 
         def _over_budget(text: str) -> bool:
+            """``text`` is the reply so far; the tool calls of the attempt in flight count as well."""
             nonlocal prompt_count
             if prompt_count is None:
-                prompt_count = count_prompt_tokens(provider_type=provider_type, model=model, messages=messages)
+                prompt_count = count_prompt_tokens(
+                    provider_type=provider_type,
+                    model=model,
+                    messages=messages,
+                    tools=completion_kwargs.get("tools"),
+                )
+            if attempt is not None and attempt.tool_call_chars:
+                text = f"{text}\n{attempt.tool_call_text}"
             return turn_cost_exceeds_ceiling(
                 ai_model=ai_model,
                 provider_type=provider_type,
@@ -1074,11 +1085,10 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
                     if delta:
                         attempt.record_text(delta)
                         collected_content += delta
-                    if (
-                        budget_ceiling_usd is not None
-                        and len(collected_content) - budget_checked_at_len >= BUDGET_RECHECK_CHARS
-                    ):
-                        budget_checked_at_len = len(collected_content)
+                    # Tool calls are output the provider bills like words, so they count too.
+                    generated_len = len(collected_content) + attempt.tool_call_chars
+                    if budget_ceiling_usd is not None and generated_len - budget_checked_at_len >= BUDGET_RECHECK_CHARS:
+                        budget_checked_at_len = generated_len
                         if _over_budget(collected_content):
                             budget_exceeded = True
                             client_disconnected = True
@@ -1095,13 +1105,15 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
 
                 attempt.finish()
                 iteration_content = attempt.content
-                empty_completion = not iteration_content.strip()
+                # A reply of tool calls alone (the browser extension's agent) has no
+                # words and is not empty.
+                empty_completion = not iteration_content.strip() and not attempt.has_tool_calls
                 attempt_error = "Upstream model returned an empty completion." if empty_completion else None
                 _absorb(
                     attempt,
                     status="failed" if empty_completion else "succeeded",
                     error_message=attempt_error,
-                    completion=iteration_content,
+                    completion=attempt.billable_text,
                     track_model=True,
                 )
                 active_event = usage_events[-1]
@@ -1261,7 +1273,9 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
                 attempt = None
                 if tools.code_interpreter:
                     await _record_ci_failure(failed_event, failure_message(exc))
-            if _should_retry_non_stream(provider, exc):
+            # Not with function tools: the retry reads only the reply's words, so
+            # the tool calls would be lost, and some may already be with the client.
+            if _should_retry_non_stream(provider, exc) and not completion_kwargs.get("tools"):
                 retry = NonStreamRetry(
                     ai_model=ai_model,
                     provider_type=provider_type,

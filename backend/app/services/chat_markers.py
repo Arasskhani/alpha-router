@@ -17,3 +17,9 @@ PAGE_CONTEXT_BODY_KEY = "_page_context_sites"
 #: pages shared from the browser. Page text is untrusted, so such an answer is
 #: never learned from as memory, and the web app never loads its images.
 PAGE_CONTEXT_META_KEY = "pageContext"
+#: Server-owned body keys: the function tools the browser extension's agent
+#: offers the model for one step, and the tool choice. The turn hands them to
+#: the provider as ``tools`` / ``tool_choice`` and streams the model's tool
+#: calls back; it is answered without the user's memory or profile.
+BROWSER_TOOLS_BODY_KEY = "_browser_tools"
+BROWSER_TOOL_CHOICE_BODY_KEY = "_browser_tool_choice"

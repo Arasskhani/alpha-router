@@ -31,7 +31,12 @@ from app.services.agent_chat_integration_service import PreparedAgentTurn
 from app.services.agent_run_service import finalize_agent_run, mark_agent_run_started
 from app.services.budget_reservation_service import release
 from app.services.chat_completion_persistence import persister_from_body
-from app.services.chat_markers import PAGE_CONTEXT_BODY_KEY, PAGE_CONTEXT_META_KEY
+from app.services.chat_markers import (
+    BROWSER_TOOL_CHOICE_BODY_KEY,
+    BROWSER_TOOLS_BODY_KEY,
+    PAGE_CONTEXT_BODY_KEY,
+    PAGE_CONTEXT_META_KEY,
+)
 from app.services.chat_tools_service import ChatToolsConfig, augment_messages_with_tools, parse_tools_config
 from app.services.code_interpreter_capacity_service import (
     CapacityPermit,
@@ -209,6 +214,25 @@ def _page_context_sites(body: dict) -> list[str]:
     if not isinstance(sites, list):
         return []
     return [str(site) for site in sites if isinstance(site, str) and site]
+
+
+#: What the agent may ask of the model about its tools; anything else is left to the provider's default.
+_TOOL_CHOICES = frozenset({"auto", "none", "required"})
+
+
+def _browser_tools(body: dict) -> tuple[list[dict], str | None]:
+    """The function tools the browser extension's agent offers for this step, and its tool choice.
+
+    Set only by the chat endpoint, after checking them (the Gateway drops every
+    ``_`` key a client sends). Such a step reads pages through the tools, so,
+    like a turn with pages, it is answered without the user's memory, profile
+    or project context.
+    """
+    tools = body.get(BROWSER_TOOLS_BODY_KEY)
+    if not isinstance(tools, list) or not tools or not all(isinstance(tool, dict) for tool in tools):
+        return [], None
+    choice = body.get(BROWSER_TOOL_CHOICE_BODY_KEY)
+    return list(tools), (choice if choice in _TOOL_CHOICES else None)
 
 
 async def _earlier_page_answers(db: AsyncSession, chat_session_id: Any) -> tuple[bool, list[str]]:
@@ -415,6 +439,11 @@ async def build_turn_context(  # noqa: C901 -- straight-line preparation moved o
                 completion_kwargs["extra_body"] = auto_router_extra_body
         if provider in ("openai", "azure", "openrouter", "anthropic", "xai"):
             completion_kwargs["stream_options"] = {"include_usage": True}
+        browser_tools, browser_tool_choice = _browser_tools(body)
+        if browser_tools:
+            completion_kwargs["tools"] = browser_tools
+            if browser_tool_choice is not None:
+                completion_kwargs["tool_choice"] = browser_tool_choice
 
         if agent_turn is None:
             try:
@@ -439,7 +468,7 @@ async def build_turn_context(  # noqa: C901 -- straight-line preparation moved o
             if not page_sites and source == "alpha_router_chat"
             else (False, [])
         )
-        if agent_turn is None and not page_sites and not earlier:
+        if agent_turn is None and not page_sites and not earlier and not browser_tools:
             try:
                 chat_session_id = str(body.get("chat_session_id") or "").strip() or None
                 session_project_id = await resolve_session_project_id(db, chat_session_id)

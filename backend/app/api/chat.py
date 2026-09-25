@@ -1,7 +1,9 @@
 """In-app chat using enabled models (admin + user)."""
 
 import asyncio
+import json
 import re
+from typing import Any, Literal
 
 from fastapi import (
     APIRouter,
@@ -13,7 +15,7 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.background import BackgroundTask
@@ -27,12 +29,14 @@ from app.models.connection import Connection
 from app.models.model_catalog import AIModel
 from app.models.user import User
 from app.services.client_ip import resolve_client_ip
+from app.services.extension_access import AGENT_TOOL, permitted_extension_tools
 from app.services.extension_page_context import (
     MAX_PAGE_CHARS,
     MAX_PAGE_IMAGES,
     MAX_PAGE_SITES,
     PageContextRefused,
     PageShare,
+    check_agent_model,
     check_page_shares,
     page_share_events,
     page_shares,
@@ -60,7 +64,7 @@ from app.services.chat_export_service import (
     build_pdf_content_disposition,
     render_chat_pdf,
 )
-from app.services.chat_markers import PAGE_CONTEXT_BODY_KEY
+from app.services.chat_markers import BROWSER_TOOL_CHOICE_BODY_KEY, BROWSER_TOOLS_BODY_KEY, PAGE_CONTEXT_BODY_KEY
 from app.services.chat_session_access import resolve_owned_chat_session
 from app.services.chat_title_service import generate_chat_title
 from app.services.chat_tool_access_service import assert_tool_for_user, permitted_tool_keys
@@ -244,6 +248,35 @@ class ExtensionPageContextIn(BaseModel):
     sites: list[ExtensionPageSiteIn] = Field(..., min_length=1, max_length=MAX_PAGE_SITES)
 
 
+#: Tools one step of the browser agent may offer the model, and their size as JSON.
+MAX_BROWSER_TOOLS = 32
+MAX_BROWSER_TOOLS_BYTES = 32 * 1024
+
+
+class BrowserToolFunctionIn(BaseModel):
+    """One of the agent's tools as the OpenAI API describes a function: name, what it does, its arguments."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(..., pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    description: str = Field("", max_length=4000)
+    parameters: dict[str, Any] = Field(default_factory=lambda: {"type": "object", "properties": {}})
+
+    @field_validator("parameters")
+    @classmethod
+    def _an_object_schema(cls, value: dict[str, Any]) -> dict[str, Any]:
+        if value.get("type") != "object":
+            raise ValueError("A tool's parameters are a JSON schema of type object.")
+        return value
+
+
+class BrowserToolIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["function"]
+    function: BrowserToolFunctionIn
+
+
 class ChatRequest(BaseModel):
     model: str | None = None
     messages: list[dict]
@@ -264,6 +297,23 @@ class ChatRequest(BaseModel):
     include_citations: bool | None = None
     #: The browser extension's declaration of the pages in ``messages``; refused from anyone else.
     extension_page_context: ExtensionPageContextIn | None = None
+    #: The browser extension agent's tools for this step; the reply streams the model's tool calls.
+    browser_tools: list[BrowserToolIn] | None = Field(None, min_length=1, max_length=MAX_BROWSER_TOOLS)
+    browser_tool_choice: Literal["auto", "none", "required"] | None = None
+
+    @model_validator(mode="after")
+    def _browser_tools_shape(self) -> "ChatRequest":
+        if self.browser_tools is None:
+            if self.browser_tool_choice is not None:
+                raise ValueError("browser_tool_choice goes with browser_tools.")
+            return self
+        names = [tool.function.name for tool in self.browser_tools]
+        if len(set(names)) != len(names):
+            raise ValueError("Each browser tool needs a name of its own.")
+        size = len(json.dumps([tool.model_dump() for tool in self.browser_tools], separators=(",", ":")).encode())
+        if size > MAX_BROWSER_TOOLS_BYTES:
+            raise ValueError(f"The browser tools come to more than {MAX_BROWSER_TOOLS_BYTES // 1024} KB.")
+        return self
 
 
 #: Fields that hand a turn to an Agent Studio agent, which chooses its own model and tools.
@@ -292,6 +342,72 @@ def _page_context_conflict(body: ChatRequest, tools: dict) -> str | None:
     if body.web_search or any(value is True for value in tools.values()):
         return "Pages cannot be shared together with tools."
     return None
+
+
+def _browser_tools_conflict(body: ChatRequest, tools: dict) -> str | None:
+    """Why the agent's tools cannot go with the rest of this request, if they cannot.
+
+    A step of the browser agent is one model call and nothing else: an Agent
+    Studio agent would choose its own model and tools, chat tools and Code
+    Interpreter would run beside the agent's, and a step is never saved to a
+    chat (the panel keeps the run; each step's reservation stands alone).
+    Pages reach the agent through its own tools, never as declared pages.
+    """
+    if any(getattr(body, key) is not None for key in _AGENT_FIELDS):
+        return "The browser agent cannot run with an Agent Studio agent."
+    if body.web_search or any(value is True for value in tools.values()):
+        return "The browser agent cannot use chat tools."
+    if body.extension_page_context is not None:
+        return "The browser agent reads pages with its own tools."
+    if (
+        body.persist_chat
+        or body.chat_session_id
+        or body.project_id
+        or body.user_message is not None
+        or body.assistant_client_message_id
+    ):
+        return "Browser agent steps are not saved to a chat."
+    return None
+
+
+async def _browser_agent_tools(
+    db: AsyncSession,
+    request: Request,
+    body: ChatRequest,
+    payload: dict,
+    tools: dict,
+    user: User,
+) -> None:
+    """The agent's tools for this step, checked before anything is spent and handed to the turn.
+
+    Only a connected browser whose user may use the agent can offer them, and
+    only to a model the administrator's lists allow; the model is checked as
+    the turn will resolve it and then pinned in the payload.
+    """
+    if body.browser_tools is None:
+        return
+    if not _extension_session_id(request):
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "extension_only", "message": "Only the browser extension can offer browser tools."},
+        )
+    conflict = _browser_tools_conflict(body, tools)
+    if conflict:
+        raise HTTPException(status_code=400, detail={"code": "browser_tools_conflict", "message": conflict})
+    if AGENT_TOOL not in await permitted_extension_tools(db, user):
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "agent_not_permitted", "message": "The browser agent is not enabled for your account."},
+        )
+    try:
+        model = await check_agent_model(db, model_ref=str(body.model or ""), settings=await load_extension_settings(db))
+    except PageContextRefused as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.detail()) from None
+    if model is not None:
+        payload["model"] = f"model::{model.id}"
+    payload[BROWSER_TOOLS_BODY_KEY] = [tool.model_dump() for tool in body.browser_tools]
+    if body.browser_tool_choice is not None:
+        payload[BROWSER_TOOL_CHOICE_BODY_KEY] = body.browser_tool_choice
 
 
 async def _project_chat_conflict(db: AsyncSession, chat_session_id: str | None) -> str | None:
@@ -481,6 +597,7 @@ async def chat_completions(
         if value is not None:
             payload[key] = value
     client_app = _client_app(request)
+    await _browser_agent_tools(db, request, body, payload, tools, user)
     shares = await _declared_page_shares(db, request, body, payload, tools)
     if shares:
         payload[PAGE_CONTEXT_BODY_KEY] = [share.host for share in shares]

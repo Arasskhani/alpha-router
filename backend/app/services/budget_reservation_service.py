@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime
 import hashlib
+import json
 import uuid
 
 from fastapi import HTTPException
@@ -21,6 +22,7 @@ from app.services.budget_service import (
     NO_PLAN_BUDGET_DETAIL,
     ensure_budget_period,
 )
+from app.services.chat_markers import BROWSER_TOOLS_BODY_KEY
 from app.services.observability import increment, observe_budget_reserved_drift
 
 SUBJECT_USER = "user"
@@ -97,9 +99,22 @@ def _content_media_tokens(content: object) -> int:
     return images * IMAGE_PROMPT_TOKENS
 
 
+def _json_bytes(value: object) -> int:
+    """UTF-8 bytes of ``value`` as compact JSON: how tool calls and tool schemas reach the provider."""
+    if not value:
+        return 0
+    try:
+        text = json.dumps(value, separators=(",", ":"), ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        text = str(value)
+    return len(text.encode("utf-8"))
+
+
 def _prompt_tokens_from_messages(messages: object) -> int:
     """UTF-8 bytes / 3 for text, plus a flat estimate per attached image.
 
+    An assistant message's tool calls count as text (the browser extension's
+    agent sends them back with each step), and so does a tool's answer.
     Conservative and provider-free, so it stays safe to run at stream preflight.
     """
     if not isinstance(messages, list):
@@ -111,6 +126,7 @@ def _prompt_tokens_from_messages(messages: object) -> int:
             continue
         content = message.get("content")
         prompt_bytes += _content_prompt_bytes(content)
+        prompt_bytes += _json_bytes(message.get("tool_calls"))
         media_tokens += _content_media_tokens(content)
     return max(1, (prompt_bytes + 2) // 3 + media_tokens)
 
@@ -340,7 +356,11 @@ async def reservation_hold_usd(
     qty = quantity
     qty_unit = unit
     if body and service == "llm":
-        prompt_tokens = _prompt_tokens_from_messages(body.get("messages"))
+        # The function tools a step offers are prompt too: the provider reads their schemas.
+        prompt_tokens = (
+            _prompt_tokens_from_messages(body.get("messages"))
+            + (_json_bytes(body.get(BROWSER_TOOLS_BODY_KEY)) + 2) // 3
+        )
         completion_tokens = _completion_tokens_from_body(body)
     elif body and service == "embedding":
         prompt_tokens = _text_tokens(str(body.get("input") or ""))

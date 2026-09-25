@@ -14,6 +14,10 @@ site, how much text, how many screenshots and which model, never the content.
 
 A screenshot of a page is page content like its text: the same rules apply,
 and it may only go to a model that reads images.
+
+The browser agent reads pages through its tools rather than declaring them;
+the extension checks the site rules before each action, and the server checks
+the agent's model against both model lists.
 """
 
 from __future__ import annotations
@@ -143,6 +147,31 @@ async def check_page_shares(
         )
     if model is not None and any(share.images for share in shares) and not reads_images(model):
         raise PageContextRefused(400, "model_reads_no_images", "This model does not read images. Choose another model.")
+    return model
+
+
+async def check_agent_model(db: AsyncSession, *, model_ref: str, settings: ExtensionSettings) -> AIModel | None:
+    """Refuse a model the administrator keeps from the browser agent; otherwise the model.
+
+    The agent reads pages through its tools and sends what it reads to the
+    model, so the page-content list binds it as well as its own list. Resolved
+    as the chat turn will resolve ``model_ref``, like ``check_page_shares``.
+    """
+    found = await resolve_model_row(db, model_ref)
+    model = found[0] if found is not None else None
+    ref = f"model::{model.id}" if model is not None else None
+    if settings.agent_models and ref not in settings.agent_models:
+        raise PageContextRefused(
+            403,
+            "model_not_allowed",
+            "Your administrator does not allow the browser agent to use this model. Choose another model.",
+        )
+    if settings.page_content_models and ref not in settings.page_content_models:
+        raise PageContextRefused(
+            403,
+            "model_not_allowed",
+            "Your administrator does not allow pages to be sent to this model. Choose another model.",
+        )
     return model
 
 

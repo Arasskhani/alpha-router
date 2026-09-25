@@ -89,14 +89,28 @@ export function createTokenManager(deps: TokenManagerDeps) {
     });
   }
 
-  async function clear(): Promise<void> {
+  async function clearStored(): Promise<void> {
     await deps.storage.setAccess(null);
     await deps.storage.setRefresh(null);
+  }
+
+  /**
+   * Drop the tokens. Under the lock: a refresh in flight finishes first, so it
+   * cannot save a new pair afterwards and connect the browser again.
+   */
+  async function clear(): Promise<void> {
+    await deps.lock(clearStored);
   }
 
   /** The server said this browser is disconnected: drop the tokens and say so. */
   async function forget(): Promise<void> {
     await clear();
+    deps.onDisconnected?.();
+  }
+
+  /** forget(), for the refresh, which already holds the lock (it is not reentrant). */
+  async function forgetLocked(): Promise<void> {
+    await clearStored();
     deps.onDisconnected?.();
   }
 
@@ -142,7 +156,7 @@ export function createTokenManager(deps: TokenManagerDeps) {
       // invalid_grant: revoked, expired, or signed out everywhere. Any other
       // 400 can never succeed either, and retrying it forever helps nobody.
       const message = await refusalMessage(response);
-      await forget();
+      await forgetLocked();
       throw new DisconnectedError(message);
     }
     throw new TemporaryError();

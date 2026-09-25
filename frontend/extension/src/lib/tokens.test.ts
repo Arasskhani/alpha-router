@@ -196,6 +196,22 @@ describe("connecting and disconnecting", () => {
     expect(onDisconnected).toHaveBeenCalledOnce();
   });
 
+  it("waits for a refresh in flight before dropping the tokens, so it cannot bring them back", async () => {
+    const { state, storage } = memoryStorage(ENDED, "alpha-router-ext-rt-0");
+    let answer!: (response: Response) => void;
+    const fetchImpl = vi.fn(() => new Promise<Response>((resolve) => (answer = resolve)));
+    const { tokens } = manager(storage, fetchImpl as unknown as typeof fetch);
+    const refreshing = tokens.accessToken();
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledOnce());
+    const clearing = tokens.clear();
+    answer(json(200, pair(1)));
+    expect(await refreshing).toBe("alpha-router-ext-at-1");
+    await clearing;
+    expect(state.access).toBeNull();
+    expect(state.refresh).toBeNull();
+    expect(state.writes.slice(-2)).toEqual(["access:cleared", "refresh:cleared"]);
+  });
+
   it("refuses a response without tokens", async () => {
     const { storage } = memoryStorage(null, null);
     const { tokens } = manager(storage, vi.fn() as unknown as typeof fetch);

@@ -542,13 +542,14 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     if (arrived) approval = "user";
     // The browser has to allow a site before the agent can work there, and it asks only in a click.
     let access: ApprovalRequest["access"];
+    // For a link to another site, that site: the page it is on is already the agent's.
     const needs =
-      PAGE_TOOLS.has(name) && pageNow
-        ? pageNow.url
-        : name === "navigate" || name === "tab_open"
-          ? String(a.url)
-          : name === "click" && element?.href && /^https?:/.test(element.href)
-            ? element.href
+      name === "click" && verdict.site && element?.href && /^https?:/.test(element.href)
+        ? element.href
+        : PAGE_TOOLS.has(name) && pageNow
+          ? pageNow.url
+          : name === "navigate" || name === "tab_open"
+            ? String(a.url)
             : name === "tab_switch" && target?.host
               ? target.url
               : null;

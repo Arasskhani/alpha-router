@@ -303,6 +303,16 @@ describe("going somewhere", () => {
     expect(browser.openTab).toHaveBeenCalledWith("https://partner.org/deals");
   });
 
+  it("asks for the browser's permission for the site a link goes to, in the same click", async () => {
+    const browser = fakeBrowser();
+    browser.hasAccess.mockImplementation(async (url: string) => !url.includes("partner.org"));
+    const h = harness([{ text: "", toolCalls: [call("click", { ref: "e5" })] }, { text: "", toolCalls: [call("done", { summary: "ok" })] }], { browser });
+    await run(h);
+    expect(h.approvals).toEqual([
+      expect.objectContaining({ tool: "click", access: { pattern: "https://partner.org/*", host: "partner.org" }, verdict: expect.objectContaining({ reason: "other_site" }) }),
+    ]);
+  });
+
   it("refuses a blocked site, and lists its tabs without their titles", async () => {
     const h = harness([
       { text: "", toolCalls: [call("tabs_list", {}, "c1"), call("navigate", { url: "https://bank.example.com/" }, "c2")] },

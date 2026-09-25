@@ -213,6 +213,32 @@ describe("a run", () => {
     expect(server.calls.some((c) => c.path === "/api/chat/completions")).toBe(false);
   });
 
+  it("starts one run however quickly Start is pressed again while Chrome asks for the site", async () => {
+    chromeFake.permissions.granted.clear();
+    let answer: (granted: boolean) => void = () => undefined;
+    chromeFake.permissions.request.mockImplementation(
+      () =>
+        new Promise<boolean>((resolve) => {
+          answer = (granted) => {
+            chromeFake.permissions.granted.add("https://shop.example.com/*");
+            resolve(granted);
+          };
+        }),
+    );
+    await render();
+    await start("Do something.");
+    // Start again, and Enter in the task box, while Chrome's prompt is open.
+    const box = host.querySelector('textarea[aria-label="Task"]') as HTMLTextAreaElement;
+    expect(box.disabled).toBe(true);
+    await act(async () => {
+      host.querySelector("form.chat__composer")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    expect(chromeFake.permissions.request).toHaveBeenCalledTimes(1);
+    await act(async () => answer(true));
+    await until(() => host.textContent!.includes("Finished"), "the run to end");
+    expect(server.calls.filter((c) => c.path === "/api/chat/completions")).toHaveLength(1);
+  });
+
   it("puts a question from the agent to the user", async () => {
     replies = [toolFrame([{ id: "c1", name: "ask_user", args: { question: "Which size?" } }]), toolFrame([{ id: "c2", name: "done", args: { summary: "Chose M." } }])];
     await render();

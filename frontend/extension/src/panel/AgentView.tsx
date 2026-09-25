@@ -117,6 +117,10 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
   const [mode, setMode] = useState<AgentMode>("ask");
   const [draft, setDraft] = useState("");
   const [running, setRunning] = useState(false);
+  /** Between Start and the run beginning (Chrome's site prompt may be open): no second Start. */
+  const [starting, setStarting] = useState(false);
+  /** Set at once in the Start click, before any render: two quick presses start one run. */
+  const busy = useRef(false);
   const [log, setLog] = useState<LogItem[]>([]);
   const [approval, setApproval] = useState<{ request: ApprovalRequest; resolve: (ok: boolean) => void } | null>(null);
   const [question, setQuestion] = useState<{ text: string; resolve: (answer: string) => void } | null>(null);
@@ -302,6 +306,8 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
   }
 
   async function begin(task: string) {
+    // One run at a time: a second one would take over the Stop buttons and leave the first running unseen.
+    if (controller.current) return;
     const run = `run-${randomHex(8)}`;
     const abort = new AbortController();
     controller.current = abort;
@@ -311,6 +317,7 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
     setDraft("");
     setLog([{ kind: "task", id: run, text: task }]);
     setRunning(true);
+    setStarting(false);
     try {
       const result = await runAgent(
         { task, mode, maxSteps, rules, runId: run, nonce: randomHex(6), modelRef: modelId },
@@ -325,26 +332,31 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
       setApproval(null);
       setQuestion(null);
       if (controller.current === abort) controller.current = null;
+      busy.current = false;
     }
   }
 
   function start() {
     const task = draft.trim();
-    if (!task || running || !modelId) return;
+    if (!task || running || busy.current || !modelId) return;
     if (!rules.ownHosts.length) {
       // Without Alpharouter's own address the rules cannot keep the agent off its pages.
       setBanner("The agent cannot tell Alpharouter's own pages from others. Download the extension again from Settings → Extension.");
       return;
     }
+    busy.current = true;
+    setStarting(true);
+    const refused = () => {
+      busy.current = false;
+      setStarting(false);
+      setBanner(`The agent needs your permission to work on ${target?.host ?? "this site"}.`);
+    };
     if (target && siteAccess === false) {
       // Chrome asks only while a click is being handled: at once, nothing awaited first.
       chrome.permissions
         .request({ origins: [target.pattern] })
-        .then((granted) => {
-          if (granted) void begin(task);
-          else setBanner(`The agent needs your permission to work on ${target.host}.`);
-        })
-        .catch(() => setBanner(`The agent needs your permission to work on ${target.host}.`));
+        .then((granted) => (granted ? void begin(task) : refused()))
+        .catch(refused);
       return;
     }
     void begin(task);
@@ -520,7 +532,7 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
           aria-label="Task"
           value={draft}
           rows={2}
-          disabled={running}
+          disabled={running || starting}
           placeholder="What should Alpharouter do in your browser?"
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => {
@@ -535,7 +547,7 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
             Stop
           </button>
         ) : (
-          <button type="submit" className="btn btn--primary" disabled={!draft.trim() || !modelId}>
+          <button type="submit" className="btn btn--primary" disabled={!draft.trim() || !modelId || starting}>
             Start
           </button>
         )}

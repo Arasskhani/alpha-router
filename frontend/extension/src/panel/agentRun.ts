@@ -291,9 +291,17 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     if (signal.aborted) throw abortError();
   };
 
+  /** Stop takes effect at once, even while the page is busy (a wait, a slow page): what it does then no longer matters. */
+  const stopped = new Promise<never>((_, reject) => {
+    const fail = () => reject(abortError());
+    if (signal.aborted) fail();
+    else signal.addEventListener("abort", fail, { once: true });
+  });
+  stopped.catch(() => undefined);
+
   async function page(method: PageMethod, a: Record<string, unknown> = {}): Promise<PageResult> {
     check();
-    const result = await deps.browser.page(method, a);
+    const result = await Promise.race([deps.browser.page(method, a), stopped]);
     check();
     return result;
   }
@@ -329,7 +337,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     if (tool === "tab_open" || tool === "navigate") {
       const url = String(a.url);
       const next = tool === "tab_open" ? await deps.browser.openTab(url) : await deps.browser.navigate(url);
-      await deps.browser.settle();
+      await Promise.race([deps.browser.settle(), stopped]);
       check();
       const where = next.host ? `${next.host}` : "a page";
       return {
@@ -362,7 +370,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       };
     }
     if (MAY_LOAD.has(tool)) {
-      await deps.browser.settle();
+      await Promise.race([deps.browser.settle(), stopped]);
       check();
     }
     let body: string;

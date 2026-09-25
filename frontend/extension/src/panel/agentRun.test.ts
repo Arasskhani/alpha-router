@@ -242,6 +242,20 @@ describe("a run", () => {
     expect(h.reports.at(-1)).toMatchObject({ kind: "agent_task", outcome: "stopped" });
   });
 
+  it("stops at once, even while the page is still busy with an action", async () => {
+    const abort = new AbortController();
+    const browser = fakeBrowser();
+    browser.page.mockImplementation(async (method: string) => {
+      if (method === "wait_for") {
+        setTimeout(() => abort.abort(), 10);
+        return new Promise<PageResult>(() => undefined);
+      }
+      return { ok: true, note: "Done." };
+    });
+    const h = harness([{ text: "", toolCalls: [call("wait_for", { seconds: 10 })] }], { browser });
+    await expect(run(h, {}, abort.signal)).resolves.toMatchObject({ outcome: "stopped" });
+  });
+
   it("answers invalid arguments and unknown tools instead of failing", async () => {
     const h = harness([
       { text: "", toolCalls: [{ id: "c1", name: "click", arguments: "{not json" }, call("run_shell", { cmd: "ls" }, "c2")] },

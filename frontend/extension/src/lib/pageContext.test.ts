@@ -91,6 +91,8 @@ describe("reading the page in a tab", () => {
 
   beforeEach(() => {
     chromeFake = installChromeFake();
+    // The tab the user chose, still on the page they chose.
+    chromeFake.tabs.add({ id: 7, url: "https://docs.example.com/guide" });
   });
 
   afterEach(() => {
@@ -109,7 +111,7 @@ describe("reading the page in a tab", () => {
     const calls = chromeFake.scripting.executeScript.mock.calls.map(([injection]) => injection as Record<string, unknown>);
     expect(calls[0]).toEqual({ target: { tabId: 7 }, files: ["content.js"] });
     expect(calls[1].target).toEqual({ tabId: 7 });
-    expect(calls[1].args).toEqual([{ maxChars: MAX_PAGE_CHARS, maxSelectionChars: MAX_SELECTION_CHARS }]);
+    expect(calls[1].args).toEqual([{ maxChars: MAX_PAGE_CHARS, maxSelectionChars: MAX_SELECTION_CHARS, host: "docs.example.com" }]);
     expect(read).toEqual({
       page: {
         host: "docs.example.com",
@@ -123,18 +125,43 @@ describe("reading the page in a tab", () => {
     });
   });
 
-  it("sends a function that stands on its own, as Chrome serializes it into the page", async () => {
-    const pageSide = vi.fn(() => extract);
-    (globalThis as { __alpharouter?: unknown }).__alpharouter = { extract: pageSide };
+  /** The injected function, rebuilt from its source as Chrome does, run in a page at `hostname`. */
+  function runInPage(hostname: string) {
+    vi.stubGlobal("location", { hostname });
     chromeFake.scripting.executeScript.mockImplementation((async (injection: { files?: string[]; func?: () => unknown; args?: unknown[] }) => {
       if (injection.files) return [];
-      // Rebuilt from its source, as Chrome does: nothing from the module is in scope.
+      // Nothing from the module is in scope.
       const rebuilt = new Function(`return (${String(injection.func)})`)() as (...args: unknown[]) => unknown;
       return [{ result: rebuilt(...(injection.args ?? [])) }];
     }) as never);
+  }
+
+  it("sends a function that stands on its own, as Chrome serializes it into the page", async () => {
+    const pageSide = vi.fn(() => extract);
+    (globalThis as { __alpharouter?: unknown }).__alpharouter = { extract: pageSide };
+    runInPage("docs.example.com");
     const read = await readPage({ id: 7, url: "https://docs.example.com/guide" }, OPEN);
-    expect(pageSide).toHaveBeenCalledWith({ maxChars: MAX_PAGE_CHARS, maxSelectionChars: MAX_SELECTION_CHARS });
+    expect(pageSide).toHaveBeenCalledWith({ maxChars: MAX_PAGE_CHARS, maxSelectionChars: MAX_SELECTION_CHARS, host: "docs.example.com" });
     expect(read.page.text).toBe("Step one. Step two.");
+  });
+
+  it("reads nothing in a page that is on another site by the time the reader runs", async () => {
+    const pageSide = vi.fn(() => ({ ...extract, url: "https://evil.example/" }));
+    (globalThis as { __alpharouter?: unknown }).__alpharouter = { extract: pageSide };
+    runInPage("evil.example");
+    await expect(readPage({ id: 7, url: "https://docs.example.com/guide" }, OPEN)).rejects.toThrow("The page changed");
+    expect(pageSide).not.toHaveBeenCalled();
+  });
+
+  it("injects nothing into a tab that has moved to another site", async () => {
+    chromeFake.tabs.update(7, { url: "https://evil.example/" });
+    await expect(readPage({ id: 7, url: "https://docs.example.com/guide" }, OPEN)).rejects.toThrow("The page changed");
+    expect(chromeFake.scripting.executeScript).not.toHaveBeenCalled();
+  });
+
+  it("injects nothing into a tab that is gone", async () => {
+    await expect(readPage({ id: 8, url: "https://docs.example.com/guide" }, OPEN)).rejects.toThrow("The page changed");
+    expect(chromeFake.scripting.executeScript).not.toHaveBeenCalled();
   });
 
   it.each([

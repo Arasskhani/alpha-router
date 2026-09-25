@@ -38,6 +38,8 @@ export type PageRead = { page: PageContext; selection: string };
 
 export class PageReadError extends Error {}
 
+const MOVED = "The page changed while it was being read. Try again.";
+
 export type SiteRules = { policy: SitePolicy; serverHost: string | null };
 
 /** Why the rules keep this site's pages from being shared, or null. */
@@ -73,23 +75,31 @@ function modelUrl(raw: string): string {
 
 /**
  * Read the page in a tab: inject content.js (only now, and only there),
- * extract, and check where the text actually came from - the tab may have
- * moved on since the user chose it.
+ * extract, and check where the text actually came from.
+ *
+ * The tab may have moved to another site since the user chose it, so its
+ * site is checked before anything goes into it, again inside the page -
+ * where no navigation can come between the check and the reading - and once
+ * more on the answer.
  */
 export async function readPage(tab: { id: number; url?: string }, rules: SiteRules): Promise<PageRead> {
   const target = readablePage(tab.url);
   if (!target) throw new PageReadError("Alpharouter cannot read this kind of page.");
   const refused = pageRefusal(target.host, rules);
   if (refused) throw new PageReadError(refused);
+  const current = await chrome.tabs.get(tab.id).catch(() => undefined);
+  if (readablePage(current?.url)?.host !== target.host) throw new PageReadError(MOVED);
   let results: Array<{ result?: unknown }>;
   try {
     await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content.js"] });
     results = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       // Serialized into the page: it may use nothing from this module.
-      func: (limits: { maxChars: number; maxSelectionChars: number }) =>
-        (globalThis as { __alpharouter?: { extract: (l: typeof limits) => unknown } }).__alpharouter?.extract(limits) ?? null,
-      args: [{ maxChars: MAX_PAGE_CHARS, maxSelectionChars: MAX_SELECTION_CHARS }],
+      func: (limits: { maxChars: number; maxSelectionChars: number; host: string }) =>
+        location.hostname.replace(/\.$/, "") === limits.host
+          ? ((globalThis as { __alpharouter?: { extract: (l: typeof limits) => unknown } }).__alpharouter?.extract(limits) ?? null)
+          : "moved",
+      args: [{ maxChars: MAX_PAGE_CHARS, maxSelectionChars: MAX_SELECTION_CHARS, host: target.host }],
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "";
@@ -98,12 +108,11 @@ export async function readPage(tab: { id: number; url?: string }, rules: SiteRul
     }
     throw new PageReadError("Alpharouter could not read this page. Reload it and try again.");
   }
+  if (results?.[0]?.result === "moved") throw new PageReadError(MOVED);
   const extract = cleanExtract(results?.[0]?.result);
   if (!extract) throw new PageReadError("Alpharouter could not read this page. Reload it and try again.");
   const source = readablePage(extract.url);
-  if (!source || source.host !== target.host) {
-    throw new PageReadError("The page changed while it was being read. Try again.");
-  }
+  if (!source || source.host !== target.host) throw new PageReadError(MOVED);
   if (!extract.text) throw new PageReadError("This page has no text Alpharouter can read.");
   return {
     page: {

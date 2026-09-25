@@ -629,6 +629,8 @@ describe("right-click actions", () => {
 
   beforeEach(() => {
     server.routes["POST /api/chat/session-title"] = () => json(200, { title: "" });
+    // The tab the action was chosen in, still on that page.
+    chromeFake.tabs.add({ id: 9, url: PAGE_URL, title: "The guide" });
   });
 
   it("summarizes the page it was chosen on, reading that tab", async () => {

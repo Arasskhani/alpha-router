@@ -7,7 +7,7 @@ import { resolveReferenceImageFromUserContent } from "./chatAttachments";
 import { isPrivateBlobRef, resolvePrivateMediaUrlForApi } from "./privateMediaStore";
 import { authFetch } from "../api";
 import { humanizeGatewayError } from "./gatewayErrors";
-import { mediaContent } from "./sharedPages";
+import { mediaContent, withSharedPageMarks } from "./sharedPages";
 import {
   normalizeImageAspectPreset,
   presetFromAspectRatio,
@@ -166,11 +166,13 @@ export function parseImageMessage(content: string): ImagePayload | null {
 
 /**
  * Last generated image in the thread (skips pending placeholders), for an edit
- * or a video's first frame. Never one written in an answer about a shared page.
+ * or a video's first frame. Never one written in an answer about a shared page,
+ * or in any answer after one, marked yet or not.
  */
 export function lastAssistantImageUrl(messages: ChatMessage[]): string | undefined {
-  for (let i = messages.length - 1; i >= 0; i -= 1) {
-    const msg = messages[i];
+  const marked = withSharedPageMarks(messages);
+  for (let i = marked.length - 1; i >= 0; i -= 1) {
+    const msg = marked[i];
     if (msg.role !== "assistant") continue;
     if (msg.content === IMAGE_PENDING_MARKER) continue;
     const payload = parseImageMessage(mediaContent(msg));

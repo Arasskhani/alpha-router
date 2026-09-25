@@ -107,6 +107,17 @@ describe("the image an edit starts from", () => {
     expect(lastAssistantImageUrl(history)).toBe("/api/chat/media/7/file");
     expect(lastAssistantImageUrl(history.slice(1))).toBeUndefined();
   });
+
+  it("is never one written in a later answer the server has not marked yet", () => {
+    const history = [
+      { role: "assistant" as const, content: generated },
+      { role: "user" as const, content: "what does this page say?" },
+      { role: "assistant" as const, content: "It says hello.", pageContext: { sites: ["evil.example"], inherited: false } },
+      { role: "user" as const, content: "and now?" },
+      { role: "assistant" as const, content: planted },
+    ];
+    expect(lastAssistantImageUrl(history)).toBe("/api/chat/media/7/file");
+  });
 });
 
 describe("image preparation control", () => {

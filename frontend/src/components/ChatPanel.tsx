@@ -309,7 +309,13 @@ import AgentMenu from "./chat/AgentMenu";
 import { useBackOnline } from "../hooks/useBackOnline";
 import { CONNECTION_LOST_MESSAGE, isConnectionLostError } from "../lib/chatConnection";
 import { RECOVERY_RETRY_MS, createReplyRecovery } from "../lib/replyRecovery";
-import { answerImages, mediaContent, sharedPagesLabel, sharedPagesNote } from "../lib/sharedPages";
+import {
+  answerImages,
+  mediaContent,
+  sharedPagesLabel,
+  sharedPagesNote,
+  withSharedPageMarks,
+} from "../lib/sharedPages";
 import {
   shortModelName,
   readAudioMessage,
@@ -561,7 +567,12 @@ export default function ChatPanel({
   const [movingSessionIds, setMovingSessionIds] = useState<string[] | null>(null);
   const [selectedChatIds, setSelectedChatIds] = useState<Set<string>>(() => new Set());
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [unmarkedMessages, setMessages] = useState<ChatMessage[]>([]);
+  // The messages as the chat shows and uses them: an answer that follows one
+  // built from shared pages is marked as one from its placeholder on, while it
+  // streams and when a local copy is kept over the server's, so its images stay
+  // links and its media markers stay text before the server's mark arrives.
+  const messages = useMemo(() => withSharedPageMarks(unmarkedMessages), [unmarkedMessages]);
   const messageKeys = useMemo(() => stableMessageKeys(messages, String(activeId ?? "")), [messages, activeId]);
   const [input, setInput] = useState("");
   const [inputDirection, setInputDirection] = useState<TextDirection>("ltr");

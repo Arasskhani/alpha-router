@@ -9,6 +9,7 @@
  *
  * A later answer in the same chat is marked too (`inherited`): the page is
  * still in the conversation the model reads, so it can still steer the model.
+ * The chat does not wait for the server to say so: see `withSharedPageMarks`.
  */
 
 export type SharedPages = {
@@ -33,6 +34,34 @@ export function readSharedPages(value: unknown): SharedPages | undefined {
     ? mark.sites.filter((site): site is string => typeof site === "string" && site.length > 0 && site.length <= MAX_HOST_CHARS)
     : [];
   return { sites: sites.slice(0, MAX_SITES), inherited: mark.inherited === true };
+}
+
+/**
+ * The chat's messages with every answer that follows an answer built from
+ * shared pages marked as one too (`inherited`, with the earlier answers'
+ * sites), whether or not the server's mark has reached it.
+ *
+ * The server marks such an answer when it saves it, but the chat has it
+ * before that: its placeholder, every update while it streams, and a local
+ * copy kept over the server's never carry the mark, although the page is
+ * already in the conversation the model reads. An answer's own mark is kept
+ * as it is. Returns `messages` itself when no answer needs a mark.
+ */
+export function withSharedPageMarks<T extends { role: string; pageContext?: SharedPages }>(messages: T[]): T[] {
+  let sites: string[] | null = null;
+  let changed = false;
+  const marked = messages.map((message) => {
+    if (message.role !== "assistant") return message;
+    if (message.pageContext) {
+      const seen: string[] = sites ?? [];
+      sites = [...seen, ...message.pageContext.sites.filter((site) => !seen.includes(site))].slice(0, MAX_SITES);
+      return message;
+    }
+    if (sites === null) return message;
+    changed = true;
+    return { ...message, pageContext: { sites: [...sites], inherited: true } };
+  });
+  return changed ? marked : messages;
 }
 
 function pagesOn(sites: string[], preposition: "on" | "from"): string {

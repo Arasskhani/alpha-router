@@ -23,7 +23,8 @@ from app.models.budget_reservation import BudgetReservation
 from app.models.connection import Connection
 from app.models.logging import RequestLog
 from app.models.model_catalog import AIModel
-from app.services import chat_turn_context, extension_tokens, proxy_service, turn_settlement
+from app.models.user import User
+from app.services import budget_reservation_service, chat_turn_context, extension_tokens, proxy_service, turn_settlement
 from app.services.budget_reservation_service import reservation_hold_usd
 from app.services.chat_markers import BROWSER_TOOL_CHOICE_BODY_KEY, BROWSER_TOOLS_BODY_KEY
 from app.services.chat_tool_access_service import set_chat_tool_access
@@ -174,8 +175,8 @@ def _server(monkeypatch, session_factory):
     monkeypatch.setattr(extension_tokens, "AsyncSessionLocal", session_factory)
     monkeypatch.setattr("app.services.admin_ip_guard.AsyncSessionLocal", session_factory)
     monkeypatch.setattr("app.services.budget_notice_service.AsyncSessionLocal", session_factory)
-    # The turn opens sessions of its own for the stream and its settlement.
-    for module in (proxy_service, chat_turn_context, turn_settlement):
+    # The turn opens sessions of its own for the stream, for growing its budget hold and for its settlement.
+    for module in (proxy_service, chat_turn_context, turn_settlement, budget_reservation_service):
         monkeypatch.setattr(module, "AsyncSessionLocal", session_factory)
     monkeypatch.setattr(get_settings(), "frontend_url", f"{SERVER}/")
 
@@ -377,7 +378,7 @@ class TestAStep:
         assert log.success is False
 
     async def test_long_tool_calls_count_against_the_budget(
-        self, client, browser, models, provider, session_factory, db_session
+        self, client, browser, models, provider, session_factory, db_session, user
     ):
         # $0.20 left pays for about 6,600 output tokens; these arguments run to several times that.
         await db_session.execute(update(BudgetPlan).values(monthly_budget_usd=0.2))
@@ -395,6 +396,12 @@ class TestAStep:
         assert errors and "budget" in errors[0]["error"]["message"]
         [log] = await _logs(session_factory)
         assert log.error_code == "budget_exceeded"
+        # The hold grew with the calls and is settled at what they cost; nothing stays held.
+        [hold] = await _reservations(session_factory)
+        assert hold.status == "settled"
+        assert float(hold.actual_usd) == pytest.approx(float(log.total_cost_usd))
+        async with session_factory() as fresh:
+            assert float((await fresh.get(User, user.id)).budget_reserved_usd) == pytest.approx(0.0)
 
 
 # --- refused --------------------------------------------------------------------

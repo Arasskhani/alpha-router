@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime
 import hashlib
 import json
+import math
 import uuid
 
 from fastapi import HTTPException
@@ -12,6 +13,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
+from app.database import AsyncSessionLocal
 from app.models.api_key import AlphaRouterApiKey
 from app.models.budget_reservation import BudgetReservation
 from app.models.model_catalog import AIModel
@@ -181,9 +183,10 @@ def _hold_fits_balance(
     """Whether the estimated hold still fits inside the remaining balance.
 
     Admission is strict: an operation may not start unless its whole estimate
-    fits. This is the *only* budget control that exists — nothing re-checks the
-    balance once a request is running, and an async media job cannot be stopped
-    at all — so weakening it has no second line of defence behind it.
+    fits. For everything but a chat turn this is the *only* budget control that
+    exists — nothing re-checks the balance once such a request is running, and
+    an async media job cannot be stopped at all — so weakening it has no second
+    line of defence behind it.
 
     An earlier revision clamped an over-sized estimate down to whatever balance
     was left and admitted the request anyway. That is safe only while the
@@ -542,39 +545,108 @@ async def reserve(
     return row
 
 
-async def spend_ceiling_usd(db: AsyncSession, hold: BudgetReservation | None) -> float | None:
-    """What a running chat turn may spend before it is stopped: the budget its subject had left at admission.
+async def bounded_hold_usd(db: AsyncSession, hold: BudgetReservation | None) -> float | None:
+    """The hold a running chat turn watches its cost against; None when nothing bounds the turn.
 
-    A chat hold is an estimate of the reply, not of what the budget can bear,
-    so a reply that outgrows its hold is not over budget: stopping it there
-    would cut answers the budget pays for easily. The balance left when the
-    hold was taken is the real bound - the hold plus whatever was still free
-    beside it. Read right after ``reserve`` in the same session, so the
-    subject's counters already include this hold. None when nothing bounds the
-    turn: no hold, or an API key without a credit limit.
+    A chat hold guesses at the reply's length, so a reply may outgrow it. The
+    stream then grows it with :func:`extend_hold`, and stops the reply only
+    when the budget left cannot bear it. None when there is no hold, or when
+    it belongs to an API key without a credit limit: nothing stops such a
+    turn. Read right after ``reserve``, in the same session.
     """
     if hold is None:
         return None
-    amount = float(hold.reserved_usd or 0)
     if hold.subject_type == SUBJECT_ALPHA_ROUTER_KEY:
         key = await db.get(AlphaRouterApiKey, int(hold.subject_id))
-        if key is None:
-            return amount
-        limit = float(key.credit_limit_usd or 0)
-        if limit <= 0:
-            # ``ensure_key_usable`` lets a key without a limit through only when it is unlimited.
+        # ``ensure_key_usable`` lets a key without a limit through only when it is unlimited.
+        if key is not None and float(key.credit_limit_usd or 0) <= 0:
             return None
-        used = float(key.period_used_usd or 0)
-        held = float(key.period_reserved_usd or 0)
+    return float(hold.reserved_usd or 0)
+
+
+async def extend_hold(reservation_id: str | None, needed_usd: float) -> float | None:
+    """Grow a running chat turn's hold to cover ``needed_usd`` out of the budget left, or refuse.
+
+    Every turn running for the same user or key draws on the same free
+    balance: the limit, less what is spent and what is held. Read once at
+    admission and taken as each turn's own, it let every one of them spend all
+    of it - with $1.00 left, five turns running at once were allowed about
+    $4.50 between them. A hold that grows claims its share instead. Under the
+    subject's row lock, taken before the reservation's as everywhere else, the
+    growth is added to the reservation and to the subject's reserved counter
+    together, so the next turn to grow counts it as held, and settling the
+    turn releases the hold as grown.
+
+    The hold grows to twice its size, or to ``needed_usd`` when that is more,
+    capped at what is free, so a long reply comes back here a handful of times
+    rather than at every check. As at admission, a refusal is checked twice:
+    a reserved counter that drifted above the open holds is repaired first.
+
+    Opens its own short session: the stream releases its request session while
+    it waits on the provider, and the row locks are held for this transaction
+    only.
+
+    Returns the hold, grown or already large enough, or None when the budget
+    left cannot bear ``needed_usd``. None as well when the hold no longer
+    counts - settled, released, expired, or given back when the budget period
+    rolled over or was reset: growing it would put money in the reserved
+    counter that no held reservation accounts for, and without it nothing
+    bounds the turn. An API key without a credit limit is never refused.
+    """
+    needed = float(needed_usd or 0)
+    if not reservation_id or not math.isfinite(needed):
+        return None
+    needed = round(needed, 8)
+    async with AsyncSessionLocal() as db:
+        row = await _lock_subject_then_reservation(db, reservation_id)
+        if row is None or row.status != STATUS_HELD:
+            return None
+        reserved = round(float(row.reserved_usd or 0), 8)
+        if needed <= reserved:
+            return reserved
+        subject_type, subject_id = str(row.subject_type), int(row.subject_id)
+        subject = await _locked_subject(db, subject_type, subject_id)
+        if subject is None:
+            return None
+        limit, used, held = _subject_balance(subject)
+        extra = round(needed - reserved, 8)
+        unlimited = isinstance(subject, AlphaRouterApiKey) and limit <= 0
+        headroom = math.inf if unlimited else round(limit - used - held, 8)
+        if headroom < extra:
+            held = await reconcile_subject_reserved(db, subject_type, subject_id)
+            headroom = round(limit - used - held, 8)
+            if headroom < extra:
+                # Keep the repair, if there was one.
+                await db.commit()
+                return None
+        grown = round(min(max(needed, 2 * reserved), reserved + headroom), 8)
+        row.reserved_usd = grown
+        _set_subject_reserved(subject, round(held + grown - reserved, 8))
+        await db.commit()
+        return grown
+
+
+def _subject_balance(subject: User | AlphaRouterApiKey) -> tuple[float, float, float]:
+    """(limit, used, held) of a user's monthly budget or of an API key's credit for the period."""
+    if isinstance(subject, User):
+        return (
+            float(subject.monthly_budget_usd or 0),
+            float(subject.budget_used_usd or 0),
+            float(subject.budget_reserved_usd or 0),
+        )
+    return (
+        float(subject.credit_limit_usd or 0),
+        float(subject.period_used_usd or 0),
+        float(subject.period_reserved_usd or 0),
+    )
+
+
+def _set_subject_reserved(subject: User | AlphaRouterApiKey, held: float) -> None:
+    """Write the reserved counter that :func:`_subject_balance` reads as ``held``."""
+    if isinstance(subject, User):
+        subject.budget_reserved_usd = held
     else:
-        user = await db.get(User, int(hold.subject_id))
-        if user is None:
-            return amount
-        limit = float(user.monthly_budget_usd or 0)
-        used = float(user.budget_used_usd or 0)
-        held = float(user.budget_reserved_usd or 0)
-    free_beside = limit - used - held
-    return round(amount + max(0.0, free_beside), 8)
+        subject.period_reserved_usd = held
 
 
 async def _lock_reservation(
@@ -591,16 +663,25 @@ async def _lock_reservation(
     ).scalar_one_or_none()
 
 
+async def _locked_subject(
+    db: AsyncSession,
+    subject_type: str,
+    subject_id: int,
+) -> User | AlphaRouterApiKey | None:
+    """The subject's row, locked ``FOR UPDATE`` and refreshed (see :func:`_locked_user_stmt`)."""
+    if subject_type == SUBJECT_USER:
+        return (await db.execute(_locked_user_stmt(subject_id))).scalar_one_or_none()
+    if subject_type == SUBJECT_ALPHA_ROUTER_KEY:
+        return (await db.execute(_locked_key_stmt(subject_id))).scalar_one_or_none()
+    return None
+
+
 async def _lock_subject(
     db: AsyncSession,
     subject_type: str,
     subject_id: int,
 ) -> bool:
-    if subject_type == SUBJECT_USER:
-        return (await db.execute(_locked_user_stmt(subject_id))).scalar_one_or_none() is not None
-    if subject_type == SUBJECT_ALPHA_ROUTER_KEY:
-        return (await db.execute(_locked_key_stmt(subject_id))).scalar_one_or_none() is not None
-    return False
+    return await _locked_subject(db, subject_type, subject_id) is not None
 
 
 async def _lock_subject_then_reservation(

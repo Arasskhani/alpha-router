@@ -35,6 +35,16 @@ describe("a call to the page", () => {
     expect(run.args).toEqual(["https://shop.example.com", "type_text", { ref: "e3", text: "hello" }, null]);
   });
 
+  it("does not send the action once the run is stopped, however long the page kept the injection back", async () => {
+    const abort = new AbortController();
+    chromeFake.scripting.executeScript.mockImplementationOnce(async () => {
+      abort.abort();
+      return [];
+    });
+    await expect(callPage(SHOP, "click", { ref: "e1" }, null, abort.signal)).resolves.toMatchObject({ ok: false, error: "stopped" });
+    expect(chromeFake.scripting.executeScript).toHaveBeenCalledTimes(1);
+  });
+
   it("puts the run's banner up before the action, when asked to", async () => {
     chromeFake.scripting.executeScript.mockResolvedValue([]);
     await callPage(SHOP, "click", { ref: "e1" }, { run: "run-1", label: "Working" });
@@ -45,6 +55,9 @@ describe("a call to the page", () => {
     vi.stubGlobal("location", { origin: "https://shop.example.com" });
     run.func!(...run.args!);
     expect(seen).toEqual(["show_overlay", "click"]);
+    // The action goes with its run, which the page refuses once the user stopped it there.
+    const agent = (globalThis as unknown as { __alpharouter: { agent: ReturnType<typeof vi.fn> } }).__alpharouter.agent;
+    expect(agent).toHaveBeenLastCalledWith("click", { ref: "e1" }, "run-1");
     // Not on a page that is no longer the one judged.
     seen.length = 0;
     vi.stubGlobal("location", { origin: "https://evil.example.net" });
@@ -66,7 +79,7 @@ describe("a call to the page", () => {
     expect(agent).not.toHaveBeenCalled();
     vi.stubGlobal("location", { origin: "https://shop.example.com" });
     expect(run.func!("https://shop.example.com", "click", { ref: "e1" }, null)).toEqual({ ok: true });
-    expect(agent).toHaveBeenCalledWith("click", { ref: "e1" });
+    expect(agent).toHaveBeenCalledWith("click", { ref: "e1" }, undefined);
   });
 
   it.each([

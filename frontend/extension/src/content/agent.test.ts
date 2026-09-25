@@ -537,6 +537,30 @@ describe("the overlay", () => {
   });
 });
 
+describe("a run stopped from the page", () => {
+  it("is refused any further action there, though it may still read, and its banner does not come back", async () => {
+    page("<button>Next</button>");
+    const send = vi.fn();
+    await runAgentCall(document, "show_overlay", { run: "run-stopped-1", label: "Working" }, visible, send);
+    const host = document.getElementById(OVERLAY_ID)!;
+    (host as unknown as { __label: HTMLElement }).__label.parentElement!.querySelector("button")!.click();
+    expect(send).toHaveBeenCalledWith({ type: "agent-stop", run: "run-stopped-1" });
+    const ref = snapshot(document, { isVisible: visible }).elements[0].ref;
+    const clicked = vi.fn();
+    document.querySelector("button:not([type])")?.addEventListener("click", clicked);
+    for (const [method, args] of [["click", { ref }], ["type_text", { ref, text: "x" }], ["press_key", { key: "Enter" }], ["submit_form", { ref }]] as const) {
+      await expect(runAgentCall(document, method, args, visible, send, "run-stopped-1")).resolves.toMatchObject({ ok: false, error: "stopped" });
+    }
+    expect(clicked).not.toHaveBeenCalled();
+    await expect(runAgentCall(document, "read_page", {}, visible, send, "run-stopped-1")).resolves.toMatchObject({ ok: true });
+    // Another run is not stopped.
+    await expect(runAgentCall(document, "click", { ref }, visible, send, "run-other")).resolves.toMatchObject({ ok: true });
+    hideOverlay(document, "run-stopped-1");
+    await runAgentCall(document, "show_overlay", { run: "run-stopped-1", label: "Working" }, visible, send);
+    expect(document.getElementById(OVERLAY_ID)).toBeNull();
+  });
+});
+
 describe("one call from the panel", () => {
   it("answers every call with ok, and never throws", async () => {
     page(`<button>One</button>`);

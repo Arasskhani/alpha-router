@@ -38,7 +38,7 @@ export type AgentBrowser = {
    * the page the rules judged, when it is given: a tab that has gone to
    * another site since answers "moved".
    */
-  page(method: PageMethod, args?: Record<string, unknown>, judged?: WorkTab): Promise<PageResult>;
+  page(method: PageMethod, args?: Record<string, unknown>, judged?: WorkTab, signal?: AbortSignal): Promise<PageResult>;
   /** Whether the browser lets the extension work on the pages of this address's site. */
   hasAccess(url: string): Promise<boolean>;
   /** After an action that may load a page: wait until the tab has settled. */
@@ -326,7 +326,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
 
   async function page(method: PageMethod, a: Record<string, unknown>, judged: WorkTab): Promise<PageResult> {
     check();
-    const result = await Promise.race([deps.browser.page(method, a, judged), stopped]);
+    const result = await Promise.race([deps.browser.page(method, a, judged, signal), stopped]);
     check();
     return result;
   }

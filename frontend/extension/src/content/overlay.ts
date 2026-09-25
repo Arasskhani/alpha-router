@@ -29,6 +29,30 @@ export type StopSender = (message: { type: "agent-stop"; run: string }) => unkno
 /** After Stop, the side panel takes the banner off; if it cannot, the banner goes by itself after this. */
 const STOP_FALLBACK_MS = 5000;
 
+const STOPPED_KEY = "__alpharouterStoppedRuns";
+
+/**
+ * The runs stopped from a banner in this page, kept in the isolated world
+ * (the page's scripts cannot reach it) and across injections of content.js.
+ */
+function stoppedRuns(): Set<string> {
+  const scope = globalThis as typeof globalThis & { [STOPPED_KEY]?: Set<string> };
+  const found = scope[STOPPED_KEY];
+  if (found instanceof Set) return found;
+  const fresh = new Set<string>();
+  scope[STOPPED_KEY] = fresh;
+  return fresh;
+}
+
+/**
+ * Whether the user pressed Stop on this page's banner for run `run`. The
+ * panel may already have sent an action on its way when the Stop reaches it;
+ * the page refuses such an action itself.
+ */
+export function runStopped(run: unknown): boolean {
+  return typeof run === "string" && stoppedRuns().has(run);
+}
+
 /**
  * The banner's own box, set on the element itself with priority: a page's
  * style sheet cannot hide, shrink, move or cover it (`#…{display:none
@@ -68,6 +92,8 @@ function setStyles(el: HTMLElement, styles: Styles): void {
  * comes back.
  */
 export function showOverlay(doc: Document, run: string, label: string, send: StopSender): void {
+  // A run stopped here does not come back on this page.
+  if (runStopped(run)) return;
   let host = doc.getElementById(OVERLAY_ID);
   if (host && host.dataset.run !== run) {
     host.remove();
@@ -115,6 +141,7 @@ export function showOverlay(doc: Document, run: string, label: string, send: Sto
     event.stopPropagation();
     text.textContent = "Stopping…";
     stop.disabled = true;
+    stoppedRuns().add(run);
     doc.defaultView?.setTimeout(() => hideOverlay(doc, run), STOP_FALLBACK_MS);
     // Nobody listening - the side panel was closed, so the run is already over: the banner just goes.
     let sent: unknown;

@@ -20,7 +20,7 @@ import {
   type Result,
   type Visibility,
 } from "./agent";
-import { hideOverlay, showOverlay, type StopSender } from "./overlay";
+import { hideOverlay, runStopped, showOverlay, type StopSender } from "./overlay";
 
 /** What the panel can ask of the page. */
 export type PageMethod =
@@ -41,6 +41,9 @@ export type PageMethod =
 
 const RUN_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
+/** What changes the page: refused for a run the user stopped from this page's banner. */
+const ACTS = new Set(["click", "type_text", "select_option", "submit_form", "press_key"]);
+
 function count(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
@@ -51,8 +54,12 @@ export async function runAgentCall(
   rawArgs: unknown,
   isVisible: Visibility,
   send: StopSender,
+  run?: unknown,
 ): Promise<Result> {
   const args = rawArgs && typeof rawArgs === "object" ? (rawArgs as Record<string, unknown>) : {};
+  if (typeof method === "string" && ACTS.has(method) && runStopped(run)) {
+    return { ok: false, error: "stopped", message: "The user stopped the agent on this page." };
+  }
   try {
     switch (method) {
       case "read_page":

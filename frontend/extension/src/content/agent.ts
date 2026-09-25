@@ -81,6 +81,7 @@ type AgentError =
   | "bad_key"
   | "bad_request"
   | "not_found"
+  | "stopped"
   | "failed";
 
 type Failure = { ok: false; error: AgentError; message: string };

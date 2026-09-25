@@ -115,7 +115,7 @@ export function createAgentBrowser(options: { startTabId: number | null; runId: 
       return workTab(tab) ?? { id: working, url, host: readablePage(url)?.host ?? null, title: "" };
     },
 
-    async page(method: PageMethod, args: Record<string, unknown> = {}, judged?: WorkTab): Promise<PageResult> {
+    async page(method: PageMethod, args: Record<string, unknown> = {}, judged?: WorkTab, signal?: AbortSignal): Promise<PageResult> {
       const tab = await current();
       const target = tab ? targetOf(tab) : null;
       if (!tab || !target) return { ok: false, error: "failed", message: "The tab does not show a web page the agent can work on." };
@@ -126,7 +126,7 @@ export function createAgentBrowser(options: { startTabId: number | null; runId: 
       }
       // The banner goes up with every action: a page that took it down gets it back.
       overlays.set(tab.id, expected);
-      return callPage(expected, method, args, banner);
+      return callPage(expected, method, args, banner, signal);
     },
 
     async hasAccess(url: string) {

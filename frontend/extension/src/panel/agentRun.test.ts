@@ -137,11 +137,12 @@ describe("a run", () => {
     // Reading asked nobody; typing and clicking asked the user, each with what exactly it does.
     expect(h.approvals.map((a) => a.summary)).toEqual(['Type "SAVE10" into "Coupon"', 'Click "Next"']);
     // Every page call names the page the rules judged, so a tab gone elsewhere since is not acted on.
-    expect(h.browser.page).toHaveBeenCalledWith("type_text", { ref: "e3", text: "SAVE10" }, TAB);
-    expect(h.browser.page).toHaveBeenCalledWith("click", { ref: "e1" }, TAB);
+    // (With the run's signal: a Stop keeps an action on its way from being sent.)
+    expect(h.browser.page).toHaveBeenCalledWith("type_text", { ref: "e3", text: "SAVE10" }, TAB, expect.any(AbortSignal));
+    expect(h.browser.page).toHaveBeenCalledWith("click", { ref: "e1" }, TAB, expect.any(AbortSignal));
     // A click is judged by the control it works on (the button around the words named); typing by the field itself.
-    expect(h.browser.page).toHaveBeenCalledWith("describe", { ref: "e1", activates: true }, TAB);
-    expect(h.browser.page).toHaveBeenCalledWith("describe", { ref: "e3" }, TAB);
+    expect(h.browser.page).toHaveBeenCalledWith("describe", { ref: "e1", activates: true }, TAB, expect.any(AbortSignal));
+    expect(h.browser.page).toHaveBeenCalledWith("describe", { ref: "e3" }, TAB, expect.any(AbortSignal));
     expect(h.deps.onText).toHaveBeenCalledWith("I will look at the page.");
     expectEveryCallAnswered(h.sent[2]);
   });
@@ -373,7 +374,7 @@ describe("Auto mode", () => {
       expect.objectContaining({ task: options().task, tool: "click", site: "shop.example.com", target: "button: Next", arguments: { ref: "e1" } }),
       expect.anything(),
     );
-    expect(h.browser.page).toHaveBeenCalledWith("click", { ref: "e1" }, TAB);
+    expect(h.browser.page).toHaveBeenCalledWith("click", { ref: "e1" }, TAB, expect.any(AbortSignal));
     expect(h.reports.find((r) => r.action === "click")).toMatchObject({ detail: expect.objectContaining({ approval: "review", review: "allow" }) });
   });
 

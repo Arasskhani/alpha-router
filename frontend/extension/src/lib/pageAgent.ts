@@ -34,6 +34,7 @@ const ERRORS = new Set([
   "bad_key",
   "bad_request",
   "not_found",
+  "stopped",
   "failed",
   // Set on this side, never by the page.
   "moved",
@@ -137,7 +138,7 @@ export function cleanPageResult(method: PageMethod, raw: unknown): PageResult {
   }
 }
 
-type AgentScope = { __alpharouter?: { agent?: (method: unknown, args: unknown) => unknown } };
+type AgentScope = { __alpharouter?: { agent?: (method: unknown, args: unknown, run?: unknown) => unknown } };
 
 /**
  * Where a call goes: the tab, and the page in it the rules judged - its host
@@ -151,18 +152,23 @@ export type OverlayRequest = { run: string; label: string };
 /**
  * Run one agent action in the tab `target.tabId`, only while it shows a page
  * of `target.origin`, with the run's banner shown first when `overlay` is
- * given. Never throws: every outcome is a PageResult.
+ * given. Stopped (`signal`) before the action itself is sent, it is never
+ * sent; and the page refuses an action for a run the user stopped from its
+ * banner. Never throws: every outcome is a PageResult.
  */
 export async function callPage(
   target: PageTarget,
   method: PageMethod,
   args: Record<string, unknown> = {},
   overlay: OverlayRequest | null = null,
+  signal?: AbortSignal,
 ): Promise<PageResult> {
   const { tabId, host, origin } = target;
   let results: Array<{ result?: unknown }>;
   try {
     await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
+    // A busy page can hold the injection back for a while: a Stop pressed meanwhile keeps the action from going.
+    if (signal?.aborted) return failure("stopped", "The run was stopped.");
     results = await chrome.scripting.executeScript({
       target: { tabId },
       // Serialized into the page: it may use nothing from this module. The
@@ -172,7 +178,7 @@ export async function callPage(
         const agent = (globalThis as AgentScope).__alpharouter?.agent;
         if (!agent) return { ok: false, error: "failed", message: "The page's helper is missing." };
         if (banner) agent("show_overlay", banner);
-        return agent(name, input);
+        return agent(name, input, banner?.run);
       },
       args: [origin, method, args, overlay],
     });

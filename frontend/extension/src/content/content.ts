@@ -12,8 +12,8 @@ import type { Result } from "./agent";
 
 type ContentApi = {
   extract: (limits: { maxChars: number; maxSelectionChars: number }) => PageExtract;
-  /** One call from the side panel's agent: which action, with which arguments. */
-  agent: (method: unknown, args: unknown) => Promise<Result>;
+  /** One call from the side panel's agent: which action, with which arguments, for which run. */
+  agent: (method: unknown, args: unknown, run?: unknown) => Promise<Result>;
 };
 
 /** The overlay's Stop, to the side panel: it rejects when nobody listens (the panel closed, the extension reloaded). */
@@ -38,5 +38,5 @@ scope.__alpharouter = {
       isTextVisible: isTextRendered,
       isBlock: isBlockDisplayed,
     }),
-  agent: (method, args) => runAgentCall(document, method, args, isRendered, sendStop),
+  agent: (method, args, run) => runAgentCall(document, method, args, isRendered, sendStop, run),
 };

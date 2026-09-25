@@ -349,6 +349,17 @@ describe("Auto mode", () => {
     expect(h.approvals).toEqual([expect.objectContaining({ review: "The task did not mention this." })]);
   });
 
+  it("asks the user before Enter in a message box, which is how pages send", async () => {
+    const browser = fakeBrowser({ describe_focus: () => ({ ok: true, element: { ref: "e7", role: "textbox", name: "Message", tag: "textarea" } }) });
+    const h = harness([{ text: "", toolCalls: [call("press_key", { key: "Enter" })] }, { text: "", toolCalls: [call("done", { summary: "ok" })] }], {
+      browser,
+      review: { decision: "allow", reason: "ok" },
+    });
+    await run(h, { mode: "auto" });
+    expect(h.deps.review).not.toHaveBeenCalled();
+    expect(h.approvals).toEqual([expect.objectContaining({ summary: 'Press Enter in "Message"', verdict: expect.objectContaining({ reason: "enter_sends" }) })]);
+  });
+
   it("always asks the user before a sensitive action, whatever the reviewer would say", async () => {
     const h = harness(
       [{ text: "", toolCalls: [call("click", { ref: "e4" })] }, { text: "", toolCalls: [call("done", { summary: "ok" })] }],

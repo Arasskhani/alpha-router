@@ -7,6 +7,7 @@
 import {
   click,
   describe,
+  describeFocus,
   find,
   pageText,
   pressKey,
@@ -27,6 +28,7 @@ export type PageMethod =
   | "get_page_text"
   | "find"
   | "describe"
+  | "describe_focus"
   | "click"
   | "type_text"
   | "select_option"
@@ -61,6 +63,8 @@ export async function runAgentCall(
         return find(doc, args.query, isVisible);
       case "describe":
         return describe(args.ref, isVisible, args.activates === true);
+      case "describe_focus":
+        return describeFocus(doc, isVisible);
       case "click":
         return click(args.ref, isVisible);
       case "type_text":

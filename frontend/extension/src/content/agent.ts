@@ -952,13 +952,29 @@ const KEYS: Record<string, { code: string; keyCode: number }> = {
   " ": { code: "Space", keyCode: 32 },
 };
 
+/** The element that has the keyboard: the focused element, followed into open shadow roots; null for the page itself. */
+function focusedElement(doc: Document): Element | null {
+  let el: Element | null = doc.activeElement;
+  while (el?.shadowRoot?.activeElement) el = el.shadowRoot.activeElement;
+  return el && el !== doc.body && el !== doc.documentElement ? el : null;
+}
+
+/** The element a key press would go to, for the rules: what Enter or Delete does depends on it. */
+export function describeFocus(doc: Document, isVisible: Visibility): Result<{ element?: ElementInfo }> {
+  const el = focusedElement(doc);
+  if (!el) return { ok: true };
+  const role = roleOf(el) ?? (headingLevel(el) !== null ? "heading" : "text");
+  return { ok: true, element: describeElement(el, role, isVisible, true) };
+}
+
 export function pressKey(doc: Document, key: unknown): Result<{ note: string }> {
   const name = key === "Space" ? " " : key;
   const known = typeof name === "string" ? KEYS[name] : undefined;
   if (typeof name !== "string" || !known) {
     return { ok: false, error: "bad_key", message: `The agent can press: ${Object.keys(KEYS).map((k) => (k === " " ? "Space" : k)).join(", ")}.` };
   }
-  const target = (doc.activeElement && doc.activeElement !== doc.documentElement ? doc.activeElement : doc.body) ?? doc.documentElement;
+  // Where describeFocus looked: the element with the keyboard, inside a web component too.
+  const target = focusedElement(doc) ?? doc.body ?? doc.documentElement;
   const view = doc.defaultView;
   for (const type of ["keydown", "keyup"] as const) {
     const event = new (view?.KeyboardEvent ?? KeyboardEvent)(type, { key: name, code: known.code, bubbles: true, cancelable: true, composed: true });

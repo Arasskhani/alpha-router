@@ -126,6 +126,12 @@ export function cleanPageResult(method: PageMethod, raw: unknown): PageResult {
       const element = cleanElement(v.element);
       return element ? { ok: true, element } : failure("failed", "The element could not be read.");
     }
+    case "describe_focus": {
+      // Nothing focused is an answer too: the page itself has the keyboard.
+      if (v.element === undefined || v.element === null) return { ok: true };
+      const element = cleanElement(v.element);
+      return element ? { ok: true, element } : failure("failed", "The focused element could not be read.");
+    }
     default:
       return { ok: true, note: str(v.note, MAX_MESSAGE) };
   }

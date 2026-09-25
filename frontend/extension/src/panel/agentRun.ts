@@ -243,7 +243,7 @@ function describeAction(tool: string, a: Record<string, unknown>, element?: Elem
     case "select_option":
       return `Choose "${clip(String(a.value ?? ""), 60)}" in ${named(element, a.ref)}`;
     case "press_key":
-      return `Press ${clip(String(a.key ?? "a key"), 20)}`;
+      return `Press ${clip(String(a.key ?? "a key"), 20)}${element ? ` in ${named(element, undefined)}` : ""}`;
     case "submit_form":
       return `Send the form${element?.formAction ? ` to ${whereTo(element.formAction)}` : ""}${element?.name ? ` (from ${named(element, a.ref)})` : ""}`;
     case "scroll":
@@ -425,7 +425,11 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     check();
     const pageNow = tab?.host ? { url: tab.url, host: tab.host } : undefined;
     let element: ElementInfo | undefined;
-    if (ELEMENT_TOOLS.has(name) || (name === "scroll" && typeof a.ref === "string")) {
+    if (name === "press_key" && pageNow) {
+      // A key goes to the focused element, which decides what it does: Enter in a message box sends it.
+      const focus = await page("describe_focus");
+      if (focus.ok && focus.element) element = focus.element as ElementInfo;
+    } else if (ELEMENT_TOOLS.has(name) || (name === "scroll" && typeof a.ref === "string")) {
       if (!pageNow) {
         // The rules refuse it below, with the reason.
       } else {

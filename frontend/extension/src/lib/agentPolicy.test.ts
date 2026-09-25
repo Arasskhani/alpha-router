@@ -232,6 +232,23 @@ describe("the rest", () => {
     expect(classify("press_key", { args: { key: "Enter" } })).toMatchObject({ class: "act" });
   });
 
+  it("a key is judged by where it goes: Enter in a message box sends, on a control it clicks", () => {
+    const message = el({ role: "textbox", name: "Message", tag: "textarea" });
+    expect(classify("press_key", { args: { key: "Enter" }, element: message })).toMatchObject({ class: "sensitive", reason: "enter_sends" });
+    const search = el({ role: "searchbox", name: "Search", tag: "input", type: "search" });
+    expect(classify("press_key", { args: { key: "Enter" }, element: search })).toMatchObject({ class: "act" });
+    expect(classify("press_key", { args: { key: "Enter" }, element: el({ name: "Buy now" }) })).toMatchObject({ class: "blocked", reason: "purchase_label" });
+    expect(classify("press_key", { args: { key: "Space" }, element: el({ name: "Delete account" }) })).toMatchObject({
+      class: "sensitive",
+      reason: "sensitive_label",
+      message: expect.stringContaining("works like clicking it"),
+    });
+    expect(classify("press_key", { args: { key: "Enter" }, element: el({ name: "Next" }) })).toMatchObject({ class: "act" });
+    expect(classify("press_key", { args: { key: "Delete" } })).toMatchObject({ class: "sensitive", reason: "delete_key" });
+    expect(classify("press_key", { args: { key: "Backspace" }, element: message })).toMatchObject({ class: "act" });
+    expect(classify("press_key", { args: { key: "Tab" }, element: message })).toMatchObject({ class: "act" });
+  });
+
   it("sending a form is judged by the form: its sending button, and where it goes", () => {
     const search = el({ role: "textbox", name: "Search", tag: "input" });
     expect(classify("submit_form", { element: { ...search, formButton: ["Next", "Place order"] } })).toMatchObject({ class: "blocked", reason: "purchase_label" });

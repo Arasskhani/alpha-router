@@ -241,6 +241,34 @@ function submitVerdict(element: ElementInfo, ctx: PolicyContext): Verdict {
   return verdict("sensitive", "submit", `Sending the form${destination(element.formAction)}${element.name ? ` from ${named(element)}` : ""}.`);
 }
 
+/** Roles of fields that hold text a person types. */
+const TEXT_ROLES = new Set(["textbox", "searchbox", "combobox", "spinbutton"]);
+
+/**
+ * A key press, judged by the element it goes to (`element`: the focused
+ * one, if any). Enter in a message box is how most web apps send; on a
+ * control, Enter or Space works as a click in the page's own handlers; and
+ * Delete outside a text field deletes whatever the page has selected.
+ */
+function keyVerdict(rawKey: unknown, element: ElementInfo | undefined, page: { url: string; host: string }, ctx: PolicyContext): Verdict {
+  const key = rawKey === "Space" ? " " : typeof rawKey === "string" ? rawKey : "";
+  const shown = key === " " ? "Space" : key || "a key";
+  const inText = Boolean(element && (TEXT_ROLES.has(element.role) || element.tag === "textarea"));
+  if (element && inText && key === "Enter") {
+    if (element.role === "searchbox" || element.type === "search") return verdict("act", "press_key", `Pressing Enter in ${named(element)} to search.`);
+    return verdict("sensitive", "enter_sends", `Pressing Enter in ${named(element)} may send what it holds.`);
+  }
+  if (element && !inText && (key === "Enter" || key === " ")) {
+    const asClick = clickVerdict(element, page, ctx);
+    if (asClick.class === "act") return verdict("act", "press_key", `Pressing ${shown} on ${named(element)}.`);
+    return { ...asClick, message: `Pressing ${shown} on ${named(element)} works like clicking it. ${asClick.message}` };
+  }
+  if (!inText && (key === "Delete" || key === "Backspace")) {
+    return verdict("sensitive", "delete_key", `Pressing ${shown} ${element ? `on ${named(element)}` : "on the page"} may delete something.`);
+  }
+  return verdict("act", "press_key", `Pressing ${shown}${element ? ` in ${named(element)}` : ""}.`);
+}
+
 /** What kind of action this is, from the tool, the element, the addresses involved and the site rules. */
 export function classifyAction(action: ProposedAction, ctx: PolicyContext): Verdict {
   const { tool, args, page, element } = action;
@@ -258,7 +286,7 @@ export function classifyAction(action: ProposedAction, ctx: PolicyContext): Verd
     case "tab_switch":
       return verdict("act", "tab_switch", "Switching to another tab.");
     case "press_key":
-      return verdict("act", "press_key", `Pressing ${typeof args.key === "string" ? args.key : "a key"}.`);
+      return keyVerdict(args.key, element, page!, ctx);
     case "click":
     case "type_text":
     case "select_option":

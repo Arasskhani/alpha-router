@@ -3,7 +3,7 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { click, describe as describeRef, find, pressKey, scroll, selectOption, snapshot, submitForm, typeText, waitFor, type ElementInfo } from "./agent";
+import { click, describe as describeRef, describeFocus, find, pressKey, scroll, selectOption, snapshot, submitForm, typeText, waitFor, type ElementInfo } from "./agent";
 import { hideOverlay, OVERLAY_ID, showOverlay } from "./overlay";
 import { runAgentCall } from "./runtime";
 
@@ -424,6 +424,23 @@ describe("acting", () => {
     expect(pressKey(document, "Enter")).toMatchObject({ ok: true });
     expect(seen).toEqual(["Enter:13", "up:Enter"]);
     expect(pressKey(document, "Control+W")).toMatchObject({ ok: false, error: "bad_key" });
+  });
+
+  it("tells which element has the keyboard, and presses keys there, inside a web component too", () => {
+    page(`<textarea aria-label="Message"></textarea><x-box></x-box>`);
+    document.querySelector("textarea")!.focus();
+    expect(describeFocus(document, visible)).toMatchObject({ ok: true, element: { role: "textbox", name: "Message", tag: "textarea" } });
+    const shadow = document.querySelector("x-box")!.attachShadow({ mode: "open" });
+    shadow.innerHTML = '<input aria-label="Inner">';
+    const inner = shadow.querySelector("input")!;
+    inner.focus();
+    expect(describeFocus(document, visible)).toMatchObject({ ok: true, element: { name: "Inner" } });
+    const keys: string[] = [];
+    inner.addEventListener("keydown", (e) => keys.push((e as KeyboardEvent).key));
+    expect(pressKey(document, "Enter")).toMatchObject({ ok: true });
+    expect(keys).toEqual(["Enter"]);
+    inner.blur();
+    expect(describeFocus(document, visible)).toEqual({ ok: true });
   });
 
   it("scrolls the page, or to an element", () => {

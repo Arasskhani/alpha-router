@@ -761,3 +761,64 @@ class TestList:
         assert await list_sessions(db_session, user) == []
         fresh = await _connect(db_session, user)
         assert [row.id for row in await list_sessions(db_session, user)] == [fresh.session_id]
+
+
+class TestCleanup:
+    async def test_connections_that_ended_long_ago_are_deleted(self, db_session, session_factory, user, clock):
+        live = await _connect(db_session, user)
+        revoked_long_ago = await _connect(db_session, user)
+        revoked_lately = await _connect(db_session, user)
+        idle_long_ago = await _connect(db_session, user)
+        long = clock.value - tokens.ENDED_SESSION_RETENTION - datetime.timedelta(days=1)
+        lately = clock.value - datetime.timedelta(days=10)
+        for session_id, values in (
+            (revoked_long_ago.session_id, {"revoked_at": long}),
+            (revoked_lately.session_id, {"revoked_at": lately}),
+            (idle_long_ago.session_id, {"refresh_expires_at": long}),
+        ):
+            await db_session.execute(update(ExtensionSession).where(ExtensionSession.id == session_id).values(**values))
+        await db_session.commit()
+        assert await tokens.purge_ended_sessions(db_session) == 2
+        async with session_factory() as fresh:
+            left = set((await fresh.execute(select(ExtensionSession.id))).scalars().all())
+        assert left == {live.session_id, revoked_lately.session_id}
+
+    async def test_it_works_in_batches(self, db_session, session_factory, user, clock, monkeypatch):
+        monkeypatch.setattr(tokens, "_PURGE_BATCH", 2)
+        for _ in range(5):
+            pair = await _connect(db_session, user)
+            await db_session.execute(
+                update(ExtensionSession)
+                .where(ExtensionSession.id == pair.session_id)
+                .values(revoked_at=clock.value - tokens.ENDED_SESSION_RETENTION - datetime.timedelta(days=1))
+            )
+        await db_session.commit()
+        assert await tokens.purge_ended_sessions(db_session) == 5
+
+    def test_the_nightly_job_is_registered(self, monkeypatch):
+        from app.services import scheduler
+
+        added: list[tuple[tuple, dict]] = []
+        monkeypatch.setattr(scheduler.scheduler, "add_job", lambda *a, **k: added.append((a, k)))
+        monkeypatch.setattr(scheduler.scheduler, "start", lambda: None)
+        scheduler.start_scheduler()
+        (args, kwargs) = next((a, k) for a, k in added if k.get("id") == "extension_session_cleanup")
+        assert args == (scheduler.job_extension_session_cleanup, "cron")
+        assert (kwargs["hour"], kwargs["minute"]) == (4, 40)
+
+    async def test_the_nightly_job_deletes_on_the_app_database(
+        self, db_session, session_factory, user, clock, monkeypatch
+    ):
+        from app.services import scheduler
+
+        pair = await _connect(db_session, user)
+        await db_session.execute(
+            update(ExtensionSession)
+            .where(ExtensionSession.id == pair.session_id)
+            .values(revoked_at=clock.value - tokens.ENDED_SESSION_RETENTION - datetime.timedelta(days=1))
+        )
+        await db_session.commit()
+        monkeypatch.setattr(scheduler, "AsyncSessionLocal", session_factory)
+        await scheduler.job_extension_session_cleanup()
+        async with session_factory() as fresh:
+            assert (await fresh.execute(select(ExtensionSession.id))).first() is None

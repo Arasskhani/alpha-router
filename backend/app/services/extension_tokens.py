@@ -43,7 +43,7 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 import redis.asyncio as redis_async
-from sqlalchemy import or_, select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.branding import PRODUCT_SLUG
@@ -71,6 +71,10 @@ REFRESH_GRACE = datetime.timedelta(minutes=2)
 #: this session's - weeks of normal use - so that any old token, not only the
 #: one just replaced, ends the session when it comes back.
 REUSE_LOOKBACK = 256
+#: How long an ended connection (revoked, or expired) is kept - its device
+#: name, last address and browser - before the nightly cleanup deletes it.
+ENDED_SESSION_RETENTION = datetime.timedelta(days=90)
+_PURGE_BATCH = 500
 #: last_used_at is written at most this often per session.
 TOUCH_INTERVAL = datetime.timedelta(minutes=1)
 
@@ -611,3 +615,32 @@ async def list_sessions(db: AsyncSession, user: User) -> list[ExtensionSession]:
         .all()
     )
     return list(rows)
+
+
+async def purge_ended_sessions(db: AsyncSession) -> int:
+    """Delete connections that ended more than 90 days ago; how many went.
+
+    Ended means revoked, idle past the refresh lifetime, or past the absolute
+    limit - a session a sign-out everywhere made unusable ends by idling out
+    too. In batches, committing each, so the first run on a busy installation
+    never holds one long transaction.
+    """
+    cutoff = _now() - ENDED_SESSION_RETENTION
+    ended = or_(
+        ExtensionSession.revoked_at < cutoff,
+        ExtensionSession.refresh_expires_at < cutoff,
+        ExtensionSession.absolute_expires_at < cutoff,
+    )
+    deleted = 0
+    while True:
+        ids = list((await db.execute(select(ExtensionSession.id).where(ended).limit(_PURGE_BATCH))).scalars().all())
+        if not ids:
+            break
+        result = await db.execute(
+            delete(ExtensionSession).where(ExtensionSession.id.in_(ids)), execution_options=_NO_SYNC
+        )
+        deleted += _rowcount(result)
+        await db.commit()
+        if len(ids) < _PURGE_BATCH:
+            break
+    return deleted

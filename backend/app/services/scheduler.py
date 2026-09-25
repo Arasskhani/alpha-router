@@ -363,6 +363,20 @@ async def job_admin_log_retention():
             logger.exception("Admin log retention run failed")
 
 
+async def job_extension_session_cleanup():
+    """Delete browser-extension connections that ended more than 90 days ago."""
+    async with AsyncSessionLocal() as db:
+        from app.services.extension_tokens import purge_ended_sessions
+
+        try:
+            deleted = await purge_ended_sessions(db)
+            if deleted:
+                logger.info("Extension connections: %s ended more than 90 days ago deleted", deleted)
+        except Exception:
+            await db.rollback()
+            logger.exception("Extension connection cleanup failed")
+
+
 async def job_auth_event_retention():
     """Delete sign-in history past the window set on the Retention Policy page.
 
@@ -633,6 +647,14 @@ def start_scheduler():
         minute=35,
         timezone=get_server_timezone(),
         id="auth_event_retention",
+    )
+    scheduler.add_job(
+        job_extension_session_cleanup,
+        "cron",
+        hour=4,
+        minute=40,
+        timezone=get_server_timezone(),
+        id="extension_session_cleanup",
     )
     # After the admin log pass, and out of hours: this is the biggest table in
     # the product and the first run on an installation that has never had

@@ -6,6 +6,7 @@ import { loadConfig } from "../lib/config";
 import { cancelConnect, disconnect, hasPendingConnect, startConnect } from "../lib/connect";
 import { broadcast, fromOwnPages, isExtensionMessage } from "../lib/messages";
 import { DisconnectedError, TemporaryError } from "../lib/tokens";
+import Chat from "./Chat";
 import ConnectView from "./ConnectView";
 import type { Me } from "./types";
 
@@ -15,8 +16,6 @@ type View =
   | { kind: "disconnected"; server: string; waiting: boolean; message: string }
   | { kind: "unreachable"; message: string }
   | { kind: "connected"; server: string; me: Me };
-
-const NOT_PERMITTED = "The browser extension is not enabled for your account. Ask your administrator if you need it.";
 
 /** Where the panel stands: read from config.json, the stored tokens and /api/extension/me. */
 async function currentView(): Promise<View> {
@@ -121,23 +120,12 @@ export default function App() {
     );
   }
 
-  const { me } = view;
   return (
-    <main className="panel panel__center">
-      <h1 className="panel__title">Connected</h1>
-      <p className="panel__text">
-        Signed in as <strong>{me.user.display_name || me.user.username}</strong>
-      </p>
-      {!me.features.chat && (
-        <p className="banner banner--warning" role="status">
-          {NOT_PERMITTED}
-        </p>
-      )}
-      <div className="panel__actions">
-        <button type="button" className="btn" onClick={() => void signOut()}>
-          Disconnect
-        </button>
-      </div>
-    </main>
+    <Chat
+      me={view.me}
+      server={view.server}
+      onDisconnect={() => void signOut()}
+      onDisconnected={() => setChecks((n) => n + 1)}
+    />
   );
 }

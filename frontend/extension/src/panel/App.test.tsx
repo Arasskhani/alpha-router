@@ -114,6 +114,7 @@ describe("the side panel, not connected", () => {
 
   it("moves on when connected.html says the tokens arrived", async () => {
     routes["GET /api/extension/me"] = () => json(200, ME);
+    routes["GET /api/chat/models"] = () => json(200, []);
     await render();
     tokenState.refresh = "rt";
     tokenState.access = { token: "at", expiresAt: NOW + 3_600_000, sessionId: "s1" };
@@ -135,14 +136,17 @@ describe("the side panel, not connected", () => {
 });
 
 describe("the side panel, connected", () => {
-  beforeEach(() => connectWith({ token: "at", expiresAt: NOW + 3_600_000, sessionId: "s1" }, "rt"));
+  beforeEach(() => {
+    connectWith({ token: "at", expiresAt: NOW + 3_600_000, sessionId: "s1" }, "rt");
+    routes["GET /api/chat/models"] = () => json(200, [{ id: "model::1", name: "GPT Test", kinds: ["text"] }]);
+  });
 
-  it("shows who it works for, and disconnects", async () => {
+  it("opens the chat for the user, and disconnects", async () => {
     routes["GET /api/extension/me"] = () => json(200, ME);
     const revoke = vi.fn(() => json(200, { ok: true }));
     routes["POST /api/extension/revoke"] = revoke;
     await render();
-    expect(host.textContent).toContain("Signed in as Majid A.");
+    expect(host.textContent).toContain("Ask anything, Majid A.");
     await act(async () => button("Disconnect").click());
     await act(async () => undefined);
     expect(revoke).toHaveBeenCalledOnce();

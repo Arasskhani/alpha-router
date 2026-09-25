@@ -38,6 +38,9 @@ export function parseConnectRequest(search: string): ConnectRequest | null {
   return { redirectUri, extensionId: match[1], codeChallenge, state };
 }
 
+/** How long "returning to the extension" may show before the page says what to check. */
+export const STUCK_AFTER_MS = 4000;
+
 /** Where the tab goes next; a seam for tests, which cannot leave the page. */
 export const navigation = {
   go(url: string) {
@@ -64,7 +67,17 @@ export default function ExtensionConnect() {
   const request = useMemo(() => parseConnectRequest(location.search), [location.search]);
   const [state, setView] = useState<View>({ kind: "checking" });
   const [busy, setBusy] = useState(false);
+  const [stuck, setStuck] = useState(false);
   const view: View = request ? state : { kind: "invalid" };
+  const leaving = view.kind === "leaving";
+
+  useEffect(() => {
+    if (!leaving) return;
+    // The browser blocks the way back when the extension is not installed in
+    // it, and this page would say "returning" forever.
+    const timer = window.setTimeout(() => setStuck(true), STUCK_AFTER_MS);
+    return () => window.clearTimeout(timer);
+  }, [leaving]);
 
   useEffect(() => {
     document.title = `Connect the browser extension | ${PRODUCT_NAME}`;
@@ -86,8 +99,11 @@ export default function ExtensionConnect() {
         if (active) nav("/login", { replace: true });
         return;
       }
-      forgetAfterLogin();
+      // The page to resume stays until the answer is sent: a session that
+      // expires while the user reads this sends them to sign in again, and
+      // they should come back here, not to the app.
       if (session.is_active === false) {
+        forgetAfterLogin();
         if (active) setView({ kind: "refused", message: "Your account is disabled, so it cannot connect a browser." });
         return;
       }
@@ -98,9 +114,15 @@ export default function ExtensionConnect() {
         info = null; // The server decides again when the user answers.
       }
       if (!active) return;
-      if (info && !info.permitted) setView({ kind: "refused", message: NOT_PERMITTED });
-      else if (info?.extension_id && info.extension_id !== request.extensionId) setView({ kind: "refused", message: OTHER_SERVER });
-      else setView({ kind: "consent", session });
+      if (info && !info.permitted) {
+        forgetAfterLogin();
+        setView({ kind: "refused", message: NOT_PERMITTED });
+      } else if (info?.extension_id && info.extension_id !== request.extensionId) {
+        forgetAfterLogin();
+        setView({ kind: "refused", message: OTHER_SERVER });
+      } else {
+        setView({ kind: "consent", session });
+      }
     })();
     return () => {
       active = false;
@@ -123,6 +145,7 @@ export default function ExtensionConnect() {
       });
       // Only ever back to the extension's own page; the server checked it too.
       if (!result.redirect_to.startsWith(`${request.redirectUri}?`)) throw new Error("The server answered with an unexpected address.");
+      forgetAfterLogin();
       setView({ kind: "leaving", denied: deny });
       navigation.go(result.redirect_to);
     } catch (err) {
@@ -170,7 +193,10 @@ export default function ExtensionConnect() {
               </h1>
               <p className="extension-connect__lead">
                 The {PRODUCT_NAME} extension in this browser asks to work for{" "}
-                <strong>{view.session.display_name || view.session.username}</strong>. Once connected, it can:
+                <strong>
+                  {view.session.display_name ? `${view.session.display_name} (${view.session.username})` : view.session.username}
+                </strong>
+                . Once connected, it can:
               </p>
               <ul className="extension-connect__list">
                 <li>chat with the models you can use here, saving chats to your history unless you choose Private;</li>
@@ -202,9 +228,17 @@ export default function ExtensionConnect() {
             </>
           )}
           {view.kind === "leaving" && (
-            <h1 className="login-panel__title" id="extension-connect-title">
-              {view.denied ? "Cancelled - returning to the extension…" : "Allowed - returning to the extension…"}
-            </h1>
+            <>
+              <h1 className="login-panel__title" id="extension-connect-title">
+                {view.denied ? "Cancelled - returning to the extension…" : "Allowed - returning to the extension…"}
+              </h1>
+              {stuck && (
+                <p className="extension-connect__lead" role="status">
+                  Nothing happening? The {PRODUCT_NAME} extension may not be installed in this browser profile. Install
+                  it from Settings → Extension, then choose Connect in its side panel again. You can close this tab.
+                </p>
+              )}
+            </>
           )}
         </section>
       </div>

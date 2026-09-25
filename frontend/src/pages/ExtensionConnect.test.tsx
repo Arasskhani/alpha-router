@@ -15,7 +15,7 @@ vi.mock("../lib/themeCache", () => ({ applyThemeToDocument: () => {} }));
 
 import { api, bootstrapSession } from "../api";
 import { STORAGE_KEYS } from "../lib/brand";
-import ExtensionConnect, { navigation, parseConnectRequest } from "./ExtensionConnect";
+import ExtensionConnect, { STUCK_AFTER_MS, navigation, parseConnectRequest } from "./ExtensionConnect";
 
 const ID = "abcdefghijklmnopabcdefghijklmnop";
 const REDIRECT = `chrome-extension://${ID}/connected.html`;
@@ -144,11 +144,46 @@ describe("the connect page", () => {
     expect(stored.target).toBe(`/extension/connect${search()}`);
   });
 
-  it("forgets the page to resume once signed in", async () => {
-    sessionStorage.setItem(STORAGE_KEYS.afterLogin, JSON.stringify({ target: `/extension/connect${search()}`, at: Date.now() }));
+  it("keeps the page to resume until the answer is sent", async () => {
     signedIn();
     await render();
+    // Still there while the user reads: a session expiring now must bring them back here.
+    expect(sessionStorage.getItem(STORAGE_KEYS.afterLogin)).not.toBeNull();
+    vi.mocked(api).mockRejectedValueOnce(Object.assign(new Error("Not authenticated"), { status: 401 }));
+    await act(async () => button("Connect").click());
+    expect(sessionStorage.getItem(STORAGE_KEYS.afterLogin)).not.toBeNull();
+    vi.mocked(api).mockResolvedValueOnce({ redirect_to: `${REDIRECT}?code=abc&state=${STATE}` } as never);
+    await act(async () => button("Connect").click());
     expect(sessionStorage.getItem(STORAGE_KEYS.afterLogin)).toBeNull();
+  });
+
+  it("forgets the page to resume when the answer is a refusal", async () => {
+    signedIn({ permitted: false, extension_id: ID });
+    await render();
+    expect(sessionStorage.getItem(STORAGE_KEYS.afterLogin)).toBeNull();
+  });
+
+  it("names the account by display name and user name", async () => {
+    signedIn();
+    await render();
+    expect(host.querySelector("strong")?.textContent).toBe("Majid A. (majid)");
+  });
+
+  it("says what to check when the way back to the extension is blocked", async () => {
+    signedIn();
+    await render();
+    vi.useFakeTimers();
+    try {
+      vi.mocked(api).mockResolvedValueOnce({ redirect_to: `${REDIRECT}?code=abc&state=${STATE}` } as never);
+      await act(async () => button("Connect").click());
+      expect(host.textContent).not.toContain("Nothing happening?");
+      await act(async () => {
+        vi.advanceTimersByTime(STUCK_AFTER_MS);
+      });
+      expect(host.querySelector('[role="status"]')?.textContent).toContain("may not be installed");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("refuses a broken link without asking the server anything", async () => {

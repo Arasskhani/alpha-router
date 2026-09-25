@@ -40,22 +40,24 @@ export function insertIntoFocusedField(text: string, host: string, rules: Sensit
   const persian = new RegExp(rules.persian, "i");
   const pairs = new Map(rules.pairs);
   const namesSecret = (said: string): boolean => {
-    const form = said
-      .replace(/[يى]/g, "ی")
-      .replace(/ك/g, "ک")
-      .replace(/[\u200b-\u200d\u00ad\u0640\ufeff]/g, "")
-      .replace(/\p{M}/gu, "")
-      .replace(/\s+/g, " ");
-    if (persian.test(form) || /(^|[\s_-])cc-/.test(said.toLowerCase())) return true;
-    const words = said
-      .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-      .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
-      .replace(/([A-Za-z])(\d)/g, "$1 $2")
-      .replace(/(\d)([A-Za-z])/g, "$1 $2")
-      .toLowerCase()
-      .split(/[^a-z0-9]+/)
-      .filter(Boolean);
-    return words.some((word, index) => rules.words.includes(word) || Boolean(pairs.get(word)?.includes(words[index + 1] ?? "")));
+    const folded = said.normalize("NFKC").replace(/\u0640/g, "");
+    return [folded.replace(/\p{Cf}/gu, ""), folded.replace(/\p{Cf}/gu, " ")].some((plain) => {
+      const form = plain
+        .replace(/[يى]/g, "ی")
+        .replace(/ك/g, "ک")
+        .replace(/\p{M}/gu, "")
+        .replace(/\s+/g, " ");
+      if (persian.test(form) || /(^|[\s_-])cc-/.test(plain.toLowerCase())) return true;
+      const words = plain
+        .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+        .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+        .replace(/([A-Za-z])(\d)/g, "$1 $2")
+        .replace(/(\d)([A-Za-z])/g, "$1 $2")
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter(Boolean);
+      return words.some((word, index) => rules.words.includes(word) || Boolean(pairs.get(word)?.includes(words[index + 1] ?? "")));
+    });
   };
   const said = [
     ...["type", "name", "id", "autocomplete", "aria-label", "placeholder", "aria-placeholder", "title"].map((name) => target.getAttribute(name)),

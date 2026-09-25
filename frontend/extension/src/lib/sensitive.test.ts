@@ -60,6 +60,14 @@ describe("names as page authors write them", () => {
     "تاریخ انقضا",
     "شماره شبا",
     "کد ملی",
+    // Drawn the same, written to slip past: a word joiner, a zero-width space, a soft hyphen, a direction mark,
+    // fullwidth letters, and Persian in Arabic presentation forms.
+    "pass\u2060word",
+    "Pass\u200bword",
+    "PIN\u00adcode",
+    "Card\u200e number",
+    "\uff50\uff41\uff53\uff53\uff57\uff4f\uff52\uff44",
+    "\ufead\ufee3\ufeb0",
   ])("%s names a secret", (text) => {
     expect(sensitiveText(text)).toBe(true);
   });

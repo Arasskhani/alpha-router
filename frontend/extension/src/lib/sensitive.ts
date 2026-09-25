@@ -86,15 +86,23 @@ export const SENSITIVE_RULES: SensitiveRules = {
 };
 
 /**
- * Persian as the rules match it: Arabic yeh and kaf as Persian ones, and no
- * zero-width joiners, tatweel or diacritics, which change how a word is
- * written but not what it says.
+ * The forms of a text the rules read: compatibility forms folded (fullwidth
+ * letters, Arabic presentation forms) and tatweel dropped; then, for the
+ * invisible format characters - zero-width joiners and spaces, the word
+ * joiner, direction marks, soft hyphens - once without them and once with
+ * each read as a space. Inside a word one hides it (a word joiner in
+ * "password"), between words it parts them ("PIN" and "code").
  */
+function readForms(text: string): string[] {
+  const folded = text.normalize("NFKC").replace(/\u0640/g, "");
+  return [folded.replace(/\p{Cf}/gu, ""), folded.replace(/\p{Cf}/gu, " ")];
+}
+
+/** Persian as the rules match it: Arabic yeh and kaf as Persian ones, and no diacritics. */
 function persianForm(text: string): string {
   return text
     .replace(/[يى]/g, "ی")
     .replace(/ك/g, "ک")
-    .replace(/[\u200b-\u200d\u00ad\u0640\ufeff]/g, "")
     .replace(/\p{M}/gu, "")
     .replace(/\s+/g, " ");
 }
@@ -114,11 +122,13 @@ export function nameWords(text: string): string[] {
 /** Whether one thing a page says about a field (a name, a label) names a secret. */
 export function sensitiveText(text: string, rules: SensitiveRules = SENSITIVE_RULES): boolean {
   if (!text) return false;
-  if (new RegExp(rules.persian, "i").test(persianForm(text))) return true;
-  if (/(^|[\s_-])cc-/.test(text.toLowerCase())) return true;
-  const words = nameWords(text);
+  const persian = new RegExp(rules.persian, "i");
   const pairs = new Map(rules.pairs);
-  return words.some((word, index) => rules.words.includes(word) || Boolean(pairs.get(word)?.includes(words[index + 1] ?? "")));
+  return readForms(text).some((form) => {
+    if (persian.test(persianForm(form)) || /(^|[\s_-])cc-/.test(form.toLowerCase())) return true;
+    const words = nameWords(form);
+    return words.some((word, index) => rules.words.includes(word) || Boolean(pairs.get(word)?.includes(words[index + 1] ?? "")));
+  });
 }
 
 /** Everything the page says about a field, each on its own: a pair of words never spans two of them. */

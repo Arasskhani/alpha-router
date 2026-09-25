@@ -55,6 +55,8 @@ describe("an answer put into the page", () => {
     ['<input type="text" autocomplete="one-time-code">', "a one-time code"],
     ['<input type="text" id="cvv">', "a security code"],
     ['<input type="text" aria-label="PIN">', "a PIN"],
+    ['<input type="text" name="pass\u2060word">', "a password field whose name hides a word joiner"],
+    ['<input type="text" aria-label="\ufead\ufee3\ufeb0">', "a Persian password label in presentation forms"],
   ])("never goes into %s (%s)", (html) => {
     const input = focusOn<HTMLInputElement>(html);
     expect(insertIntoFocusedField("secret", here(), SENSITIVE_RULES)).toBe("sensitive");
@@ -173,6 +175,10 @@ describe("the rules for sensitive fields", () => {
     '<input name="postal_code">',
     '<input placeholder="Your city">',
     '<input aria-label="کد پستی">',
+    // Invisible characters and compatibility forms read the same in both copies.
+    '<input name="pass\u2060word">',
+    '<input aria-label="Security\u200b code">',
+    '<input aria-label="\ufead\ufee3\ufeb0">',
   ])("classify %s alike", (html) => {
     const field = focusOn<HTMLInputElement>(html);
     const inserted = insertIntoFocusedField("x", here(), SENSITIVE_RULES);

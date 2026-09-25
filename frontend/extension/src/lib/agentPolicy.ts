@@ -77,7 +77,7 @@ const PAGE_TOOLS = new Set(["read_page", "find", "get_page_text", "scroll", "wai
 /**
  * Words on a button (or a link, in English) that buy, pay, bid or give
  * money. Order alone is checked as the whole label or with a verb, so
- * "Order history" is not one. Matched on `labelForm` of the label.
+ * "Order history" is not one. Matched on the `labelForms` of the label.
  */
 const PURCHASE =
   /\b(buy|pay|purchase|checkout|check out|donate|pre-?order)\b|\b(place|submit|complete|confirm)( your| the| my| an)? order\b|^order( now)?$|\bplace (a )?bid\b|\bbid now\b|\b(continue|proceed|go) to (payment|checkout)\b|\b(complete|make|confirm|submit) (the |a |your )?payment\b|\badd funds\b/;
@@ -93,21 +93,25 @@ const SENSITIVE_FA =
 /**
  * A label as the word lists read it: compatibility forms folded, in lower
  * case, Persian written with Arabic yeh or kaf read as Persian, without the
- * zero-width joiners, tatweel and diacritics that change how a word is drawn
- * but not what it says, and without the marks around it ("Order now!",
- * "Order now →", "🛒 Buy"). Otherwise "خريد" or "خریـــد" would not be
- * "خرید", and "Order now!" would not be "Order now".
+ * tatweel and diacritics that change how a word is drawn but not what it
+ * says, and without the marks around it ("Order now!", "Order now →",
+ * "🛒 Buy"). Otherwise "خريد" or "خریـــد" would not be "خرید", and "Order
+ * now!" would not be "Order now".
+ *
+ * Two forms, for the invisible format characters (zero-width joiners and
+ * spaces, the word joiner, direction marks, soft hyphens): inside a word one
+ * hides it (a word joiner in "Buy"), between words it parts them (one
+ * between "Buy" and "now", drawn as "Buynow"). So a label is read once
+ * without them and once with each as a space.
  */
-function labelForm(text: string): string {
-  return text
-    .normalize("NFKC")
-    .toLowerCase()
-    .replace(/[يى]/g, "ی")
-    .replace(/ك/g, "ک")
-    .replace(/[\u200b-\u200d\u00ad\u0640\ufeff]/g, "")
-    .replace(/\p{M}/gu, "")
-    .replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "")
-    .replace(/\s+/g, " ");
+function labelForms(text: string): string[] {
+  const folded = text.normalize("NFKC").toLowerCase().replace(/[يى]/g, "ی").replace(/ك/g, "ک").replace(/\u0640/g, "");
+  return [folded.replace(/\p{Cf}/gu, ""), folded.replace(/\p{Cf}/gu, " ")].map((form) =>
+    form
+      .replace(/\p{M}/gu, "")
+      .replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "")
+      .replace(/\s+/g, " "),
+  );
 }
 /** Fields for a person's identity documents. */
 const ID_FIELD = /\b(ssn|social security|passport|national id|national identity|tax id|id number|identity number)\b/i;
@@ -146,14 +150,12 @@ function goingTo(rawUrl: unknown, fromHost: string | undefined, ctx: PolicyConte
 }
 
 function purchase(name: string, role: string): boolean {
-  const form = labelForm(name);
-  if (PURCHASE.test(form)) return true;
-  return role === "link" ? PURCHASE_FA_LINK.test(form) : PURCHASE_FA.test(form);
+  const persian = role === "link" ? PURCHASE_FA_LINK : PURCHASE_FA;
+  return labelForms(name).some((form) => PURCHASE.test(form) || persian.test(form));
 }
 
 function sendsSomething(name: string): boolean {
-  const form = labelForm(name);
-  return SENSITIVE.test(form) || SENSITIVE_FA.test(form);
+  return labelForms(name).some((form) => SENSITIVE.test(form) || SENSITIVE_FA.test(form));
 }
 
 function named(element: ElementInfo): string {
@@ -207,8 +209,7 @@ function clickVerdict(element: ElementInfo, page: { url: string; host: string },
 function typeVerdict(element: ElementInfo): Verdict {
   const secret = () => blocked("sensitive_field", `The agent never types into ${named(element)}: passwords, card numbers and codes are for the user to enter.`);
   if (element.sensitive) return secret();
-  const described = labelForm(`${element.name} ${element.type ?? ""}`);
-  if (ID_FIELD.test(described) || ID_FIELD_FA.test(described)) {
+  if (labelForms(`${element.name} ${element.type ?? ""}`).some((form) => ID_FIELD.test(form) || ID_FIELD_FA.test(form))) {
     return blocked("id_field", `The agent never types into ${named(element)}: identity numbers are for the user to enter.`);
   }
   // The page judges the field by everything it says about it; its name is checked here as well.

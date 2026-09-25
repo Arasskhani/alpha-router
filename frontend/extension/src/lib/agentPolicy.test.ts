@@ -121,6 +121,23 @@ describe("clicking", () => {
     expect(classify("click", { element: el({ name }) })).toMatchObject({ class: "blocked", reason: "purchase_label" });
   });
 
+  it.each([
+    ["a word joiner", "Bu\u2060y now"],
+    ["a left-to-right mark", "Place\u200e order"],
+    ["a soft hyphen", "Check\u00adout"],
+    ["embedding marks", "\u202bخرید\u202c"],
+    ["an isolate", "\u2066Pay\u2069"],
+    ["a zero-width space", "Or\u200bder now"],
+    ["a word joiner between its words", "Buy\u2060now"],
+    ["a zero-width space between its words", "Place\u200border"],
+  ])("a button whose label hides %s is refused all the same", (_what, name) => {
+    expect(classify("click", { element: el({ name }) })).toMatchObject({ class: "blocked", reason: "purchase_label" });
+  });
+
+  it("reads a sending word through invisible characters too", () => {
+    expect(classify("click", { element: el({ name: "Del\u2060ete account" }) })).toMatchObject({ class: "sensitive", reason: "sensitive_label" });
+  });
+
   it.each(["Subscribe", "Reply", "Forward", "Share", "Accept all", "I agree", "Book now", "Approve", "Cancel my subscription", "تاييد", "پاك كردن", "پاسخ", "ثبت نام"])(
     "a button labelled %s always asks",
     (name) => {

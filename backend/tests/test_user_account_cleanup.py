@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.database import Base
 from app.models.chat import ChatSession, UserChatPrefs, UserMemory
+from app.models.extension import ExtensionSession
 from app.models.media import MediaAsset
 from app.models.user import User
 from app.services.object_storage_service import cdn_user_prefix
@@ -77,6 +78,23 @@ async def _purge_roundtrip(monkeypatch) -> None:
             )
         )
 
+        import datetime
+
+        soon = datetime.datetime.utcnow() + datetime.timedelta(hours=1)
+        db.add(
+            ExtensionSession(
+                id="ext1",
+                user_id=user.id,
+                device_name="Chrome on Windows",
+                access_token_hash="a" * 64,
+                access_expires_at=soon,
+                refresh_token_hash="r" * 64,
+                refresh_expires_at=soon,
+                absolute_expires_at=soon,
+                token_version=0,
+            )
+        )
+
         await db.commit()
 
         deleted_objects: list[str] = []
@@ -124,6 +142,9 @@ async def _purge_roundtrip(monkeypatch) -> None:
         prefs_left = await db.get(UserChatPrefs, user.id)
 
         memory_left = await db.get(UserMemory, "mem1")
+
+        # The account row is emptied, not deleted: the cascade never fires, so purge forgets the browsers.
+        assert await db.get(ExtensionSession, "ext1") is None
 
         assert not media_left
 

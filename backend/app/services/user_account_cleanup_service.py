@@ -10,6 +10,7 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.chat import ChatFolder, ChatMessage, ChatSession, UserChatPrefs, UserMemory
+from app.models.extension import ExtensionSession
 from app.models.project import (
     PROJECT_ROLE_OWNER,
     PROJECT_ROLE_PRIMARY_OWNER,
@@ -163,6 +164,9 @@ async def purge_user_account_data(
     except Exception:
         logger.exception("Failed to purge memory vectors for user_id=%s", user_id)
     await db.execute(delete(ChatFolder).where(ChatFolder.user_id == user_id))
+    # The row is emptied rather than deleted, so ON DELETE CASCADE never fires:
+    # the browsers this account connected are forgotten here.
+    await db.execute(delete(ExtensionSession).where(ExtensionSession.user_id == user_id))
 
     chat_deleted = 1
 

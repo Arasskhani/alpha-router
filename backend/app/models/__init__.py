@@ -58,6 +58,7 @@ from app.models.evaluation import (
     EvaluationResult,
     EvaluationRun,
 )
+from app.models.extension import ExtensionEvent, ExtensionSession
 from app.models.governance import GovernanceAuditEvent
 from app.models.knowledge import (
     ConnectorSyncRun,
@@ -192,6 +193,8 @@ __all__ = [
     "ProjectResource",
     "ProjectRoomHandoff",
     "ProjectUserPref",
+    "ExtensionEvent",
+    "ExtensionSession",
     "ReconciliationRun",
     "ReportSchedule",
     "RequestLog",

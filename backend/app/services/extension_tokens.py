@@ -53,6 +53,7 @@ from app.database import AsyncSessionLocal
 from app.models.extension import DEVICE_NAME_MAX_CHARS, USER_AGENT_MAX_CHARS, ExtensionSession
 from app.models.user import User
 from app.services.observability import increment
+from app.services.security_audit import log_security_event
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +76,12 @@ _CHALLENGE_RE = re.compile(r"^[A-Za-z0-9_-]{43}$")
 REVOKED_BY_USER = "user"
 REVOKED_REFRESH_REUSE = "refresh_reuse"
 REVOKED_TOKEN_VERSION = "token_version"
+
+#: The security audit trail's names for what happens to a connected browser.
+AUDIT_RESOURCE = "extension_session"
+AUDIT_CONNECTED = "extension_connected"
+AUDIT_DISCONNECTED = "extension_disconnected"
+AUDIT_SESSION_REVOKED = "extension_session_revoked"
 
 _ROTATION_CONTEXT = b"alpharouter extension token rotation"
 
@@ -342,11 +349,27 @@ async def revoke_session(
     return _rowcount(result) > 0
 
 
-async def _revoke_now(session_id: str, *, reason: str) -> None:
-    """End a session in a transaction of its own: the request that found out is refused, not committed."""
+async def _revoke_now(session_id: str, *, reason: str, ip: str | None = None) -> None:
+    """End a session in a transaction of its own: the request that found out is refused, not committed.
+
+    A replayed refresh token is a security event - someone else holds a copy -
+    so that revocation is audited with the address it came from.
+    """
     try:
         async with AsyncSessionLocal() as db:
-            await revoke_session(db, session_id, reason=reason)
+            revoked = await revoke_session(db, session_id, reason=reason)
+            if revoked and reason == REVOKED_REFRESH_REUSE:
+                row = await db.get(ExtensionSession, session_id)
+                owner = await db.get(User, row.user_id) if row is not None else None
+                await log_security_event(
+                    db,
+                    actor=owner,
+                    actor_ip=ip,
+                    action=AUDIT_SESSION_REVOKED,
+                    resource_type=AUDIT_RESOURCE,
+                    resource_id=session_id,
+                    detail={"reason": reason, "device_name": row.device_name if row is not None else None},
+                )
             await db.commit()
     except Exception:  # noqa: BLE001 -- the request is refused either way; the next one tries again
         logger.warning("could not mark extension session %s revoked", session_id, exc_info=True)
@@ -368,7 +391,7 @@ async def _require_usable(db: AsyncSession, session: ExtensionSession, now: date
         raise _invalid_grant("Your account is disabled.")
 
 
-async def refresh_session(db: AsyncSession, refresh_token: str | None) -> TokenPair:
+async def refresh_session(db: AsyncSession, refresh_token: str | None, *, ip: str | None = None) -> TokenPair:
     """The next pair for a refresh token; raises ExtensionTokenError(invalid_grant). The caller commits."""
     if not refresh_token or not refresh_token.startswith(REFRESH_TOKEN_PREFIX):
         raise _invalid_grant("Unknown refresh token.")
@@ -405,7 +428,7 @@ async def refresh_session(db: AsyncSession, refresh_token: str | None) -> TokenP
             raise _invalid_grant("Unknown refresh token.")
         if replaced.prior_refresh_valid_until is None or replaced.prior_refresh_valid_until < now:  # type: ignore[operator]
             # A replaced token, well after it was replaced: someone else holds a copy.
-            await _revoke_now(str(replaced.id), reason=REVOKED_REFRESH_REUSE)
+            await _revoke_now(str(replaced.id), reason=REVOKED_REFRESH_REUSE, ip=ip)
             raise _invalid_grant("This browser's connection was ended for safety.")
         await _require_usable(db, replaced, now)
         if replaced.refresh_token_hash != token_hash(refresh):

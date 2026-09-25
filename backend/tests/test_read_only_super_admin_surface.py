@@ -34,6 +34,8 @@ UNGUARDED_BY_DESIGN = {
     "/api/auth/saml/exchange",
     "/v1/chat/completions",
     "/v1/embeddings",
+    # The browser extension trades a one-time code or a refresh token here.
+    "/api/extension/token",
 }
 
 #: POST only because the request carries a body; the handler reads and returns.

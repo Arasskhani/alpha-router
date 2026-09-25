@@ -24,8 +24,6 @@ from app.services.extension_tokens import create_session, revoke_session
 CSRF = "csrf-token"
 #: Scope entries whose endpoints later steps of the extension work add.
 NOT_BUILT_YET = {
-    ("GET", "/api/extension/me"),
-    ("POST", "/api/extension/revoke"),
     ("POST", "/api/extension/events"),
     ("POST", "/api/extension/review-action"),
 }
@@ -97,7 +95,9 @@ class TestTheScope:
 
     async def test_every_real_endpoint_in_it_takes_the_token(self, client, db_session, user):
         pair = await _connect(db_session, user)
-        for method, path in sorted(EXTENSION_SCOPE - NOT_BUILT_YET):
+        # Last: it ends the session.
+        calls = sorted(EXTENSION_SCOPE - NOT_BUILT_YET - {("POST", "/api/extension/revoke")})
+        for method, path in [*calls, ("POST", "/api/extension/revoke")]:
             resp = await client.request(method, _concrete(path), headers=_bearer(pair.access_token), json={})
             body = resp.json() if resp.headers.get("content-type") == "application/json" else None
             detail = body.get("detail") if isinstance(body, dict) else None

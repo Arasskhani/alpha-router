@@ -52,6 +52,9 @@ SITE_ACCESS_MODES = (SITE_ACCESS_PER_SITE, SITE_ACCESS_ALL_SITES)
 MAX_VERSION_PART = 65535
 #: The first number of every version; raised only to start the count again.
 VERSION_MAJOR = 1
+#: The oldest copy this server still works with. A connected browser below it
+#: is told to update; raise it when the server stops understanding older copies.
+MIN_SUPPORTED_VERSION = f"{VERSION_MAJOR}.0.0.0"
 MAX_PACKAGE_REVISION = MAX_VERSION_PART * 65536 + MAX_VERSION_PART
 
 CONNECTED_PAGE = "connected.html"

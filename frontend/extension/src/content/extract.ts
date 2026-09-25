@@ -296,6 +296,8 @@ function clips(style: CSSStyleDeclaration): boolean {
  * The browser's own answer: not display:none, visibility:hidden, opacity 0,
  * `hidden` or `aria-hidden`; has a box; is not a clipped zero-size box (the
  * screen-reader-only pattern); is not pushed off the page to the left or top.
+ * The box tests do not apply to <html> and <body>, whose size says nothing
+ * about what they show.
  */
 export function isRendered(el: Element): boolean {
   if (el.hasAttribute("hidden") || el.getAttribute("aria-hidden") === "true") return false;
@@ -305,6 +307,9 @@ export function isRendered(el: Element): boolean {
   if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse") return false;
   if (Number.parseFloat(style.opacity) === 0) return false;
   if (style.display === "contents") return true;
+  // The page itself: a body that clips its overflow, or has no height of its
+  // own because everything in it is positioned, still shows all of it.
+  if (el === el.ownerDocument.documentElement || el === el.ownerDocument.body) return true;
   if (el.getClientRects().length === 0) return false;
   const rect = el.getBoundingClientRect();
   if ((rect.width <= 1 || rect.height <= 1) && clips(style)) return false;

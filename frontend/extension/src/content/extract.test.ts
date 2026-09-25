@@ -231,6 +231,22 @@ describe("the browser's own visibility check", () => {
     expect(isRendered(element({}, { left: 0, top: 10, width: 0, height: 20 }))).toBe(true);
   });
 
+  it("does not measure the page itself: a body that clips, with no height of its own, shows what is in it", () => {
+    for (const el of [document.body, document.documentElement]) {
+      vi.spyOn(window, "getComputedStyle").mockImplementation(() => styled({ overflow: "hidden" }));
+      el.getClientRects = () => ({ length: 0 }) as DOMRectList;
+      el.getBoundingClientRect = () => ({ left: 0, top: 0, right: 1200, bottom: 0, width: 1200, height: 0, x: 0, y: 0 }) as DOMRect;
+      expect(isRendered(el)).toBe(true);
+      vi.restoreAllMocks();
+      // Own properties shadowing the prototype's: gone, the element measures itself again.
+      delete (el as Partial<Element>).getClientRects;
+      delete (el as Partial<Element>).getBoundingClientRect;
+    }
+    // A hidden body still hides.
+    vi.spyOn(window, "getComputedStyle").mockImplementation(() => styled({ display: "none" }));
+    expect(isRendered(document.body)).toBe(false);
+  });
+
   it("rejects hidden and aria-hidden before measuring anything", () => {
     const el = element({});
     el.setAttribute("aria-hidden", "true");

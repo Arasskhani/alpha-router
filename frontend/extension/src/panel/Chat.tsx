@@ -1,15 +1,34 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ApiError } from "../lib/api";
 import { ChatStreamError, readChatStream } from "../lib/chatStream";
 import { getClient } from "../lib/client";
+import { MAX_PAGE_SITES, PageReadError, pageRefusal, readPage, type PageContext, type SiteRules } from "../lib/pageContext";
 import { DisconnectedError, TemporaryError } from "../lib/tokens";
 import { compareVersions } from "../lib/version";
-import { completionBody, pickModel, textModels, type ChatModel, type Turn } from "./chat";
+import { useActivePage, useSiteAccess } from "./activePage";
+import { completionBody, pagesIn, pickModel, textModels, type ChatModel, type Turn } from "./chat";
 import PanelMarkdown from "./PanelMarkdown";
 import type { Me } from "./types";
 
 const MODEL_KEY = "alpharouter.model";
+
+function hostOf(url: string): string | null {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return null;
+  }
+}
+
+function PageIcon() {
+  return (
+    <svg className="chip__icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">
+      <path d="M4 1.5h5l3 3v10H4z" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+      <path d="M9 1.5v3h3M6 8h4M6 10.5h4" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    </svg>
+  );
+}
 
 type Props = {
   me: Me;
@@ -39,6 +58,19 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
   const sessionId = useRef<string | null>(null);
   const log = useRef<HTMLDivElement | null>(null);
   const disconnected = useRef(onDisconnected);
+  const activePage = useActivePage();
+  const target = me.features.page_context ? (activePage?.target ?? null) : null;
+  const siteAccess = useSiteAccess(target?.pattern ?? null);
+  // "This page" is chosen for one tab and origin: switching tabs or sites turns it off.
+  const [attachFor, setAttachFor] = useState<{ tabId: number; origin: string } | null>(null);
+  const [reading, setReading] = useState(false);
+  const rules = useMemo<SiteRules>(
+    () => ({
+      policy: { allowed_sites: me.policy?.allowed_sites ?? [], blocked_sites: me.policy?.blocked_sites ?? [] },
+      serverHost: hostOf(server),
+    }),
+    [me.policy, server],
+  );
 
   useEffect(() => {
     disconnected.current = onDisconnected;
@@ -75,6 +107,17 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
   const version = chrome.runtime.getManifest().version;
   const tooOld = compareVersions(version, me.extension.min_version || "0") < 0;
   const newer = me.extension.latest_version && compareVersions(version, me.extension.latest_version) < 0;
+  const attached = Boolean(
+    target && activePage && attachFor && attachFor.tabId === activePage.tabId && attachFor.origin === target.origin,
+  );
+  const pageModels = me.policy?.page_content_models ?? [];
+  /** Why "This page" cannot be used right now, if it cannot. */
+  const pageBlock = target
+    ? (pageRefusal(target.host, rules) ??
+      (pageModels.length && !pageModels.includes(modelId)
+        ? "Your administrator does not allow pages to be sent to this model. Choose another model."
+        : null))
+    : null;
 
   function chooseModel(id: string) {
     setModelId(id);
@@ -105,10 +148,70 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
     }
   }
 
+  function togglePage() {
+    if (!target || !activePage) return;
+    if (attached) {
+      setAttachFor(null);
+      return;
+    }
+    const choice = { tabId: activePage.tabId, origin: target.origin };
+    if (siteAccess) {
+      setAttachFor(choice);
+      return;
+    }
+    const { host } = target;
+    // Chrome asks the user only while the click is being handled: nothing may come first.
+    chrome.permissions
+      .request({ origins: [target.pattern] })
+      .then((granted) => {
+        if (granted) {
+          setAttachFor(choice);
+          setBanner("");
+        } else {
+          setBanner(`Alpharouter can read pages on ${host} only if you allow it when Chrome asks.`);
+        }
+      })
+      .catch(() => setBanner("Chrome could not ask for permission. Try again."));
+  }
+
+  /** The page to send with this question, read now; null when none; throws PageReadError. */
+  async function pageToSend(): Promise<PageContext | null> {
+    if (!attached || !activePage || !target) return null;
+    if (pageBlock) throw new PageReadError(pageBlock);
+    const sites = new Set(pagesIn(turns).map((page) => page.host));
+    if (!sites.has(target.host) && sites.size >= MAX_PAGE_SITES) {
+      throw new PageReadError(`This chat already has pages from ${MAX_PAGE_SITES} sites. Start a new chat to share more.`);
+    }
+    return (await readPage({ id: activePage.tabId, url: activePage.url }, rules)).page;
+  }
+
+  /** The server refused a site: its pages leave the conversation, so the next question can go. */
+  function dropPagesFrom(host: string) {
+    setTurns((all) =>
+      all.map((turn) => (turn.pages?.some((page) => page.host === host) ? { ...turn, pages: turn.pages.filter((page) => page.host !== host) } : turn)),
+    );
+  }
+
   async function send() {
     const text = draft.trim();
     if (!text || busy || !modelId) return;
-    const user: Turn = { id: crypto.randomUUID(), role: "user", content: text };
+    let page: PageContext | null = null;
+    if (attached) {
+      setBusy(true);
+      setReading(true);
+      setBanner("");
+      try {
+        page = await pageToSend();
+      } catch (err) {
+        setBanner(err instanceof PageReadError ? err.message : "Alpharouter could not read this page.");
+        return;
+      } finally {
+        setReading(false);
+        setBusy(false);
+      }
+      setAttachFor(null);
+    }
+    const user: Turn = { id: crypto.randomUUID(), role: "user", content: text, ...(page ? { pages: [page] } : {}) };
     const assistant: Turn = { id: crypto.randomUUID(), role: "assistant", content: "", streaming: true };
     const history = turns;
     if (!privateMode) sessionId.current ??= crypto.randomUUID();
@@ -136,7 +239,12 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
     } catch (err) {
       if (abort.signal.aborted) update({ streaming: false, stopped: true });
       else if (err instanceof DisconnectedError) disconnected.current();
-      else update({ streaming: false, error: describe(err) });
+      else {
+        if (err instanceof ApiError && err.code === "site_not_allowed" && typeof err.detail.site === "string") {
+          dropPagesFrom(err.detail.site);
+        }
+        update({ streaming: false, error: describe(err) });
+      }
     } finally {
       controller.current = null;
       setBusy(false);
@@ -251,10 +359,18 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
             {privateMode
               ? "Private chat: nothing is saved, and it is gone when you start a new chat."
               : `Ask anything, ${me.user.display_name || me.user.username}. Chats are saved to your Alpharouter history.`}
+            {me.features.page_context && " To ask about the page next to this panel, turn on “This page” below."}
           </p>
         )}
         {turns.map((turn) => (
           <article key={turn.id} className={`turn turn--${turn.role}`}>
+            {turn.pages?.map((shared, index) => (
+              <p key={index} className="turn__page" title={shared.url}>
+                <PageIcon />
+                <span className="turn__page-title">{shared.title || shared.host}</span>
+                <span className="turn__page-site">{shared.truncated ? `${shared.host}, first part` : shared.host}</span>
+              </p>
+            ))}
             {turn.role === "user" ? <p className="turn__text">{turn.content}</p> : turn.content && <PanelMarkdown text={turn.content} />}
             {turn.streaming && !turn.content && <p className="turn__pending">Thinking…</p>}
             {turn.stopped && <p className="turn__meta">Stopped.</p>}
@@ -279,6 +395,28 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
           void send();
         }}
       >
+        {target && activePage && (
+          <div className="chat__context">
+            <button
+              type="button"
+              className={`chip${attached ? " chip--on" : ""}`}
+              aria-pressed={attached}
+              disabled={Boolean(pageBlock) || busy}
+              onClick={togglePage}
+              title={activePage.url}
+            >
+              <PageIcon />
+              <span className="chip__label">{attached ? "Sending this page" : "This page"}</span>
+              <span className="chip__site">{activePage.title || target.host}</span>
+            </button>
+            {reading && (
+              <span className="chat__context-note" role="status">
+                Reading the page…
+              </span>
+            )}
+            {!reading && pageBlock && <span className="chat__context-note">{pageBlock}</span>}
+          </div>
+        )}
         <textarea
           aria-label="Message"
           value={draft}

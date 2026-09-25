@@ -10,6 +10,8 @@
 import { vi } from "vitest";
 
 export const EXTENSION_ID = "abcdefghijklmnopabcdefghijklmnop";
+/** The window the side panel belongs to. */
+const CURRENT_WINDOW = 1;
 
 type Listener = (...args: never[]) => unknown;
 
@@ -60,6 +62,10 @@ export function installChromeFake(options: { version?: string } = {}) {
   const onChanged = event();
   const onInstalled = event();
   const onClicked = event();
+  const onActivated = event<(info: { tabId: number; windowId: number }) => void>();
+  const onUpdated = event<(tabId: number, change: Record<string, unknown>, tab: chrome.tabs.Tab) => void>();
+  const onPermissionsAdded = event<(permissions: { origins?: string[] }) => void>();
+  const onPermissionsRemoved = event<(permissions: { origins?: string[] }) => void>();
   const tabs = new Map<number, chrome.tabs.Tab>();
   let nextTab = 1;
 
@@ -89,33 +95,63 @@ export function installChromeFake(options: { version?: string } = {}) {
       created: [] as Array<{ url?: string; active?: boolean }>,
       create: vi.fn(async (props: { url?: string; active?: boolean }) => {
         fake.tabs.created.push(props);
-        const tab = { id: nextTab++, url: props.url, active: true } as chrome.tabs.Tab;
+        const tab = { id: nextTab++, url: props.url, active: true, windowId: CURRENT_WINDOW } as chrome.tabs.Tab;
         tabs.set(tab.id!, tab);
         return tab;
       }),
       get: vi.fn(async (id: number) => tabs.get(id)),
-      query: vi.fn(async () => [...tabs.values()]),
+      query: vi.fn(async (info: { active?: boolean; currentWindow?: boolean } = {}) =>
+        [...tabs.values()].filter(
+          (tab) =>
+            (info.active === undefined || tab.active === info.active) &&
+            (!info.currentWindow || tab.windowId === CURRENT_WINDOW),
+        ),
+      ),
       remove: vi.fn(async (id: number) => void tabs.delete(id)),
       getCurrent: vi.fn((callback?: (tab?: chrome.tabs.Tab) => void) => callback?.(undefined)),
-      onActivated: event(),
-      onUpdated: event(),
+      onActivated,
+      onUpdated,
       /** Put a tab in place for the code under test to find. */
       add(tab: Partial<chrome.tabs.Tab>) {
-        const full = { id: nextTab++, active: false, windowId: 1, ...tab } as chrome.tabs.Tab;
+        const full = { id: nextTab++, active: false, windowId: CURRENT_WINDOW, ...tab } as chrome.tabs.Tab;
         tabs.set(full.id!, full);
         return full;
+      },
+      /** The user switches to this tab. */
+      activate(tabId: number) {
+        const chosen = tabs.get(tabId)!;
+        for (const tab of tabs.values()) if (tab.windowId === chosen.windowId) tab.active = tab.id === tabId;
+        onActivated.emit({ tabId, windowId: chosen.windowId });
+      },
+      /** A tab loads another page, or its title changes. */
+      update(tabId: number, change: { url?: string; title?: string }) {
+        const tab = tabs.get(tabId)!;
+        Object.assign(tab, change);
+        onUpdated.emit(tabId, change, tab);
       },
     },
     permissions: {
       granted: new Set<string>(),
+      /** What the user answers the next time Chrome asks. */
+      answer: true,
       contains: vi.fn(async ({ origins = [] }: { origins?: string[] }) => origins.every((o) => fake.permissions.granted.has(o))),
       request: vi.fn(async ({ origins = [] }: { origins?: string[] }) => {
-        for (const origin of origins) fake.permissions.granted.add(origin);
+        if (!fake.permissions.answer) return false;
+        const added = origins.filter((origin) => !fake.permissions.granted.has(origin));
+        for (const origin of added) fake.permissions.granted.add(origin);
+        if (added.length) onPermissionsAdded.emit({ origins: added });
         return true;
       }),
+      /** The user takes a site back (chrome://extensions, or the site-access menu). */
+      revoke(origin: string) {
+        fake.permissions.granted.delete(origin);
+        onPermissionsRemoved.emit({ origins: [origin] });
+      },
+      onAdded: onPermissionsAdded,
+      onRemoved: onPermissionsRemoved,
     },
     scripting: {
-      executeScript: vi.fn(async () => [] as Array<{ result?: unknown }>),
+      executeScript: vi.fn(async (_injection: unknown) => [] as Array<{ result?: unknown }>),
     },
     sidePanel: {
       open: vi.fn(async () => undefined),

@@ -3,6 +3,7 @@
  */
 
 import { modelSupportsTextChat } from "../../../src/lib/chatModels";
+import { declaredSites, pageMessage, type PageContext } from "../lib/pageContext";
 
 export type ChatModel = {
   id: string;
@@ -21,6 +22,8 @@ export type Turn = {
   /** Shown instead of (or after) the content; never sent back to the model. */
   error?: string;
   stopped?: boolean;
+  /** Pages the user shared with this question. They go to the model with it on every later turn too. */
+  pages?: PageContext[];
 };
 
 export function textModels(models: ChatModel[]): ChatModel[] {
@@ -38,11 +41,26 @@ export function pickModel(models: ChatModel[], remembered: string | null): ChatM
   );
 }
 
-/** The conversation as the model reads it: failed and empty answers left out. */
+/** The turns the model reads: failed and empty answers left out. */
+function sentTurns(turns: Turn[]): Turn[] {
+  return turns.filter((turn) => turn.role === "user" || (turn.content && !turn.error));
+}
+
+/**
+ * The conversation as the model reads it. A shared page travels in its own
+ * message just before the question it came with, so the question stays the
+ * user's own words and the last message of its turn.
+ */
 export function apiMessages(turns: Turn[]): Array<{ role: string; content: string }> {
-  return turns
-    .filter((turn) => turn.role === "user" || (turn.content && !turn.error))
-    .map((turn) => ({ role: turn.role, content: turn.content }));
+  return sentTurns(turns).flatMap((turn) => [
+    ...(turn.pages ?? []).map((page) => ({ role: "user", content: pageMessage(page) })),
+    { role: turn.role, content: turn.content },
+  ]);
+}
+
+/** Every page the conversation carries. */
+export function pagesIn(turns: Turn[]): PageContext[] {
+  return sentTurns(turns).flatMap((turn) => turn.pages ?? []);
 }
 
 export type CompletionRequest = {
@@ -56,14 +74,19 @@ export type CompletionRequest = {
 };
 
 export function completionBody(request: CompletionRequest): Record<string, unknown> {
-  const messages = apiMessages([...request.history, request.user]);
+  const turns = [...request.history, request.user];
+  const messages = apiMessages(turns);
+  const pages = pagesIn(turns);
+  // The server checks each site and the model against the admin's rules, and records the share.
+  const declaration = pages.length ? { extension_page_context: { sites: declaredSites(pages) } } : {};
   if (request.sessionId === null) {
-    return { model: request.model, messages, stream: true, private_mode: true };
+    return { model: request.model, messages, stream: true, private_mode: true, ...declaration };
   }
   return {
     model: request.model,
     messages,
     stream: true,
+    ...declaration,
     // The server saves the question and the answer as it streams, into a
     // chat it creates with this id when it does not exist yet.
     chat_session_id: request.sessionId,

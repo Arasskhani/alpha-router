@@ -252,7 +252,32 @@ button {
 
 .turn--user {
   display: flex;
-  justify-content: flex-end;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.turn__page {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  max-width: 90%;
+  margin: 0 0 0.3rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.turn__page-title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  unicode-bidi: plaintext;
+}
+
+.turn__page-site {
+  flex: none;
 }
 
 .turn__text {
@@ -331,6 +356,7 @@ button {
 
 .chat__composer {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-end;
   gap: 0.4rem;
   padding: 0.5rem 0.6rem 0.6rem;
@@ -350,4 +376,68 @@ button {
   font: inherit;
   resize: vertical;
   unicode-bidi: plaintext;
+}
+
+/* "This page": share the page in the active tab with the next question. */
+.chat__context {
+  display: flex;
+  flex-basis: 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.5rem;
+  min-width: 0;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  max-width: 100%;
+  min-height: 28px;
+  padding: 0.15rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--muted);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.chip:hover:not(:disabled) {
+  border-color: var(--muted);
+  color: var(--text);
+}
+
+.chip:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.chip--on {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--text);
+}
+
+.chip__icon {
+  flex: none;
+}
+
+.chip__label {
+  flex: none;
+  font-weight: 600;
+}
+
+.chip__site {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  unicode-bidi: plaintext;
+}
+
+.chat__context-note {
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.4;
 }

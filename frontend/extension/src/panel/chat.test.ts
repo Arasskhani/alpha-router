@@ -3,8 +3,9 @@
  */
 import { describe, expect, it } from "vitest";
 
+import { pageMessage, type PageContext } from "../lib/pageContext";
 import { compareVersions } from "../lib/version";
-import { apiMessages, completionBody, pickModel, textModels, type Turn } from "./chat";
+import { apiMessages, completionBody, pagesIn, pickModel, textModels, type Turn } from "./chat";
 
 const user = (content: string, id = "u1"): Turn => ({ id, role: "user", content });
 const assistant = (content: string, extra: Partial<Turn> = {}): Turn => ({ id: "a1", role: "assistant", content, ...extra });
@@ -61,6 +62,49 @@ describe("what a turn sends", () => {
       stream: true,
       private_mode: true,
     });
+  });
+});
+
+describe("a question about a page", () => {
+  const guide: PageContext = { host: "docs.example.com", url: "https://docs.example.com/guide", title: "Guide", text: "Guide text.", truncated: false };
+  const wiki: PageContext = { host: "wiki.example.com", url: "https://wiki.example.com/", title: "Wiki", text: "Wiki page.", truncated: false };
+  const asked = (content: string, pages: PageContext[], id = "u1"): Turn => ({ id, role: "user", content, pages });
+
+  it("sends the page in its own message, just before the question, which stays last", () => {
+    const messages = apiMessages([asked("Summarize this", [guide])]);
+    expect(messages).toEqual([
+      { role: "user", content: pageMessage(guide) },
+      { role: "user", content: "Summarize this" },
+    ]);
+  });
+
+  it("keeps the page with its question on later turns", () => {
+    const messages = apiMessages([asked("Summarize this", [guide]), assistant("A summary."), user("And the second step?", "u2")]);
+    expect(messages.map((m) => m.content)).toEqual([pageMessage(guide), "Summarize this", "A summary.", "And the second step?"]);
+  });
+
+  it("declares every page the request carries, per site", () => {
+    const turns = [asked("First", [guide]), assistant("One."), asked("Compare", [wiki, { ...guide, text: "More." }], "u2")];
+    expect(pagesIn(turns)).toHaveLength(3);
+    const body = completionBody({ model: "model::1", history: turns.slice(0, 2), user: turns[2], assistantId: "a9", sessionId: "s1", sentAt: 5 });
+    expect(body.extension_page_context).toEqual({
+      sites: [
+        { host: "docs.example.com", chars: "Guide text.".length + "More.".length },
+        { host: "wiki.example.com", chars: "Wiki page.".length },
+      ],
+    });
+    expect((body.user_message as { content: string }).content).toBe("Compare");
+  });
+
+  it("declares pages in a private chat too", () => {
+    const body = completionBody({ model: "model::1", history: [], user: asked("Q", [guide]), assistantId: "a9", sessionId: null, sentAt: 5 });
+    expect(body.private_mode).toBe(true);
+    expect(body.extension_page_context).toEqual({ sites: [{ host: "docs.example.com", chars: 11 }] });
+  });
+
+  it("declares nothing without a page", () => {
+    const body = completionBody({ model: "model::1", history: [], user: user("hi"), assistantId: "a9", sessionId: "s1", sentAt: 5 });
+    expect(body).not.toHaveProperty("extension_page_context");
   });
 });
 

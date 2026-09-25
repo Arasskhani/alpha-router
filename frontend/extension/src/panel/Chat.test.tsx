@@ -7,7 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { setClient } from "../lib/client";
 import { resetConfigForTests } from "../lib/config";
-import { installChromeFake } from "../test/chromeFake";
+import { pageMessage } from "../lib/pageContext";
+import { installChromeFake, type ChromeFake } from "../test/chromeFake";
 import { SERVER, createServerFake, frame, json, sse, textFrame, type ServerFake } from "../test/serverFake";
 import Chat from "./Chat";
 import type { Me } from "./types";
@@ -27,13 +28,14 @@ const MODELS = [
 ];
 
 let server: ServerFake;
+let chromeFake: ChromeFake;
 let host: HTMLDivElement;
 let root: Root;
 const onDisconnect = vi.fn();
 const onDisconnected = vi.fn();
 
 beforeEach(() => {
-  installChromeFake({ version: "1.0.0.1" });
+  chromeFake = installChromeFake({ version: "1.0.0.1" });
   resetConfigForTests();
   server = createServerFake();
   server.routes["GET /api/chat/models"] = () => json(200, MODELS);
@@ -283,3 +285,255 @@ describe("versions and permissions", () => {
   });
 });
 
+
+describe("sharing the page next to the panel", () => {
+  const GUIDE = { url: "https://docs.example.com/guide?session=abc", title: "The guide" };
+  const PATTERN = "https://docs.example.com/*";
+  const EXTRACT = {
+    url: "https://docs.example.com/guide?session=abc",
+    title: "The guide",
+    text: "Step one. Step two.",
+    truncated: false,
+    selection: "",
+  };
+
+  function chip(): HTMLButtonElement | null {
+    return host.querySelector<HTMLButtonElement>("button.chip");
+  }
+
+  function pageReads(result: unknown = EXTRACT) {
+    chromeFake.scripting.executeScript.mockImplementation((async (injection: { files?: string[] }) =>
+      injection.files ? [] : [{ result }]) as never);
+  }
+
+  async function click(el: HTMLElement) {
+    await act(async () => el.click());
+    await act(async () => undefined);
+  }
+
+  beforeEach(() => {
+    server.routes["POST /api/chat/session-title"] = () => json(200, { title: "" });
+  });
+
+  it("offers the page in the active tab, off until the user turns it on", async () => {
+    chromeFake.tabs.add({ ...GUIDE, active: true });
+    await render();
+    expect(chip()?.textContent).toBe("This pageThe guide");
+    expect(chip()?.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it.each(["chrome://settings", "https://chromewebstore.google.com/detail/x", "file:///C:/notes.txt"])(
+    "never offers %s",
+    async (url) => {
+      chromeFake.tabs.add({ url, title: "Somewhere", active: true });
+      await render();
+      expect(chip()).toBeNull();
+    },
+  );
+
+  it("is not offered when page context is off for the user", async () => {
+    chromeFake.tabs.add({ ...GUIDE, active: true });
+    await render({ ...ME, features: { ...ME.features, page_context: false } });
+    expect(chip()).toBeNull();
+  });
+
+  it("asks Chrome for that one site, and turns on when the user allows it", async () => {
+    chromeFake.tabs.add({ ...GUIDE, active: true });
+    await render();
+    await click(chip()!);
+    expect(chromeFake.permissions.request).toHaveBeenCalledWith({ origins: [PATTERN] });
+    expect(chip()?.getAttribute("aria-pressed")).toBe("true");
+    expect(chip()?.textContent).toContain("Sending this page");
+  });
+
+  it("stays off when the user refuses", async () => {
+    chromeFake.permissions.answer = false;
+    chromeFake.tabs.add({ ...GUIDE, active: true });
+    await render();
+    await click(chip()!);
+    expect(chip()?.getAttribute("aria-pressed")).toBe("false");
+    expect(host.textContent).toContain("only if you allow it when Chrome asks");
+  });
+
+  it("does not ask again for a site already granted", async () => {
+    chromeFake.permissions.granted.add(PATTERN);
+    chromeFake.tabs.add({ ...GUIDE, active: true });
+    await render();
+    await click(chip()!);
+    expect(chromeFake.permissions.request).not.toHaveBeenCalled();
+    expect(chip()?.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("asks again once the user takes the site back", async () => {
+    chromeFake.permissions.granted.add(PATTERN);
+    chromeFake.tabs.add({ ...GUIDE, active: true });
+    await render();
+    await act(async () => chromeFake.permissions.revoke(PATTERN));
+    await act(async () => undefined);
+    await click(chip()!);
+    expect(chromeFake.permissions.request).toHaveBeenCalledWith({ origins: [PATTERN] });
+  });
+
+  it("knows a site the user granted from Chrome's own menu", async () => {
+    chromeFake.tabs.add({ ...GUIDE, active: true });
+    await render();
+    await act(async () => chromeFake.permissions.request({ origins: [PATTERN] }));
+    chromeFake.permissions.request.mockClear();
+    await act(async () => undefined);
+    await click(chip()!);
+    expect(chromeFake.permissions.request).not.toHaveBeenCalled();
+    expect(chip()?.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("sends the page with the question, shows it on the question, and turns off", async () => {
+    chromeFake.permissions.granted.add(PATTERN);
+    chromeFake.tabs.add({ ...GUIDE, active: true });
+    pageReads();
+    answerWith([textFrame("It has two steps.")]);
+    await render();
+    await click(chip()!);
+    await send("Summarize it");
+    const body = server.callsTo("POST", "/api/chat/completions")[0].body as Record<string, unknown>;
+    const page = { host: "docs.example.com", url: "https://docs.example.com/guide", title: "The guide", text: "Step one. Step two.", truncated: false };
+    expect(body.messages).toEqual([
+      { role: "user", content: pageMessage(page) },
+      { role: "user", content: "Summarize it" },
+    ]);
+    expect(body.extension_page_context).toEqual({ sites: [{ host: "docs.example.com", chars: 19 }] });
+    expect((body.user_message as { content: string }).content).toBe("Summarize it");
+    expect(host.querySelector(".turn--user .turn__page")?.textContent).toBe("The guidedocs.example.com");
+    expect(host.textContent).toContain("It has two steps.");
+    expect(chip()?.getAttribute("aria-pressed")).toBe("false");
+    // The page stays with its question on the next turn.
+    answerWith([textFrame("Step two is second.")]);
+    await send("And the second?");
+    const next = server.callsTo("POST", "/api/chat/completions")[1].body as Record<string, unknown>;
+    expect((next.messages as Array<{ content: string }>).map((m) => m.content)).toEqual([
+      pageMessage(page),
+      "Summarize it",
+      "It has two steps.",
+      "And the second?",
+    ]);
+    expect(next.extension_page_context).toEqual({ sites: [{ host: "docs.example.com", chars: 19 }] });
+  });
+
+  it("keeps the question when the page cannot be read", async () => {
+    chromeFake.permissions.granted.add(PATTERN);
+    chromeFake.tabs.add({ ...GUIDE, active: true });
+    chromeFake.scripting.executeScript.mockRejectedValue(new Error("Frame with ID 0 was removed."));
+    await render();
+    await click(chip()!);
+    await send("Summarize it");
+    expect(host.textContent).toContain("could not read this page");
+    expect((host.querySelector("textarea") as HTMLTextAreaElement).value).toBe("Summarize it");
+    expect(server.callsTo("POST", "/api/chat/completions")).toHaveLength(0);
+  });
+
+  it("is off, with the reason, on a site the administrator blocked, and never asks for it", async () => {
+    chromeFake.tabs.add({ ...GUIDE, active: true });
+    await render({ ...ME, policy: { ...ME.policy!, blocked_sites: ["*.example.com"] } });
+    expect(chip()?.disabled).toBe(true);
+    expect(host.textContent).toContain("does not allow Alpharouter to read docs.example.com");
+    await click(chip()!);
+    expect(chromeFake.permissions.request).not.toHaveBeenCalled();
+  });
+
+  it("is off, with the reason, for a model the administrator did not allow pages for", async () => {
+    chromeFake.tabs.add({ ...GUIDE, active: true });
+    await render({ ...ME, policy: { ...ME.policy!, page_content_models: ["model::1"] } });
+    // The chat default, model::3, is selected.
+    expect(chip()?.disabled).toBe(true);
+    expect(host.textContent).toContain("does not allow pages to be sent to this model");
+    const select = host.querySelector("select") as HTMLSelectElement;
+    await act(async () => {
+      select.value = "model::1";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(chip()?.disabled).toBe(false);
+  });
+
+  it("does not send the page after the user switches to a model it may not go to", async () => {
+    chromeFake.permissions.granted.add(PATTERN);
+    chromeFake.tabs.add({ ...GUIDE, active: true });
+    pageReads();
+    await render({ ...ME, policy: { ...ME.policy!, page_content_models: ["model::1"] } });
+    const select = host.querySelector("select") as HTMLSelectElement;
+    await act(async () => {
+      select.value = "model::1";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await click(chip()!);
+    await act(async () => {
+      select.value = "model::3";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await send("Summarize it");
+    expect(host.querySelector('.chat__notice[role="alert"]')?.textContent).toContain("does not allow pages to be sent to this model");
+    expect(server.callsTo("POST", "/api/chat/completions")).toHaveLength(0);
+    expect(chromeFake.scripting.executeScript).not.toHaveBeenCalled();
+  });
+
+  it("turns off when the user switches to another tab", async () => {
+    chromeFake.permissions.granted.add(PATTERN);
+    chromeFake.tabs.add({ ...GUIDE, active: true });
+    const other = chromeFake.tabs.add({ url: "https://news.example.org/today", title: "Today's news" });
+    await render();
+    await click(chip()!);
+    expect(chip()?.getAttribute("aria-pressed")).toBe("true");
+    await act(async () => chromeFake.tabs.activate(other.id!));
+    await act(async () => undefined);
+    expect(chip()?.textContent).toBe("This pageToday's news");
+    expect(chip()?.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("turns off when the tab goes to another site", async () => {
+    chromeFake.permissions.granted.add(PATTERN);
+    const tab = chromeFake.tabs.add({ ...GUIDE, active: true });
+    await render();
+    await click(chip()!);
+    await act(async () => chromeFake.tabs.update(tab.id!, { url: "https://evil.example/", title: "Elsewhere" }));
+    await act(async () => undefined);
+    expect(chip()?.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("drops a site's pages when the server refuses it, so the chat can go on", async () => {
+    chromeFake.permissions.granted.add(PATTERN);
+    chromeFake.tabs.add({ ...GUIDE, active: true });
+    pageReads();
+    server.routes["POST /api/chat/completions"] = () =>
+      json(403, {
+        detail: { code: "site_not_allowed", message: "Your administrator does not allow sharing pages from docs.example.com.", site: "docs.example.com" },
+      });
+    await render();
+    await click(chip()!);
+    await send("Summarize it");
+    expect(host.textContent).toContain("does not allow sharing pages from docs.example.com");
+    answerWith([textFrame("Sure.")]);
+    await send("Something else");
+    const next = server.callsTo("POST", "/api/chat/completions")[1].body as Record<string, unknown>;
+    expect(next).not.toHaveProperty("extension_page_context");
+    expect(next.messages).toEqual([
+      { role: "user", content: "Summarize it" },
+      { role: "user", content: "Something else" },
+    ]);
+  });
+
+  it("stops at twenty sites in one chat", async () => {
+    pageReads();
+    await render();
+    for (let n = 1; n <= 21; n += 1) {
+      const url = `https://site${n}.example.com/`;
+      chromeFake.permissions.granted.add(`https://site${n}.example.com/*`);
+      pageReads({ ...EXTRACT, url, text: `Page ${n}.` });
+      const tab = chromeFake.tabs.add({ url, title: `Site ${n}` });
+      await act(async () => chromeFake.tabs.activate(tab.id!));
+      await act(async () => undefined);
+      await click(chip()!);
+      answerWith([textFrame(`Answer ${n}.`)]);
+      await send(`Question ${n}`);
+    }
+    expect(server.callsTo("POST", "/api/chat/completions")).toHaveLength(20);
+    expect(host.textContent).toContain("already has pages from 20 sites");
+    expect((host.querySelector("textarea") as HTMLTextAreaElement).value).toBe("Question 21");
+  });
+});

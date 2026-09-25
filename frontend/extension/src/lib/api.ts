@@ -14,36 +14,42 @@ export class ApiError extends Error {
   readonly status: number;
   /** The server's machine-readable reason, when it sent one (detail.code). */
   readonly code: string | null;
+  /** The rest of the server's detail object, such as the site a refusal names. */
+  readonly detail: Record<string, unknown>;
 
-  constructor(status: number, message: string, code: string | null) {
+  constructor(status: number, message: string, code: string | null, detail: Record<string, unknown> = {}) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
+    this.detail = detail;
   }
 
   static async from(response: Response): Promise<ApiError> {
-    const { message, code } = await readError(response);
-    return new ApiError(response.status, message, code);
+    const { message, code, detail } = await readError(response);
+    return new ApiError(response.status, message, code, detail);
   }
 }
 
-async function readError(response: Response): Promise<{ message: string; code: string | null }> {
+async function readError(
+  response: Response,
+): Promise<{ message: string; code: string | null; detail: Record<string, unknown> }> {
   let message = `Alpharouter answered ${response.status}.`;
   let code: string | null = null;
+  let fields: Record<string, unknown> = {};
   try {
     const body = (await response.json()) as { detail?: unknown };
     const detail = body.detail;
     if (typeof detail === "string") message = detail;
-    else if (detail && typeof detail === "object") {
-      const d = detail as { message?: unknown; code?: unknown };
-      if (typeof d.message === "string") message = d.message;
-      if (typeof d.code === "string") code = d.code;
+    else if (detail && typeof detail === "object" && !Array.isArray(detail)) {
+      fields = detail as Record<string, unknown>;
+      if (typeof fields.message === "string") message = fields.message;
+      if (typeof fields.code === "string") code = fields.code;
     }
   } catch {
     // Not JSON: keep the generic message.
   }
-  return { message, code };
+  return { message, code, detail: fields };
 }
 
 export type ApiDeps = {

@@ -58,6 +58,7 @@ from app.services.chat_export_service import (
     build_pdf_content_disposition,
     render_chat_pdf,
 )
+from app.services.chat_markers import PAGE_CONTEXT_BODY_KEY
 from app.services.chat_session_access import resolve_owned_chat_session
 from app.services.chat_title_service import generate_chat_title
 from app.services.chat_tool_access_service import assert_tool_for_user, permitted_tool_keys
@@ -468,6 +469,8 @@ async def chat_completions(
             payload[key] = value
     client_app = _client_app(request)
     shares = await _declared_page_shares(db, request, body, payload, tools)
+    if shares:
+        payload[PAGE_CONTEXT_BODY_KEY] = [share.host for share in shares]
     resolved = await preflight_stream_chat(
         db,
         payload,

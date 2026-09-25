@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.chat import ChatMessage, ChatSession, UserMemory, is_member_channel
+from app.services.chat_markers import PAGE_CONTEXT_META_KEY
 from app.services.memory_settings_service import MEMORY_CATEGORIES, get_memory_settings
 from app.services.user_memory_service import (
     NEAR_DUPE_THRESHOLD,
@@ -142,6 +143,17 @@ def looks_like_injection(text: str) -> bool:
     return any(pattern.search(blob) for pattern in _INJECTION_PATTERNS)
 
 
+def restates_a_shared_page(row: ChatMessage) -> bool:
+    """An answer built from pages the user shared from the browser extension.
+
+    Page text is untrusted - anyone who can put words on a page can put them
+    in such an answer - so no memory is ever learned from one. The user's own
+    question stays in the window: that part the user typed.
+    """
+    meta: dict[str, Any] = row.meta if isinstance(row.meta, dict) else {}
+    return str(row.role) == "assistant" and bool(meta.get(PAGE_CONTEXT_META_KEY))
+
+
 async def build_extraction_window(
     db: AsyncSession,
     *,
@@ -171,6 +183,8 @@ async def build_extraction_window(
     )
     turns: list[WindowTurn] = []
     for row in rows:
+        if restates_a_shared_page(row):
+            continue
         text = extract_message_text(row.content)[:MAX_MESSAGE_CHARS]
         if not text.strip():
             continue

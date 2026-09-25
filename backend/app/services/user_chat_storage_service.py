@@ -28,6 +28,7 @@ from app.services.chat_markers import (
     ATTACHMENT_MESSAGE_PREFIX,
     IMAGE_MESSAGE_PREFIX,
     IMAGE_PENDING_MARKER,
+    PAGE_CONTEXT_META_KEY,
     SPEECH_MESSAGE_PREFIX,
     SPEECH_PENDING_MARKER,
     VIDEO_MESSAGE_PREFIX,
@@ -321,7 +322,8 @@ def _message_meta_from_client(msg: dict[str, Any]) -> dict[str, Any]:
     return meta
 
 
-_SERVER_OWNED_AGENT_META_KEYS = frozenset(
+#: Assistant meta only the server writes: a client replacing the messages keeps them.
+_SERVER_OWNED_META_KEYS = frozenset(
     {
         "agentRunId",
         "agentId",
@@ -331,6 +333,7 @@ _SERVER_OWNED_AGENT_META_KEYS = frozenset(
         "routingOutcome",
         "completionReasonCode",
         "citations",
+        PAGE_CONTEXT_META_KEY,
     }
 )
 
@@ -365,6 +368,7 @@ def _message_to_client(row: ChatMessage) -> dict[str, Any]:
         "routingOutcome",
         "completionReasonCode",
         "citations",
+        PAGE_CONTEXT_META_KEY,
     ):
         if meta.get(key) is not None:
             out[key] = meta[key]
@@ -1347,7 +1351,7 @@ async def replace_session_messages(
         agent_run_id = None
         if previous is not None and role == "assistant":
             previous_meta = previous.meta if isinstance(previous.meta, dict) else {}
-            for key in _SERVER_OWNED_AGENT_META_KEYS:
+            for key in _SERVER_OWNED_META_KEYS:
                 if previous_meta.get(key) is not None:
                     message_meta[key] = previous_meta[key]
             agent_run_id = previous.agent_run_id

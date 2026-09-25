@@ -31,6 +31,7 @@ from app.services.agent_chat_integration_service import PreparedAgentTurn
 from app.services.agent_run_service import finalize_agent_run, mark_agent_run_started
 from app.services.budget_reservation_service import release
 from app.services.chat_completion_persistence import persister_from_body
+from app.services.chat_markers import PAGE_CONTEXT_BODY_KEY, PAGE_CONTEXT_META_KEY
 from app.services.chat_tools_service import ChatToolsConfig, augment_messages_with_tools, parse_tools_config
 from app.services.code_interpreter_capacity_service import (
     CapacityPermit,
@@ -193,6 +194,20 @@ async def resolve_private_mode_for_memory(
             source="alpha_router_chat",
         )
     ).effective
+
+
+def _page_context_sites(body: dict) -> list[str]:
+    """The hosts of the pages this turn carries from the browser extension, if any.
+
+    Page text is untrusted: it can carry instructions meant to pull private
+    facts into the answer. So a turn with pages is answered without the user's
+    memory, profile or project context, as in Private Mode, and its answer is
+    marked so no memory is ever learned from it.
+    """
+    sites = body.get(PAGE_CONTEXT_BODY_KEY)
+    if not isinstance(sites, list):
+        return []
+    return [str(site) for site in sites if isinstance(site, str) and site]
 
 
 async def resolve_session_project_id(db: AsyncSession, chat_session_id: str | None) -> str | None:
@@ -380,7 +395,8 @@ async def build_turn_context(  # noqa: C901 -- straight-line preparation moved o
                 await lease.abandon("tool setup error")
                 raise
         private_mode = await resolve_private_mode_for_memory(db, body, user_id=user_id)
-        if agent_turn is None:
+        page_sites = _page_context_sites(body)
+        if agent_turn is None and not page_sites:
             try:
                 chat_session_id = str(body.get("chat_session_id") or "").strip() or None
                 session_project_id = await resolve_session_project_id(db, chat_session_id)
@@ -458,6 +474,8 @@ async def build_turn_context(  # noqa: C901 -- straight-line preparation moved o
             )
             if persister:
                 try:
+                    if page_sites:
+                        persister.set_message_metadata({PAGE_CONTEXT_META_KEY: {"sites": page_sites}})
                     if agent_turn is not None:
                         persister.set_completion_metadata(
                             {

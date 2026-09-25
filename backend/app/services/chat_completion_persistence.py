@@ -7,7 +7,7 @@ import contextlib
 import logging
 import time
 import uuid
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -82,6 +82,19 @@ async def _read_cancel_flag(db: AsyncSession, session_id: str) -> bool:
     return bool(meta.get("cancelRequested"))
 
 
+#: Meta the persister itself keeps current; server-owned metadata never overrides it.
+_PERSISTER_META_KEYS = frozenset({"streaming", "receivedAt", "cancelRequested", "modelId", "modelName"})
+
+
+def _merge_server_metadata(into: dict[str, Any], metadata: dict[str, Any] | None) -> None:
+    if not isinstance(metadata, dict):
+        return
+    for key, value in metadata.items():
+        clean_key = str(key).strip()
+        if clean_key and clean_key not in _PERSISTER_META_KEYS:
+            into[clean_key] = value
+
+
 class ChatCompletionPersister:
     """Persist a placeholder and update assistant content during streaming."""
 
@@ -108,6 +121,7 @@ class ChatCompletionPersister:
         self.agent_run_id = agent_run_id
         self.project_id = (project_id or "").strip() or None
         self._completion_metadata: dict[str, Any] = {}
+        self._message_metadata: dict[str, Any] = {}
         self._content = ""
         self._last_persist_len = 0
         self._last_persist_at = 0.0
@@ -134,19 +148,16 @@ class ChatCompletionPersister:
     def set_completion_metadata(self, metadata: dict[str, Any] | None) -> None:
         """Attach server-owned Agent metadata only to the completed message."""
 
-        if not isinstance(metadata, dict):
-            return
-        reserved = {
-            "streaming",
-            "receivedAt",
-            "cancelRequested",
-            "modelId",
-            "modelName",
-        }
-        for key, value in metadata.items():
-            clean_key = str(key).strip()
-            if clean_key and clean_key not in reserved:
-                self._completion_metadata[clean_key] = value
+        _merge_server_metadata(self._completion_metadata, metadata)
+
+    def set_message_metadata(self, metadata: dict[str, Any] | None) -> None:
+        """Server-owned facts about the answer, on its message from the placeholder on.
+
+        Unlike completion metadata, these are true of the answer before a
+        single token arrives, so they are stamped when the placeholder is
+        written: a job that reads the chat mid-stream sees them too.
+        """
+        _merge_server_metadata(self._message_metadata, metadata)
 
     async def _ensure_chat_session(self) -> None:
         existing = await get_chat_session(self.db, self.user_id, self.session_id)
@@ -195,6 +206,19 @@ class ChatCompletionPersister:
             self.session_id,
             to_append,
         )
+        if self._message_metadata and appended is not None:
+            placeholder = (
+                await self.db.execute(
+                    select(ChatMessage).where(
+                        ChatMessage.session_id == self.session_id,
+                        ChatMessage.user_id == self.user_id,
+                        ChatMessage.client_message_id == self.assistant_client_message_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if placeholder is not None:
+                current: dict[str, Any] = placeholder.meta if isinstance(placeholder.meta, dict) else {}
+                cast(Any, placeholder).meta = {**current, **self._message_metadata}
         if self.agent_run_id and appended is not None:
             run = await self.db.get(AgentRun, self.agent_run_id)
             if run is None or run.user_id != self.user_id:
@@ -361,7 +385,9 @@ class ChatCompletionPersister:
         await self._flush_on(self.db, content, partial=partial)
 
     async def _flush_on(self, db: AsyncSession, content: str, *, partial: bool) -> None:
-        meta: dict[str, Any] = dict(self._completion_metadata) if not partial else {}
+        meta: dict[str, Any] = dict(self._message_metadata)
+        if not partial:
+            meta.update(self._completion_metadata)
         meta["streaming"] = partial
         if self.model_id:
             meta["modelId"] = self.model_id

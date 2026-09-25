@@ -35,6 +35,7 @@ from app.services.memory_extraction_service import (
     extraction_budget_exhausted,
     looks_like_injection,
     record_extraction_usage,
+    restates_a_shared_page,
 )
 from app.services.memory_settings_service import (
     PROJECT_DENIED_CATEGORIES,
@@ -162,6 +163,8 @@ async def build_project_extraction_window(
     )
     turns: list[ProjectWindowTurn] = []
     for row in rows:
+        if restates_a_shared_page(row):
+            continue
         text = extract_message_text(row.content)[:MAX_MESSAGE_CHARS]
         if not text.strip():
             continue

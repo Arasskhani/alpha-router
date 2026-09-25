@@ -17,6 +17,7 @@ from app.models.connection import Connection
 from app.models.extension import ExtensionEvent
 from app.models.model_catalog import AIModel
 from app.services import extension_tokens
+from app.services.chat_markers import PAGE_CONTEXT_BODY_KEY
 from app.services.extension_page_context import page_shares
 from app.services.extension_settings import ExtensionSettings, save_extension_settings
 from app.services.extension_tokens import create_session
@@ -159,6 +160,16 @@ class TestAccepted:
         )
         assert turn.preflights[0]["client_app"] == "Alpharouter Extension"
         assert turn.streams[0]["client_app"] == "Alpharouter Extension"
+
+    async def test_the_turn_knows_it_carries_pages(self, client, browser, models, turn):
+        # So it is answered without the user's memory and profile, and its answer is marked.
+        await client.post(
+            "/api/chat/completions",
+            json=_body(f"model::{models.a.id}", ("Docs.Example.com", 5), ("intranet", 1), ("docs.example.com", 2)),
+            headers=browser.headers,
+        )
+        assert turn.preflights[0]["payload"][PAGE_CONTEXT_BODY_KEY] == ["docs.example.com", "intranet"]
+        assert turn.streams[0]["payload"][PAGE_CONTEXT_BODY_KEY] == ["docs.example.com", "intranet"]
 
     async def test_two_tabs_on_one_site_are_one_row(self, client, browser, models, turn, session_factory):
         resp = await client.post(
@@ -364,6 +375,7 @@ class TestOtherTurns:
         resp = await client.post("/api/chat/completions", json=_body(f"model::{models.a.id}"), headers=browser.headers)
         assert resp.status_code == 200, resp.text
         assert turn.preflights[0]["client_app"] == "Alpharouter Extension"
+        assert PAGE_CONTEXT_BODY_KEY not in turn.preflights[0]["payload"]
         assert await _events(session_factory) == []
 
     async def test_the_web_app_is_unchanged(self, client, models, turn, user, session_factory):

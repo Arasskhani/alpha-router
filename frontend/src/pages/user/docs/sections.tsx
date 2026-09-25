@@ -1032,23 +1032,25 @@ export const userManualSections: DocSection[] = [
             <tr>
               <td>Sensitive</td>
               <td>
-                Sending a form; a button that sends, submits, deletes, confirms, transfers, downloads or publishes;
-                going to another site
+                Sending a form; a button that sends, submits, deletes, confirms, shares, accepts, transfers,
+                downloads or publishes; Enter in a message box; a button with no name, whose purpose nobody can
+                tell; going to another site, or working on one the page went to by itself
               </td>
               <td>Always asks you, in either mode.</td>
             </tr>
             <tr>
               <td>Refused</td>
               <td>
-                Typing into a password, card, one-time-code or identity field; buying or paying; a site your
-                administrator blocks; Alpharouter itself
+                Typing into a password, card, one-time-code or identity field; buying, paying, bidding or
+                donating; a site your administrator blocks; any address of Alpharouter itself
               </td>
               <td>Never happens; the agent is told why.</td>
             </tr>
           </tbody>
         </DocsTable>
         <p>
-          The approval card says what will happen — the text that will be typed, the site that will open.{" "}
+          The approval card says what will happen — the whole address that will open, the text that will be typed,
+          the option that will be chosen, where a form goes.{" "}
           <strong>Deny</strong> refuses that action and any others the agent planned alongside it, and the agent is
           told not to look for a way around your answer. When it needs something only you know, it asks in the
           panel.

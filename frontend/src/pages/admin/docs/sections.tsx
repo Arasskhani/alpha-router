@@ -2132,8 +2132,11 @@ export const docSections: DocSection[] = [
               <td>Auto mode and review model</td>
               <td>
                 Auto mode lets the agent act on allowed sites without asking; the review model checks each action
-                against the person&apos;s task and asks them whenever it is not sure. Sensitive actions (sending,
-                deleting, other sites) always ask. Reviews are billed to the person.
+                against the person&apos;s task and asks them whenever it is not sure. Sensitive actions always ask:
+                sending, deleting, Enter in a message box, a control with no name, another site, and a site a page
+                moved the tab to by itself. An action too long for the review model to see whole goes to the
+                person too. The review model must be one of the page-content models when that list is set.
+                Reviews are billed to the person.
               </td>
             </tr>
           </tbody>

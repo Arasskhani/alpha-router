@@ -3,7 +3,18 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError } from "../lib/api";
 import { ChatStreamError, readChatStream } from "../lib/chatStream";
 import { getClient } from "../lib/client";
-import { MAX_PAGE_SITES, PageReadError, pageRefusal, readPage, type PageContext, type SiteRules } from "../lib/pageContext";
+import { fromOwnPages, isExtensionMessage } from "../lib/messages";
+import {
+  MAX_PAGE_SITES,
+  PageReadError,
+  pageRefusal,
+  readPage,
+  selectionContext,
+  type PageContext,
+  type SiteRules,
+} from "../lib/pageContext";
+import { takePendingAction, type PendingAction, type PendingActionKind } from "../lib/pendingAction";
+import { readablePage } from "../lib/sites";
 import { DisconnectedError, TemporaryError } from "../lib/tokens";
 import { compareVersions } from "../lib/version";
 import { useActivePage, useSiteAccess } from "./activePage";
@@ -12,6 +23,13 @@ import PanelMarkdown from "./PanelMarkdown";
 import type { Me } from "./types";
 
 const MODEL_KEY = "alpharouter.model";
+
+/** What a right-click action asks; the page or the selection goes with it. */
+const ACTION_QUESTIONS: Record<Exclude<PendingActionKind, "ask">, string> = {
+  summarize: "Summarize this page.",
+  explain: "Explain the selected text.",
+  translate: "Translate the selected text to Persian.",
+};
 
 function hostOf(url: string): string | null {
   try {
@@ -64,6 +82,14 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
   // "This page" is chosen for one tab and origin: switching tabs or sites turns it off.
   const [attachFor, setAttachFor] = useState<{ tabId: number; origin: string } | null>(null);
   const [reading, setReading] = useState(false);
+  /** Text selected on a page ("Ask Alpharouter about…"), sent with the next question. */
+  const [selections, setSelections] = useState<PageContext[]>([]);
+  // Refs for the right-click actions, which arrive from Chrome at any time.
+  const modelRef = useRef("");
+  const busyRef = useRef(false);
+  const waitingAction = useRef<PendingAction | null>(null);
+  const actionHandler = useRef<(action: PendingAction) => void>(() => undefined);
+  const composer = useRef<HTMLTextAreaElement | null>(null);
   const rules = useMemo<SiteRules>(
     () => ({
       policy: { allowed_sites: me.policy?.allowed_sites ?? [], blocked_sites: me.policy?.blocked_sites ?? [] },
@@ -82,8 +108,16 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
       .then(([rows, stored]) => {
         if (!active) return;
         const usable = textModels(rows);
+        const picked = pickModel(usable, typeof stored[MODEL_KEY] === "string" ? stored[MODEL_KEY] : null)?.id ?? "";
         setModels(usable);
-        setModelId(pickModel(usable, typeof stored[MODEL_KEY] === "string" ? stored[MODEL_KEY] : null)?.id ?? "");
+        setModelId(picked);
+        modelRef.current = picked;
+        // A right-click action that opened the panel waited for the models.
+        const waiting = waitingAction.current;
+        if (waiting && picked) {
+          waitingAction.current = null;
+          actionHandler.current(waiting);
+        }
       })
       .catch((err: unknown) => {
         if (!active) return;
@@ -104,6 +138,35 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
     if (el) el.scrollTop = el.scrollHeight;
   }, [turns]);
 
+  // The latest render's handler: the listener below lives as long as the panel.
+  useEffect(() => {
+    actionHandler.current = (action) => void runAction(action);
+  });
+
+  useEffect(() => {
+    let active = true;
+    const check = () => {
+      chrome.windows
+        .getCurrent()
+        .then((win) => (win.id === undefined ? null : takePendingAction(win.id)))
+        .then((action) => {
+          if (!active || !action) return;
+          if (modelRef.current) actionHandler.current(action);
+          else waitingAction.current = action;
+        })
+        .catch(() => undefined);
+    };
+    const listener = (message: unknown, sender: chrome.runtime.MessageSender) => {
+      if (fromOwnPages(sender) && isExtensionMessage(message) && message.type === "pending-action") check();
+    };
+    check();
+    chrome.runtime.onMessage.addListener(listener);
+    return () => {
+      active = false;
+      chrome.runtime.onMessage.removeListener(listener);
+    };
+  }, []);
+
   const version = chrome.runtime.getManifest().version;
   const tooOld = compareVersions(version, me.extension.min_version || "0") < 0;
   const newer = me.extension.latest_version && compareVersions(version, me.extension.latest_version) < 0;
@@ -111,26 +174,47 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
     target && activePage && attachFor && attachFor.tabId === activePage.tabId && attachFor.origin === target.origin,
   );
   const pageModels = me.policy?.page_content_models ?? [];
-  /** Why "This page" cannot be used right now, if it cannot. */
-  const pageBlock = target
-    ? (pageRefusal(target.host, rules) ??
-      (pageModels.length && !pageModels.includes(modelId)
+
+  /** Why this site's pages cannot go to this model, if they cannot. */
+  function pageBlockFor(host: string, model: string): string | null {
+    return (
+      pageRefusal(host, rules) ??
+      (pageModels.length && !pageModels.includes(model)
         ? "Your administrator does not allow pages to be sent to this model. Choose another model."
-        : null))
-    : null;
+        : null)
+    );
+  }
+
+  /** "This page", unless the rules keep it from going right now. */
+  const pageBlock = target ? pageBlockFor(target.host, modelId) : null;
+
+  /** A chat carries pages from at most as many sites as the server accepts in one request. */
+  function siteLimitError(hosts: string[]): string | null {
+    const sites = new Set(pagesIn(turns).map((page) => page.host));
+    for (const host of hosts) sites.add(host);
+    return sites.size > MAX_PAGE_SITES
+      ? `This chat already has pages from ${MAX_PAGE_SITES} sites. Start a new chat to share more.`
+      : null;
+  }
+
+  function markBusy(value: boolean) {
+    busyRef.current = value;
+    setBusy(value);
+  }
 
   function chooseModel(id: string) {
+    modelRef.current = id;
     setModelId(id);
     void chrome.storage.local.set({ [MODEL_KEY]: id });
   }
 
-  async function nameTheChat(sid: string, question: string, answer: string) {
+  async function nameTheChat(sid: string, question: string, answer: string, model: string) {
     const { api } = getClient();
     try {
       const { title } = await api.json<{ title: string }>("/api/chat/session-title", {
         method: "POST",
         body: JSON.stringify({
-          model: modelId,
+          model,
           messages: [
             { role: "user", content: question },
             { role: "assistant", content: answer },
@@ -174,15 +258,20 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
       .catch(() => setBanner("Chrome could not ask for permission. Try again."));
   }
 
-  /** The page to send with this question, read now; null when none; throws PageReadError. */
-  async function pageToSend(): Promise<PageContext | null> {
-    if (!attached || !activePage || !target) return null;
-    if (pageBlock) throw new PageReadError(pageBlock);
-    const sites = new Set(pagesIn(turns).map((page) => page.host));
-    if (!sites.has(target.host) && sites.size >= MAX_PAGE_SITES) {
-      throw new PageReadError(`This chat already has pages from ${MAX_PAGE_SITES} sites. Start a new chat to share more.`);
+  /** Read a tab's page for the question about to go; the banner says why not, and null comes back. */
+  async function readForQuestion(tab: { id: number; url: string }): Promise<PageContext | null> {
+    markBusy(true);
+    setReading(true);
+    setBanner("");
+    try {
+      return (await readPage(tab, rules)).page;
+    } catch (err) {
+      setBanner(err instanceof PageReadError ? err.message : "Alpharouter could not read this page.");
+      return null;
+    } finally {
+      setReading(false);
+      markBusy(false);
     }
-    return (await readPage({ id: activePage.tabId, url: activePage.url }, rules)).page;
   }
 
   /** The server refused a site: its pages leave the conversation, so the next question can go. */
@@ -194,31 +283,35 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
 
   async function send() {
     const text = draft.trim();
-    if (!text || busy || !modelId) return;
-    let page: PageContext | null = null;
-    if (attached) {
-      setBusy(true);
-      setReading(true);
-      setBanner("");
-      try {
-        page = await pageToSend();
-      } catch (err) {
-        setBanner(err instanceof PageReadError ? err.message : "Alpharouter could not read this page.");
-        return;
-      } finally {
-        setReading(false);
-        setBusy(false);
-      }
-      setAttachFor(null);
+    if (!text || busyRef.current || !modelId) return;
+    const pages = [...selections];
+    const tab = attached && activePage && target ? { id: activePage.tabId, url: activePage.url, host: target.host } : null;
+    const hosts = [...pages.map((page) => page.host), ...(tab ? [tab.host] : [])];
+    const refused = hosts.map((host) => pageBlockFor(host, modelId)).find(Boolean) ?? (hosts.length ? siteLimitError(hosts) : null);
+    if (refused) {
+      setBanner(refused);
+      return;
     }
-    const user: Turn = { id: crypto.randomUUID(), role: "user", content: text, ...(page ? { pages: [page] } : {}) };
+    if (tab) {
+      const page = await readForQuestion(tab);
+      if (!page) return;
+      pages.push(page);
+    }
+    setAttachFor(null);
+    setSelections([]);
+    setDraft("");
+    await sendTurn(text, pages, modelId);
+  }
+
+  /** A question for the model, with the pages that go with it. */
+  async function sendTurn(text: string, pages: PageContext[], model: string) {
+    const user: Turn = { id: crypto.randomUUID(), role: "user", content: text, ...(pages.length ? { pages } : {}) };
     const assistant: Turn = { id: crypto.randomUUID(), role: "assistant", content: "", streaming: true };
     const history = turns;
     if (!privateMode) sessionId.current ??= crypto.randomUUID();
     const sid = privateMode ? null : sessionId.current;
     setTurns([...history, user, assistant]);
-    setDraft("");
-    setBusy(true);
+    markBusy(true);
     setBanner("");
     const abort = new AbortController();
     controller.current = abort;
@@ -228,14 +321,14 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
       const response = await getClient().api.request("/api/chat/completions", {
         method: "POST",
         body: JSON.stringify(
-          completionBody({ model: modelId, history, user, assistantId: assistant.id, sessionId: sid, sentAt: Date.now() }),
+          completionBody({ model, history, user, assistantId: assistant.id, sessionId: sid, sentAt: Date.now() }),
         ),
         signal: abort.signal,
       });
       if (!response.ok) throw await ApiError.from(response);
       const result = await readChatStream(response, { onText: (full) => update({ content: full }) });
       update({ content: result.text, streaming: false });
-      if (sid && history.length === 0 && result.text) void nameTheChat(sid, text, result.text);
+      if (sid && history.length === 0 && result.text) void nameTheChat(sid, text, result.text, model);
     } catch (err) {
       if (abort.signal.aborted) update({ streaming: false, stopped: true });
       else if (err instanceof DisconnectedError) disconnected.current();
@@ -247,8 +340,45 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
       }
     } finally {
       controller.current = null;
-      setBusy(false);
+      markBusy(false);
     }
+  }
+
+  /** A right-click action: summarize the page, or explain, translate or ask about the selection. */
+  async function runAction(action: PendingAction) {
+    if (!me.features.chat || tooOld) return;
+    if (busyRef.current) {
+      setBanner("Alpharouter is still answering. Stop it or wait, then try again.");
+      return;
+    }
+    const model = modelRef.current;
+    const page = me.features.page_context ? readablePage(action.pageUrl) : null;
+    if (!page) {
+      setBanner("Alpharouter cannot read this page.");
+      return;
+    }
+    const refused = pageBlockFor(page.host, model) ?? siteLimitError([page.host]);
+    if (refused) {
+      setBanner(refused);
+      return;
+    }
+    if (action.kind === "summarize") {
+      const read = await readForQuestion({ id: action.tabId, url: action.pageUrl });
+      if (read) await sendTurn(ACTION_QUESTIONS.summarize, [read], model);
+      return;
+    }
+    const selected = selectionContext(action.pageUrl, action.title, action.selection);
+    if (!selected) {
+      setBanner("Select some text on the page first.");
+      return;
+    }
+    setBanner("");
+    if (action.kind === "ask") {
+      setSelections((all) => [...all.filter((item) => item.text !== selected.text || item.host !== selected.host), selected]);
+      composer.current?.focus();
+      return;
+    }
+    await sendTurn(ACTION_QUESTIONS[action.kind], [selected], model);
   }
 
   function stop() {
@@ -265,6 +395,7 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
   function newChat() {
     if (busy) stop();
     setTurns([]);
+    setSelections([]);
     setBanner("");
     sessionId.current = null;
   }
@@ -367,7 +498,9 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
             {turn.pages?.map((shared, index) => (
               <p key={index} className="turn__page" title={shared.url}>
                 <PageIcon />
-                <span className="turn__page-title">{shared.title || shared.host}</span>
+                <span className="turn__page-title">
+                  {shared.part === "selection" ? "Selected text" : shared.title || shared.host}
+                </span>
                 <span className="turn__page-site">{shared.truncated ? `${shared.host}, first part` : shared.host}</span>
               </p>
             ))}
@@ -395,20 +528,38 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
           void send();
         }}
       >
-        {target && activePage && (
+        {(selections.length > 0 || (target && activePage)) && (
           <div className="chat__context">
-            <button
-              type="button"
-              className={`chip${attached ? " chip--on" : ""}`}
-              aria-pressed={attached}
-              disabled={Boolean(pageBlock) || busy}
-              onClick={togglePage}
-              title={activePage.url}
-            >
-              <PageIcon />
-              <span className="chip__label">{attached ? "Sending this page" : "This page"}</span>
-              <span className="chip__site">{activePage.title || target.host}</span>
-            </button>
+            {selections.map((selected, index) => (
+              <span key={index} className="chip chip--on chip--static" title={selected.text.slice(0, 300)}>
+                <PageIcon />
+                <span className="chip__label">Selected text</span>
+                <span className="chip__site">{selected.host}</span>
+                <button
+                  type="button"
+                  className="chip__remove"
+                  aria-label={`Remove the text selected on ${selected.host}`}
+                  disabled={busy}
+                  onClick={() => setSelections((all) => all.filter((_, i) => i !== index))}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+            {target && activePage && (
+              <button
+                type="button"
+                className={`chip${attached ? " chip--on" : ""}`}
+                aria-pressed={attached}
+                disabled={Boolean(pageBlock) || busy}
+                onClick={togglePage}
+                title={activePage.url}
+              >
+                <PageIcon />
+                <span className="chip__label">{attached ? "Sending this page" : "This page"}</span>
+                <span className="chip__site">{activePage.title || target.host}</span>
+              </button>
+            )}
             {reading && (
               <span className="chat__context-note" role="status">
                 Reading the page…
@@ -418,6 +569,7 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
           </div>
         )}
         <textarea
+          ref={composer}
           aria-label="Message"
           value={draft}
           rows={2}

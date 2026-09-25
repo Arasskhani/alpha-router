@@ -163,7 +163,11 @@ export function installChromeFake(options: { version?: string } = {}) {
       onClicked,
     },
     commands: { onCommand: event() },
-    windows: { WINDOW_ID_CURRENT: -2 },
+    windows: {
+      WINDOW_ID_CURRENT: -2,
+      /** The window of the page asking: the side panel's. */
+      getCurrent: vi.fn(async () => ({ id: CURRENT_WINDOW }) as chrome.windows.Window),
+    },
   };
   vi.stubGlobal("chrome", fake);
   return fake;

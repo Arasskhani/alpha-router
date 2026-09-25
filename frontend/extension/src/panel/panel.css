@@ -441,3 +441,22 @@ button {
   font-size: 0.78rem;
   line-height: 1.4;
 }
+
+.chip--static {
+  cursor: default;
+}
+
+.chip__remove {
+  flex: none;
+  padding: 0 0.15rem;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.chip__remove:disabled {
+  cursor: default;
+}

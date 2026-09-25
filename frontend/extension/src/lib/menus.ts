@@ -1,0 +1,52 @@
+/**
+ * The right-click menu: summarize the page, or explain, translate or ask
+ * about the selection. Each item opens the side panel and leaves the work
+ * there (see pendingAction.ts).
+ *
+ * A click on one of them also grants the extension that tab for as long as it
+ * shows the same page (Chrome's activeTab), so it works on a site the user has
+ * not granted yet, without a prompt.
+ */
+
+import { broadcast } from "./messages";
+import { savePendingAction, type PendingActionKind } from "./pendingAction";
+
+const WEB_PAGES = ["http://*/*", "https://*/*"];
+/** Selected text kept from a click; the model sees at most this much of it. */
+export const MAX_MENU_SELECTION_CHARS = 10_000;
+
+type MenuItem = { id: string; kind: PendingActionKind; title: string; on: "page" | "selection" };
+
+const MENU_ITEMS: MenuItem[] = [
+  { id: "alpharouter-summarize", kind: "summarize", title: "Summarize this page", on: "page" },
+  { id: "alpharouter-explain", kind: "explain", title: "Explain “%s”", on: "selection" },
+  { id: "alpharouter-translate", kind: "translate", title: "Translate “%s” to Persian", on: "selection" },
+  { id: "alpharouter-ask", kind: "ask", title: "Ask Alpharouter about “%s”", on: "selection" },
+];
+
+/** Chrome keeps menus across worker restarts, so they are made once, on install or update. */
+export function createMenus(): void {
+  chrome.contextMenus.removeAll(() => {
+    for (const item of MENU_ITEMS) {
+      chrome.contextMenus.create({ id: item.id, title: item.title, contexts: [item.on], documentUrlPatterns: WEB_PAGES });
+    }
+  });
+}
+
+export function handleMenuClick(info: chrome.contextMenus.OnClickData, tab?: chrome.tabs.Tab): void {
+  const item = MENU_ITEMS.find((entry) => entry.id === info.menuItemId);
+  if (!item || tab?.id === undefined || tab.windowId === undefined || tab.windowId < 0) return;
+  // First, while Chrome still counts the click as the user's: nothing may come before it.
+  chrome.sidePanel.open({ windowId: tab.windowId }).catch(() => undefined);
+  const selection = item.on === "selection" ? (info.selectionText ?? "").slice(0, MAX_MENU_SELECTION_CHARS) : "";
+  void savePendingAction({
+    id: crypto.randomUUID(),
+    kind: item.kind,
+    tabId: tab.id,
+    windowId: tab.windowId,
+    pageUrl: info.pageUrl || tab.url || "",
+    title: tab.title ?? "",
+    selection,
+    createdAt: Date.now(),
+  }).then(() => broadcast({ type: "pending-action" }));
+}

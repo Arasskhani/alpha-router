@@ -32,6 +32,7 @@ from typing import Any
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.extension import ExtensionEvent
 from app.models.security import SecurityAuditEvent
 from app.models.system import SystemSetting
 
@@ -46,6 +47,11 @@ MAX_RETENTION_DAYS = 3650
 #: Batched so a first run against a table that has never been pruned cannot
 #: hold one enormous transaction open.
 _PURGE_BATCH_SIZE = 5000
+
+#: The trails these windows apply to, each with what its detail becomes when
+#: blanked. The browser extension's trail (pages shared, agent steps) keeps a
+#: non-null detail column, so it is emptied rather than nulled.
+_PRUNED_TRAILS: tuple[tuple[Any, str | None], ...] = ((SecurityAuditEvent, None), (ExtensionEvent, "{}"))
 
 
 def _now() -> datetime.datetime:
@@ -73,34 +79,23 @@ async def get_event_retention_days(db: AsyncSession) -> int:
     return await _setting(db, KEY_EVENT_RETENTION_DAYS, DEFAULT_EVENT_RETENTION_DAYS)
 
 
+async def _count(db: AsyncSession, model: Any, *conditions: Any) -> int:
+    return int((await db.execute(select(func.count()).select_from(model).where(*conditions))).scalar_one() or 0)
+
+
 async def get_admin_log_retention(db: AsyncSession) -> dict[str, Any]:
     """The block the Retention Policy page renders."""
     detail_days = await get_detail_retention_days(db)
     event_days = await get_event_retention_days(db)
-    stored = int((await db.execute(select(func.count()).select_from(SecurityAuditEvent))).scalar_one() or 0)
     detail_cutoff = _now() - datetime.timedelta(days=detail_days)
     event_cutoff = _now() - datetime.timedelta(days=event_days)
-    expiring_details = int(
-        (
-            await db.execute(
-                select(func.count())
-                .select_from(SecurityAuditEvent)
-                .where(
-                    SecurityAuditEvent.detail_redacted_at.is_(None),
-                    SecurityAuditEvent.created_at < detail_cutoff,
-                )
-            )
-        ).scalar_one()
-        or 0
-    )
-    expiring_events = int(
-        (
-            await db.execute(
-                select(func.count()).select_from(SecurityAuditEvent).where(SecurityAuditEvent.created_at < event_cutoff)
-            )
-        ).scalar_one()
-        or 0
-    )
+    stored = expiring_details = expiring_events = 0
+    for model, _blank in _PRUNED_TRAILS:
+        stored += await _count(db, model)
+        expiring_details += await _count(
+            db, model, model.detail_redacted_at.is_(None), model.created_at < detail_cutoff
+        )
+        expiring_events += await _count(db, model, model.created_at < event_cutoff)
     return {
         "detail_retention_days": detail_days,
         "event_retention_days": event_days,
@@ -155,42 +150,41 @@ async def purge_expired_admin_logs(db: AsyncSession) -> dict[str, int]:
     detail_days = await get_detail_retention_days(db)
     event_days = await get_event_retention_days(db)
     now = _now()
-
-    redacted = await db.execute(
-        update(SecurityAuditEvent)
-        .where(
-            SecurityAuditEvent.detail_redacted_at.is_(None),
-            SecurityAuditEvent.created_at < now - datetime.timedelta(days=detail_days),
-        )
-        .values(detail_json=None, detail_redacted_at=now)
-    )
-
+    detail_cutoff = now - datetime.timedelta(days=detail_days)
     event_cutoff = now - datetime.timedelta(days=event_days)
+
+    redacted = 0
     deleted = 0
-    while True:
-        ids = (
-            (
-                await db.execute(
-                    select(SecurityAuditEvent.id)
-                    .where(SecurityAuditEvent.created_at < event_cutoff)
-                    .limit(_PURGE_BATCH_SIZE)
-                )
-            )
-            .scalars()
-            .all()
+    for model, blank in _PRUNED_TRAILS:
+        result = await db.execute(
+            update(model)
+            .where(model.detail_redacted_at.is_(None), model.created_at < detail_cutoff)
+            .values(detail_json=blank, detail_redacted_at=now)
         )
-        if not ids:
-            break
-        result = await db.execute(delete(SecurityAuditEvent).where(SecurityAuditEvent.id.in_(list(ids))))
-        deleted += int(result.rowcount or 0)
-        await db.commit()
-        if len(ids) < _PURGE_BATCH_SIZE:
-            break
+        redacted += int(result.rowcount or 0)
+        deleted += await _delete_before(db, model, event_cutoff)
 
     await db.commit()
     return {
         "detail_retention_days": detail_days,
         "event_retention_days": event_days,
-        "details_redacted": int(redacted.rowcount or 0),
+        "details_redacted": redacted,
         "events_deleted": deleted,
     }
+
+
+async def _delete_before(db: AsyncSession, model: Any, cutoff: datetime.datetime) -> int:
+    deleted = 0
+    while True:
+        ids = (
+            (await db.execute(select(model.id).where(model.created_at < cutoff).limit(_PURGE_BATCH_SIZE)))
+            .scalars()
+            .all()
+        )
+        if not ids:
+            return deleted
+        result = await db.execute(delete(model).where(model.id.in_(list(ids))))
+        deleted += int(result.rowcount or 0)
+        await db.commit()
+        if len(ids) < _PURGE_BATCH_SIZE:
+            return deleted

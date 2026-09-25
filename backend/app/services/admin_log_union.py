@@ -1,4 +1,4 @@
-"""One shape over the product's nine administrative audit trails.
+"""One shape over the product's ten administrative audit trails.
 
 Each trail keeps its own table, with its own reasons: the governance chain is
 hash-linked and append-only, the agent and knowledge trails are guarded by
@@ -8,6 +8,10 @@ projection - source, time, actor, action, resource, detail - so the Admin Logs
 page can show an investigation everything that happened, in one order.
 
 Adding a trail is one more entry in ``SOURCES``.
+
+The tenth, ``browser_extension``, is what the browser extension did for each
+person: a page shared with a model (the site, how much text, which model, never
+the text), and later each step of the browser agent.
 
 The ninth, ``authentication``, is the one that was here before under another
 name: sign-ins used to be three ``action`` values in the security trail, and
@@ -32,6 +36,7 @@ from app.models.auth_event import AuthEvent
 from app.models.agent_tool import AgentToolAuditEvent
 from app.models.api_key import AlphaRouterApiKeyAuditLog
 from app.models.connection import ConnectionAuditLog
+from app.models.extension import ExtensionEvent
 from app.models.governance import GovernanceAuditEvent
 from app.models.knowledge import KnowledgeAuditEvent
 from app.models.project import ProjectAuditEvent
@@ -236,6 +241,20 @@ SOURCES: dict[str, Source] = {
             outcome=AuthEvent.outcome,
             created_at=AuthEvent.occurred_at,
             actor_user_id=AuthEvent.user_id,
+        ),
+        # Each row is about one site: the host, never a full URL.
+        Source(
+            key="browser_extension",
+            label="Browser extension",
+            model=ExtensionEvent,
+            action=ExtensionEvent.kind,
+            resource_type=literal("site"),
+            resource_id=ExtensionEvent.site,
+            detail=ExtensionEvent.detail_json,
+            actor_username=ExtensionEvent.actor_username,
+            actor_ip=ExtensionEvent.actor_ip,
+            outcome=ExtensionEvent.outcome,
+            detail_redacted_at=ExtensionEvent.detail_redacted_at,
         ),
     )
 }

@@ -24,6 +24,7 @@ from app.models.agent_tool import AgentToolAuditEvent
 from app.models.api_key import AlphaRouterApiKey, AlphaRouterApiKeyAuditLog
 from app.models.auth_event import AuthEvent
 from app.models.connection import Connection, ConnectionAuditLog
+from app.models.extension import ExtensionEvent
 from app.models.governance import GovernanceAuditEvent
 from app.models.knowledge import KnowledgeAuditEvent
 from app.models.project import ProjectAuditEvent
@@ -125,6 +126,16 @@ async def _seed(db_session) -> User:
                 ip="203.0.113.7",
                 session_id=None,
             ),
+            ExtensionEvent(
+                actor_user_id=actor.id,
+                actor_username="auditor",
+                actor_ip="198.51.100.4",
+                session_id="browser-1",
+                kind="page_context",
+                site="wiki.example.com",
+                detail_json='{"chars":1200,"model":"model::3","model_name":"GPT","private":false}',
+                created_at=_at(10),
+            ),
         ]
     )
     await db_session.commit()
@@ -148,13 +159,14 @@ def _args(db, **overrides):
     return base
 
 
-async def test_all_nine_trails_appear_in_one_list_newest_first(db_session):
+async def test_all_ten_trails_appear_in_one_list_newest_first(db_session):
     await _seed(db_session)
 
     result = await list_admin_logs(**_args(db_session))
 
     sources = [row["source"] for row in result["items"]]
     assert sources == [
+        "browser_extension",
         "authentication",
         "connections",
         "api_keys",
@@ -166,7 +178,7 @@ async def test_all_nine_trails_appear_in_one_list_newest_first(db_session):
         "security",
     ]
     actions = [row["action"] for row in result["items"]]
-    assert actions[0] == "login_failed" and actions[-1] == "tls_activate"
+    assert actions[0] == "page_context" and actions[-1] == "tls_activate"
 
 
 async def test_every_row_names_its_actor_even_where_the_table_stores_only_an_id(db_session):
@@ -175,16 +187,17 @@ async def test_every_row_names_its_actor_even_where_the_table_stores_only_an_id(
     result = await list_admin_logs(**_args(db_session))
 
     assert {row["actor_username"] for row in result["items"]} == {"auditor"}
-    # The security and sign-in trails store a copy of the name; the rest name only an id.
+    # The security, sign-in and extension trails store a copy of the name; the rest name only an id.
     assert all(
-        row["actor_resolved_live"] is (row["source"] not in ("security", "authentication")) for row in result["items"]
+        row["actor_resolved_live"] is (row["source"] not in ("security", "authentication", "browser_extension"))
+        for row in result["items"]
     )
 
 
 async def test_the_actor_filter_reaches_every_trail(db_session):
     await _seed(db_session)
     result = await list_admin_logs(**_args(db_session, actor="audit"))
-    assert len(result["items"]) == 9
+    assert len(result["items"]) == 10
     none = await list_admin_logs(**_args(db_session, actor="somebody-else"))
     assert none["items"] == []
 
@@ -206,11 +219,11 @@ async def test_the_default_source_is_still_the_security_trail(db_session):
 async def test_paging_across_sources_neither_repeats_nor_skips(db_session):
     await _seed(db_session)
     seen: list[str] = []
-    for offset in (0, 3, 6):
+    for offset in (0, 3, 6, 9):
         page = await list_admin_logs(**_args(db_session, limit=3, offset=offset))
         seen.extend(f"{row['source']}:{row['id']}" for row in page["items"])
-        assert page["has_more"] is (offset < 6)
-    assert len(seen) == 9 and len(set(seen)) == 9
+        assert page["has_more"] is (offset < 9)
+    assert len(seen) == 10 and len(set(seen)) == 10
 
 
 async def test_the_resource_type_is_the_kind_of_thing_each_trail_is_about(db_session):
@@ -227,7 +240,7 @@ async def test_the_resource_type_is_the_kind_of_thing_each_trail_is_about(db_ses
 async def test_the_date_range_applies_to_the_union(db_session):
     await _seed(db_session)
     result = await list_admin_logs(**_args(db_session, start_date="2026-09-19", end_date="2026-09-19"))
-    assert len(result["items"]) == 9
+    assert len(result["items"]) == 10
     none = await list_admin_logs(**_args(db_session, start_date="2026-09-20"))
     assert none["items"] == []
 
@@ -278,3 +291,29 @@ async def test_the_filter_panel_offers_sign_in_actions_and_the_account(db_sessio
     assert options["actions"] == ["login_failed"]
     assert options["resource_types"] == ["authentication"]
     assert options["actors"] == ["auditor"]
+
+
+async def test_pages_shared_from_the_browser_extension_are_a_trail(db_session):
+    """One row per site: who shared it, from where, how much text and to which model - never the text."""
+    await _seed(db_session)
+
+    only = await list_admin_logs(**_args(db_session, source="browser_extension"))
+    assert len(only["items"]) == 1
+    row = only["items"][0]
+    assert row["action"] == "page_context"
+    assert row["resource_type"] == "site"
+    assert row["resource_id"] == "wiki.example.com"
+    assert row["actor_username"] == "auditor"
+    assert row["actor_ip"] == "198.51.100.4"
+    assert row["actor_resolved_live"] is False
+    assert row["detail"] == {"chars": 1200, "model": "model::3", "model_name": "GPT", "private": False}
+
+    by_type = await list_admin_logs(**_args(db_session, resource_type="site"))
+    assert [r["source"] for r in by_type["items"]] == ["browser_extension"]
+    options = await admin_log_filter_options(db=db_session, _=None, source="browser_extension")
+    assert options == {
+        "sources": ["browser_extension"],
+        "actions": ["page_context"],
+        "resource_types": ["site"],
+        "actors": ["auditor"],
+    }

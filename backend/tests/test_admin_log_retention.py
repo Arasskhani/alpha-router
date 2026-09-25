@@ -17,6 +17,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.extension import ExtensionEvent
 from app.models.security import SecurityAuditEvent
 from app.models.user import User
 from app.services.admin_log_retention_service import (
@@ -200,6 +201,59 @@ class TestPurge:
     async def test_an_empty_table_is_not_an_error(self, db):
         result = await purge_expired_admin_logs(db)
         assert result["details_redacted"] == 0 and result["events_deleted"] == 0
+
+
+class TestTheBrowserExtensionTrail:
+    """Pages shared from the browser follow the same two windows as the security trail."""
+
+    async def _shared(self, db, *, days_old: int) -> ExtensionEvent:
+        row = ExtensionEvent(
+            actor_username="someone",
+            kind="page_context",
+            site="wiki.example.com",
+            detail_json='{"chars":10}',
+            created_at=datetime.datetime.now(datetime.UTC).replace(tzinfo=None) - datetime.timedelta(days=days_old),
+        )
+        db.add(row)
+        await db.flush()
+        return row
+
+    async def test_detail_is_emptied_and_the_row_kept(self, db):
+        await set_admin_log_retention(db, detail_retention_days=30, event_retention_days=3650)
+        old = await self._shared(db, days_old=90)
+        recent = await self._shared(db, days_old=1)
+        await db.commit()
+
+        result = await purge_expired_admin_logs(db)
+        assert result["details_redacted"] == 1
+        await db.refresh(old)
+        await db.refresh(recent)
+        # The column stays non-null: emptied, not nulled.
+        assert old.detail_json == "{}" and old.detail_redacted_at is not None
+        assert old.site == "wiki.example.com"
+        assert recent.detail_json == '{"chars":10}' and recent.detail_redacted_at is None
+
+    async def test_rows_past_the_longer_window_are_deleted(self, db):
+        await set_admin_log_retention(db, detail_retention_days=10, event_retention_days=30)
+        await self._shared(db, days_old=90)
+        await self._shared(db, days_old=1)
+        await _event(db, days_old=90)
+        await db.commit()
+
+        result = await purge_expired_admin_logs(db)
+        assert result["events_deleted"] == 2
+        assert len((await db.execute(select(ExtensionEvent))).scalars().all()) == 1
+
+    async def test_the_page_counts_it(self, db):
+        await set_admin_log_retention(db, detail_retention_days=30, event_retention_days=60)
+        await self._shared(db, days_old=90)
+        await _event(db, days_old=45)
+        await db.commit()
+
+        state = await get_admin_log_retention(db)
+        assert state["stored_events"] == 2
+        assert state["expiring_details"] == 2
+        assert state["expiring_events"] == 1
 
 
 class _Request:

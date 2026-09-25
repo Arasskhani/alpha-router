@@ -16,12 +16,12 @@ type ContentApi = {
   agent: (method: unknown, args: unknown) => Promise<Result>;
 };
 
-/** The overlay's Stop, to the side panel; a panel that has closed is not an error. */
-function sendStop(message: { type: "agent-stop"; run: string }): void {
+/** The overlay's Stop, to the side panel: it rejects when nobody listens (the panel closed, the extension reloaded). */
+function sendStop(message: { type: "agent-stop"; run: string }): Promise<unknown> {
   try {
-    void chrome.runtime.sendMessage(message)?.catch?.(() => undefined);
-  } catch {
-    // The extension was reloaded: nobody is listening.
+    return Promise.resolve(chrome.runtime.sendMessage(message));
+  } catch (err) {
+    return Promise.reject(err);
   }
 }
 

@@ -20,8 +20,14 @@ function styled<K extends keyof HTMLElementTagNameMap>(doc: Document, tag: K, st
   return el;
 }
 
-/** Sends the stop request; the content script passes chrome.runtime.sendMessage, tests pass a spy. */
-export type StopSender = (message: { type: "agent-stop"; run: string }) => void;
+/**
+ * Sends the stop request; the content script passes chrome.runtime.sendMessage,
+ * tests pass a spy. A rejected promise means nobody is listening.
+ */
+export type StopSender = (message: { type: "agent-stop"; run: string }) => unknown;
+
+/** After Stop, the side panel takes the banner off; if it cannot, the banner goes by itself after this. */
+const STOP_FALLBACK_MS = 5000;
 
 /** Show (or update) the banner for run `run`; Stop sends `agent-stop` for that run. */
 export function showOverlay(doc: Document, run: string, label: string, send: StopSender): void {
@@ -79,7 +85,17 @@ export function showOverlay(doc: Document, run: string, label: string, send: Sto
     event.preventDefault();
     event.stopPropagation();
     text.textContent = "Stopping…";
-    send({ type: "agent-stop", run });
+    stop.disabled = true;
+    doc.defaultView?.setTimeout(() => hideOverlay(doc, run), STOP_FALLBACK_MS);
+    // Nobody listening - the side panel was closed, so the run is already over: the banner just goes.
+    let sent: unknown;
+    try {
+      sent = send({ type: "agent-stop", run });
+    } catch {
+      hideOverlay(doc, run);
+      return;
+    }
+    Promise.resolve(sent).catch(() => hideOverlay(doc, run));
   });
   box.append(text, stop);
   shadow.append(box);

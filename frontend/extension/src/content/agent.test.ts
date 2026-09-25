@@ -359,6 +359,26 @@ describe("the overlay", () => {
     expect(document.getElementById(OVERLAY_ID)).toBeNull();
   });
 
+  it("goes by itself when nobody listens to its Stop - the side panel was closed", async () => {
+    page("<p>Page</p>");
+    showOverlay(document, "run-9", "Working", () => Promise.reject(new Error("Receiving end does not exist.")));
+    const host = document.getElementById(OVERLAY_ID)!;
+    (host as unknown as { __label: HTMLElement }).__label.parentElement!.querySelector("button")!.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(document.getElementById(OVERLAY_ID)).toBeNull();
+  });
+
+  it("goes after a while even when the panel does not take it off", () => {
+    vi.useFakeTimers();
+    page("<p>Page</p>");
+    showOverlay(document, "run-10", "Working", () => undefined);
+    const host = document.getElementById(OVERLAY_ID)!;
+    (host as unknown as { __label: HTMLElement }).__label.parentElement!.querySelector("button")!.click();
+    expect(document.getElementById(OVERLAY_ID)).not.toBeNull();
+    vi.advanceTimersByTime(5000);
+    expect(document.getElementById(OVERLAY_ID)).toBeNull();
+  });
+
   it("is styled through the CSSOM only", () => {
     page("<p>Page</p>");
     showOverlay(document, "run-1", "Working", () => undefined);

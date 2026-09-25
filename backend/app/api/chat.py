@@ -29,6 +29,7 @@ from app.models.user import User
 from app.services.client_ip import resolve_client_ip
 from app.services.extension_page_context import (
     MAX_PAGE_CHARS,
+    MAX_PAGE_IMAGES,
     MAX_PAGE_SITES,
     PageContextRefused,
     PageShare,
@@ -231,10 +232,12 @@ class ChatToolsIn(BaseModel):
 
 
 class ExtensionPageSiteIn(BaseModel):
-    """A site whose page text the request carries: its host (``URL.hostname``) and how many characters."""
+    """A site whose page content the request carries: its host (``URL.hostname``), how many
+    characters of text, and how many screenshots."""
 
     host: str = Field(..., min_length=1, max_length=253)
     chars: int = Field(..., ge=0, le=MAX_PAGE_CHARS)
+    images: int = Field(0, ge=0, le=MAX_PAGE_IMAGES)
 
 
 class ExtensionPageContextIn(BaseModel):
@@ -324,7 +327,7 @@ async def _declared_page_shares(
     if conflict:
         raise HTTPException(status_code=400, detail={"code": "page_context_conflict", "message": conflict})
     try:
-        shares = page_shares((site.host, site.chars) for site in context.sites)
+        shares = page_shares((site.host, site.chars, site.images) for site in context.sites)
         model = await check_page_shares(
             db,
             shares,

@@ -10,7 +10,10 @@ can name the models that may receive page content.
 The declaration is the extension's word - the server cannot tell page text
 from text the user typed. What it makes sure of is that a page the extension
 declares goes nowhere the rules forbid, and that each one is recorded: the
-site, how much text and which model, never the text itself.
+site, how much text, how many screenshots and which model, never the content.
+
+A screenshot of a page is page content like its text: the same rules apply,
+and it may only go to a model that reads images.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import cast
 from urllib.parse import urlsplit
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,12 +32,15 @@ from app.models.model_catalog import AIModel
 from app.models.user import User
 from app.services.extension_package import normalize_origin
 from app.services.extension_settings import ExtensionSettings, normalize_page_host, site_refusal
+from app.services.model_capabilities import model_media_flags, supports_vision
 from app.services.model_resolution_service import resolve_model_row
 
 #: Sites one request may declare; the panel sends one per tab it shares.
 MAX_PAGE_SITES = 20
 #: A sanity bound on the declared size of one site's text, far above what the extension sends.
 MAX_PAGE_CHARS = 5_000_000
+#: Screenshots of one site in one request (the panel sends one per question).
+MAX_PAGE_IMAGES = 20
 
 EVENT_PAGE_CONTEXT = "page_context"
 
@@ -54,22 +61,44 @@ class PageContextRefused(Exception):
 
 @dataclass(frozen=True)
 class PageShare:
-    """One site's pages in a request: the host, and how many characters of text."""
+    """One site's pages in a request: the host, how many characters of text, how many screenshots."""
 
     host: str
     chars: int
+    images: int = 0
 
 
-def page_shares(declared: Iterable[tuple[str, int]]) -> list[PageShare]:
+def page_shares(declared: Iterable[tuple[str, int, int]]) -> list[PageShare]:
     """The declared sites, checked and merged: two tabs on one site are one share of both sizes."""
-    totals: dict[str, int] = {}
-    for raw_host, chars in declared:
+    totals: dict[str, tuple[int, int]] = {}
+    for raw_host, chars, images in declared:
         try:
             host = normalize_page_host(raw_host)
         except ValueError:
             raise PageContextRefused(400, "invalid_request", f"{raw_host!r} is not a host name.") from None
-        totals[host] = totals.get(host, 0) + int(chars)
-    return [PageShare(host=host, chars=chars) for host, chars in totals.items()]
+        had_chars, had_images = totals.get(host, (0, 0))
+        totals[host] = (had_chars + int(chars), had_images + int(images))
+    return [PageShare(host=host, chars=chars, images=images) for host, (chars, images) in totals.items()]
+
+
+def reads_images(model: AIModel) -> bool:
+    """Whether a chat model takes an image as input, as /api/chat/models reports it."""
+    external_id = str(model.external_id or "")
+    pricing_raw = cast("str | None", model.pricing_raw)
+    provider_type = cast("str | None", model.provider_type)
+    media = model_media_flags(
+        external_id=external_id,
+        is_image_model=bool(model.is_image_model),
+        is_video_model=bool(getattr(model, "is_video_model", False)),
+        pricing_raw=pricing_raw,
+        provider_type=provider_type,
+    )
+    return supports_vision(
+        external_id=external_id,
+        is_image_model=media["is_image_model"],
+        pricing_raw=pricing_raw,
+        provider_type=provider_type,
+    )
 
 
 def server_host() -> str | None:
@@ -87,7 +116,8 @@ async def check_page_shares(
     model_ref: str,
     settings: ExtensionSettings,
 ) -> AIModel | None:
-    """Refuse a blocked or unlisted site, or a model outside the admin's list; otherwise the model.
+    """Refuse a blocked or unlisted site, a model outside the admin's list, or
+    screenshots for a model that reads no images; otherwise the model.
 
     The model is the one a chat turn would resolve ``model_ref`` to, so naming
     it by its external id instead of ``model::<id>`` changes nothing. None
@@ -111,6 +141,8 @@ async def check_page_shares(
             "model_not_allowed",
             "Your administrator does not allow pages to be sent to this model. Choose another model.",
         )
+    if model is not None and any(share.images for share in shares) and not reads_images(model):
+        raise PageContextRefused(400, "model_reads_no_images", "This model does not read images. Choose another model.")
     return model
 
 
@@ -136,7 +168,14 @@ def page_share_events(
             kind=EVENT_PAGE_CONTEXT,
             site=share.host,
             detail_json=json.dumps(
-                {"chars": share.chars, "model": model_value, "model_name": model_name, "private": private},
+                {
+                    "chars": share.chars,
+                    "model": model_value,
+                    "model_name": model_name,
+                    "private": private,
+                    # Only when there were any: a text-only share reads as it always did.
+                    **({"images": share.images} if share.images else {}),
+                },
                 separators=(",", ":"),
                 sort_keys=True,
             ),

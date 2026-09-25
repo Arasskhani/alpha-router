@@ -73,7 +73,12 @@ def turn(monkeypatch) -> FakeTurn:
     return fake
 
 
-async def _model(db, external_id: str) -> AIModel:
+#: A catalog entry that says the model takes images as well as text.
+READS_IMAGES = json.dumps({"architecture": {"input_modalities": ["text", "image"], "output_modalities": ["text"]}})
+TEXT_ONLY = json.dumps({"architecture": {"input_modalities": ["text"], "output_modalities": ["text"]}})
+
+
+async def _model(db, external_id: str, *, pricing_raw: str | None = None) -> AIModel:
     connection = Connection(
         name=f"c-{external_id}", provider_type="openai", api_key_encrypted=encrypt_secret("sk-x"), is_active=True
     )
@@ -85,6 +90,7 @@ async def _model(db, external_id: str) -> AIModel:
         display_name=f"Model {external_id}",
         provider_type="openai",
         is_enabled=True,
+        pricing_raw=pricing_raw,
     )
     db.add(row)
     await db.commit()
@@ -108,10 +114,14 @@ async def browser(db_session, user) -> SimpleNamespace:
     return SimpleNamespace(session_id=pair.session_id, headers={"Authorization": f"Bearer {pair.access_token}"})
 
 
-def _body(model: str, *sites: tuple[str, int], **extra) -> dict:
+def _body(model: str, *sites: tuple[str, int] | tuple[str, int, int], **extra) -> dict:
     body: dict = {"model": model, "messages": [{"role": "user", "content": "What is on this page?"}], **extra}
     if sites:
-        body["extension_page_context"] = {"sites": [{"host": host, "chars": chars} for host, chars in sites]}
+        body["extension_page_context"] = {
+            "sites": [
+                {"host": site[0], "chars": site[1], **({"images": site[2]} if len(site) > 2 else {})} for site in sites
+            ]
+        }
     return body
 
 
@@ -406,6 +416,71 @@ class TestRefused:
         assert turn.preflights == []
 
 
+class TestScreenshots:
+    async def test_a_screenshot_goes_to_a_model_that_reads_images_and_is_recorded(
+        self, client, browser, db_session, turn, session_factory
+    ):
+        vision = await _model(db_session, "vision-model", pricing_raw=READS_IMAGES)
+        resp = await client.post(
+            "/api/chat/completions",
+            json=_body(f"model::{vision.id}", ("docs.example.com", 0, 1)),
+            headers=browser.headers,
+        )
+        assert resp.status_code == 200, resp.text
+        [event] = await _events(session_factory)
+        assert json.loads(event.detail_json) == {
+            "chars": 0,
+            "images": 1,
+            "model": f"model::{vision.id}",
+            "model_name": "Model vision-model",
+            "private": False,
+        }
+        # A screenshot is page content: the answer is marked like any other.
+        assert turn.preflights[0]["payload"][PAGE_CONTEXT_BODY_KEY] == ["docs.example.com"]
+
+    async def test_not_to_a_model_that_reads_no_images(self, client, browser, db_session, turn, session_factory):
+        text_only = await _model(db_session, "text-model", pricing_raw=TEXT_ONLY)
+        resp = await client.post(
+            "/api/chat/completions",
+            json=_body(f"model::{text_only.id}", ("docs.example.com", 120), ("wiki.example.org", 0, 1)),
+            headers=browser.headers,
+        )
+        assert resp.status_code == 400
+        assert resp.json()["detail"]["code"] == "model_reads_no_images"
+        assert turn.preflights == []
+        assert await _events(session_factory) == []
+
+    async def test_text_alone_is_fine_for_that_model(self, client, browser, db_session, turn):
+        text_only = await _model(db_session, "text-model", pricing_raw=TEXT_ONLY)
+        resp = await client.post(
+            "/api/chat/completions",
+            json=_body(f"model::{text_only.id}", ("docs.example.com", 120, 0)),
+            headers=browser.headers,
+        )
+        assert resp.status_code == 200, resp.text
+
+    async def test_the_site_rules_apply_to_screenshots_too(self, client, browser, db_session, turn):
+        vision = await _model(db_session, "vision-model", pricing_raw=READS_IMAGES)
+        await _settings(db_session, blocked_sites=("docs.example.com",))
+        resp = await client.post(
+            "/api/chat/completions",
+            json=_body(f"model::{vision.id}", ("docs.example.com", 0, 1)),
+            headers=browser.headers,
+        )
+        assert resp.status_code == 403
+        assert resp.json()["detail"]["code"] == "site_not_allowed"
+
+    @pytest.mark.parametrize("images", [-1, 21])
+    async def test_the_count_is_bounded(self, client, browser, db_session, turn, images):
+        vision = await _model(db_session, "vision-model", pricing_raw=READS_IMAGES)
+        resp = await client.post(
+            "/api/chat/completions",
+            json=_body(f"model::{vision.id}", ("docs.example.com", 0, images)),
+            headers=browser.headers,
+        )
+        assert resp.status_code == 422
+
+
 class TestOtherTurns:
     async def test_an_extension_turn_without_a_page(self, client, browser, models, turn, session_factory):
         resp = await client.post("/api/chat/completions", json=_body(f"model::{models.a.id}"), headers=browser.headers)
@@ -449,10 +524,16 @@ class TestTitles:
 
 class TestPageShares:
     def test_hosts_are_normalized_like_the_browser_reports_them(self):
-        shares = page_shares([("Bücher.Example.", 3), ("[::1]", 4), ("10.0.0.5", 1), ("my_server.local", 2)])
+        shares = page_shares(
+            [("Bücher.Example.", 3, 0), ("[::1]", 4, 0), ("10.0.0.5", 1, 0), ("my_server.local", 2, 0)]
+        )
         assert [(s.host, s.chars) for s in shares] == [
             ("xn--bcher-kva.example", 3),
             ("[::1]", 4),
             ("10.0.0.5", 1),
             ("my_server.local", 2),
         ]
+
+    def test_two_entries_for_one_site_add_up_text_and_screenshots(self):
+        [share] = page_shares([("example.com", 100, 0), ("Example.com.", 20, 1)])
+        assert (share.host, share.chars, share.images) == ("example.com", 120, 1)

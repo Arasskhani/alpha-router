@@ -2,6 +2,7 @@
 
 import secrets
 from dataclasses import dataclass
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -211,10 +212,23 @@ async def list_models(request: Request, db: AsyncSession = Depends(get_db)):
     }
 
 
+def _without_internal_keys(body: Any) -> dict:
+    """The client's body without keys the server itself uses to pass decisions along.
+
+    The pipeline carries its own decisions in ``_``-prefixed body keys
+    (``_idempotency_key``, ``_effective_private_mode``, ``_page_context_sites``,
+    ...). Each is set by the server, but this body arrives as the client wrote
+    it; no key of that shape belongs to the OpenAI API, so none is let through.
+    """
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="The request body must be a JSON object.")
+    return {key: value for key, value in body.items() if not str(key).startswith("_")}
+
+
 @router.post("/v1/chat/completions")
 async def chat_completions(request: Request, db: AsyncSession = Depends(get_db)):
     auth_ctx = await _resolve_gateway_auth(request, db)
-    body = await request.json()
+    body = _without_internal_keys(await request.json())
     if request.headers.get("Idempotency-Key"):
         body["_idempotency_key"] = request.headers["Idempotency-Key"]
 
@@ -273,7 +287,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
 @router.post("/v1/embeddings")
 async def embeddings(request: Request, db: AsyncSession = Depends(get_db)):
     auth_ctx = await _resolve_gateway_auth(request, db)
-    body = await request.json()
+    body = _without_internal_keys(await request.json())
     if request.headers.get("Idempotency-Key"):
         body["_idempotency_key"] = request.headers["Idempotency-Key"]
     payload = await create_embedding(

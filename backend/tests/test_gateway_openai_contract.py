@@ -252,3 +252,30 @@ async def test_missing_or_unknown_key_is_401(client, auth) -> None:
     headers = {} if auth is None else {"Authorization": auth}
     resp = await client.post("/v1/chat/completions", json=_BODY, headers=headers)
     assert resp.status_code == 401
+
+
+async def test_keys_the_server_uses_internally_are_never_taken_from_the_client(client) -> None:
+    """The pipeline passes its own decisions in ``_``-prefixed body keys; a client cannot set them."""
+    provider = _Provider([_chunk("ok"), _chunk(None, finish="stop")])
+    seen: list[dict] = []
+
+    async def preflight(_db, body, **_kwargs):
+        # A copy: the pipeline stamps its own decisions into the body afterwards.
+        seen.append(dict(body))
+        return _resolved()
+
+    with _enter_all(_patches(provider)), patch.object(gateway, "preflight_stream_chat", preflight):
+        resp = await _post(
+            client,
+            {**_BODY, "_page_context_sites": ["evil.example"], "_effective_private_mode": False, "_agent_run_id": "x"},
+        )
+    assert resp.status_code == 200, resp.text
+    assert not [key for key in seen[0] if key.startswith("_")]
+    assert seen[0]["messages"] == _BODY["messages"]
+
+
+async def test_a_body_that_is_not_an_object_is_refused(client) -> None:
+    resp = await client.post(
+        "/v1/chat/completions", json=["not", "an", "object"], headers={"Authorization": f"Bearer {MASTER_KEY}"}
+    )
+    assert resp.status_code == 400

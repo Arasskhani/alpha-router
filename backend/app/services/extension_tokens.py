@@ -543,11 +543,12 @@ def needs_touch(session: ExtensionSession, now: datetime.datetime | None = None)
 
 
 async def touch_session(session_id: str, *, ip: str | None) -> None:
-    """Record use, at most once a minute, in a session of its own.
+    """Record use, at most once a minute, in a transaction of its own.
 
-    Not the request's: a GET never commits, and a long request would hold the
-    row (and with it, a refresh) until it ends. A failure costs a stale
-    "last used", never the request.
+    Not the request's: that commits only when the request ends, and a chat
+    stream lasts minutes - holding the row's lock that long would make a
+    refresh of the same session wait for it. A failure costs a stale "last
+    used", never the request.
     """
     now = _now()
     try:
@@ -564,6 +565,27 @@ async def touch_session(session_id: str, *, ip: str | None) -> None:
             await db.commit()
     except Exception:  # noqa: BLE001 -- bookkeeping only
         logger.debug("could not record extension session use", exc_info=True)
+
+
+_touches: set[asyncio.Task[None]] = set()
+
+
+def schedule_touch(session_id: str, *, ip: str | None) -> None:
+    """Record use beside the request instead of inside it.
+
+    The request already holds a database connection; waiting for a second one
+    would stall authentication whenever the pool is busy. Kept referenced until
+    done, so the task is not collected half-way.
+    """
+    task = asyncio.get_running_loop().create_task(touch_session(session_id, ip=ip))
+    _touches.add(task)
+    task.add_done_callback(_touches.discard)
+
+
+async def wait_for_touches() -> None:
+    """Let every scheduled touch finish (tests, and an orderly shutdown)."""
+    while _touches:
+        await asyncio.gather(*list(_touches), return_exceptions=True)
 
 
 async def list_sessions(db: AsyncSession, user: User) -> list[ExtensionSession]:

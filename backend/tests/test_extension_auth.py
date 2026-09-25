@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 
 import httpx
@@ -232,13 +233,39 @@ class TestUse:
         )
         await db_session.commit()
         await probe.get("/api/chat/models", headers=_bearer(pair.access_token))
+        await extension_tokens.wait_for_touches()
         async with session_factory() as fresh:
             row = await fresh.get(ExtensionSession, pair.session_id)
         assert row.last_used_at > stale
         touched = row.last_used_at
         await probe.get("/api/chat/models", headers=_bearer(pair.access_token))
+        await extension_tokens.wait_for_touches()
         async with session_factory() as fresh:
             assert (await fresh.get(ExtensionSession, pair.session_id)).last_used_at == touched
+
+
+class TestRecordingUseNeverHoldsTheRequest:
+    async def test_the_request_does_not_wait_for_the_touch(self, probe, db_session, user, monkeypatch):
+        pair = await _connect(db_session, user)
+        await db_session.execute(
+            update(ExtensionSession)
+            .where(ExtensionSession.id == pair.session_id)
+            .values(last_used_at=datetime.datetime(2026, 1, 1))
+        )
+        await db_session.commit()
+        release = asyncio.Event()
+        started = asyncio.Event()
+
+        async def slow_touch(session_id, *, ip):
+            started.set()
+            await release.wait()
+
+        monkeypatch.setattr(extension_tokens, "touch_session", slow_touch)
+        resp = await asyncio.wait_for(probe.get("/api/chat/models", headers=_bearer(pair.access_token)), timeout=10)
+        assert resp.status_code == 200
+        assert started.is_set()
+        release.set()
+        await extension_tokens.wait_for_touches()
 
 
 class TestTheOtherPathsAreUnchanged:

@@ -17,7 +17,7 @@ from app.services.extension_tokens import (
     ExtensionTokenError,
     is_extension_access_token,
     needs_touch,
-    touch_session,
+    schedule_touch,
 )
 from app.services.extension_tokens import authenticate as authenticate_extension
 from app.services.rbac import (
@@ -89,7 +89,7 @@ async def _extension_user(request: Request, token: str, db: AsyncSession) -> Use
     session_id = str(found.session.id)
     request.state.extension_session_id = session_id
     if needs_touch(found.session):
-        await touch_session(session_id, ip=resolve_client_ip(request))
+        schedule_touch(session_id, ip=resolve_client_ip(request))
     return user
 
 

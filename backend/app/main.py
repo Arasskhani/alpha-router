@@ -699,6 +699,10 @@ async def lifespan(app: FastAPI):
     from app.core.redis_client import close_redis
 
     await close_redis()
+    from app.services.extension_tokens import wait_for_touches
+
+    # A browser's "last used" written before the pool goes away.
+    await wait_for_touches()
     await engine.dispose()
     shutdown_telemetry()
 

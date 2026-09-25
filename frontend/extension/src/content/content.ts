@@ -5,7 +5,7 @@
  * touches the extension's storage or tokens.
  */
 
-import { extractPage, isRendered, isTextRendered, type PageExtract } from "./extract";
+import { extractPage, isBlockDisplayed, isRendered, isTextRendered, type PageExtract } from "./extract";
 
 type ContentApi = {
   extract: (limits: { maxChars: number; maxSelectionChars: number }) => PageExtract;
@@ -22,5 +22,6 @@ scope.__alpharouter = {
       maxSelectionChars: limits.maxSelectionChars,
       isVisible: isRendered,
       isTextVisible: isTextRendered,
+      isBlock: isBlockDisplayed,
     }),
 };

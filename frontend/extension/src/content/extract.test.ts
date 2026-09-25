@@ -3,7 +3,7 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { extractPage, isRendered, isTextRendered, type ExtractOptions } from "./extract";
+import { extractPage, isBlockDisplayed, isRendered, isTextRendered, type ExtractOptions } from "./extract";
 
 /** A DOM without layout: visibility decided from attributes and inline styles, as a browser would compute them. */
 function style(el: Element): string {
@@ -144,6 +144,12 @@ describe("the shape of the text", () => {
     expect(text).toBe("line one\n  line two\nline three");
   });
 
+  it("puts elements the browser shows as blocks on lines of their own, whatever their tag", () => {
+    const html = `<span style="display:block">First card</span><my-card style="display:flex">Second card</my-card><span>inline</span>`;
+    expect(read(html).text).toBe("First cardSecond cardinline");
+    expect(read(html, { isBlock: (el) => /display:(block|flex)/.test(style(el)) }).text).toBe("First card\nSecond card\ninline");
+  });
+
   it("reads the content of web components in open shadow roots", () => {
     const host = page(`<p>Outside.</p><div id="widget"></div>`).getElementById("widget")!;
     host.attachShadow({ mode: "open" }).innerHTML = "<p>Inside the component.</p>";
@@ -254,6 +260,22 @@ describe("the browser's own visibility check", () => {
     el.removeAttribute("aria-hidden");
     el.hidden = true;
     expect(isRendered(el)).toBe(false);
+  });
+
+  it.each([
+    ["block", true],
+    ["flex", true],
+    ["grid", true],
+    ["list-item", true],
+    ["table-row", true],
+    ["block flow", true],
+    ["inline", false],
+    ["inline-block", false],
+    ["inline flex", false],
+    ["table-cell", false],
+    ["contents", false],
+  ])("counts display %s as a block: %s", (display, block) => {
+    expect(isBlockDisplayed(element({ display }))).toBe(block);
   });
 
   it("reads text of any size but zero", () => {

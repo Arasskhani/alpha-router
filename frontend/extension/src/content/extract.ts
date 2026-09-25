@@ -20,6 +20,8 @@ export type ExtractOptions = {
   isVisible: (el: Element) => boolean;
   /** Is text directly inside this element readable (a zero font size is not)? */
   isTextVisible: (el: Element) => boolean;
+  /** Does this element sit on lines of its own? By tag name when not given. */
+  isBlock?: (el: Element) => boolean;
 };
 
 export type PageExtract = {
@@ -222,7 +224,7 @@ function walk(node: Node, out: TextBuffer, options: ExtractOptions, skip: Set<El
     out.verbatim(Array.from((el.shadowRoot ?? el).childNodes, (child) => preformatted(child, options)).join(""));
     return;
   }
-  const block = BLOCKS.has(tag);
+  const block = options.isBlock ? options.isBlock(el) : BLOCKS.has(tag);
   if (block) out.lineBreak();
   const heading = /^H([1-6])$/.exec(tag);
   if (heading) out.inline(`${"#".repeat(Number(heading[1]))} `);
@@ -316,6 +318,33 @@ export function isRendered(el: Element): boolean {
   if (/inset\((50|100)%/.test(style.clipPath)) return false;
   if (rect.right + view.scrollX < 0 || rect.bottom + view.scrollY < 0) return false;
   return true;
+}
+
+/** Outer displays that put an element on lines of its own. */
+const BLOCK_DISPLAYS = new Set([
+  "block",
+  "flow-root",
+  "flex",
+  "grid",
+  "list-item",
+  "table",
+  "table-row",
+  "table-caption",
+  "table-row-group",
+  "table-header-group",
+  "table-footer-group",
+]);
+
+/**
+ * Whether the browser lays the element out on lines of its own - a <span>
+ * made a block, a web component styled as a card - so its text is not run
+ * into its neighbours'.
+ */
+export function isBlockDisplayed(el: Element): boolean {
+  const view = el.ownerDocument.defaultView;
+  if (!view) return BLOCKS.has(el.tagName.toUpperCase());
+  // "flex", or "block flow": the outer display is the first word.
+  return BLOCK_DISPLAYS.has(view.getComputedStyle(el).display.split(" ")[0]);
 }
 
 /** Text in a zero font size is there for machines only. */

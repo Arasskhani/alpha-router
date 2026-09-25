@@ -412,6 +412,24 @@ class TestRefresh:
         assert event.resource_id == tokens["session_id"]
         assert json.loads(event.detail_json) == {"reason": "refresh_reuse", "device_name": "Chrome on Windows"}
 
+    async def test_a_disabled_account_keeps_its_browsers_for_when_it_returns(
+        self, client, browser, db_session, user, redirect
+    ):
+        tokens = await _connect(client, browser, user, redirect)
+        await db_session.execute(update(User).where(User.id == user.id).values(is_active=False))
+        await db_session.commit()
+        body = {"grant_type": "refresh_token", "refresh_token": tokens["refresh_token"]}
+        refreshed = await browser.post("/api/extension/token", json=body)
+        assert refreshed.status_code == 200, refreshed.text
+        access = refreshed.json()["access_token"]
+        me = await browser.get("/api/extension/me", headers=_bearer(access))
+        assert me.status_code == 200 and not any(me.json()["features"].values())
+        refused = await browser.get("/api/chat/models", headers=_bearer(access))
+        assert refused.json()["detail"]["code"] == "account_disabled"
+        await db_session.execute(update(User).where(User.id == user.id).values(is_active=True))
+        await db_session.commit()
+        assert (await browser.get("/api/chat/models", headers=_bearer(access))).status_code == 200
+
     async def test_ten_refreshes_a_minute_per_token(self, browser):
         body = {"grant_type": "refresh_token", "refresh_token": "alpha-router-ext-rt-same"}
         for _ in range(10):

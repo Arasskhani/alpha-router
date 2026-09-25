@@ -566,11 +566,16 @@ class TestRefresh:
         assert (await _grant_error(refresh_session(_NoCommit(db_session), pair.refresh_token))).code == "invalid_grant"
         assert (await _row(session_factory, pair.session_id)).revoked_reason == "token_version"
 
-    async def test_a_disabled_account_cannot_refresh(self, db_session, session_factory, user, clock):
+    async def test_a_disabled_account_keeps_its_browsers(self, db_session, session_factory, user, clock):
+        # Only the feature list and the disconnect call answer it (app.api.deps);
+        # re-enabling the account brings the browser back without reconnecting.
         pair = await _connect(db_session, user)
         user.is_active = False
         await db_session.commit()
-        assert (await _grant_error(refresh_session(db_session, pair.refresh_token))).code == "invalid_grant"
+        new = await refresh_session(db_session, pair.refresh_token)
+        await db_session.commit()
+        assert (await authenticate(db_session, new.access_token)).user.id == user.id
+        assert (await _row(session_factory, pair.session_id)).revoked_at is None
 
     async def test_a_revoked_session_cannot_refresh(self, db_session, user, clock):
         pair = await _connect(db_session, user)

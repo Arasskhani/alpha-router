@@ -391,14 +391,18 @@ async def _session_where(db: AsyncSession, condition: Any) -> ExtensionSession |
 
 
 async def _require_usable(db: AsyncSession, session: ExtensionSession, now: datetime.datetime) -> None:
+    """Refuse a refresh for a session that has ended.
+
+    A disabled account still refreshes: its tokens reach nothing but the
+    feature list and the disconnect call (app.api.deps), and re-enabling the
+    account brings its browsers back - as re-enabling the extension does.
+    Disabling from the admin pages signs the user out everywhere anyway.
+    """
     if not _session_is_open(session, now):
         raise _invalid_grant("This browser's connection has ended.")
-    user = await _user_still_holds(db, session)
-    if user is None:
+    if await _user_still_holds(db, session) is None:
         await _revoke_now(str(session.id), reason=REVOKED_TOKEN_VERSION)
         raise _invalid_grant("You signed out; connect this browser again.")
-    if not user.is_active:
-        raise _invalid_grant("Your account is disabled.")
 
 
 async def refresh_session(db: AsyncSession, refresh_token: str | None, *, ip: str | None = None) -> TokenPair:

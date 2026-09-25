@@ -66,8 +66,15 @@ describe("what a turn sends", () => {
 });
 
 describe("a question about a page", () => {
-  const guide: PageContext = { host: "docs.example.com", url: "https://docs.example.com/guide", title: "Guide", text: "Guide text.", truncated: false };
-  const wiki: PageContext = { host: "wiki.example.com", url: "https://wiki.example.com/", title: "Wiki", text: "Wiki page.", truncated: false };
+  const guide: PageContext = {
+    host: "docs.example.com",
+    url: "https://docs.example.com/guide",
+    title: "Guide",
+    text: "Guide text.",
+    truncated: false,
+    nonce: "aaaaaaaaaaaa",
+  };
+  const wiki: PageContext = { host: "wiki.example.com", url: "https://wiki.example.com/", title: "Wiki", text: "Wiki page.", truncated: false, nonce: "bbbbbbbbbbbb" };
   const asked = (content: string, pages: PageContext[], id = "u1"): Turn => ({ id, role: "user", content, pages });
 
   it("sends the page in its own message, just before the question, which stays last", () => {

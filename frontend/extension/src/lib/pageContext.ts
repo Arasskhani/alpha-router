@@ -4,9 +4,10 @@
  *
  * The page's text is untrusted - anyone who can put words on a page can
  * address the model - so it travels in its own message before the question,
- * wrapped in <untrusted_page_content> with an instruction never to follow
- * it, and the wrapper's tags are escaped inside the text so the page cannot
- * close it early. The request declares every site whose text it carries, so
+ * wrapped in <untrusted_page_content_…> with an instruction never to follow
+ * it. The tag ends in a random suffix fixed when the page is read, which the
+ * page cannot know, and any such tag in the text is escaped: the page cannot
+ * close its wrapper early, or write one of its own. The request declares every site whose text it carries, so
  * the server can check the site rules and the model again and record the
  * share.
  */
@@ -32,7 +33,14 @@ export type PageContext = {
   truncated: boolean;
   /** Only the text the user selected on the page, not the whole page. */
   part?: "selection";
+  /** The wrapper tag's random suffix: fixed per page, so each turn sends it the same. */
+  nonce: string;
 };
+
+/** Twelve random hex digits, for a page's wrapper tag. */
+export function pageNonce(): string {
+  return Array.from(crypto.getRandomValues(new Uint8Array(6)), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
 
 export type PageRead = { page: PageContext; selection: string };
 
@@ -121,6 +129,7 @@ export async function readPage(tab: { id: number; url?: string }, rules: SiteRul
       title: extract.title,
       text: extract.text,
       truncated: extract.truncated,
+      nonce: pageNonce(),
     },
     selection: extract.selection,
   };
@@ -150,11 +159,12 @@ export function pageMessage(page: PageContext): string {
   const what = selection ? "selected text" : "page";
   const note = page.truncated ? `\n(Only the first ${page.text.length.toLocaleString("en-US")} characters of the ${what} are included.)` : "";
   const part = selection ? ' part="selection"' : "";
+  const tag = `untrusted_page_content_${page.nonce}`;
   return [
     selection ? SELECTION_PREAMBLE : PAGE_PREAMBLE,
-    `<untrusted_page_content site="${attribute(page.host)}" url="${attribute(page.url)}" title="${attribute(page.title)}"${part}>`,
+    `<${tag} site="${attribute(page.host)}" url="${attribute(page.url)}" title="${attribute(page.title)}"${part}>`,
     escapeWrapperTags(page.text),
-    `</untrusted_page_content>${note}`,
+    `</${tag}>${note}`,
   ].join("\n");
 }
 
@@ -170,6 +180,7 @@ export function selectionContext(pageUrl: string, title: string, text: string): 
     text: trimmed.slice(0, MAX_SELECTION_CHARS),
     truncated: trimmed.length > MAX_SELECTION_CHARS,
     part: "selection",
+    nonce: pageNonce(),
   };
 }
 

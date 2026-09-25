@@ -239,6 +239,37 @@ describe("a run", () => {
     expect(server.calls.filter((c) => c.path === "/api/chat/completions")).toHaveLength(1);
   });
 
+  it("keeps the card waiting while Chrome asks for its site, so the two answers never cross", async () => {
+    let answer: (granted: boolean) => void = () => undefined;
+    chromeFake.permissions.request.mockImplementation(
+      ({ origins = [] }: { origins?: string[] }) =>
+        new Promise<boolean>((resolve) => {
+          answer = (granted) => {
+            if (granted) for (const origin of origins) chromeFake.permissions.granted.add(origin);
+            resolve(granted);
+          };
+        }),
+    );
+    replies = [
+      toolFrame([{ id: "c1", name: "tab_open", args: { url: "https://partner.org/deals" } }]),
+      toolFrame([{ id: "c2", name: "click", args: { ref: "e1" } }]),
+      toolFrame([{ id: "c3", name: "done", args: { summary: "All done." } }]),
+    ];
+    await render();
+    await start("Look at the partner's deals.");
+    await until(() => host.textContent!.includes("Chrome will ask you"), "the card for the other site");
+    await act(async () => button("Allow").click());
+    // Chrome's prompt is open: the card can be answered neither twice nor the other way.
+    expect(button("Allow").disabled).toBe(true);
+    expect(button("Deny").disabled).toBe(true);
+    await act(async () => button("Deny").click());
+    await act(async () => answer(true));
+    await until(() => host.textContent!.includes('Click "Next"'), "the next card");
+    expect(button("Allow").disabled).toBe(false);
+    await act(async () => button("Allow").click());
+    await until(() => host.textContent!.includes("All done."), "the summary");
+  });
+
   it("puts a question from the agent to the user", async () => {
     replies = [toolFrame([{ id: "c1", name: "ask_user", args: { question: "Which size?" } }]), toolFrame([{ id: "c2", name: "done", args: { summary: "Chose M." } }])];
     await render();

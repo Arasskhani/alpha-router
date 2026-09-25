@@ -122,7 +122,8 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
   /** Set at once in the Start click, before any render: two quick presses start one run. */
   const busy = useRef(false);
   const [log, setLog] = useState<LogItem[]>([]);
-  const [approval, setApproval] = useState<{ request: ApprovalRequest; resolve: (ok: boolean) => void } | null>(null);
+  /** The card waiting for the user; `asking` while Chrome's own prompt for its site is open. */
+  const [approval, setApproval] = useState<{ request: ApprovalRequest; resolve: (ok: boolean) => void; asking?: boolean } | null>(null);
   const [question, setQuestion] = useState<{ text: string; resolve: (answer: string) => void } | null>(null);
   const [answer, setAnswer] = useState("");
   const [banner, setBanner] = useState("");
@@ -257,9 +258,13 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
       browser: browser.current!,
       approve: (request, stepSignal) =>
         new Promise<boolean>((resolve) => {
+          let settled = false;
           const settle = (ok: boolean) => {
+            if (settled) return;
+            settled = true;
             stepSignal.removeEventListener("abort", onAbort);
-            setApproval(null);
+            // Only this card: a late answer to an earlier one must not take the next card away.
+            setApproval((current) => (current?.request === request ? null : current));
             resolve(ok);
           };
           const onAbort = () => settle(false);
@@ -368,10 +373,12 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
 
   function allow() {
     const pending = approval;
-    if (!pending) return;
+    if (!pending || pending.asking) return;
     const access = pending.request.access;
     if (access) {
-      // The site's permission, asked for in this click: Chrome shows its prompt only now.
+      // The site's permission, asked for in this click: Chrome shows its prompt only now. The
+      // card waits for its answer, Allow and Deny disabled, so the two can never cross.
+      setApproval((current) => (current?.request === pending.request ? { ...current, asking: true } : current));
       chrome.permissions
         .request({ origins: [access.pattern] })
         .then((granted) => pending.resolve(granted))
@@ -481,10 +488,10 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
               <p className="agent__card-why">Chrome will ask you to let Alpharouter work on {approval.request.access.host}.</p>
             )}
             <div className="panel__actions">
-              <button type="button" className="btn btn--primary" onClick={allow}>
+              <button type="button" className="btn btn--primary" onClick={allow} disabled={approval.asking}>
                 Allow
               </button>
-              <button type="button" className="btn" onClick={() => approval.resolve(false)}>
+              <button type="button" className="btn" onClick={() => approval.resolve(false)} disabled={approval.asking}>
                 Deny
               </button>
             </div>

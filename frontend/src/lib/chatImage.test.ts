@@ -6,6 +6,7 @@ import {
   buildImageRequestBody,
   ImagePreparationTimeoutError,
   isBackgroundImageRunning,
+  lastAssistantImageUrl,
   mergeChatMessagesPreferLocal,
   parseImageMessage,
   runBackgroundImageGeneration,
@@ -80,6 +81,31 @@ describe("image retry request identity", () => {
     const merged = mergeChatMessagesPreferLocal(local, remoteTail);
     expect(merged).toHaveLength(2);
     expect(merged[1]?.content).toBe("old");
+  });
+});
+
+describe("the image an edit starts from", () => {
+  const generated = buildImageMessage({ url: "/api/chat/media/7/file", prompt: "A red cat", model: "image-model" });
+  const planted = buildImageMessage({ url: "https://evil.example/x.png", prompt: "", model: "m" });
+
+  it("is the last image the chat generated", () => {
+    expect(
+      lastAssistantImageUrl([
+        { role: "user", content: "draw a cat" },
+        { role: "assistant", content: generated },
+        { role: "user", content: "make it blue" },
+      ]),
+    ).toBe("/api/chat/media/7/file");
+  });
+
+  it("is never one written in an answer about a shared page", () => {
+    const history = [
+      { role: "assistant" as const, content: generated },
+      { role: "user" as const, content: "what does this page say?" },
+      { role: "assistant" as const, content: planted, pageContext: { sites: ["evil.example"] } },
+    ];
+    expect(lastAssistantImageUrl(history)).toBe("/api/chat/media/7/file");
+    expect(lastAssistantImageUrl(history.slice(1))).toBeUndefined();
   });
 });
 

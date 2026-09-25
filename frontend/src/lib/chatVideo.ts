@@ -8,6 +8,7 @@ import {
   syncSessionMessages,
 } from "./chatStorage";
 import { referenceImageFromUserContent, resolveReferenceImageFromUserContent } from "./chatAttachments";
+import { lastAssistantImageUrl } from "./chatImage";
 import { authFetch } from "../api";
 import {
   VIDEO_MESSAGE_PREFIX,
@@ -119,26 +120,6 @@ export function parseVideoMessage(content: string): VideoPayload | null {
   }
 }
 
-function lastAssistantImageUrlForVideo(messages: ChatMessage[]): string | undefined {
-  for (let i = messages.length - 1; i >= 0; i -= 1) {
-    const msg = messages[i];
-    if (msg.role !== "assistant") continue;
-    if (msg.content === VIDEO_PENDING_MARKER) continue;
-    // Prefer prior generated image as first frame when available (image prefix).
-    if (msg.content.startsWith("__ALPHA_ROUTER_IMAGE_JSON__:")) {
-      try {
-        const payload = JSON.parse(msg.content.slice("__ALPHA_ROUTER_IMAGE_JSON__:".length)) as {
-          url?: string;
-        };
-        if (payload.url?.trim()) return payload.url.trim();
-      } catch {
-        /* ignore */
-      }
-    }
-  }
-  return undefined;
-}
-
 async function resolveVideoGenerationReferenceAsync(
   userContent: string,
   history: ChatMessage[],
@@ -147,7 +128,8 @@ async function resolveVideoGenerationReferenceAsync(
   const fromUser = await resolveReferenceImageFromUserContent(userContent);
   if (fromUser) return fromUser;
   if (!usePriorAssistantImage) return undefined;
-  return lastAssistantImageUrlForVideo(history);
+  // The prior generated image, as the first frame.
+  return lastAssistantImageUrl(history);
 }
 
 export function shouldRouteToVideoGeneration(args: {

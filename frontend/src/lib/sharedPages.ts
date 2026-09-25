@@ -38,3 +38,13 @@ export function sharedPagesLabel(pages: SharedPages): string {
 export function answerImages(message: { pageContext?: SharedPages }): "load" | "link" {
   return message.pageContext ? "link" : "load";
 }
+
+/**
+ * What the chat may read as one of its own media messages - a generated image
+ * or video, an attachment, a recording. An answer built from shared pages has
+ * none, whatever it says: the page may have told the model to write one, and
+ * the chat would load its address.
+ */
+export function mediaContent(message: { content: string; pageContext?: SharedPages }): string {
+  return answerImages(message) === "load" ? message.content : "";
+}

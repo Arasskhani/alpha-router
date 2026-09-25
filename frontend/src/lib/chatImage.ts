@@ -7,6 +7,7 @@ import { resolveReferenceImageFromUserContent } from "./chatAttachments";
 import { isPrivateBlobRef, resolvePrivateMediaUrlForApi } from "./privateMediaStore";
 import { authFetch } from "../api";
 import { humanizeGatewayError } from "./gatewayErrors";
+import { mediaContent } from "./sharedPages";
 import {
   normalizeImageAspectPreset,
   presetFromAspectRatio,
@@ -163,13 +164,16 @@ export function parseImageMessage(content: string): ImagePayload | null {
   }
 }
 
-/** Last generated image in the thread (skips pending placeholders). */
+/**
+ * Last generated image in the thread (skips pending placeholders), for an edit
+ * or a video's first frame. Never one written in an answer about a shared page.
+ */
 export function lastAssistantImageUrl(messages: ChatMessage[]): string | undefined {
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     const msg = messages[i];
     if (msg.role !== "assistant") continue;
     if (msg.content === IMAGE_PENDING_MARKER) continue;
-    const payload = parseImageMessage(msg.content);
+    const payload = parseImageMessage(mediaContent(msg));
     const url = payload?.url?.trim();
     if (url) return url;
   }

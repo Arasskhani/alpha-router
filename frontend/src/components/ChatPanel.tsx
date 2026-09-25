@@ -309,7 +309,7 @@ import AgentMenu from "./chat/AgentMenu";
 import { useBackOnline } from "../hooks/useBackOnline";
 import { CONNECTION_LOST_MESSAGE, isConnectionLostError } from "../lib/chatConnection";
 import { RECOVERY_RETRY_MS, createReplyRecovery } from "../lib/replyRecovery";
-import { answerImages, sharedPagesLabel } from "../lib/sharedPages";
+import { answerImages, mediaContent, sharedPagesLabel } from "../lib/sharedPages";
 import {
   shortModelName,
   readAudioMessage,
@@ -5493,7 +5493,7 @@ export default function ChatPanel({
     // produced the image; do not send Auto Router back through selection.
     const imageAfterPrompt =
       messages[index + 1]?.role === "assistant"
-        ? parseImageMessage(messages[index + 1].content)
+        ? parseImageMessage(mediaContent(messages[index + 1]))
         : null;
     if (imageAfterPrompt) {
       const retryModelId = imageAfterPrompt.model?.trim();
@@ -6676,7 +6676,9 @@ export default function ChatPanel({
                 dir={messageDirectionForContent(m.content)}
               >
                 {(() => {
-                  const attachPayload = readAttachmentMessage(m.content);
+                  // Empty for an answer built from a shared page: it is only ever text.
+                  const media = mediaContent(m);
+                  const attachPayload = readAttachmentMessage(media);
                   if (attachPayload) {
                     return (
                       <ChatAttachmentMessage
@@ -6685,13 +6687,13 @@ export default function ChatPanel({
                       />
                     );
                   }
-                  const audioPayload = readAudioMessage(m.content);
+                  const audioPayload = readAudioMessage(media);
                   if (audioPayload) {
                     return (
                       <ChatAudioMessage url={audioPayload.url} transcript={audioPayload.transcript} />
                     );
                   }
-                  if (m.content === IMAGE_PENDING_MARKER) {
+                  if (media === IMAGE_PENDING_MARKER) {
                     return (
                       <div className="alpha-router-generated-block alpha-router-generated-block--pending">
                         <div
@@ -6706,7 +6708,7 @@ export default function ChatPanel({
                       </div>
                     );
                   }
-                  if (m.content === VIDEO_PENDING_MARKER) {
+                  if (media === VIDEO_PENDING_MARKER) {
                     return (
                       <div className="alpha-router-generated-block alpha-router-generated-block--pending">
                         <div
@@ -6721,7 +6723,7 @@ export default function ChatPanel({
                       </div>
                     );
                   }
-                  if (m.content === SPEECH_PENDING_MARKER) {
+                  if (media === SPEECH_PENDING_MARKER) {
                     return (
                       <div className="alpha-router-generated-block alpha-router-generated-block--pending">
                         <div
@@ -6736,7 +6738,7 @@ export default function ChatPanel({
                       </div>
                     );
                   }
-                  const imagePayload = readImageMessage(m.content);
+                  const imagePayload = readImageMessage(media);
                   if (imagePayload) {
                     return (
                       <div className="alpha-router-generated-block">
@@ -6755,7 +6757,7 @@ export default function ChatPanel({
                       </div>
                     );
                   }
-                  const videoPayload = readVideoMessage(m.content);
+                  const videoPayload = readVideoMessage(media);
                   if (videoPayload) {
                     return (
                       <div className="alpha-router-generated-block">
@@ -6782,7 +6784,7 @@ export default function ChatPanel({
                       </div>
                     );
                   }
-                  const speechPayload = readSpeechMessage(m.content);
+                  const speechPayload = readSpeechMessage(media);
                   if (speechPayload) {
                     return (
                       <div className="alpha-router-generated-block">
@@ -6799,9 +6801,8 @@ export default function ChatPanel({
                       </div>
                     );
                   }
-                  const mdImage = extractMarkdownImage(m.content || "");
-                  // An answer about a shared page never loads an image: the page may have planted it.
-                  if (mdImage.imageUrl && answerImages(m) === "load") {
+                  const mdImage = extractMarkdownImage(media || "");
+                  if (mdImage.imageUrl) {
                     return (
                       <div className="alpha-router-generated-block">
                         <button
@@ -6858,7 +6859,7 @@ export default function ChatPanel({
                       </>
                     );
                   }
-                  const plain = readAttachmentMessage(m.content) || readAudioMessage(m.content) ? "" : fallback;
+                  const plain = readAttachmentMessage(media) || readAudioMessage(media) ? "" : fallback;
                   return plain;
                 })()}
               </div>
@@ -6885,7 +6886,7 @@ export default function ChatPanel({
                   <MessageInfoButton title={chatMessageInfoTitle(m, m.role, messages, i)} />
                 )}
                 {(() => {
-                  const videoPayload = readVideoMessage(m.content);
+                  const videoPayload = readVideoMessage(mediaContent(m));
                   if (!videoPayload?.url) return null;
                   return (
                     <>
@@ -6917,7 +6918,7 @@ export default function ChatPanel({
                   );
                 })()}
                 {(() => {
-                  const speechPayload = readSpeechMessage(m.content);
+                  const speechPayload = readSpeechMessage(mediaContent(m));
                   if (!speechPayload?.url) return null;
                   return (
                     <button
@@ -6932,10 +6933,9 @@ export default function ChatPanel({
                   );
                 })()}
                 {(() => {
-                  const imagePayload = readImageMessage(m.content);
-                  const mdImage = extractMarkdownImage(m.content || "");
-                  const imageUrl =
-                    imagePayload?.url || (answerImages(m) === "load" ? mdImage.imageUrl : null) || "";
+                  const media = mediaContent(m);
+                  const imagePayload = readImageMessage(media);
+                  const imageUrl = imagePayload?.url || extractMarkdownImage(media || "").imageUrl || "";
                   if (!imageUrl) return null;
                   return (
                     <>

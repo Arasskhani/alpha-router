@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.database import AsyncSessionLocal
 from app.models.model_catalog import AIModel
-from app.services.agent_chat_integration_service import PreparedAgentTurn
+from app.services.agent_chat_integration_service import AgentRequestOptions, PreparedAgentTurn
 from app.services.agent_run_service import finalize_agent_run, mark_agent_run_started
 from app.services.budget_reservation_service import release
 from app.services.chat_completion_persistence import persister_from_body
@@ -236,12 +236,13 @@ def _browser_tools(body: dict) -> tuple[list[dict], str | None]:
     return list(tools), (choice if choice in _TOOL_CHOICES else None)
 
 
-async def _earlier_page_answers(db: AsyncSession, chat_session_id: Any) -> tuple[bool, list[str]]:
+async def earlier_page_answers(db: AsyncSession, chat_session_id: Any) -> tuple[bool, list[str]]:
     """Whether this chat already holds an answer about a shared page, and that page's sites.
 
     Such an answer can restate what a page told the model, so a later turn in
     the same chat - in the extension or in the web app - is treated like a
-    turn with the page itself: no personal context, and a marked answer.
+    turn with the page itself: no personal context, no agent, and a marked
+    answer.
     """
     sid = str(chat_session_id or "").strip()
     if not sid:
@@ -269,6 +270,46 @@ async def _earlier_page_answers(db: AsyncSession, chat_session_id: Any) -> tuple
             if isinstance(site, str) and site and site not in sites:
                 sites.append(site)
     return marked, sites
+
+
+#: Why an agent a user chose does not run in a chat that holds an answer about a shared page.
+AGENT_IN_PAGE_CHAT = "agent_in_page_chat"
+
+
+async def agent_request_in_page_chat(
+    db: AsyncSession,
+    body: dict,
+    options: AgentRequestOptions | None,
+    *,
+    source: str | None,
+) -> AgentRequestOptions | None:
+    """The Agent request a chat turn goes ahead with, once the chat's earlier answers are known.
+
+    An Agent Studio agent plans its turn with the user's memory, work profile
+    and knowledge bases beside the chat's history, and an earlier answer about
+    a shared page can carry that page's instructions into the history. So in
+    such a chat an agent the user chose is refused before anything is planned
+    or spent, and Auto routing is dropped: the turn runs as a plain chat turn,
+    which gets no personal context and a marked answer. Any other chat, and a
+    Gateway request (which names no chat), keeps its agent.
+    """
+    if options is None or source != "alpha_router_chat":
+        return options
+    marked, _sites = await earlier_page_answers(db, body.get("chat_session_id"))
+    if not marked:
+        return options
+    if options.agent_id or options.agent_slug or options.pinned_version_id:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": AGENT_IN_PAGE_CHAT,
+                "message": (
+                    "This chat holds an answer about a page shared from the browser extension, "
+                    "so agents are not available in it. Start a new chat to use an agent."
+                ),
+            },
+        )
+    return None
 
 
 async def resolve_session_project_id(db: AsyncSession, chat_session_id: str | None) -> str | None:
@@ -465,7 +506,7 @@ async def build_turn_context(  # noqa: C901 -- straight-line preparation moved o
         # A chat that already holds an answer about a shared page carries that
         # page's words in its history, wherever it is continued.
         earlier, earlier_sites = (
-            await _earlier_page_answers(db, body.get("chat_session_id"))
+            await earlier_page_answers(db, body.get("chat_session_id"))
             if not page_sites and source == "alpha_router_chat"
             else (False, [])
         )

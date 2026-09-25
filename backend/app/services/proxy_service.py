@@ -67,6 +67,7 @@ from app.services.chat_tools_service import (
 from app.services.chat_turn_context import (
     NonGeneratingReply,
     _adaptive_openrouter_extra_body,
+    agent_request_in_page_chat,
     build_turn_context,
 )
 from app.services.code_interpreter_capacity_service import (
@@ -622,6 +623,9 @@ async def preflight_stream_chat(  # noqa: C901 -- Phase 4 split; complexity must
                 )
             ).effective
         agent_options = parse_agent_request(body) if operation == "chat" else None
+        # A chat with an answer about a shared page runs no agent: a chosen one is
+        # refused here, before it is planned, and Auto becomes a plain turn.
+        agent_options = await agent_request_in_page_chat(db, body, agent_options, source=source)
         if agent_options is not None and not settings.agents_platform_enabled:
             raise HTTPException(status_code=400, detail="The Agent platform is not enabled on this installation")
         if agent_options is not None:

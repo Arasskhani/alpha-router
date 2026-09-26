@@ -1046,6 +1046,38 @@ export async function waitFor(doc: Document, text: unknown, seconds: unknown): P
  * control the click works on: the button around the words named, the field
  * of a label.
  */
+export type PointRect = { x: number; y: number; width: number; height: number };
+
+/**
+ * The element at a viewport point (CSS pixels), the way a click there would
+ * reach it: the document reports a web component as its host, so open shadow
+ * roots are entered until the innermost element under the point is found. With
+ * `activates`, the control that click would work (the button around the words).
+ * Its viewport rect comes with it, for the target box. The agent's own overlay
+ * is never "there": the visuals take no pointer events, and the banner is skipped.
+ */
+export function describeAt(doc: Document, x: unknown, y: unknown, isVisible: Visibility, activates = false): Result<{ element: ElementInfo; rect: PointRect }> {
+  if (typeof x !== "number" || typeof y !== "number" || !Number.isFinite(x) || !Number.isFinite(y)) {
+    return { ok: false, error: "bad_request", message: "Give the point as numbers: x and y in CSS pixels." };
+  }
+  if (typeof doc.elementFromPoint !== "function") return { ok: false, error: "failed", message: "The page cannot find what is at a point." };
+  let el: Element | null = doc.elementFromPoint(x, y);
+  while (el?.shadowRoot && typeof el.shadowRoot.elementFromPoint === "function") {
+    const inner = el.shadowRoot.elementFromPoint(x, y);
+    if (!inner || inner === el) break;
+    el = inner;
+  }
+  if (!el || el.id === OVERLAY_ID || el.closest(`#${OVERLAY_ID}`) || el === doc.documentElement) {
+    return { ok: false, error: "not_found", message: "There is nothing to act on at that point." };
+  }
+  if (!isVisible(el)) return { ok: false, error: "not_visible", message: "What is at that point is not visible." };
+  const target = activates ? activationTarget(el) : el;
+  const role = roleOf(target) ?? (headingLevel(target) !== null ? "heading" : "text");
+  const element = describeElement(target, role, isVisible, true);
+  const r = target.getBoundingClientRect();
+  return { ok: true, element, rect: { x: r.left, y: r.top, width: r.width, height: r.height } };
+}
+
 export function describe(ref: unknown, isVisible: Visibility, activates = false, choose?: unknown): Result<{ element: ElementInfo }> {
   const named = resolve(ref);
   if (isFailure(named)) return named;

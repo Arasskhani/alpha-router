@@ -7,6 +7,7 @@
 import {
   click,
   describe,
+  describeAt,
   describeFocus,
   find,
   pageText,
@@ -21,6 +22,7 @@ import {
   type Visibility,
 } from "./agent";
 import { hideOverlay, runStopped, showOverlay, type StopSender } from "./overlay";
+import { hideTarget, hideVisuals, moveCursor, pulseClick, setHighlightState, showTarget, showVisuals, type ClickKind, type HighlightState } from "./visuals";
 
 /** What the panel can ask of the page. */
 export type PageMethod =
@@ -28,6 +30,7 @@ export type PageMethod =
   | "get_page_text"
   | "find"
   | "describe"
+  | "describe_at"
   | "describe_focus"
   | "click"
   | "type_text"
@@ -37,7 +40,19 @@ export type PageMethod =
   | "scroll"
   | "wait_for"
   | "show_overlay"
-  | "hide_overlay";
+  | "hide_overlay"
+  | "visuals_show"
+  | "visuals_hide"
+  | "visuals_state"
+  | "visuals_cursor"
+  | "visuals_target";
+
+const HIGHLIGHT_STATES = new Set<HighlightState>(["working", "waiting", "paused", "error"]);
+const CLICK_KINDS = new Set<ClickKind>(["left", "right", "double", "triple"]);
+
+function num(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
 
 const RUN_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -70,6 +85,8 @@ export async function runAgentCall(
         return find(doc, args.query, isVisible);
       case "describe":
         return describe(args.ref, isVisible, args.activates === true, args.choose);
+      case "describe_at":
+        return describeAt(doc, args.x, args.y, isVisible, args.activates === true);
       case "describe_focus":
         return describeFocus(doc, isVisible);
       case "click":
@@ -96,6 +113,41 @@ export async function runAgentCall(
       case "hide_overlay":
         hideOverlay(doc, typeof args.run === "string" ? args.run : undefined);
         return { ok: true };
+      case "visuals_show":
+        showVisuals(doc);
+        return { ok: true };
+      case "visuals_hide":
+        hideVisuals(doc);
+        return { ok: true };
+      case "visuals_state": {
+        const state = args.state as HighlightState;
+        if (!HIGHLIGHT_STATES.has(state)) return { ok: false, error: "bad_request", message: "Unknown highlight state." };
+        setHighlightState(doc, state);
+        return { ok: true };
+      }
+      case "visuals_cursor": {
+        const x = num(args.x);
+        const y = num(args.y);
+        if (x === null || y === null) return { ok: false, error: "bad_request", message: "The cursor needs x and y." };
+        moveCursor(doc, { x, y });
+        const kind = args.click as ClickKind | undefined;
+        if (kind !== undefined && CLICK_KINDS.has(kind)) pulseClick(doc, { x, y }, kind);
+        return { ok: true };
+      }
+      case "visuals_target": {
+        const rect = args.rect as Record<string, unknown> | null | undefined;
+        if (!rect) {
+          hideTarget(doc);
+          return { ok: true };
+        }
+        const x = num(rect.x);
+        const y = num(rect.y);
+        const width = num(rect.width);
+        const height = num(rect.height);
+        if (x === null || y === null || width === null || height === null) return { ok: false, error: "bad_request", message: "The target needs a rect." };
+        showTarget(doc, { x, y, width, height });
+        return { ok: true };
+      }
       default:
         return { ok: false, error: "bad_request", message: "The page does not know that action." };
     }

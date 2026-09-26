@@ -129,6 +129,13 @@ export function cleanPageResult(method: PageMethod, raw: unknown): PageResult {
       const element = cleanElement(v.element);
       return element ? { ok: true, element } : failure("failed", "The element could not be read.");
     }
+    case "describe_at": {
+      const element = cleanElement(v.element);
+      if (!element) return failure("failed", "What is at that point could not be read.");
+      const r = (v.rect && typeof v.rect === "object" ? v.rect : {}) as Record<string, unknown>;
+      const n = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : 0);
+      return { ok: true, element, rect: { x: n(r.x), y: n(r.y), width: n(r.width), height: n(r.height) } };
+    }
     case "describe_focus": {
       // Nothing focused is an answer too: the page itself has the keyboard.
       if (v.element === undefined || v.element === null) return { ok: true };

@@ -92,7 +92,10 @@ export const AGENT_TASKS = {
   injection: "E2E-AGENT-INJECTION",
   blocked: "E2E-AGENT-BLOCKED",
   stop: "E2E-AGENT-STOP",
+  control: "E2E-AGENT-CONTROL",
 };
+/** Where the control script clicks: the centre of the trusted-only button on agent-control.html. */
+export const CONTROL_CLICK = [100, 140];
 /** What the form script types into the name field. */
 export const AGENT_NAME = "Majid E2E";
 /** Where the injection script, hijacked by the page, tries to take the agent. */
@@ -152,6 +155,12 @@ function agentReply(messages, { stealUrl }) {
       () => ({ tool: "read_page", args: {} }),
       () => ({ tool: "wait_for", args: { seconds: 10 } }),
       () => answered("Waited"),
+    ],
+    // Full control: look at the page, then click at a point in it with the real mouse.
+    [AGENT_TASKS.control]: [
+      () => ({ tool: "screenshot", args: {} }),
+      () => ({ tool: "computer", args: { action: "left_click", coordinate: CONTROL_CLICK } }),
+      () => answered("Control step"),
     ],
   };
   const name = Object.keys(script).find((key) => task.startsWith(key));

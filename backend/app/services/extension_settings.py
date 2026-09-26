@@ -78,6 +78,10 @@ class ExtensionSettings:
     agent_max_steps: int = DEFAULT_MAX_STEPS
     agent_auto_mode: bool = False
     agent_review_model: str | None = None
+    #: Full control: the agent drives the page with trusted input (a real mouse
+    #: and keyboard) through chrome.debugger, and sees it in screenshots. It adds
+    #: the ``debugger`` permission to the package, so a copy updates to get it.
+    full_control: bool = False
 
     def to_json(self) -> dict[str, Any]:
         data = asdict(self)
@@ -223,7 +227,24 @@ def parse_settings(raw: str | None) -> ExtensionSettings:
         ),
         agent_auto_mode=bool(data.get("agent_auto_mode")) and isinstance(review, str) and bool(review),
         agent_review_model=review if isinstance(review, str) and review else None,
+        full_control=bool(data.get("full_control")),
     )
+
+
+#: A manifest permission an admin toggle adds to the package (see build_manifest).
+PERMISSION_DEBUGGER = "debugger"
+
+
+def extra_package_permissions(settings: ExtensionSettings) -> tuple[str, ...]:
+    """The manifest permissions the current settings add beyond the template's.
+
+    Full control needs ``debugger`` (trusted input and screenshots). Later
+    releases add downloads, notifications and alarms here for their features.
+    """
+    extras: list[str] = []
+    if settings.full_control:
+        extras.append(PERMISSION_DEBUGGER)
+    return tuple(extras)
 
 
 async def load_extension_settings(db: AsyncSession) -> ExtensionSettings:
@@ -339,6 +360,7 @@ async def validated_update(
     agent_max_steps: int,
     agent_auto_mode: bool,
     agent_review_model: str | None,
+    full_control: bool = False,
 ) -> ExtensionSettings:
     """The settings an administrator asked for, checked; raises ExtensionSettingsError."""
     if site_access not in SITE_ACCESS_MODES:
@@ -360,6 +382,7 @@ async def validated_update(
         agent_max_steps=int(agent_max_steps),
         agent_auto_mode=bool(agent_auto_mode),
         agent_review_model=review_list[0] if review_list else None,
+        full_control=bool(full_control),
     )
     # The reviewer reads what the agent found on pages: element names, the text it would type.
     if updated.agent_auto_mode and not page_content_allowed(updated, updated.agent_review_model):

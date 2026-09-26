@@ -15,6 +15,7 @@ from app.services.extension_settings import (
     SITE_NOT_ALLOWED,
     ExtensionSettings,
     ExtensionSettingsError,
+    extra_package_permissions,
     host_matches,
     load_extension_settings,
     normalize_page_host,
@@ -178,6 +179,26 @@ class TestStoredSettings:
         await db_session.commit()
         row = await db_session.get(SystemSetting, SETTINGS_KEY)
         assert json.loads(row.value)["agent_max_steps"] == 30
+
+
+class TestFullControl:
+    def test_off_by_default(self):
+        assert ExtensionSettings().full_control is False
+        assert extra_package_permissions(ExtensionSettings()) == ()
+
+    def test_on_adds_the_debugger_permission(self):
+        assert extra_package_permissions(ExtensionSettings(full_control=True)) == ("debugger",)
+
+    def test_it_reads_back(self):
+        assert parse_settings(json.dumps({"full_control": True})).full_control is True
+        assert parse_settings(json.dumps({"full_control": "yes"})).full_control is True
+        assert parse_settings(json.dumps({})).full_control is False
+
+    async def test_an_admin_can_turn_it_on(self, db_session):
+        updated = await validated_update(db_session, ExtensionSettings(), **_update(full_control=True))
+        assert updated.full_control is True
+        off = await validated_update(db_session, updated, **_update(full_control=False))
+        assert off.full_control is False
 
 
 class TestAnAdminsChange:

@@ -33,7 +33,7 @@ import io
 import json
 import struct
 import zipfile
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -71,22 +71,39 @@ def extension_version(revision: int) -> str:
     return f"{VERSION_MAJOR}.0.{int(revision) // 65536}.{int(revision) % 65536}"
 
 
-def package_settings_key(*, origin: str, site_access: str, server_name: str) -> str:
+def package_settings_key(
+    *, origin: str, site_access: str, server_name: str, extra_permissions: Sequence[str] = ()
+) -> str:
     """The part of the fingerprint the server patches in: the origin, the site access and the name.
 
     Kept apart so the revision counter can tell a change of settings from a
-    change of files (extension_distribution.package_revision).
+    change of files (extension_distribution.package_revision). ``extra_permissions``
+    are the manifest permissions an admin toggle adds (``debugger`` for full
+    control, and later downloads, notifications, alarms): they change the package,
+    so a copy updates to the new permissions. Empty by default, so a server with
+    none keeps the settings key - and the version - it had before.
     """
-    inputs = {"origin": origin, "site_access": site_access, "server_name": server_name}
+    inputs: dict[str, Any] = {"origin": origin, "site_access": site_access, "server_name": server_name}
+    if extra_permissions:
+        inputs["extra_permissions"] = sorted(extra_permissions)
     return hashlib.sha256(json.dumps(inputs, sort_keys=True).encode("utf-8")).hexdigest()
 
 
-def package_fingerprint(files: Mapping[str, bytes], *, origin: str, site_access: str, server_name: str) -> str:
+def package_fingerprint(
+    files: Mapping[str, bytes],
+    *,
+    origin: str,
+    site_access: str,
+    server_name: str,
+    extra_permissions: Sequence[str] = (),
+) -> str:
     """What the package is made from: the built files and everything the server patches in."""
     digest = hashlib.sha256()
     for name in sorted(files):
         digest.update(name.encode("utf-8") + b"\0" + hashlib.sha256(files[name]).digest())
-    settings_key = package_settings_key(origin=origin, site_access=site_access, server_name=server_name)
+    settings_key = package_settings_key(
+        origin=origin, site_access=site_access, server_name=server_name, extra_permissions=extra_permissions
+    )
     digest.update(settings_key.encode("ascii"))
     return digest.hexdigest()
 
@@ -125,8 +142,15 @@ def build_manifest(
     public_key_b64: str,
     origin: str,
     site_access: str,
+    extra_permissions: Sequence[str] = (),
 ) -> dict[str, Any]:
-    """The template with everything that makes it this server's extension."""
+    """The template with everything that makes it this server's extension.
+
+    ``extra_permissions`` are the manifest permissions an admin toggle adds
+    (``debugger`` for full control, and later downloads, notifications, alarms).
+    They are appended to the template's own, without duplicates and in a stable
+    order, so the manifest is reproducible.
+    """
     if site_access not in SITE_ACCESS_MODES:
         raise ValueError(f"unknown site access mode {site_access!r}")
     manifest = copy.deepcopy(dict(template))
@@ -135,6 +159,12 @@ def build_manifest(
     # Never the app's build (a git describe string) in a file anyone can fetch.
     manifest.pop("version_name", None)
     manifest["key"] = public_key_b64
+    if extra_permissions:
+        base = list(manifest.get("permissions", []))
+        for permission in extra_permissions:
+            if permission not in base:
+                base.append(permission)
+        manifest["permissions"] = base
     hosts = [server_pattern]
     if site_access == SITE_ACCESS_ALL_SITES:
         hosts.append("<all_urls>")

@@ -45,7 +45,11 @@ from app.services.extension_package import (
     update_manifest_xml,
     update_url,
 )
-from app.services.extension_settings import ExtensionSettings, load_extension_settings
+from app.services.extension_settings import (
+    ExtensionSettings,
+    extra_package_permissions,
+    load_extension_settings,
+)
 
 UNAVAILABLE_NOT_BUILT = "not_built"
 UNAVAILABLE_KEY_UNREADABLE = "key_unreadable"
@@ -276,9 +280,14 @@ async def current_build(db: AsyncSession, *, request_host: str | None, client_ip
     except ExtensionKeyUnavailable as exc:
         raise ExtensionUnavailable(UNAVAILABLE_KEY_UNREADABLE, str(exc)) from exc
     settings = await load_extension_settings(db)
-    fingerprint = package_fingerprint(files, origin=origin, site_access=settings.site_access, server_name=PRODUCT_NAME)
+    extras = extra_package_permissions(settings)
+    fingerprint = package_fingerprint(
+        files, origin=origin, site_access=settings.site_access, server_name=PRODUCT_NAME, extra_permissions=extras
+    )
     # And the settings on their own: going back to earlier ones must give a newer version, not the old number.
-    settings_key = package_settings_key(origin=origin, site_access=settings.site_access, server_name=PRODUCT_NAME)
+    settings_key = package_settings_key(
+        origin=origin, site_access=settings.site_access, server_name=PRODUCT_NAME, extra_permissions=extras
+    )
     version = extension_version(await package_revision(fingerprint, settings_key))
     manifest = build_manifest(
         template,
@@ -286,6 +295,7 @@ async def current_build(db: AsyncSession, *, request_host: str | None, client_ip
         public_key_b64=key.public_key_b64,
         origin=origin,
         site_access=settings.site_access,
+        extra_permissions=extras,
     )
     config = extension_config(origin=origin, server_name=PRODUCT_NAME, version=version)
     return ExtensionBuild(

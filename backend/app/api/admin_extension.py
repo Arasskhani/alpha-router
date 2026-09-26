@@ -47,6 +47,7 @@ class ExtensionSettingsIn(BaseModel):
     agent_max_steps: int
     agent_auto_mode: bool = False
     agent_review_model: str | None = Field(default=None, max_length=64)
+    full_control: bool = False
 
 
 async def _key_status(db: AsyncSession) -> dict:

@@ -83,8 +83,21 @@ class TestTheVersion:
 class TestTheFingerprint:
     FILES = {"manifest.json": b"{}", "background.js": b"sw", "assets/a.js": b"a"}
 
-    def _fp(self, files=None, origin="https://ai.example.com", site_access="per_site", server_name="Alpharouter"):
-        return package_fingerprint(files or self.FILES, origin=origin, site_access=site_access, server_name=server_name)
+    def _fp(
+        self,
+        files=None,
+        origin="https://ai.example.com",
+        site_access="per_site",
+        server_name="Alpharouter",
+        extra_permissions=(),
+    ):
+        return package_fingerprint(
+            files or self.FILES,
+            origin=origin,
+            site_access=site_access,
+            server_name=server_name,
+            extra_permissions=extra_permissions,
+        )
 
     def test_the_same_inputs_give_the_same_fingerprint_whatever_the_order(self):
         assert self._fp() == self._fp(dict(reversed(list(self.FILES.items()))))
@@ -109,6 +122,22 @@ class TestTheFingerprint:
     def test_the_settings_key_changes_with_every_setting(self, change):
         settings = {"origin": "https://ai.example.com", "site_access": "per_site", "server_name": "Alpharouter"}
         assert package_settings_key(**{**settings, **change}) != package_settings_key(**settings)
+
+    def test_extra_permissions_change_the_package_and_the_settings_key(self):
+        settings = {"origin": "https://ai.example.com", "site_access": "per_site", "server_name": "Alpharouter"}
+        assert self._fp(extra_permissions=["debugger"]) != self._fp()
+        assert package_settings_key(**settings, extra_permissions=["debugger"]) != package_settings_key(**settings)
+
+    def test_no_extra_permissions_keeps_the_earlier_key(self):
+        # A server with full control off must keep the version it had before this field existed.
+        settings = {"origin": "https://ai.example.com", "site_access": "per_site", "server_name": "Alpharouter"}
+        assert package_settings_key(**settings, extra_permissions=[]) == package_settings_key(**settings)
+
+    def test_extra_permissions_order_does_not_matter(self):
+        settings = {"origin": "https://ai.example.com", "site_access": "per_site", "server_name": "Alpharouter"}
+        assert package_settings_key(**settings, extra_permissions=["debugger", "downloads"]) == package_settings_key(
+            **settings, extra_permissions=["downloads", "debugger"]
+        )
 
 
 class TestTheOrigin:
@@ -135,13 +164,14 @@ class TestTheOrigin:
 
 
 class TestTheManifest:
-    def _manifest(self, site_access: str) -> dict:
+    def _manifest(self, site_access: str, extra_permissions=()) -> dict:
         return build_manifest(
             TEMPLATE,
             version="1.0.0.7",
             public_key_b64="S0VZ",
             origin="https://ai.example.com",
             site_access=site_access,
+            extra_permissions=extra_permissions,
         )
 
     def test_it_is_this_servers_extension(self):
@@ -174,6 +204,14 @@ class TestTheManifest:
     def test_an_unknown_mode_is_refused(self):
         with pytest.raises(ValueError):
             self._manifest("some_sites")
+
+    def test_extra_permissions_are_appended_without_duplicates(self):
+        manifest = self._manifest("per_site", extra_permissions=["debugger", "sidePanel"])
+        # The template's own come first, in order; a new one is appended; a duplicate is not.
+        assert manifest["permissions"] == ["sidePanel", "storage", "debugger"]
+
+    def test_no_extra_permissions_leaves_the_template_list(self):
+        assert self._manifest("per_site")["permissions"] == TEMPLATE["permissions"]
 
 
 class TestTheZip:

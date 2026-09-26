@@ -227,6 +227,20 @@ class TestTheDownload:
         assert "optional_host_permissions" not in manifest
         assert (before["version"], manifest["version"]) == ("1.0.0.1", "1.0.0.2")
 
+    async def test_full_control_adds_the_debugger_permission_with_a_new_version(
+        self, client, db_session, user, built_extension
+    ):
+        _sign_in(client, user)
+        first = zipfile.ZipFile(io.BytesIO((await client.get("/api/extension/download")).content))
+        before = json.loads(first.read("manifest.json"))
+        assert "debugger" not in before["permissions"]
+        await save_extension_settings(db_session, ExtensionSettings(full_control=True))
+        await db_session.commit()
+        archive = zipfile.ZipFile(io.BytesIO((await client.get("/api/extension/download")).content))
+        manifest = json.loads(archive.read("manifest.json"))
+        assert "debugger" in manifest["permissions"]
+        assert before["version"] != manifest["version"]
+
     async def test_the_key_and_id_stay_the_same_across_downloads(self, client, user, built_extension):
         _sign_in(client, user)
         first = zipfile.ZipFile(io.BytesIO((await client.get("/api/extension/download")).content))

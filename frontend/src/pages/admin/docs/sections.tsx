@@ -2159,6 +2159,51 @@ export const docSections: DocSection[] = [
                 or a data-loss-prevention screenshot rule.
               </td>
             </tr>
+            <tr>
+              <td>Extension on for the organization</td>
+              <td>
+                On by default. Off stops the extension for everyone at once and refuses new connections, whatever the
+                Chat Tools grants say — a single switch for a pause or an incident.
+              </td>
+            </tr>
+            <tr>
+              <td>Read-only sites</td>
+              <td>
+                The agent reads these and never acts on them: it may look, scroll and screenshot, but every click,
+                keystroke and form is refused. For a dashboard or a record system people should not have changed for
+                them.
+              </td>
+            </tr>
+            <tr>
+              <td>Protected sites</td>
+              <td>
+                The agent never acts here at all, and the refusal says so. For payment gateways and banks (e.g.{" "}
+                <code>*.shaparak.ir</code>) — anything that must stay the person&apos;s own. Reading is still allowed;
+                acting, and sending a form to one of these, is not.
+              </td>
+            </tr>
+            <tr>
+              <td>Data location (full control)</td>
+              <td>
+                <strong>Internal sites</strong> are the organization&apos;s own (e.g. <code>*.corp.example</code>).
+                Their pages and screenshots go only to the <strong>models that may see internal sites</strong> (none
+                selected: any). <strong>Models that may see screenshots</strong> limits which models get an image of
+                any site at all; a model not on it works from the page&apos;s text and references. The extension
+                enforces this, and the server re-checks every page and screenshot a request declares.
+              </td>
+            </tr>
+            <tr>
+              <td>Always ask before</td>
+              <td>
+                Seven cases, each on by default, that you can relax so the agent does them as ordinary actions (in
+                Auto mode, still checked by the reviewer): sending messages and emails, submitting forms, deleting,
+                going to another site, downloads, uploads, and the page&apos;s confirm/prompt dialogs. What is{" "}
+                <em>fixed</em> and cannot be relaxed: payments and trades, creating accounts, deleting for good,
+                downloading a program, identity and card fields, giving a program access to an account (OAuth consent),
+                changing what keeps an account safe, typing personal details, and CAPTCHAs — these always ask or are
+                refused. Text on a page that reads like instructions to the agent also forces the next change to ask.
+              </td>
+            </tr>
           </tbody>
         </DocsTable>
         <h3>Handing it out</h3>

@@ -1096,11 +1096,19 @@ export const userManualSections: DocSection[] = [
           </li>
           <li>
             The same rules apply: a click is judged by what is under the point, typing by the field that has the
-            focus. Nothing is typed into a password field, nothing is bought, and sensitive actions ask first.
+            focus. Nothing is typed into a password field, nothing is bought, and sensitive actions ask first. Right
+            before the mouse presses, the agent looks again at what is under the point — if the page moved or changed,
+            it does not press, and takes a fresh screenshot instead.
+          </li>
+          <li>
+            Some things it never does, whatever you ask: buy, pay or trade, create an account, delete for good,
+            download a program, or solve a CAPTCHA (that one is yours — solve it, then tell it to go on). It leaves a
+            payment page or a sign-in to you. Your administrator may also mark sites the agent only reads, or never
+            touches at all.
           </li>
           <li>
             Screenshots go to the model and nowhere else: they are never saved, and only the last few stay in the
-            run.
+            run. Your administrator can keep screenshots of your organization&apos;s own sites to chosen models.
           </li>
           <li>
             Full control adds the <em>debugger</em> permission to the extension. When your administrator turns it

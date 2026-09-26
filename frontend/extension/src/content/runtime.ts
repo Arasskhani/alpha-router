@@ -22,7 +22,7 @@ import {
   type Visibility,
 } from "./agent";
 import { hideOverlay, runStopped, showOverlay, type StopSender } from "./overlay";
-import { hideTarget, hideVisuals, moveCursor, pulseClick, setHighlightState, showTarget, showVisuals, type ClickKind, type HighlightState } from "./visuals";
+import { hideTarget, hideVisuals, moveCursor, pulseClick, setHighlightState, showTarget, showVisuals, veilVisuals, type ClickKind, type HighlightState } from "./visuals";
 
 /** What the panel can ask of the page. */
 export type PageMethod =
@@ -45,7 +45,8 @@ export type PageMethod =
   | "visuals_hide"
   | "visuals_state"
   | "visuals_cursor"
-  | "visuals_target";
+  | "visuals_target"
+  | "visuals_veil";
 
 const HIGHLIGHT_STATES = new Set<HighlightState>(["working", "waiting", "paused", "error"]);
 const CLICK_KINDS = new Set<ClickKind>(["left", "right", "double", "triple"]);
@@ -118,6 +119,9 @@ export async function runAgentCall(
         return { ok: true };
       case "visuals_hide":
         hideVisuals(doc);
+        return { ok: true };
+      case "visuals_veil":
+        veilVisuals(doc, args.veiled === true);
         return { ok: true };
       case "visuals_state": {
         const state = args.state as HighlightState;

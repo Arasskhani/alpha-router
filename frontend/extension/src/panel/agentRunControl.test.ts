@@ -109,6 +109,9 @@ describe("screenshots", () => {
     const image = second.find((m) => m.role === "user" && Array.isArray(m.content))!;
     expect(image.content).toEqual([{ type: "text", text: expect.stringContaining("640×360") }, { type: "image_url", image_url: { url: "data:image/jpeg;base64,SHOT" } }]);
     expect(String(second[0].content)).toContain("full control");
+    // The layer was veiled for the capture and unveiled after it.
+    const veils = h.browser.page.mock.calls.filter(([m]) => m === "visuals_veil").map(([, a]) => (a as { veiled: boolean }).veiled);
+    expect(veils).toEqual([true, false]);
   });
 
   it("is refused without the driver", async () => {

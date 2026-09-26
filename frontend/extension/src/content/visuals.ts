@@ -131,6 +131,12 @@ export function showVisuals(doc: Document): Host {
   return host;
 }
 
+/** Veil the layer for a capture, so the model never sees the cursor or the border; unveil after. */
+export function veilVisuals(doc: Document, veiled: boolean): void {
+  const host = doc.getElementById(VISUALS_ID) as Host | null;
+  if (host) setStyles(host, { visibility: veiled ? "hidden" : "visible" });
+}
+
 export function hideVisuals(doc: Document): void {
   const host = doc.getElementById(VISUALS_ID) as Host | null;
   host?.__pulse?.cancel();

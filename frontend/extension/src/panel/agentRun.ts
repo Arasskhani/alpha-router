@@ -490,8 +490,17 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     if (!driver) return { content: "Full control is not on for this run: use read_page and the reference tools.", status: "error", outcome: "error", extra: { error: "no_control" } };
     const site = tab.host ?? "";
     const race = <T>(work: Promise<T>) => Promise.race([work, stopped]);
+    // The layer is veiled for a capture: the model must never see the cursor or the border.
+    const capture = async <T>(work: () => Promise<T>): Promise<T> => {
+      await visual("visuals_veil", { veiled: true }, tab);
+      try {
+        return await race(work());
+      } finally {
+        await visual("visuals_veil", { veiled: false }, tab);
+      }
+    };
     if (tool === "screenshot") {
-      const shot = await race(driver.screenshot());
+      const shot = await capture(() => driver.screenshot());
       check();
       const size = `${shot.frame.width}×${shot.frame.height}`;
       return {
@@ -505,7 +514,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     if (tool === "zoom") {
       const r = Array.isArray(a.region) ? a.region.map(Number) : [];
       if (r.length !== 4 || r.some((n) => !Number.isFinite(n)) || r[2] <= r[0] || r[3] <= r[1]) return invalid("zoom needs region [x0, y0, x1, y1] with x1 > x0 and y1 > y0.");
-      const shot = await race(driver.zoom({ x: r[0], y: r[1], width: r[2] - r[0], height: r[3] - r[1] }));
+      const shot = await capture(() => driver.zoom({ x: r[0], y: r[1], width: r[2] - r[0], height: r[3] - r[1] }));
       check();
       return {
         content: `Zoomed into [${r.join(", ")}].`,

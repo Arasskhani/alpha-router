@@ -11,6 +11,7 @@ import {
   setHighlightState,
   showTarget,
   showVisuals,
+  veilVisuals,
   VISUALS_ID,
 } from "./visuals";
 
@@ -73,6 +74,16 @@ describe("pulseClick", () => {
   it("does not throw and cleans up when the DOM has no animation support", () => {
     showVisuals(document);
     expect(() => pulseClick(document, { x: 5, y: 5 }, "double")).not.toThrow();
+  });
+});
+
+describe("veilVisuals", () => {
+  it("hides the whole layer for a capture and shows it again", () => {
+    const host = showVisuals(document);
+    veilVisuals(document, true);
+    expect(host.style.getPropertyValue("visibility")).toBe("hidden");
+    veilVisuals(document, false);
+    expect(host.style.getPropertyValue("visibility")).toBe("visible");
   });
 });
 

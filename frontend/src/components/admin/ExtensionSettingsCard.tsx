@@ -16,16 +16,35 @@ import SearchableModelSelect from "./SearchableModelSelect";
 
 type SiteAccess = "per_site" | "all_sites";
 
+/** The relaxable approvals, in the order the card shows them, with what each says. */
+const APPROVALS: { key: string; label: string; hint: string }[] = [
+  { key: "send", label: "Sending messages and emails", hint: "A send button, a reply, a post; Enter in a message box." },
+  { key: "submit", label: "Submitting forms", hint: "Pressing a form's send button." },
+  { key: "delete", label: "Deleting", hint: "Delete, remove, discard (deleting for good is never allowed)." },
+  { key: "leave_sites", label: "Going to another site", hint: "A link, an address or a tab on a site other than the one it is on." },
+  { key: "downloads", label: "Downloads", hint: "Saving a file (a program is never downloaded)." },
+  { key: "uploads", label: "Uploads", hint: "Choosing or dropping a file into the page." },
+  { key: "dialogs", label: "The page's dialogs", hint: "A confirm or prompt the page opens; relaxed, a confirm is accepted and a prompt dismissed." },
+];
+const APPROVAL_KEYS = APPROVALS.map((a) => a.key);
+
 type ExtensionSettings = {
   site_access: SiteAccess;
   allowed_sites: string[];
   blocked_sites: string[];
+  read_only_sites: string[];
+  protected_sites: string[];
+  internal_sites: string[];
+  internal_models: string[];
+  screenshot_models: string[];
   page_content_models: string[];
   agent_models: string[];
   agent_max_steps: number;
   agent_auto_mode: boolean;
   agent_review_model: string | null;
   full_control: boolean;
+  enabled: boolean;
+  relaxed_approvals: string[];
 };
 
 type Distribution = {
@@ -53,9 +72,15 @@ type Overview = { settings: ExtensionSettings; models: ModelChoice[]; distributi
  * The form keeps what the administrator types: the site lists one pattern per
  * line, and the steps as text, so the field can be cleared and typed again.
  */
-type Form = Omit<ExtensionSettings, "allowed_sites" | "blocked_sites" | "agent_max_steps"> & {
+type Form = Omit<
+  ExtensionSettings,
+  "allowed_sites" | "blocked_sites" | "read_only_sites" | "protected_sites" | "internal_sites" | "agent_max_steps"
+> & {
   allowed_sites: string;
   blocked_sites: string;
+  read_only_sites: string;
+  protected_sites: string;
+  internal_sites: string;
   agent_max_steps: string;
 };
 
@@ -68,6 +93,9 @@ function toForm(settings: ExtensionSettings): Form {
     ...settings,
     allowed_sites: settings.allowed_sites.join("\n"),
     blocked_sites: settings.blocked_sites.join("\n"),
+    read_only_sites: settings.read_only_sites.join("\n"),
+    protected_sites: settings.protected_sites.join("\n"),
+    internal_sites: settings.internal_sites.join("\n"),
     agent_max_steps: String(settings.agent_max_steps),
   };
 }
@@ -214,6 +242,18 @@ export default function ExtensionSettingsCard() {
     setNotice("");
   }
 
+  /** The approvals are shown as "always ask": ticked means it asks (not relaxed). */
+  function setAsks(key: string, asks: boolean) {
+    setForm((current) => {
+      if (!current) return current;
+      const relaxed = new Set(current.relaxed_approvals);
+      if (asks) relaxed.delete(key);
+      else relaxed.add(key);
+      return { ...current, relaxed_approvals: APPROVAL_KEYS.filter((k) => relaxed.has(k)) };
+    });
+    setNotice("");
+  }
+
   async function save(event: FormEvent) {
     event.preventDefault();
     if (!form || readOnly) return;
@@ -234,6 +274,9 @@ export default function ExtensionSettingsCard() {
           ...form,
           allowed_sites: siteLines(form.allowed_sites),
           blocked_sites: siteLines(form.blocked_sites),
+          read_only_sites: siteLines(form.read_only_sites),
+          protected_sites: siteLines(form.protected_sites),
+          internal_sites: siteLines(form.internal_sites),
           agent_max_steps: steps,
           agent_review_model: form.agent_review_model || null,
         }),
@@ -282,6 +325,22 @@ export default function ExtensionSettingsCard() {
         error ? null : <p className="muted-text">Loading…</p>
       ) : (
         <form onSubmit={(e) => void save(e)}>
+          <label className="extension-admin__choice">
+            <input
+              type="checkbox"
+              checked={form.enabled}
+              disabled={locked}
+              onChange={(e) => patch({ enabled: e.target.checked })}
+            />
+            <span>
+              <strong>Browser extension on for the organisation</strong>
+              <span className="muted-text">
+                Turning it off stops the extension for everyone at once and refuses new connections, whatever the Chat
+                Tools grants say.
+              </span>
+            </span>
+          </label>
+
           <fieldset className="extension-admin__group" disabled={locked}>
             <legend>Site access</legend>
             <label className="extension-admin__choice">
@@ -339,6 +398,32 @@ export default function ExtensionSettingsCard() {
               <span className="settings-row__hint">
                 Always wins over the allowed list. The extension checks these before it reads or does anything, and
                 the server checks every page it is sent.
+              </span>
+            </label>
+            <label className="extension-admin__field">
+              <span className="settings-row__title">Read-only sites</span>
+              <textarea
+                className="input-block mono"
+                rows={3}
+                value={form.read_only_sites}
+                disabled={locked}
+                placeholder={"One per line: wiki.example.com"}
+                onChange={(e) => patch({ read_only_sites: e.target.value })}
+              />
+              <span className="settings-row__hint">The agent reads these, and never acts on them.</span>
+            </label>
+            <label className="extension-admin__field">
+              <span className="settings-row__title">Protected sites</span>
+              <textarea
+                className="input-block mono"
+                rows={3}
+                value={form.protected_sites}
+                disabled={locked}
+                placeholder={"One per line: *.shaparak.ir, bank.example"}
+                onChange={(e) => patch({ protected_sites: e.target.value })}
+              />
+              <span className="settings-row__hint">
+                The agent never acts here at all: payment gateways, banks — whatever must stay the person's own.
               </span>
             </label>
           </div>
@@ -434,6 +519,73 @@ export default function ExtensionSettingsCard() {
               </span>
             ) : null}
             <span className="settings-row__hint">Required for Auto mode. Its cost is billed to the person.</span>
+          </div>
+
+          <h3 className="settings-subsection-title">Full control: data location</h3>
+          <label className="extension-admin__field">
+            <span className="settings-row__title">Internal sites</span>
+            <textarea
+              className="input-block mono"
+              rows={3}
+              value={form.internal_sites}
+              disabled={locked}
+              placeholder={"One per line: *.corp.example, intranet"}
+              onChange={(e) => patch({ internal_sites: e.target.value })}
+            />
+            <span className="settings-row__hint">
+              The organisation's own sites. Their pages and screenshots go only to the models chosen below.
+            </span>
+          </label>
+          <div className="extension-admin__field">
+            <span className="settings-row__title">Models that may see internal sites</span>
+            <ModelChecklist
+              label="Models that may see internal sites"
+              models={models}
+              selected={form.internal_models}
+              disabled={locked}
+              onChange={(next) => patch({ internal_models: next })}
+            />
+            <span className="settings-row__hint">
+              None selected: any model the person may use. A model not here cannot read an internal site or see its
+              screenshots.
+            </span>
+          </div>
+          <div className="extension-admin__field">
+            <span className="settings-row__title">Models that may see screenshots</span>
+            <ModelChecklist
+              label="Models that may see screenshots"
+              models={models}
+              selected={form.screenshot_models}
+              disabled={locked}
+              onChange={(next) => patch({ screenshot_models: next })}
+            />
+            <span className="settings-row__hint">
+              None selected: any model. A model not here works from the page's text and references, without screenshots.
+            </span>
+          </div>
+
+          <h3 className="settings-subsection-title">Full control: always ask before</h3>
+          <p className="settings-row__hint">
+            Each is on by default. Turn one off to let the agent do it as an ordinary action (in Auto mode, still
+            checked by the reviewer). Payments, trades, creating accounts, deleting for good, identity and card fields,
+            giving a program access to an account and typing personal details always ask or are refused, and cannot be
+            turned off here.
+          </p>
+          <div className="extension-admin__approvals">
+            {APPROVALS.map((approval) => (
+              <label key={approval.key} className="extension-admin__choice">
+                <input
+                  type="checkbox"
+                  checked={!form.relaxed_approvals.includes(approval.key)}
+                  disabled={locked}
+                  onChange={(e) => setAsks(approval.key, e.target.checked)}
+                />
+                <span>
+                  <strong>{approval.label}</strong>
+                  <span className="muted-text">{approval.hint}</span>
+                </span>
+              </label>
+            ))}
           </div>
 
           {readOnly ? null : (

@@ -18925,6 +18925,12 @@ p.error,
   gap: 0.75rem;
 }
 
+.extension-admin__approvals {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  gap: 0.5rem 1.25rem;
+}
+
 .extension-admin__it {
   display: flex;
   flex-direction: column;

@@ -18,12 +18,19 @@ const SETTINGS = {
   site_access: "per_site",
   allowed_sites: ["wiki.example.com"],
   blocked_sites: ["*.bank.example"],
+  read_only_sites: [],
+  protected_sites: [],
+  internal_sites: [],
+  internal_models: [],
+  screenshot_models: [],
   page_content_models: ["model::2"],
   agent_models: [],
   agent_max_steps: 25,
   agent_auto_mode: false,
   agent_review_model: null,
   full_control: false,
+  enabled: true,
+  relaxed_approvals: [],
 };
 const DISTRIBUTION = {
   available: true,
@@ -230,6 +237,42 @@ describe("the browser extension card", () => {
     await act(async () => (control as HTMLInputElement).click());
     await save();
     expect(lastPut).toEqual({ ...SETTINGS, full_control: true });
+  });
+
+  it("saves the read-only and protected site lists", async () => {
+    serve();
+    await render();
+    await type(field("Read-only sites"), "wiki.example.com");
+    await type(field("Protected sites"), "*.shaparak.ir, bank.example");
+    await save();
+    expect(lastPut).toMatchObject({
+      read_only_sites: ["wiki.example.com"],
+      protected_sites: ["*.shaparak.ir", "bank.example"],
+    });
+  });
+
+  it("turns the whole extension off and back on", async () => {
+    serve();
+    await render();
+    const toggle = [...host.querySelectorAll("input[type=checkbox]")].find((c) =>
+      c.closest("label")?.textContent?.startsWith("Browser extension on for the organisation"),
+    )!;
+    expect((toggle as HTMLInputElement).checked).toBe(true);
+    await act(async () => (toggle as HTMLInputElement).click());
+    await save();
+    expect(lastPut).toMatchObject({ enabled: false });
+  });
+
+  it("relaxes an approval by unticking its always-ask box", async () => {
+    serve();
+    await render();
+    const send = [...host.querySelectorAll("input[type=checkbox]")].find((c) =>
+      c.closest("label")?.textContent?.startsWith("Sending messages and emails"),
+    )!;
+    expect((send as HTMLInputElement).checked).toBe(true);
+    await act(async () => (send as HTMLInputElement).click());
+    await save();
+    expect(lastPut).toMatchObject({ relaxed_approvals: ["send"] });
   });
 
   it("shows the server's reason when a setting cannot be saved", async () => {

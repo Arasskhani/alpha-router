@@ -180,7 +180,8 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
         setModels(usable);
         setModelsFailed(false);
         setModelId(pickModel(usable, typeof stored[MODEL_KEY] === "string" ? stored[MODEL_KEY] : null)?.id ?? "");
-        setMode(autoAllowed && stored[MODE_KEY] === "auto" ? "auto" : "ask");
+        const saved = stored[MODE_KEY];
+        setMode(saved === "plan" ? "plan" : autoAllowed && saved === "auto" ? "auto" : "ask");
       })
       .catch((err) => {
         if (!active) return;
@@ -257,7 +258,7 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
 
   function deps(model: string, driver: ControlDriver | null): AgentDeps {
     const { api } = getClient();
-    const browserTools = agentToolsFor({ fullControl: driver !== null });
+    const browserTools = agentToolsFor({ fullControl: driver !== null, plan: mode === "plan" });
     return {
       async model(messages, stepSignal) {
         for (let attempt = 0; ; attempt += 1) {
@@ -453,7 +454,9 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
   const empty =
     mode === "auto"
       ? "Tell Alpharouter what to do in your browser. In Auto mode it acts on the sites your administrator allows without asking; a reviewer checks each action, and it always asks before it sends, deletes, or goes to another site."
-      : "Tell Alpharouter what to do in your browser. It works in the tab next to this panel, and asks you before it changes anything.";
+      : mode === "plan"
+        ? "Tell Alpharouter what to do in your browser. In Plan mode it looks, proposes a plan and the sites it will work on, and waits for you to approve it once; then it works those sites on its own, and still asks before it sends, deletes, or leaves them."
+        : "Tell Alpharouter what to do in your browser. It works in the tab next to this panel, and asks you before it changes anything.";
 
   return (
     <main className="panel agent" hidden={hidden}>
@@ -478,23 +481,21 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
             Try again
           </button>
         )}
-        {autoAllowed && (
-          <div className="agent__modes" role="radiogroup" aria-label="Mode">
-            {(["ask", "auto"] as const).map((value) => (
-              <button
-                key={value}
-                type="button"
-                role="radio"
-                aria-checked={mode === value}
-                className={`agent__mode${mode === value ? " agent__mode--on" : ""}`}
-                disabled={running}
-                onClick={() => chooseMode(value)}
-              >
-                {value === "ask" ? "Ask" : "Auto"}
-              </button>
-            ))}
-          </div>
-        )}
+        <div className="agent__modes" role="radiogroup" aria-label="Mode">
+          {(["ask", "plan", ...(autoAllowed ? (["auto"] as const) : [])] as const).map((value) => (
+            <button
+              key={value}
+              type="button"
+              role="radio"
+              aria-checked={mode === value}
+              className={`agent__mode${mode === value ? " agent__mode--on" : ""}`}
+              disabled={running}
+              onClick={() => chooseMode(value)}
+            >
+              {value === "ask" ? "Ask" : value === "plan" ? "Plan" : "Auto"}
+            </button>
+          ))}
+        </div>
       </header>
 
       {banner && (

@@ -117,13 +117,23 @@ describe("the agent's models", () => {
     expect(agentModels(MODELS, ME).map((m) => m.id)).toEqual(["model::1", "model::2"]);
   });
 
-  it("offers Auto mode only when the administrator turned it on", async () => {
+  it("offers Ask and Plan always, and Auto only when the administrator turned it on", async () => {
     await render();
-    expect(host.querySelector('[role="radiogroup"]')).toBeNull();
+    expect([...host.querySelectorAll('[role="radio"]')].map((b) => b.textContent)).toEqual(["Ask", "Plan"]);
     act(() => root.unmount());
     root = createRoot(host);
     await render({ ...ME, features: { ...ME.features, auto_mode: true } });
-    expect([...host.querySelectorAll('[role="radio"]')].map((b) => b.textContent)).toEqual(["Ask", "Auto"]);
+    expect([...host.querySelectorAll('[role="radio"]')].map((b) => b.textContent)).toEqual(["Ask", "Plan", "Auto"]);
+  });
+
+  it("offers the plan tool to the model when Plan mode is chosen", async () => {
+    replies = [toolFrame([{ id: "c1", name: "done", args: { summary: "ok" } }])];
+    await render();
+    await act(async () => [...host.querySelectorAll('[role="radio"]')].find((b) => b.textContent === "Plan")!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await start("Do a thing.");
+    await until(() => host.textContent!.includes("ok"), "the summary");
+    const body = server.calls.filter((c) => c.path === "/api/chat/completions").at(-1)!.body as { browser_tools: { function: { name: string } }[] };
+    expect(body.browser_tools.map((t) => t.function.name)).toContain("update_plan");
   });
 });
 

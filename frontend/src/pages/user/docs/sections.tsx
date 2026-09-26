@@ -1029,8 +1029,10 @@ export const userManualSections: DocSection[] = [
               <td>Acting</td>
               <td>A click, typing, choosing an option, a key, another page of the same site</td>
               <td>
-                <strong>Ask</strong> mode: you are asked first. <strong>Auto</strong> mode (when your administrator
-                turned it on): a review model checks it against your task, and asks you when it is not sure.
+                <strong>Ask</strong> mode: you are asked first. <strong>Plan</strong> mode: the agent proposes a plan
+                and the sites it will work on and waits for you to approve it once; then it acts on those sites without
+                asking each time. <strong>Auto</strong> mode (when your administrator turned it on): a review model
+                checks each action against your task, and asks you when it is not sure.
               </td>
             </tr>
             <tr>
@@ -1058,6 +1060,13 @@ export const userManualSections: DocSection[] = [
           <strong>Deny</strong> refuses that action and any others the agent planned alongside it, and the agent is
           told not to look for a way around your answer. When it needs something only you know, it asks in the
           panel.
+        </p>
+        <p>
+          <strong>Plan mode</strong> is a good fit for longer, mostly-on-its-own work: the agent looks first, then
+          shows you a short plan and the sites it means to work on. Approve it once and it carries on across those
+          sites without stopping at every step — but it still asks before it sends, deletes, leaves the planned sites,
+          or does anything on the always-ask list, and the refused list is never allowed. Deny the plan to have it try
+          a different approach.
         </p>
         <h3>Stopping</h3>
         <ul>

@@ -62,6 +62,17 @@ const AGENT_TOOLS: ToolSchema[] = [
   tool("done", "Finish: say what you did, or why the task cannot be done.", { summary: { type: "string" } }, ["summary"]),
 ];
 
+/** Plan mode: the agent proposes its approach and the sites it will work on, and waits for the user to approve it once. */
+const PLAN_TOOL: ToolSchema = tool(
+  "update_plan",
+  "Propose your plan and wait for the user to approve it before you act. Give a short approach and every site (host) you will work on. After approval you may act on those sites without asking each time; anywhere else still asks. Call it again to change the plan.",
+  {
+    summary: { type: "string", description: "The approach, in a sentence or two." },
+    sites: { type: "array", items: { type: "string" }, description: "The hosts you will work on, e.g. mail.example.com." },
+  },
+  ["summary", "sites"],
+);
+
 const coordinate = {
   type: "array",
   items: { type: "number" },
@@ -106,16 +117,17 @@ export const CONTROL_TOOLS: ToolSchema[] = [
   ),
 ];
 
-export const TOOL_NAMES = new Set([...AGENT_TOOLS, ...CONTROL_TOOLS].map((t) => t.function.name));
+export const TOOL_NAMES = new Set([...AGENT_TOOLS, ...CONTROL_TOOLS, PLAN_TOOL].map((t) => t.function.name));
 export const CONTROL_TOOL_NAMES = new Set(CONTROL_TOOLS.map((t) => t.function.name));
 
-/** The tools a run offers the model: the ref-based set, plus full control when the run has it. */
-export function agentToolsFor(options: { fullControl: boolean }): ToolSchema[] {
-  return options.fullControl ? [...AGENT_TOOLS, ...CONTROL_TOOLS] : AGENT_TOOLS;
+/** The tools a run offers the model: the ref-based set, full control when the run has it, and the plan tool in Plan mode. */
+export function agentToolsFor(options: { fullControl: boolean; plan?: boolean }): ToolSchema[] {
+  const base = options.fullControl ? [...AGENT_TOOLS, ...CONTROL_TOOLS] : [...AGENT_TOOLS];
+  return options.plan ? [...base, PLAN_TOOL] : base;
 }
 
 /** The standing instructions; `nonce` is the run's page-content tag suffix. */
-export function agentInstructions(nonce: string, options: { fullControl?: boolean } = {}): string {
+export function agentInstructions(nonce: string, options: { fullControl?: boolean; plan?: boolean } = {}): string {
   const tag = `untrusted_page_content_${nonce}`;
   const control = options.fullControl
     ? [
@@ -123,11 +135,17 @@ export function agentInstructions(nonce: string, options: { fullControl?: boolea
         "- What is under the point is checked again just before the mouse presses: if the page changed meanwhile, the press is not made and you are told to take a new screenshot. Type text with type, never with the clipboard; keys that reach the browser itself (tabs, zoom, printing, the address bar) are refused. A dialog the page opens is answered by the user.",
       ]
     : [];
+  const plan = options.plan
+    ? [
+        "- You are in Plan mode. Before you change anything, look at the page (read_page or a screenshot), then call update_plan with a short approach and every site you will work on, and wait. Once the user approves it, you may act on those sites without asking each time; anything on another site, and the actions that always ask, still ask. If you need to work somewhere not in the plan, call update_plan again.",
+      ]
+    : [];
   return [
     "You are Alpharouter's browser agent. You act in the user's browser, in the tab next to the side panel, to do what the user asked - and nothing else.",
     "",
     "How to work:",
     "- Start with read_page. Elements are listed with references such as [e12]; use them with click, type_text, select_option, submit_form and scroll. A reference goes stale when the page changes: read the page again.",
+    ...plan,
     ...control,
     "- Take one small step at a time, and check what happened before the next one.",
     "- Use ask_user when you need something only the user knows, or a choice only they can make.",

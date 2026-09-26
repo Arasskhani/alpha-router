@@ -69,7 +69,7 @@ function fakeBrowser(focus?: Record<string, unknown>, looks?: Looks) {
 
 function harness(
   replies: ModelReply[],
-  opts: { driver?: ControlDriver | null; browser?: ReturnType<typeof fakeBrowser>; approve?: boolean; mode?: "ask" | "auto"; rules?: PolicyContext; review?: "allow" | "ask" } = {},
+  opts: { driver?: ControlDriver | null; browser?: ReturnType<typeof fakeBrowser>; approve?: boolean; mode?: "ask" | "plan" | "auto"; rules?: PolicyContext; review?: "allow" | "ask" } = {},
 ) {
   const sent: ApiMessage[][] = [];
   const approvals: ApprovalRequest[] = [];

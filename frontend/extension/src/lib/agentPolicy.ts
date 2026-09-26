@@ -56,7 +56,7 @@ export type Verdict = {
 /** Who has to agree before an action happens. */
 export type Approval = "none" | "user" | "review" | "refuse";
 
-export type AgentMode = "ask" | "auto";
+export type AgentMode = "ask" | "plan" | "auto";
 
 export type ProposedAction = {
   tool: string;
@@ -650,7 +650,9 @@ export function approvalFor(result: Verdict, mode: AgentMode): Approval {
     case "read":
       return "none";
     case "act":
-      return mode === "auto" ? "review" : "user";
+      // Plan mode: once the plan is approved (the caller seeds its sites), acting on a plan site needs no more asking;
+      // an off-plan site is caught by the caller and asked about. Auto mode sends acts to the reviewer.
+      return mode === "auto" ? "review" : mode === "plan" ? "none" : "user";
     case "sensitive":
       return "user";
     default:

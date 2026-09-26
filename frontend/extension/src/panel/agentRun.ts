@@ -331,6 +331,8 @@ function describeAction(tool: string, a: Record<string, unknown>, element?: Elem
       return "Ask you a question";
     case "done":
       return "Finish";
+    case "update_plan":
+      return "Propose a plan";
     default:
       return `Use ${clip(tool, 40)}`;
   }
@@ -461,7 +463,7 @@ function originPattern(url: string): { pattern: string; host: string } | null {
 
 export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: AbortSignal): Promise<RunResult> {
   const entries: Entry[] = [
-    { message: { role: "system", content: agentInstructions(options.nonce, { fullControl: Boolean(deps.driver) }) } },
+    { message: { role: "system", content: agentInstructions(options.nonce, { fullControl: Boolean(deps.driver), plan: options.mode === "plan" }) } },
     { message: { role: "user", content: options.task } },
   ];
   const history: string[] = [];
@@ -474,6 +476,8 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
    * cleared once it has. The page may be steering the model.
    */
   let injected: string | null = null;
+  /** Plan mode: true once the user has approved a plan, after which the plan's sites are worked without asking each action. */
+  let planApproved = false;
   let steps = 0;
   let startSite: string | undefined;
   /**
@@ -803,6 +807,36 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
         outcome: "ok",
       };
     }
+    if (name === "update_plan") {
+      if (options.mode !== "plan") {
+        return { content: "There is no plan to set in this mode.", status: "error", outcome: "error", extra: { error: "no_plan" } };
+      }
+      const summary = typeof a.summary === "string" ? clip(a.summary.trim(), 1000) : "";
+      const rawSites = Array.isArray(a.sites) ? a.sites : [];
+      // Each site as a host, and only ones the rules do not keep out: a plan cannot grant a blocked site.
+      const sites: string[] = [];
+      const refused: string[] = [];
+      for (const raw of rawSites.slice(0, 50)) {
+        const page = typeof raw === "string" ? readablePage(/^https?:/i.test(raw) ? raw : `https://${raw.trim()}`) : null;
+        if (!page) continue;
+        const verdict = classifyAction({ tool: "read_page", args: {}, page: { url: page.origin, host: page.host } }, options.rules);
+        if (verdict.class === "blocked") refused.push(page.host);
+        else if (!sites.includes(page.host)) sites.push(page.host);
+      }
+      if (!summary || !sites.length) {
+        return { content: "A plan needs a short summary and at least one site the agent may work on.", status: "error", detail: "Incomplete plan", outcome: "error", extra: { error: "invalid_plan" } };
+      }
+      const shown = `Plan: ${summary}\nSites: ${sites.join(", ")}${refused.length ? `\n(Not allowed, left out: ${refused.join(", ")})` : ""}`;
+      deps.onStep({ id: call.id, tool: name, summary: shown, status: "waiting" });
+      const ok = await deps.approve({ tool: "update_plan", summary: shown, verdict: { class: "sensitive", reason: "plan", message: "Approve this plan; the agent then works these sites without asking each action." } }, signal);
+      check();
+      if (!ok) {
+        return { content: "The user did not approve the plan. Revise the approach or the sites and propose it again, or ask them what they want.", status: "denied", detail: "Plan not approved", outcome: "denied" };
+      }
+      planApproved = true;
+      for (const host of sites) allowedSites.add(host);
+      return { content: `Plan approved. You may act on: ${sites.join(", ")}. Anywhere else, and the actions that always ask, still ask.`, status: "done", detail: `${sites.length} sites`, outcome: "ok", extra: { sites: sites.length } };
+    }
     const tab = await deps.browser.current();
     check();
     const pageNow = tab?.host ? { url: tab.url, host: tab.host } : undefined;
@@ -907,6 +941,18 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
         status: "blocked",
         detail: verdict.message,
         outcome: "blocked",
+      };
+    }
+    // Plan mode: nothing that changes the page happens until a plan is approved.
+    if (options.mode === "plan" && !planApproved && verdict.class !== "read") {
+      return {
+        ...base,
+        summary,
+        content: "Propose a plan with update_plan and wait for the user to approve it before you act.",
+        status: "blocked",
+        detail: "No approved plan yet",
+        outcome: "blocked",
+        extra: { ...base.extra, reason: "no_plan" },
       };
     }
     let approval = approvalFor(verdict, options.mode);

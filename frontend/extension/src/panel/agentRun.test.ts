@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { PolicyContext } from "../lib/agentPolicy";
 import type { PageResult } from "../lib/pageAgent";
+import { agentToolsFor } from "./agentTools";
 import {
   conversation,
   runAgent,
@@ -610,5 +611,86 @@ describe("the conversation the model reads", () => {
     expectEveryCallAnswered(messages);
     expect(messages.at(-1)).toMatchObject({ role: "tool", tool_call_id: "c6" });
     expect(messages.reduce((sum, m) => sum + (typeof m.content === "string" ? m.content.length : 0), 0)).toBeLessThan(130_000);
+  });
+});
+
+describe("plan mode", () => {
+  it("offers the plan tool only in plan mode", () => {
+    const names = (fullControl: boolean, plan: boolean) => agentToolsFor({ fullControl, plan }).map((t) => t.function.name);
+    expect(names(false, false)).not.toContain("update_plan");
+    expect(names(false, true)).toContain("update_plan");
+    expect(names(true, true)).toEqual(expect.arrayContaining(["update_plan", "computer"]));
+  });
+
+  it("refuses to change anything until a plan is approved, then works the plan's sites without asking", async () => {
+    const h = harness(
+      [
+        // Acting before a plan: refused.
+        { text: "", toolCalls: [call("click", { ref: "e1" }, "c1")] },
+        // Look, then propose a plan.
+        { text: "", toolCalls: [call("read_page", {}, "c2")] },
+        { text: "", toolCalls: [call("update_plan", { summary: "Apply the coupon and go next.", sites: ["shop.example.com"] }, "c3")] },
+        // Now act on the plan site: no approval.
+        { text: "", toolCalls: [call("type_text", { ref: "e3", text: "SAVE10" }, "c4"), call("click", { ref: "e1" }, "c5")] },
+        { text: "", toolCalls: [call("done", { summary: "Done." }, "c6")] },
+      ],
+      { approve: () => true },
+    );
+    const result = await run(h, { mode: "plan" });
+    expect(result.outcome).toBe("done");
+    // The pre-plan click was blocked with the plan reason, and never reached the page.
+    const firstAnswer = h.sent[1].find((m) => m.role === "tool");
+    expect(String(firstAnswer?.content)).toContain("Propose a plan");
+    // Only the plan itself was approved; the coupon and the click went ahead on their own.
+    expect(h.approvals.map((a) => a.tool)).toEqual(["update_plan"]);
+    expect(h.approvals[0].summary).toContain("shop.example.com");
+    expect(h.browser.page).toHaveBeenCalledWith("type_text", { ref: "e3", text: "SAVE10" }, TAB, expect.any(AbortSignal));
+  });
+
+  it("a plan with no usable site is not accepted", async () => {
+    const h = harness([
+      { text: "", toolCalls: [call("update_plan", { summary: "Do things.", sites: ["bank.example.com"] }, "c1")] },
+      { text: "", toolCalls: [call("done", { summary: "Stopped." }, "c2")] },
+    ]);
+    const result = await run(h, { mode: "plan" });
+    expect(result.outcome).toBe("done");
+    // The only site was a blocked one, so the plan was incomplete; nobody was asked.
+    expect(h.approvals).toHaveLength(0);
+    expect(String(h.sent[1].find((m) => m.role === "tool")?.content)).toContain("at least one site");
+  });
+
+  it("a denied plan tells the agent to revise, and still nothing is changed", async () => {
+    const h = harness(
+      [
+        { text: "", toolCalls: [call("update_plan", { summary: "Buy stuff.", sites: ["shop.example.com"] }, "c1")] },
+        { text: "", toolCalls: [call("click", { ref: "e1" }, "c2")] },
+        { text: "", toolCalls: [call("done", { summary: "Could not." }, "c3")] },
+      ],
+      { approve: () => false },
+    );
+    await run(h, { mode: "plan" });
+    // The plan was denied; the later click is still refused for want of a plan.
+    expect(h.approvals.map((a) => a.tool)).toEqual(["update_plan"]);
+    const clickAnswer = h.sent[2].find((m) => m.role === "tool" && m.tool_call_id === "c2");
+    expect(String(clickAnswer?.content)).toContain("Propose a plan");
+    expect(h.browser.page).not.toHaveBeenCalledWith("click", expect.anything(), expect.anything(), expect.anything());
+  });
+
+  it("still asks before leaving the plan's sites, and before a sensitive action on them", async () => {
+    const h = harness(
+      [
+        { text: "", toolCalls: [call("update_plan", { summary: "Work the shop.", sites: ["shop.example.com"] }, "c1")] },
+        // A send button on the plan site still asks; a partner link leaves the plan and asks.
+        { text: "", toolCalls: [call("click", { ref: "e4" }, "c2")] },
+        { text: "", toolCalls: [call("click", { ref: "e5" }, "c3")] },
+        { text: "", toolCalls: [call("done", { summary: "Done." }, "c4")] },
+      ],
+      { approve: () => true },
+    );
+    await run(h, { mode: "plan" });
+    expect(h.approvals.map((a) => a.tool)).toEqual(["update_plan", "click", "click"]);
+    // The send is sensitive; the partner link goes to another site.
+    expect(h.approvals[1].verdict.class).toBe("sensitive");
+    expect(h.approvals[2].verdict.site).toBe("partner.org");
   });
 });

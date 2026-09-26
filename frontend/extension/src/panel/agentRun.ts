@@ -18,7 +18,7 @@
  * the user presses Stop.
  */
 
-import { approvalFor, classifyAction, type AgentMode, type PolicyContext, type Verdict } from "../lib/agentPolicy";
+import { approvalFor, classifyAction, DEFAULT_APPROVALS, parseKeyCombo, type AgentMode, type PolicyContext, type Verdict } from "../lib/agentPolicy";
 import type { CdpDriver } from "../lib/cdpDriver";
 import type { ElementInfo, PageMethod, PageResult } from "../lib/pageAgent";
 import { readablePage } from "../lib/sites";
@@ -93,7 +93,7 @@ export type AgentEventReport = {
 };
 
 /** The run's driver under full control: input and screenshots (cdpDriver.ts); absent on the dom path. */
-export type ControlDriver = Pick<CdpDriver, "screenshot" | "zoom" | "click" | "hover" | "scroll" | "drag" | "type" | "key" | "toCss">;
+export type ControlDriver = Pick<CdpDriver, "screenshot" | "zoom" | "click" | "hover" | "scroll" | "drag" | "type" | "key" | "toCss" | "takeDialog" | "handleDialog">;
 
 export type AgentDeps = {
   model(messages: ApiMessage[], signal: AbortSignal): Promise<ModelReply>;
@@ -126,6 +126,10 @@ export type RunOutcome = "done" | "stopped" | "max_steps" | "errors" | "failed";
 export type RunResult = { outcome: RunOutcome; summary: string; steps: number };
 
 const MAX_ERRORS_IN_A_ROW = 3;
+/** How far the target may have moved between the judgment and the press, in CSS pixels. */
+const TARGET_TOLERANCE_PX = 8;
+/** This many deletion keys in a row, and the next one asks the user. */
+const DELETION_RUN = 8;
 /** Older page content is cut to this, so a long run stays within the model's reach. */
 const OLD_PAGE_CHARS = 1500;
 /** How many of the latest page results stay whole. */
@@ -330,9 +334,10 @@ function describeAction(tool: string, a: Record<string, unknown>, element?: Elem
 }
 
 /** A computer action in words, naming what it touches when that is known. */
-function describeComputer(a: Record<string, unknown>, element?: ElementInfo): string {
+function describeComputer(a: Record<string, unknown>, element?: ElementInfo, drop?: ElementInfo): string {
   const action = String(a.action ?? "");
   const where = element ? ` ${element.role}${element.name ? ` "${clip(element.name, 80)}"` : ""}` : "";
+  const onto = drop ? ` ${drop.role}${drop.name ? ` "${clip(drop.name, 80)}"` : ""}` : "";
   const at = (value: unknown) => {
     const p = point(value);
     return p ? ` at (${p.x}, ${p.y})` : "";
@@ -349,7 +354,7 @@ function describeComputer(a: Record<string, unknown>, element?: ElementInfo): st
     case "hover":
       return `Hover over${where}${at(a.coordinate)}`;
     case "left_click_drag":
-      return `Drag${where}${at(a.start_coordinate)} to${at(a.coordinate)}`;
+      return `Drag${where}${at(a.start_coordinate)} to${onto}${at(a.coordinate)}`;
     case "scroll":
       return `Scroll ${String(a.scroll_direction ?? "down")}${at(a.coordinate)}`;
     case "type":
@@ -381,6 +386,33 @@ const PAGE_TOOLS = new Set([
 ]);
 /** Actions after which a page may be loading. */
 const MAY_LOAD = new Set(["click", "submit_form", "press_key", "navigate", "tab_open", "tab_switch", "computer"]);
+/** Tools (as the rules know them) that change nothing: they do not break a run of deletion keys. */
+const READ_ONLY = new Set(["tabs_list", "read_page", "find", "get_page_text", "scroll", "wait_for", "screenshot", "zoom", "ask_user"]);
+
+type PointRect = { x: number; y: number; width: number; height: number };
+
+/** The same target for the rules' purposes: what they judged it by has not changed, whichever DOM node it is now. */
+function sameTarget(judged: ElementInfo, now: ElementInfo): boolean {
+  return (
+    judged.role === now.role &&
+    judged.name === now.name &&
+    (judged.text ?? "") === (now.text ?? "") &&
+    (judged.href ?? "") === (now.href ?? "") &&
+    (judged.type ?? "") === (now.type ?? "") &&
+    Boolean(judged.submits) === Boolean(now.submits) &&
+    (judged.formAction ?? "") === (now.formAction ?? "") &&
+    Boolean(judged.sensitive) === Boolean(now.sensitive) &&
+    (judged.frame?.host ?? null) === (now.frame?.host ?? null) &&
+    Boolean(judged.frame) === Boolean(now.frame) &&
+    (judged.hidden ?? "") === (now.hidden ?? "")
+  );
+}
+
+/** Whether the target sits where it was, within the tolerance, and is about the same size. */
+function closeTo(was: PointRect, now: PointRect): boolean {
+  const t = TARGET_TOLERANCE_PX;
+  return Math.abs(was.x - now.x) <= t && Math.abs(was.y - now.y) <= t && Math.abs(was.width - now.width) <= t && Math.abs(was.height - now.height) <= t;
+}
 
 /** What a computer action is, as the rules know actions: the tool it amounts to, and where the element comes from. */
 const COMPUTER_ACTIONS: Record<string, { as: string; element: "point" | "start" | "focus" | "none"; kind?: "left" | "right" | "double" | "triple" }> = {
@@ -389,7 +421,7 @@ const COMPUTER_ACTIONS: Record<string, { as: string; element: "point" | "start" 
   double_click: { as: "click", element: "point", kind: "double" },
   triple_click: { as: "click", element: "point", kind: "triple" },
   hover: { as: "scroll", element: "point" },
-  left_click_drag: { as: "click", element: "start" },
+  left_click_drag: { as: "drag", element: "start" },
   scroll: { as: "scroll", element: "none" },
   type: { as: "type_text", element: "focus" },
   key: { as: "press_key", element: "focus" },
@@ -431,6 +463,8 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
   ];
   const history: string[] = [];
   let errorsInARow = 0;
+  /** Deletion keys pressed one after another, with no other action between: past DELETION_RUN the next one asks. */
+  let deletionsInARow = 0;
   let steps = 0;
   let startSite: string | undefined;
   /**
@@ -483,6 +517,43 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
   }
 
   const invalid = (message: string): Answer => ({ content: message, status: "error", outcome: "error", extra: { error: "invalid_arguments" } });
+
+  /**
+   * A dialog the page opened during an action (alert, confirm, prompt, or
+   * "leave this page?"): the page waits on it. An alert is closed and its
+   * message told to the model; a question is the user's to answer, unless the
+   * administrator lets the agent accept them - a prompt is then dismissed, as
+   * the agent has no answer to type.
+   */
+  async function answerDialog(dialog: { type: string; message: string }, tab: WorkTab): Promise<string> {
+    const driver = deps.driver!;
+    const message = clip(dialog.message, 300);
+    const shown = message ? ` "${message}"` : "";
+    if (dialog.type === "alert") {
+      await driver.handleDialog(true).catch(() => undefined);
+      return `\nThe page showed a message:${shown}`;
+    }
+    const kind = dialog.type === "beforeunload" ? "asks whether to leave the page" : dialog.type === "prompt" ? "asks for an answer" : "asks to confirm";
+    let accept: boolean;
+    if ((options.rules.approvals ?? DEFAULT_APPROVALS).dialogs) {
+      await visual("visuals_state", { state: "waiting" }, tab);
+      accept = await deps.approve(
+        {
+          tool: "dialog",
+          summary: `The page ${kind}:${shown || " (no message)"} - Allow accepts it, Deny dismisses it`,
+          verdict: { class: "sensitive", reason: "dialog", message: `The page ${kind}.` },
+        },
+        signal,
+      );
+      await visual("visuals_state", { state: "working" }, tab);
+      check();
+    } else {
+      accept = dialog.type !== "prompt";
+    }
+    if (accept && dialog.type === "prompt") await driver.handleDialog(true, "").catch(() => undefined);
+    else await driver.handleDialog(accept).catch(() => undefined);
+    return `\nThe page ${kind}:${shown} - it was ${accept ? "accepted" : "dismissed"}${(options.rules.approvals ?? DEFAULT_APPROVALS).dialogs ? " by the user" : ""}.`;
+  }
 
   /** Full control: screenshots and the real mouse and keyboard, through the run's driver. */
   async function control(tool: string, a: Record<string, unknown>, tab: WorkTab): Promise<Answer> {
@@ -577,6 +648,9 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       note = `Waited ${seconds} s.`;
     }
     check();
+    // A dialog the action opened holds the page: it is answered before anything else is asked of the page.
+    const dialog = driver.takeDialog();
+    if (dialog) note += await answerDialog(dialog, tab);
     let moved = "";
     await race(deps.browser.settle());
     check();
@@ -725,7 +799,10 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     // A computer action is judged as the action it amounts to, on what a click there (or the focus) would touch.
     let judgedAs = name;
     let judgedArgs = a;
-    let targetRect: { x: number; y: number; width: number; height: number } | undefined;
+    let targetRect: PointRect | undefined;
+    /** For a point action: where the mouse will press, in CSS pixels, so the target can be judged again just before. */
+    let pressAt: { x: number; y: number; activates: boolean } | undefined;
+    let drop: ElementInfo | undefined;
     if (name === "computer") {
       const spec = COMPUTER_ACTIONS[String(a.action ?? "")];
       if (!spec) return invalid("computer needs one of: left_click, right_click, double_click, triple_click, hover, left_click_drag, scroll, type, key, wait.");
@@ -737,18 +814,31 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
           const p = point(spec.element === "start" ? a.start_coordinate : a.coordinate);
           if (!p) return invalid(`${String(a.action)} needs ${spec.element === "start" ? "start_coordinate" : "coordinate"} [x, y].`);
           const css = await deps.driver.toCss(p);
-          const described = await page("describe_at", { x: css.x, y: css.y, activates: spec.as === "click" }, tab);
+          pressAt = { x: css.x, y: css.y, activates: spec.as === "click" };
+          const described = await page("describe_at", pressAt, tab);
           if (!described.ok) {
             return { content: "", page: wrapPage(options.nonce, pageNow.host, described.message), status: "error", detail: described.message, outcome: "error", site: pageNow.host, extra: { error: described.error } };
           }
           element = described.element as ElementInfo;
-          targetRect = described.rect as typeof targetRect;
+          targetRect = described.rect as PointRect;
+          if (spec.as === "drag") {
+            // Where it drops: judged too, since a drop on an upload zone uploads.
+            const end = point(a.coordinate);
+            if (!end) return invalid("left_click_drag needs coordinate [x, y] to drop at.");
+            const endCss = await deps.driver.toCss(end);
+            const dropped = await page("describe_at", { x: endCss.x, y: endCss.y, activates: false }, tab);
+            if (dropped.ok) drop = dropped.element as ElementInfo;
+          }
         } else if (spec.element === "focus") {
           const focus = await page("describe_focus", {}, tab);
           if (focus.ok && focus.element) element = focus.element as ElementInfo;
         }
       }
     }
+    // Deletion keys, one after another: past a run of them the next asks, whatever the mode.
+    const deletionKey = judgedAs === "press_key" && ["Backspace", "Delete"].includes(parseKeyCombo(judgedArgs.key)?.key ?? "");
+    if (deletionKey) deletionsInARow += 1;
+    else if (!READ_ONLY.has(judgedAs)) deletionsInARow = 0;
     let target: SwitchTarget | undefined;
     if (name === "tab_switch") {
       const found = (await deps.browser.listTabs()).find((t) => t.id === Number(a.tab_id));
@@ -758,14 +848,15 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
         target = { id: found.id, url: found.url, host: found.host, title: found.title, readable };
       }
     }
-    const summary = name === "computer" ? describeComputer(a, element) : describeAction(name, a, element, target);
+    const summary = name === "computer" ? describeComputer(a, element, drop) : describeAction(name, a, element, target);
     const verdict = TOOL_NAMES.has(name)
-      ? classifyAction({ tool: judgedAs, args: judgedArgs, page: pageNow, element, target: target && { url: target.url, host: target.host } }, options.rules)
+      ? classifyAction({ tool: judgedAs, args: judgedArgs, page: pageNow, element, drop, target: target && { url: target.url, host: target.host } }, options.rules)
       : ({ class: "blocked", reason: "unknown_tool", message: `The agent has no tool called ${clip(name, 40)}.` } as Verdict);
     const base = {
       site: verdict.site ?? pageNow?.host,
       extra: {
         class: verdict.class,
+        reason: verdict.reason,
         ...(element ? { role: element.role, label: element.name } : {}),
         ...(name === "type_text" && typeof a.text === "string" ? { chars: a.text.length } : {}),
         ...(name === "press_key" && typeof a.key === "string" ? { key: a.key.slice(0, 32) } : {}),
@@ -783,17 +874,20 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
         status: "blocked",
         detail: verdict.message,
         outcome: "blocked",
-        extra: { ...base.extra, reason: verdict.reason },
       };
     }
     let approval = approvalFor(verdict, options.mode);
     // A site the page went to by itself: the user decides before the agent reads or acts there, in Auto mode too.
     // Reading counts: with every site granted, nothing else would stop an inbox the tab was sent to going to the model.
     const arrived = pageNow && (PAGE_TOOLS.has(name) || verdict.class !== "read") && !allowedSites.has(pageNow.host) ? pageNow.host : null;
-    const judged: Verdict = arrived
+    let judged: Verdict = arrived
       ? { ...verdict, message: `${verdict.message} The page went to ${arrived} without being asked to; allowing this lets the agent work there.` }
       : verdict;
     if (arrived) approval = "user";
+    if (deletionKey && deletionsInARow > DELETION_RUN && verdict.class === "act") {
+      judged = { ...judged, message: `${judged.message} That is the ${deletionsInARow}th deletion key in a row.` };
+      approval = "user";
+    }
     // The browser has to allow a site before the agent can work there, and it asks only in a click.
     let access: ApprovalRequest["access"];
     // For a link to another site, that site: the page it is on is already the agent's.
@@ -858,10 +952,33 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       }
       approvedBy = "user";
       if (arrived) allowedSites.add(arrived);
-      // Going to another site the user allowed: the agent may work there.
-      if (verdict.site) allowedSites.add(verdict.site);
+      if (deletionKey) deletionsInARow = 0;
     }
+    // Going to another site, allowed by the user, the reviewer or the administrator's rules: the agent may work there.
+    if (verdict.site) allowedSites.add(verdict.site);
     base.extra.approval = approvedBy;
+    // Judged twice: what is under the point just before the press. The page may have changed since -
+    // a layout shift, a dialog, an element that moved - and then the press is not made.
+    if (pressAt && element && targetRect && tab) {
+      const again = await page("describe_at", pressAt, tab);
+      const now = again.ok ? (again.element as ElementInfo) : undefined;
+      const rect = again.ok ? (again.rect as PointRect) : undefined;
+      if (!now || !rect || !sameTarget(element, now) || !closeTo(targetRect, rect)) {
+        await visual("visuals_target", { rect: null }, tab);
+        const why = !now ? (again.ok ? "nothing is there now" : again.message) : "something else is there now";
+        return {
+          ...base,
+          summary,
+          content: "",
+          page: wrapPage(options.nonce, pageNow!.host, `Not done: the page changed since this action was judged (${why}). Take a new screenshot and look again.`),
+          status: "error",
+          detail: "The page changed",
+          outcome: "error",
+          extra: { ...base.extra, error: "target_changed" },
+        };
+      }
+      targetRect = rect;
+    }
     deps.onStep({ id: call.id, tool: name, summary, status: "running" });
     if (targetRect) await visual("visuals_target", { rect: targetRect }, tab);
     let answer: Answer;

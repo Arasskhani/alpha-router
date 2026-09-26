@@ -11,7 +11,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ApiError } from "../lib/api";
-import type { AgentMode, PolicyContext } from "../lib/agentPolicy";
+import { DEFAULT_APPROVALS, type AgentMode, type PolicyContext } from "../lib/agentPolicy";
 import { ChatStreamError, readChatStream } from "../lib/chatStream";
 import { getClient } from "../lib/client";
 import { fromTabScript, isExtensionMessage } from "../lib/messages";
@@ -146,12 +146,24 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
   const rules = useMemo<PolicyContext>(() => {
     // Both addresses: the server this copy talks to, and the one the server gives, if they differ.
     const own = [hostOf(server), hostOf(me.server.url)].filter((host): host is string => host !== null);
+    const data = me.policy?.data;
     return {
-      policy: { allowed_sites: me.policy?.allowed_sites ?? [], blocked_sites: me.policy?.blocked_sites ?? [] },
+      policy: {
+        allowed_sites: me.policy?.allowed_sites ?? [],
+        blocked_sites: me.policy?.blocked_sites ?? [],
+        read_only_sites: me.policy?.read_only_sites ?? [],
+        protected_sites: me.policy?.protected_sites ?? [],
+      },
       serverHost: hostOf(me.server.url) ?? hostOf(server),
       ownHosts: [...new Set(own)],
+      approvals: { ...DEFAULT_APPROVALS, ...(me.policy?.approvals ?? {}) },
+      data: {
+        internalSites: data?.internal_sites ?? [],
+        modelSeesInternal: !data?.internal_models || data.internal_models.includes(modelId),
+        modelSeesScreenshots: !data?.screenshot_models || data.screenshot_models.includes(modelId),
+      },
     };
-  }, [me, server]);
+  }, [me, server, modelId]);
 
   useEffect(() => {
     disconnected.current = onDisconnected;

@@ -351,6 +351,30 @@ describe("a run", () => {
     expect(pageCalls.some((c) => c.method === "read_page")).toBe(false);
   });
 
+  it("keeps the administrator's read-only sites, and what the model may see, from the policy", async () => {
+    replies = [toolFrame([{ id: "c1", name: "click", args: { ref: "e1" } }]), toolFrame([{ id: "c2", name: "read_page" }]), toolFrame([{ id: "c3", name: "done", args: { summary: "Read only." } }])];
+    const policy = { ...ME.policy!, read_only_sites: ["shop.example.com"], data: { internal_sites: ["shop.example.com"], internal_models: ["model::1"], screenshot_models: null } };
+    await render({ ...ME, policy });
+    await start("Click next.");
+    await until(() => host.textContent!.includes("Read only."), "the summary");
+    // The click was refused on the read-only site; the read went ahead, since this model may see the internal site.
+    expect(host.querySelector('[data-step-status="blocked"]')).not.toBeNull();
+    expect(pageCalls.some((c) => c.method === "click")).toBe(false);
+    expect(pageCalls.some((c) => c.method === "read_page")).toBe(true);
+    expect(host.textContent).toContain("read-only site");
+  });
+
+  it("keeps an internal site from a model that may not see it", async () => {
+    replies = [toolFrame([{ id: "c1", name: "read_page" }]), toolFrame([{ id: "c2", name: "done", args: { summary: "Not for this model." } }])];
+    const policy = { ...ME.policy!, data: { internal_sites: ["*.example.com"], internal_models: ["model::2"], screenshot_models: null } };
+    await render({ ...ME, policy });
+    await start("Read this page.");
+    await until(() => host.textContent!.includes("Not for this model."), "the summary");
+    expect(host.querySelector('[data-step-status="blocked"]')).not.toBeNull();
+    expect(pageCalls.some((c) => c.method === "read_page")).toBe(false);
+    expect(host.textContent).toContain("internal to your organisation");
+  });
+
   it("shows what went wrong when the server refuses the step", async () => {
     server.routes["POST /api/chat/completions"] = () =>
       json(403, { detail: { code: "model_not_allowed", message: "Your administrator does not allow the browser agent to use this model." } });

@@ -35,11 +35,16 @@ function fakeDriver() {
     type: vi.fn(async () => undefined),
     key: vi.fn(async (spec: string) => spec !== "Frobnicate"),
     toCss: vi.fn(async (p: { x: number; y: number }) => ({ x: p.x * 2, y: p.y * 2 })),
+    takeDialog: vi.fn((): { type: string; message: string } | null => null),
+    handleDialog: vi.fn(async () => undefined),
   } satisfies ControlDriver;
   return driver;
 }
 
-function fakeBrowser(focus?: Record<string, unknown>) {
+/** What describe_at answers, in order, when a test wants the page to change between looks. */
+type Looks = PageResult[];
+
+function fakeBrowser(focus?: Record<string, unknown>, looks?: Looks) {
   const browser = {
     current: vi.fn(async () => TAB),
     listTabs: vi.fn(async () => [{ ...TAB, active: true }]),
@@ -48,6 +53,7 @@ function fakeBrowser(focus?: Record<string, unknown>) {
     navigate: vi.fn(async (url: string) => ({ ...TAB, url })),
     page: vi.fn(async (method: string, args: Record<string, unknown> = {}): Promise<PageResult> => {
       if (method === "describe_at") {
+        if (looks?.length) return looks.shift()!;
         // CSS coords arrive; the fixture is keyed by frame coords (÷2).
         const hit = AT[`${Number(args.x) / 2},${Number(args.y) / 2}`];
         return hit ? { ok: true, ...hit } : { ok: false, error: "not_found", message: "There is nothing to act on at that point." };
@@ -61,7 +67,10 @@ function fakeBrowser(focus?: Record<string, unknown>) {
   return browser;
 }
 
-function harness(replies: ModelReply[], opts: { driver?: ControlDriver | null; browser?: ReturnType<typeof fakeBrowser>; approve?: boolean } = {}) {
+function harness(
+  replies: ModelReply[],
+  opts: { driver?: ControlDriver | null; browser?: ReturnType<typeof fakeBrowser>; approve?: boolean; mode?: "ask" | "auto"; rules?: PolicyContext; review?: "allow" | "ask" } = {},
+) {
   const sent: ApiMessage[][] = [];
   const approvals: ApprovalRequest[] = [];
   const browser = opts.browser ?? fakeBrowser();
@@ -78,12 +87,13 @@ function harness(replies: ModelReply[], opts: { driver?: ControlDriver | null; b
       return opts.approve ?? true;
     }),
     askUser: vi.fn(async () => ""),
-    review: vi.fn(async () => ({ decision: "ask" as const, reason: "Not sure." })),
+    review: vi.fn(async () => ({ decision: opts.review ?? ("ask" as const), reason: "Not sure." })),
     report: vi.fn(),
     onStep: vi.fn(),
     onText: vi.fn(),
   };
-  const run = () => runAgent({ task: "Go to the next step.", mode: "ask", maxSteps: 10, rules: RULES, runId: "run-1", nonce: NONCE }, deps, new AbortController().signal);
+  const run = () =>
+    runAgent({ task: "Go to the next step.", mode: opts.mode ?? "ask", maxSteps: 20, rules: opts.rules ?? RULES, runId: "run-1", nonce: NONCE }, deps, new AbortController().signal);
   return { deps, browser, driver, sent, approvals, run };
 }
 
@@ -241,11 +251,32 @@ describe("computer actions", () => {
     expect(String(tools[2].content)).toContain("cannot press");
   });
 
-  it("a drag is judged on what it picks up", async () => {
+  it("a drag is judged on what it picks up and where it drops", async () => {
     const h = harness([{ text: "", toolCalls: [call("computer", { action: "left_click_drag", start_coordinate: [200, 100], coordinate: [300, 100] })] }]);
     await h.run();
     expect(h.approvals[0].summary).toContain("Drag");
+    expect(h.approvals[0].verdict).toMatchObject({ class: "act", reason: "drag" });
+    // Both ends were looked at: the source (not as a click) and the drop point.
+    expect(h.browser.page).toHaveBeenCalledWith("describe_at", { x: 400, y: 200, activates: false }, TAB, expect.anything());
+    expect(h.browser.page).toHaveBeenCalledWith("describe_at", { x: 600, y: 200, activates: false }, TAB, expect.anything());
     expect(h.driver!.drag).toHaveBeenCalledWith({ x: 200, y: 100 }, { x: 300, y: 100 });
+  });
+
+  it("a drop on an upload zone is an upload, which asks and names the zone", async () => {
+    const looks: Looks = [
+      { ok: true, element: { ref: "e1", role: "listitem", name: "report.pdf", tag: "li" }, rect: { x: 190, y: 90, width: 40, height: 20 } },
+      { ok: true, element: { ref: "e5", role: "button", name: "Drop files here", tag: "div" }, rect: { x: 500, y: 90, width: 200, height: 100 } },
+      { ok: true, element: { ref: "e1", role: "listitem", name: "report.pdf", tag: "li" }, rect: { x: 190, y: 90, width: 40, height: 20 } },
+    ];
+    const h = harness([{ text: "", toolCalls: [call("computer", { action: "left_click_drag", start_coordinate: [200, 100], coordinate: [300, 100] })] }], {
+      browser: fakeBrowser(undefined, looks),
+      mode: "auto",
+      review: "allow",
+    });
+    await h.run();
+    expect(h.approvals).toHaveLength(1);
+    expect(h.approvals[0].verdict).toMatchObject({ class: "sensitive", reason: "upload" });
+    expect(h.approvals[0].summary).toContain('to button "Drop files here"');
   });
 
   it("without the driver a computer call is refused and nothing is looked up", async () => {
@@ -253,5 +284,115 @@ describe("computer actions", () => {
     await h.run();
     expect(h.browser.page).not.toHaveBeenCalledWith("describe_at", expect.anything(), expect.anything(), expect.anything());
     expect(h.sent[1].find((m) => m.role === "tool")!.content).toMatch(/Refused|not on/);
+  });
+});
+
+describe("judged twice", () => {
+  const next = (x: number, y: number): PageResult => ({ ok: true, element: { ref: "e1", role: "button", name: "Next", tag: "button" }, rect: { x, y, width: 40, height: 20 } });
+  const click = () => [{ text: "", toolCalls: [call("computer", { action: "left_click", coordinate: [200, 100] })] }];
+
+  it("looks again right before the press, and presses when the target is where it was", async () => {
+    const h = harness(click(), { browser: fakeBrowser(undefined, [next(190, 90), next(193, 95)]) });
+    await h.run();
+    expect(h.browser.page.mock.calls.filter(([m]) => m === "describe_at")).toHaveLength(2);
+    expect(h.driver!.click).toHaveBeenCalledTimes(1);
+    // The target box follows the target's latest place.
+    expect(visualCalls(h.browser)).toEqual(expect.arrayContaining([["visuals_target", { rect: { x: 193, y: 95, width: 40, height: 20 } }]]));
+  });
+
+  it("does not press when something else is under the point now", async () => {
+    const moved: PageResult = { ok: true, element: { ref: "e2", role: "button", name: "Buy now", tag: "button" }, rect: { x: 190, y: 90, width: 40, height: 20 } };
+    const h = harness(click(), { browser: fakeBrowser(undefined, [next(190, 90), moved]) });
+    await h.run();
+    expect(h.approvals).toHaveLength(1); // judged as "Next", approved
+    expect(h.driver!.click).not.toHaveBeenCalled();
+    const tool = h.sent[1].find((m) => m.role === "tool")!;
+    expect(String(tool.content)).toContain("the page changed");
+    expect(h.deps.report).toHaveBeenCalledWith(expect.objectContaining({ kind: "agent_step", outcome: "error", detail: expect.objectContaining({ error: "target_changed" }) }));
+  });
+
+  it("does not press when the target moved, or is gone", async () => {
+    const shifted = harness(click(), { browser: fakeBrowser(undefined, [next(190, 90), next(190, 140)]) });
+    await shifted.run();
+    expect(shifted.driver!.click).not.toHaveBeenCalled();
+    const gone = harness(click(), { browser: fakeBrowser(undefined, [next(190, 90), { ok: false, error: "not_found", message: "There is nothing to act on at that point." }]) });
+    await gone.run();
+    expect(gone.driver!.click).not.toHaveBeenCalled();
+    expect(String(gone.sent[1].find((m) => m.role === "tool")!.content)).toContain("nothing to act on");
+  });
+
+  it("the same button as a fresh node is still the same target", async () => {
+    const fresh: PageResult = { ok: true, element: { ref: "e44", role: "button", name: "Next", tag: "button" }, rect: { x: 191, y: 90, width: 40, height: 20 } };
+    const h = harness(click(), { browser: fakeBrowser(undefined, [next(190, 90), fresh]) });
+    await h.run();
+    expect(h.driver!.click).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("runs of deletion keys", () => {
+  it("asks the user past a run of them, even in Auto mode with a willing reviewer", async () => {
+    const box = { ref: "e7", role: "textbox", name: "Notes", tag: "textarea" };
+    const presses = Array.from({ length: 10 }, () => call("computer", { action: "key", text: "Backspace" }));
+    const h = harness([{ text: "", toolCalls: presses }], { browser: fakeBrowser(box), mode: "auto", review: "allow" });
+    await h.run();
+    expect(h.driver!.key).toHaveBeenCalledTimes(10);
+    // The first eight went past the reviewer; the ninth asked the user (and reset the count).
+    expect(h.approvals).toHaveLength(1);
+    expect(h.approvals[0].verdict.message).toContain("9th deletion key in a row");
+  });
+
+  it("another action breaks the run; a screenshot does not", async () => {
+    const box = { ref: "e7", role: "textbox", name: "Notes", tag: "textarea" };
+    const calls = [
+      ...Array.from({ length: 6 }, () => call("computer", { action: "key", text: "Delete" })),
+      call("screenshot"),
+      ...Array.from({ length: 2 }, () => call("computer", { action: "key", text: "Delete" })),
+      call("computer", { action: "type", text: "x" }),
+      ...Array.from({ length: 8 }, () => call("computer", { action: "key", text: "Delete" })),
+    ];
+    const h = harness([{ text: "", toolCalls: calls }], { browser: fakeBrowser(box), mode: "auto", review: "allow" });
+    await h.run();
+    expect(h.approvals).toHaveLength(0);
+  });
+});
+
+describe("the page's dialogs", () => {
+  const click = () => [{ text: "", toolCalls: [call("computer", { action: "left_click", coordinate: [200, 100] })] }];
+
+  it("closes an alert and tells the model what it said", async () => {
+    const h = harness(click());
+    h.driver!.takeDialog = vi.fn(() => ({ type: "alert", message: "Saved!" }));
+    await h.run();
+    expect(h.driver!.handleDialog).toHaveBeenCalledWith(true);
+    expect(h.approvals).toHaveLength(1); // the click itself, in Ask mode
+    expect(String(h.sent[1].find((m) => m.role === "tool")!.content)).toContain('showed a message: "Saved!"');
+  });
+
+  it("leaves a confirm to the user: Allow accepts, Deny dismisses", async () => {
+    const h = harness(click(), { mode: "auto", review: "allow" });
+    h.driver!.takeDialog = vi.fn(() => ({ type: "confirm", message: "Delete all rows?" }));
+    await h.run();
+    expect(h.approvals).toHaveLength(1);
+    expect(h.approvals[0]).toMatchObject({ tool: "dialog", verdict: { reason: "dialog" }, summary: expect.stringContaining("Delete all rows?") });
+    expect(h.driver!.handleDialog).toHaveBeenCalledWith(true);
+    expect(String(h.sent[1].find((m) => m.role === "tool")!.content)).toContain("accepted by the user");
+    const denied = harness(click(), { mode: "auto", review: "allow", approve: false });
+    denied.driver!.takeDialog = vi.fn(() => ({ type: "confirm", message: "Delete all rows?" }));
+    await denied.run();
+    expect(denied.driver!.handleDialog).toHaveBeenCalledWith(false);
+    expect(String(denied.sent[1].find((m) => m.role === "tool")!.content)).toContain("dismissed");
+  });
+
+  it("with dialogs relaxed by the administrator, a confirm is accepted and a prompt dismissed, nobody asked", async () => {
+    const rules: PolicyContext = { ...RULES, approvals: { send: true, submit: true, delete: true, leave_sites: true, downloads: true, uploads: true, dialogs: false } };
+    const h = harness(click(), { mode: "auto", review: "allow", rules });
+    h.driver!.takeDialog = vi.fn(() => ({ type: "confirm", message: "Sure?" }));
+    await h.run();
+    expect(h.approvals).toHaveLength(0);
+    expect(h.driver!.handleDialog).toHaveBeenCalledWith(true);
+    const prompt = harness(click(), { mode: "auto", review: "allow", rules });
+    prompt.driver!.takeDialog = vi.fn(() => ({ type: "prompt", message: "Your name?" }));
+    await prompt.run();
+    expect(prompt.driver!.handleDialog).toHaveBeenCalledWith(false);
   });
 });

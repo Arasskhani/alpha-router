@@ -120,6 +120,7 @@ export function agentInstructions(nonce: string, options: { fullControl?: boolea
   const control = options.fullControl
     ? [
         "- You also have full control: screenshot shows the page as an image, and computer uses a real mouse and keyboard at coordinates in that image. Take a screenshot first, act, then take another to see the result. Prefer references from read_page or find when they name the element precisely; use coordinates for canvases, menus that open on hover, drag and drop, and anything references cannot reach.",
+        "- What is under the point is checked again just before the mouse presses: if the page changed meanwhile, the press is not made and you are told to take a new screenshot. Type text with type, never with the clipboard; keys that reach the browser itself (tabs, zoom, printing, the address bar) are refused. A dialog the page opens is answered by the user.",
       ]
     : [];
   return [

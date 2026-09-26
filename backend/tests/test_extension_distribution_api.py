@@ -585,6 +585,28 @@ class TestTheAdminCard:
         assert detail["before"]["site_access"] == "per_site"
         assert detail["after"]["site_access"] == "all_sites"
 
+    async def test_saving_keeps_the_full_control_rules(self, client, db_session, admin, built_extension):
+        headers = _sign_in(client, admin)
+        body = {
+            "site_access": "per_site",
+            "agent_max_steps": 25,
+            "read_only_sites": ["Wiki.example.com"],
+            "protected_sites": ["*.shaparak.ir"],
+            "internal_sites": ["*.corp.example"],
+            "relaxed_approvals": ["send", "downloads"],
+            "enabled": False,
+        }
+        resp = await client.put("/api/admin/extension/settings", json=body, headers=headers)
+        assert resp.status_code == 200, resp.text
+        saved = resp.json()["settings"]
+        assert saved["read_only_sites"] == ["wiki.example.com"]
+        assert saved["protected_sites"] == ["*.shaparak.ir"]
+        assert saved["internal_sites"] == ["*.corp.example"]
+        assert sorted(saved["relaxed_approvals"]) == ["downloads", "send"]
+        assert saved["enabled"] is False
+        stored = await load_extension_settings(db_session)
+        assert stored.enabled is False and stored.read_only_sites == ("wiki.example.com",)
+
     async def test_a_bad_value_is_a_400_that_says_why(self, client, admin, built_extension):
         headers = _sign_in(client, admin)
         body = {

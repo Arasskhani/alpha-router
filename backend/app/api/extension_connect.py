@@ -264,11 +264,21 @@ async def extension_me(
             "site_access": settings.site_access,
             "allowed_sites": list(settings.allowed_sites),
             "blocked_sites": list(settings.blocked_sites),
+            "read_only_sites": list(settings.read_only_sites),
+            "protected_sites": list(settings.protected_sites),
             "page_content_models": list(settings.page_content_models),
             "agent_models": list(settings.agent_models),
             "agent_max_steps": settings.agent_max_steps,
             # Full control: whether the admin turned it on; the feature flag says whether this user may use it.
             "full_control": settings.full_control,
+            # Which sensitive cases still ask (true), so the extension can relax the rest.
+            "approvals": settings.approvals_json(),
+            # Where page content may go: the internal sites, and which models may see them and screenshots (null: any).
+            "data": {
+                "internal_sites": list(settings.internal_sites),
+                "internal_models": list(settings.internal_models) or None,
+                "screenshot_models": list(settings.screenshot_models) or None,
+            },
         }
     return {
         "user": {"username": user.username, "display_name": user.display_name, "email": user.email},

@@ -37,8 +37,12 @@ async def extension_permitted(db: AsyncSession, user: User) -> bool:
 
 
 async def extension_features(db: AsyncSession, user: User, settings: ExtensionSettings) -> dict[str, bool]:
-    """What the side panel offers this account: the ACLs, and the admin's Auto mode switch."""
-    if not user.is_active:
+    """What the side panel offers this account: the ACLs, and the admin's Auto mode switch.
+
+    The organisation switch (``enabled``) is over all of it: turned off, the
+    extension offers nothing to anyone, whatever the ACLs say.
+    """
+    if not user.is_active or not settings.enabled:
         allowed: frozenset[str] = frozenset()
     else:
         subject = await resolve_resource_access_subject(db, user_id=int(user.id))

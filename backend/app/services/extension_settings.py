@@ -68,6 +68,12 @@ class ExtensionSettingsError(ValueError):
     """A setting an administrator entered cannot be saved; the message says which and why."""
 
 
+#: The sensitive cases an administrator may relax, so each counts as a plain
+#: action instead of asking. Anything not here is fixed (authorizations,
+#: personal data, the never list). ``relaxed_approvals`` holds the ones turned off.
+APPROVAL_KEYS = ("send", "submit", "delete", "leave_sites", "downloads", "uploads", "dialogs")
+
+
 @dataclass(frozen=True)
 class ExtensionSettings:
     site_access: str = SITE_ACCESS_PER_SITE
@@ -82,12 +88,42 @@ class ExtensionSettings:
     #: and keyboard) through chrome.debugger, and sees it in screenshots. It adds
     #: the ``debugger`` permission to the package, so a copy updates to get it.
     full_control: bool = False
+    #: The extension for the whole organisation. Off refuses new connections and
+    #: stops the extension offering anything; the Chat Tools ACL still gates who.
+    enabled: bool = True
+    #: Sites the agent may read but never act on.
+    read_only_sites: tuple[str, ...] = field(default_factory=tuple)
+    #: Sites where the agent never acts (payment gateways, banks - whatever the admin lists).
+    protected_sites: tuple[str, ...] = field(default_factory=tuple)
+    #: The organisation's own sites, whose content and screenshots are kept to internal models.
+    internal_sites: tuple[str, ...] = field(default_factory=tuple)
+    #: Models allowed to see internal sites' content and screenshots (empty: any model the user may use).
+    internal_models: tuple[str, ...] = field(default_factory=tuple)
+    #: Models allowed to see screenshots at all (empty: any). A model not here works from text and references.
+    screenshot_models: tuple[str, ...] = field(default_factory=tuple)
+    #: Which sensitive cases the admin relaxed to plain actions (a subset of APPROVAL_KEYS).
+    relaxed_approvals: tuple[str, ...] = field(default_factory=tuple)
 
     def to_json(self) -> dict[str, Any]:
         data = asdict(self)
-        for key in ("allowed_sites", "blocked_sites", "page_content_models", "agent_models"):
+        for key in (
+            "allowed_sites",
+            "blocked_sites",
+            "page_content_models",
+            "agent_models",
+            "read_only_sites",
+            "protected_sites",
+            "internal_sites",
+            "internal_models",
+            "screenshot_models",
+            "relaxed_approvals",
+        ):
             data[key] = list(data[key])
         return data
+
+    def approvals_json(self) -> dict[str, bool]:
+        """Each relaxable case as the extension reads it: ``true`` when it still asks."""
+        return {key: key not in self.relaxed_approvals for key in APPROVAL_KEYS}
 
 
 def _to_ascii(host: str) -> str:
@@ -228,6 +264,14 @@ def parse_settings(raw: str | None) -> ExtensionSettings:
         agent_auto_mode=bool(data.get("agent_auto_mode")) and isinstance(review, str) and bool(review),
         agent_review_model=review if isinstance(review, str) and review else None,
         full_control=bool(data.get("full_control")),
+        # A document written before this field existed has the extension on, as it was.
+        enabled=bool(data.get("enabled", True)),
+        read_only_sites=_strings(data.get("read_only_sites")),
+        protected_sites=_strings(data.get("protected_sites")),
+        internal_sites=_strings(data.get("internal_sites")),
+        internal_models=_strings(data.get("internal_models")),
+        screenshot_models=_strings(data.get("screenshot_models")),
+        relaxed_approvals=tuple(key for key in _strings(data.get("relaxed_approvals")) if key in APPROVAL_KEYS),
     )
 
 
@@ -298,7 +342,13 @@ MODEL_DELETED = "deleted"
 
 
 def _named_model_ids(settings: ExtensionSettings) -> set[int]:
-    refs = (*settings.page_content_models, *settings.agent_models, settings.agent_review_model or "")
+    refs = (
+        *settings.page_content_models,
+        *settings.agent_models,
+        *settings.internal_models,
+        *settings.screenshot_models,
+        settings.agent_review_model or "",
+    )
     return {int(match.group(1)) for ref in refs if (match := _MODEL_REF_RE.match(ref))}
 
 
@@ -361,6 +411,13 @@ async def validated_update(
     agent_auto_mode: bool,
     agent_review_model: str | None,
     full_control: bool = False,
+    enabled: bool = True,
+    read_only_sites: list[str] | None = None,
+    protected_sites: list[str] | None = None,
+    internal_sites: list[str] | None = None,
+    internal_models: list[str] | None = None,
+    screenshot_models: list[str] | None = None,
+    relaxed_approvals: list[str] | None = None,
 ) -> ExtensionSettings:
     """The settings an administrator asked for, checked; raises ExtensionSettingsError."""
     if site_access not in SITE_ACCESS_MODES:
@@ -372,6 +429,9 @@ async def validated_update(
     review_list = await _model_list(db, "Review model", [review] if review else [], enabled_only=True)
     if agent_auto_mode and not review_list:
         raise ExtensionSettingsError("Auto mode needs a review model to check each action.")
+    bad = sorted(set(relaxed_approvals or []) - set(APPROVAL_KEYS))
+    if bad:
+        raise ExtensionSettingsError(f"Approvals: {bad[0]!r} is not one that can be relaxed.")
     updated = replace(
         current,
         site_access=site_access,
@@ -383,6 +443,13 @@ async def validated_update(
         agent_auto_mode=bool(agent_auto_mode),
         agent_review_model=review_list[0] if review_list else None,
         full_control=bool(full_control),
+        enabled=bool(enabled),
+        read_only_sites=_site_list("Read-only sites", read_only_sites or []),
+        protected_sites=_site_list("Protected sites", protected_sites or []),
+        internal_sites=_site_list("Internal sites", internal_sites or []),
+        internal_models=await _model_list(db, "Models for internal sites", internal_models or []),
+        screenshot_models=await _model_list(db, "Models allowed screenshots", screenshot_models or []),
+        relaxed_approvals=tuple(key for key in APPROVAL_KEYS if key in set(relaxed_approvals or [])),
     )
     # The reviewer reads what the agent found on pages: element names, the text it would type.
     if updated.agent_auto_mode and not page_content_allowed(updated, updated.agent_review_model):

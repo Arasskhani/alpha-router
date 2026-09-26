@@ -48,6 +48,13 @@ class ExtensionSettingsIn(BaseModel):
     agent_auto_mode: bool = False
     agent_review_model: str | None = Field(default=None, max_length=64)
     full_control: bool = False
+    enabled: bool = True
+    read_only_sites: list[str] = Field(default_factory=list, max_length=_BODY_LIST_CAP)
+    protected_sites: list[str] = Field(default_factory=list, max_length=_BODY_LIST_CAP)
+    internal_sites: list[str] = Field(default_factory=list, max_length=_BODY_LIST_CAP)
+    internal_models: list[str] = Field(default_factory=list, max_length=_BODY_LIST_CAP)
+    screenshot_models: list[str] = Field(default_factory=list, max_length=_BODY_LIST_CAP)
+    relaxed_approvals: list[str] = Field(default_factory=list, max_length=32)
 
 
 async def _key_status(db: AsyncSession) -> dict:

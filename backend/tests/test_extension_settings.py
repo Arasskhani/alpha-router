@@ -201,6 +201,84 @@ class TestFullControl:
         assert off.full_control is False
 
 
+class TestOrganisationSwitch:
+    def test_on_by_default_and_for_a_document_written_before_it_existed(self):
+        assert ExtensionSettings().enabled is True
+        assert parse_settings(json.dumps({"site_access": "per_site"})).enabled is True
+        assert parse_settings(json.dumps({"enabled": False})).enabled is False
+
+    async def test_an_admin_can_turn_the_whole_extension_off(self, db_session):
+        off = await validated_update(db_session, ExtensionSettings(), **_update(enabled=False))
+        assert off.enabled is False
+
+
+class TestReadOnlyAndProtectedSites:
+    async def test_they_are_normalized_like_the_other_site_lists(self, db_session):
+        updated = await validated_update(
+            db_session,
+            ExtensionSettings(),
+            **_update(read_only_sites=["Wiki.example.com", "wiki.example.com"], protected_sites=["*.shaparak.ir"]),
+        )
+        assert updated.read_only_sites == ("wiki.example.com",)
+        assert updated.protected_sites == ("*.shaparak.ir",)
+
+    async def test_a_bad_entry_says_which_list(self, db_session):
+        with pytest.raises(ExtensionSettingsError, match="Read-only sites"):
+            await validated_update(db_session, ExtensionSettings(), **_update(read_only_sites=["http://x/"]))
+        with pytest.raises(ExtensionSettingsError, match="Protected sites"):
+            await validated_update(db_session, ExtensionSettings(), **_update(protected_sites=["a b"]))
+
+    def test_they_read_back(self):
+        got = parse_settings(json.dumps({"read_only_sites": ["a.com"], "protected_sites": ["b.com"]}))
+        assert got.read_only_sites == ("a.com",)
+        assert got.protected_sites == ("b.com",)
+
+
+class TestDataLocation:
+    async def test_internal_sites_and_the_models_that_may_see_them(self, db_session):
+        model = await _model(db_session, "gpt-internal")
+        updated = await validated_update(
+            db_session,
+            ExtensionSettings(),
+            **_update(internal_sites=["*.corp.example"], internal_models=[f"model::{model.id}"], screenshot_models=[f"model::{model.id}"]),
+        )
+        assert updated.internal_sites == ("*.corp.example",)
+        assert updated.internal_models == (f"model::{model.id}",)
+        assert updated.screenshot_models == (f"model::{model.id}",)
+
+    async def test_a_model_that_does_not_exist_is_refused(self, db_session):
+        with pytest.raises(ExtensionSettingsError, match="internal sites"):
+            await validated_update(db_session, ExtensionSettings(), **_update(internal_models=["model::999999"]))
+
+
+class TestApprovals:
+    def test_all_ask_by_default_and_map_to_true(self):
+        assert ExtensionSettings().relaxed_approvals == ()
+        assert ExtensionSettings().approvals_json() == {
+            "send": True,
+            "submit": True,
+            "delete": True,
+            "leave_sites": True,
+            "downloads": True,
+            "uploads": True,
+            "dialogs": True,
+        }
+
+    async def test_an_admin_relaxes_a_subset_and_the_rest_still_ask(self, db_session):
+        updated = await validated_update(db_session, ExtensionSettings(), **_update(relaxed_approvals=["send", "downloads"]))
+        assert set(updated.relaxed_approvals) == {"send", "downloads"}
+        assert updated.approvals_json()["send"] is False
+        assert updated.approvals_json()["downloads"] is False
+        assert updated.approvals_json()["delete"] is True
+
+    async def test_an_unknown_case_is_refused(self, db_session):
+        with pytest.raises(ExtensionSettingsError, match="can be relaxed"):
+            await validated_update(db_session, ExtensionSettings(), **_update(relaxed_approvals=["purchases"]))
+
+    def test_an_unknown_case_stored_by_hand_is_dropped_on_read(self):
+        assert parse_settings(json.dumps({"relaxed_approvals": ["send", "nonsense"]})).relaxed_approvals == ("send",)
+
+
 class TestAnAdminsChange:
     async def test_sites_are_normalized_deduplicated_and_sorted(self, db_session):
         updated = await validated_update(

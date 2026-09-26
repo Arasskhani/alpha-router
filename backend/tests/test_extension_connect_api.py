@@ -592,11 +592,58 @@ class TestMe:
             "site_access": "per_site",
             "allowed_sites": ["example.com"],
             "blocked_sites": ["bank.example"],
+            "read_only_sites": [],
+            "protected_sites": [],
             "page_content_models": [],
             "agent_models": [],
             "agent_max_steps": 25,
             "full_control": False,
+            "approvals": {
+                "send": True,
+                "submit": True,
+                "delete": True,
+                "leave_sites": True,
+                "downloads": True,
+                "uploads": True,
+                "dialogs": True,
+            },
+            "data": {"internal_sites": [], "internal_models": None, "screenshot_models": None},
         }
+
+    async def test_the_policy_carries_the_full_control_rules(self, client, browser, db_session, user, redirect):
+        await save_extension_settings(
+            db_session,
+            ExtensionSettings(
+                read_only_sites=("wiki.example.com",),
+                protected_sites=("*.shaparak.ir",),
+                internal_sites=("*.corp.example",),
+                relaxed_approvals=("send", "downloads"),
+            ),
+        )
+        await db_session.commit()
+        tokens = await _connect(client, browser, user, redirect)
+        policy = (await browser.get("/api/extension/me", headers=_bearer(tokens["access_token"]))).json()["policy"]
+        assert policy["read_only_sites"] == ["wiki.example.com"]
+        assert policy["protected_sites"] == ["*.shaparak.ir"]
+        assert policy["data"]["internal_sites"] == ["*.corp.example"]
+        assert policy["approvals"]["send"] is False
+        assert policy["approvals"]["downloads"] is False
+        assert policy["approvals"]["delete"] is True
+
+    async def test_the_organisation_switch_turns_everything_off(self, client, browser, db_session, user, redirect):
+        tokens = await _connect(client, browser, user, redirect)
+        await save_extension_settings(db_session, ExtensionSettings(enabled=False))
+        await db_session.commit()
+        me = (await browser.get("/api/extension/me", headers=_bearer(tokens["access_token"]))).json()
+        assert me["features"] == {
+            "chat": False,
+            "page_context": False,
+            "agent": False,
+            "auto_mode": False,
+            "full_control": False,
+            "private_mode": False,
+        }
+        assert me["policy"] is None
 
     async def test_the_agent_needs_its_own_grant(self, client, browser, db_session, user, redirect):
         await set_chat_tool_access(

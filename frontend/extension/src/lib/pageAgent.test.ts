@@ -128,4 +128,11 @@ describe("what the page answers", () => {
       sensitive: true,
     });
   });
+
+  it("keeps what full control's rules need about a point target: a frame's site, and a hidden target", () => {
+    expect(cleanElement({ ref: "e3", role: "frame", name: "Payment", tag: "iframe", frame: { host: "pay.example" } })).toMatchObject({ frame: { host: "pay.example" } });
+    expect(cleanElement({ ref: "e3", role: "frame", name: "", tag: "iframe", frame: { host: 7 } })).toMatchObject({ frame: { host: null } });
+    expect(cleanElement({ ref: "e4", role: "button", name: "Confirm", tag: "button", hidden: "transparent" })).toMatchObject({ hidden: "transparent" });
+    expect(cleanElement({ ref: "e4", role: "button", name: "Confirm", tag: "button", hidden: "odd" })).not.toHaveProperty("hidden");
+  });
 });

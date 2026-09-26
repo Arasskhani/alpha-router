@@ -66,6 +66,17 @@ export type ElementInfo = {
   options?: string[];
   /** The option select_option would choose for the value asked about (describe's `choose`), as the menu shows it. */
   choice?: string;
+  /**
+   * A frame from another site, which this page cannot see into: the rules
+   * cannot judge what a click there touches. Its site, when the frame says.
+   */
+  frame?: { host: string | null };
+  /**
+   * The target is there but not to be seen: drawn (almost) transparent, or a
+   * couple of pixels in size - the shape of a click hidden under something
+   * else.
+   */
+  hidden?: "transparent" | "tiny";
 };
 
 type AgentError =
@@ -1060,6 +1071,48 @@ export function describeAt(doc: Document, x: unknown, y: unknown, isVisible: Vis
   if (typeof x !== "number" || typeof y !== "number" || !Number.isFinite(x) || !Number.isFinite(y)) {
     return { ok: false, error: "bad_request", message: "Give the point as numbers: x and y in CSS pixels." };
   }
+  return describeAtIn(doc, x, y, isVisible, activates, { x: 0, y: 0 }, 0);
+}
+
+/** Frames within frames: this deep and no further. */
+const MAX_FRAME_DEPTH = 5;
+/** Below this opacity a target is drawn for the eye not to see it. */
+const FAINT = 0.1;
+/** A target this small is not one a person would be shown to click. */
+const TINY_PX = 2;
+
+/** The document of a same-site frame, or null for one from another site (which the browser keeps closed). */
+function frameDocument(frame: Element): Document | null {
+  try {
+    return (frame as HTMLIFrameElement).contentDocument ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** The site a frame shows, from its address; null when it says nothing (about:blank, srcdoc). */
+function frameHost(frame: Element): string | null {
+  const src = frame.getAttribute("src") ?? "";
+  try {
+    const url = new URL(src, frame.ownerDocument.baseURI);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.hostname.replace(/\.$/, "") : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Whether the target, or anything it sits in, is drawn too faint to see. */
+function drawnFaint(el: Element): boolean {
+  const view = el.ownerDocument.defaultView;
+  if (!view) return false;
+  for (let node: Element | null = el; node; node = parentAcrossShadow(node)) {
+    const opacity = Number.parseFloat(view.getComputedStyle(node).opacity);
+    if (Number.isFinite(opacity) && opacity < FAINT) return true;
+  }
+  return false;
+}
+
+function describeAtIn(doc: Document, x: number, y: number, isVisible: Visibility, activates: boolean, offset: { x: number; y: number }, depth: number): Result<{ element: ElementInfo; rect: PointRect }> {
   if (typeof doc.elementFromPoint !== "function") return { ok: false, error: "failed", message: "The page cannot find what is at a point." };
   let el: Element | null = doc.elementFromPoint(x, y);
   while (el?.shadowRoot && typeof el.shadowRoot.elementFromPoint === "function") {
@@ -1071,11 +1124,28 @@ export function describeAt(doc: Document, x: unknown, y: unknown, isVisible: Vis
     return { ok: false, error: "not_found", message: "There is nothing to act on at that point." };
   }
   if (!isVisible(el)) return { ok: false, error: "not_visible", message: "What is at that point is not visible." };
+  const tag = el.tagName.toUpperCase();
+  if (tag === "IFRAME" || tag === "FRAME") {
+    const box = el.getBoundingClientRect();
+    const inner = depth < MAX_FRAME_DEPTH ? frameDocument(el) : null;
+    if (inner) {
+      // A frame of this site: the point, in the frame's own pixels, past its border.
+      const html = el as HTMLElement;
+      const dx = box.left + (html.clientLeft || 0);
+      const dy = box.top + (html.clientTop || 0);
+      return describeAtIn(inner, x - dx, y - dy, isVisible, activates, { x: offset.x + dx, y: offset.y + dy }, depth + 1);
+    }
+    // Another site's frame: what is under the point in there, this page cannot see.
+    const element: ElementInfo = { ref: refFor(el), role: "frame", name: clip(squash(el.getAttribute("title") ?? el.getAttribute("name") ?? ""), NAME_CHARS), tag: tag.toLowerCase(), frame: { host: frameHost(el) } };
+    return { ok: true, element, rect: { x: box.left + offset.x, y: box.top + offset.y, width: box.width, height: box.height } };
+  }
   const target = activates ? activationTarget(el) : el;
   const role = roleOf(target) ?? (headingLevel(target) !== null ? "heading" : "text");
   const element = describeElement(target, role, isVisible, true);
   const r = target.getBoundingClientRect();
-  return { ok: true, element, rect: { x: r.left, y: r.top, width: r.width, height: r.height } };
+  if (drawnFaint(el)) element.hidden = "transparent";
+  else if (r.width > 0 && r.height > 0 && (r.width <= TINY_PX || r.height <= TINY_PX)) element.hidden = "tiny";
+  return { ok: true, element, rect: { x: r.left + offset.x, y: r.top + offset.y, width: r.width, height: r.height } };
 }
 
 export function describe(ref: unknown, isVisible: Visibility, activates = false, choose?: unknown): Result<{ element: ElementInfo }> {

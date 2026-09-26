@@ -91,6 +91,11 @@ export function cleanElement(raw: unknown): ElementInfo | null {
   }
   const choice = str(v.choice, 120);
   if (choice) info.choice = choice;
+  if (v.frame && typeof v.frame === "object") {
+    const host = (v.frame as Record<string, unknown>).host;
+    info.frame = { host: typeof host === "string" && host ? host.slice(0, 253) : null };
+  }
+  if (v.hidden === "transparent" || v.hidden === "tiny") info.hidden = v.hidden;
   return info;
 }
 

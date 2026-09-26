@@ -62,6 +62,69 @@ describe("describeAt", () => {
     expect(describeAt(page(`<p>x</p>`), "1" as unknown, 2, visible)).toMatchObject({ ok: false, error: "bad_request" });
   });
 
+  it("follows the point into a frame of the same site, and reports the rect in the page's pixels", () => {
+    // Detached, so happy-dom does not go and load the frame's address.
+    const doc = page(`<p>x</p>`);
+    const frame = doc.createElement("iframe");
+    frame.setAttribute("src", "/inner");
+    const inner = document.implementation.createHTMLDocument("inner");
+    inner.body.innerHTML = `<button id="ib">In the frame</button>`;
+    const button = inner.getElementById("ib")!;
+    Object.defineProperty(frame, "contentDocument", { value: inner, configurable: true });
+    Object.defineProperty(frame, "clientLeft", { value: 2, configurable: true });
+    Object.defineProperty(frame, "clientTop", { value: 2, configurable: true });
+    vi.spyOn(frame, "getBoundingClientRect").mockReturnValue({ left: 100, top: 50, width: 300, height: 200, right: 400, bottom: 250, x: 100, y: 50, toJSON: () => ({}) } as DOMRect);
+    vi.spyOn(button, "getBoundingClientRect").mockReturnValue({ left: 10, top: 20, width: 80, height: 30, right: 90, bottom: 50, x: 10, y: 20, toJSON: () => ({}) } as DOMRect);
+    at(frame);
+    const seen: Array<[number, number]> = [];
+    Object.defineProperty(inner, "elementFromPoint", {
+      value: (x: number, y: number) => {
+        seen.push([x, y]);
+        return button;
+      },
+      configurable: true,
+    });
+    const result = describeAt(doc, 150, 90, visible, true);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.element.name).toBe("In the frame");
+      expect(result.element.frame).toBeUndefined();
+      // The point, in the frame's pixels: past its position and its border.
+      expect(seen).toEqual([[48, 38]]);
+      // The rect, back in the page's pixels.
+      expect(result.rect).toEqual({ x: 112, y: 72, width: 80, height: 30 });
+    }
+  });
+
+  it("reports a frame of another site as a frame it cannot see into, with its site", () => {
+    const doc = page(`<p>x</p>`);
+    const frame = doc.createElement("iframe");
+    frame.setAttribute("src", "https://pay.example/checkout");
+    frame.setAttribute("title", "Payment");
+    Object.defineProperty(frame, "contentDocument", { value: null, configurable: true });
+    at(frame);
+    const result = describeAt(doc, 5, 5, visible, true);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.element).toMatchObject({ role: "frame", name: "Payment", frame: { host: "pay.example" } });
+  });
+
+  it("marks a target drawn too faint to see, and one a couple of pixels in size", () => {
+    const doc = page(`<div id="veil" style="opacity:0.02"><button id="ghost">Confirm</button></div><a id="dot" href="https://x.example/">.</a>`);
+    at(doc.getElementById("ghost"));
+    const faint = describeAt(doc, 5, 5, visible, true);
+    expect(faint.ok && faint.element.hidden).toBe("transparent");
+    const dot = doc.getElementById("dot")!;
+    vi.spyOn(dot, "getBoundingClientRect").mockReturnValue({ left: 10, top: 10, width: 1, height: 1, right: 11, bottom: 11, x: 10, y: 10, toJSON: () => ({}) } as DOMRect);
+    at(dot);
+    const tiny = describeAt(doc, 10, 10, visible, true);
+    expect(tiny.ok && tiny.element.hidden).toBe("tiny");
+    // An ordinary element is not marked.
+    const doc2 = page(`<button id="b">Fine</button>`);
+    at(doc2.getElementById("b"));
+    const fine = describeAt(doc2, 5, 5, visible, true);
+    expect(fine.ok && fine.element.hidden).toBeUndefined();
+  });
+
   it("enters an open shadow root to the real element under the point", () => {
     const doc = page(`<div id="host"></div>`);
     const host = doc.getElementById("host")!;

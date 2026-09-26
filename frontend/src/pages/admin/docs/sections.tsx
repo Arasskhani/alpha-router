@@ -2080,6 +2080,10 @@ export const docSections: DocSection[] = [
             <strong>Browser Agent</strong> — the agent. <strong>Nobody has it</strong> until you grant it, and it
             means nothing without the first.
           </li>
+          <li>
+            <strong>Browser Control</strong> — full control: a real mouse and keyboard, and screenshots (below).{" "}
+            <strong>Nobody has it</strong> until you grant it; it needs Browser Agent and the Full control setting.
+          </li>
         </ul>
         <h3>Settings</h3>
         <p>
@@ -2137,6 +2141,22 @@ export const docSections: DocSection[] = [
                 moved the tab to by itself (even reading it). An action too long for the review model to see whole
                 goes to the person too. The review model must be one of the page-content models when that list is
                 set. Reviews are billed to the person.
+              </td>
+            </tr>
+            <tr>
+              <td>Full control</td>
+              <td>
+                Off by default. On, the agent may drive the page with a real mouse and keyboard through Chrome&apos;s
+                debugger, and see it in screenshots - for people who also have Browser Control and choose a model
+                that reads images. It adds the <code>debugger</code> permission to the package (Chrome does not
+                allow that one as optional), so the package gets a new version and people load it again; Chrome
+                shows its &quot;started debugging this browser&quot; bar while the agent runs. A click is judged by
+                what is under the point and typing by the focused field, with the same rules and approvals as
+                every other action. Screenshots go only to the model, at most four per step as inline images, and
+                are never stored; the page-content model list covers them. The agent falls back to ordinary
+                actions, and says so, if Chrome refuses the attach - an <code>ExtensionSettings</code> policy with{" "}
+                <code>runtime_blocked_hosts</code> for this extension (Chrome 155+), <code>DisableScreenshots</code>,
+                or a data-loss-prevention screenshot rule.
               </td>
             </tr>
           </tbody>

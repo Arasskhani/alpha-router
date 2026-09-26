@@ -1073,9 +1073,40 @@ export const userManualSections: DocSection[] = [
         </ul>
         <Warn>
           The agent acts in your own signed-in tabs, as you. Read the approval cards, and prefer Ask mode on sites
-          where a wrong click costs something. It works through the page&apos;s own events, so a few sites that
-          accept only real keyboard and mouse input will not react to it.
+          where a wrong click costs something. Without full control (below) it works through the page&apos;s own
+          events, so a few sites that accept only real keyboard and mouse input will not react to it.
         </Warn>
+        <h3>Full control</h3>
+        <p>
+          When your administrator has turned on <strong>Full control</strong> and given you the{" "}
+          <strong>Browser Control</strong> tool, the agent can also see the page as an image and use a real mouse
+          and keyboard on it — the input a page cannot tell from yours, so canvases, menus that open on hover, drag
+          and drop and sites that ignore scripted events all work. Choose a model that reads images; with any
+          other model the run goes on without full control, and the panel says so.
+        </p>
+        <ul>
+          <li>
+            While it works, the page glows at its edge — cyan while working, amber while waiting for you, grey when
+            paused, red on an error — and a small cursor moves to each target, with a ripple where it clicks and an
+            outline around what it is about to act on.
+          </li>
+          <li>
+            Chrome shows its <em>&quot;Alpharouter started debugging this browser&quot;</em> bar above the page
+            for the length of a run. <strong>Cancel</strong> on that bar stops the run, like Stop.
+          </li>
+          <li>
+            The same rules apply: a click is judged by what is under the point, typing by the field that has the
+            focus. Nothing is typed into a password field, nothing is bought, and sensitive actions ask first.
+          </li>
+          <li>
+            Screenshots go to the model and nowhere else: they are never saved, and only the last few stay in the
+            run.
+          </li>
+          <li>
+            Full control adds the <em>debugger</em> permission to the extension. When your administrator turns it
+            on, download the extension again from Settings → Extension and load the new package.
+          </li>
+        </ul>
         <p>
           Agent runs are not saved to your chat history. Each step is recorded for your administrators — the tool,
           the site, whether you approved it, and how it ended; for typing, only how many characters, never the

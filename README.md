@@ -343,6 +343,11 @@ async `/videos` work (`POST /api/videos/generate`, poll
 `GET /api/videos/jobs/{id}`) for text-to-video and image-to-video (first-frame
 reference). Provider polling URLs stay server-side; completed clips are stored
 as `MediaAsset` (`kind=video`) and served with HTTP Range support.
+Speech is synchronous (`POST /api/speech/generate`) through a provider adapter.
+The OpenRouter adapter negotiates the wire format per model: mp3 first, `pcm`
+for models that accept nothing else (Gemini TTS), learned from a format refusal
+for models it does not know. Raw pcm is stored as WAV, so the stored MIME type
+and the reported `format` always match the bytes.
 
 ## External clients
 

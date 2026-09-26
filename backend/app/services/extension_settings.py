@@ -229,6 +229,22 @@ def page_content_allowed(settings: ExtensionSettings, model_ref: str | None) -> 
     return not settings.page_content_models or (model_ref is not None and model_ref in settings.page_content_models)
 
 
+def screenshot_allowed(settings: ExtensionSettings, model_ref: str | None, host: str | None) -> bool:
+    """Whether a screenshot of ``host`` may go to the model ``model_ref`` names.
+
+    Two gates, both from the admin's data-location settings: a model must be
+    on the screenshot list (empty: any), and a screenshot of an internal site
+    must go to a model on the internal list (empty: any). A model that cannot
+    be named is never allowed when a list is set. ``host`` None (no web page)
+    is treated as not internal.
+    """
+    if settings.screenshot_models and (model_ref is None or model_ref not in settings.screenshot_models):
+        return False
+    if host and any(host_matches(host, pattern) for pattern in settings.internal_sites):
+        return not settings.internal_models or (model_ref is not None and model_ref in settings.internal_models)
+    return True
+
+
 def _strings(value: Any) -> tuple[str, ...]:
     if not isinstance(value, list):
         return ()

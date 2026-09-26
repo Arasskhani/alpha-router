@@ -251,6 +251,39 @@ class TestDataLocation:
             await validated_update(db_session, ExtensionSettings(), **_update(internal_models=["model::999999"]))
 
 
+class TestScreenshotAllowed:
+    def test_any_model_when_no_lists(self):
+        from app.services.extension_settings import screenshot_allowed
+
+        s = ExtensionSettings()
+        assert screenshot_allowed(s, "model::7", "shop.example.com") is True
+        assert screenshot_allowed(s, None, None) is True
+
+    def test_the_screenshot_list_gates_every_site(self):
+        from app.services.extension_settings import screenshot_allowed
+
+        s = ExtensionSettings(screenshot_models=("model::5",))
+        assert screenshot_allowed(s, "model::5", "shop.example.com") is True
+        assert screenshot_allowed(s, "model::9", "shop.example.com") is False
+        assert screenshot_allowed(s, None, "shop.example.com") is False
+
+    def test_an_internal_site_needs_a_model_on_the_internal_list(self):
+        from app.services.extension_settings import screenshot_allowed
+
+        s = ExtensionSettings(internal_sites=("*.corp.example",), internal_models=("model::5",))
+        assert screenshot_allowed(s, "model::5", "app.corp.example") is True
+        assert screenshot_allowed(s, "model::9", "app.corp.example") is False
+        # A non-internal site is not gated by the internal list.
+        assert screenshot_allowed(s, "model::9", "shop.example.com") is True
+
+    def test_internal_with_no_internal_models_allows_any_screenshot_model(self):
+        from app.services.extension_settings import screenshot_allowed
+
+        s = ExtensionSettings(internal_sites=("*.corp.example",), screenshot_models=("model::5",))
+        assert screenshot_allowed(s, "model::5", "app.corp.example") is True
+        assert screenshot_allowed(s, "model::9", "app.corp.example") is False
+
+
 class TestApprovals:
     def test_all_ask_by_default_and_map_to_true(self):
         assert ExtensionSettings().relaxed_approvals == ()

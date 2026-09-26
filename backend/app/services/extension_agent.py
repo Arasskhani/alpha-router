@@ -33,7 +33,12 @@ from app.branding import EXTENSION_CLIENT_APP
 from app.models.extension import ExtensionEvent
 from app.models.user import User
 from app.services.budget_service import budget_request_blocked, get_user_budget_state
-from app.services.extension_settings import ExtensionSettings, normalize_page_host, page_content_allowed
+from app.services.extension_settings import (
+    ExtensionSettings,
+    normalize_page_host,
+    page_content_allowed,
+    screenshot_allowed,
+)
 from app.services.failure_details import failure_message
 from app.services.llm_providers import litellm_model_for_provider
 from app.services.model_capabilities import supports_vision
@@ -388,17 +393,18 @@ async def review_action(
         return _ask("The review model is not available.")
     provider = cast("str | None", provider_type or ai_model.provider_type)
     model = litellm_model_for_provider(str(ai_model.external_id or ""), provider)
-    # A crop is shown only to a vision reviewer, and only where a screenshot of this site may leave (page content allowed, checked above).
-    shown_crop = (
-        usable_crop(crop)
-        if supports_vision(
-            external_id=str(ai_model.external_id or ""),
-            is_image_model=bool(ai_model.is_image_model),
-            pricing_raw=cast("str | None", ai_model.pricing_raw),
-            provider_type=provider,
-        )
-        else None
-    )
+    # A crop is shown only to a vision review model that the admin's data-location rules let see a
+    # screenshot of this site: on the screenshot list, and on the internal list when the site is internal.
+    # `site` is the page host (or "no web page"/"another site than …"); a name that is not a plain host
+    # is treated as not internal, and the screenshot-list gate still applies.
+    review_host = site if site and "." in site and " " not in site else None
+    can_see_crop = supports_vision(
+        external_id=str(ai_model.external_id or ""),
+        is_image_model=bool(ai_model.is_image_model),
+        pricing_raw=cast("str | None", ai_model.pricing_raw),
+        provider_type=provider,
+    ) and screenshot_allowed(settings, model_ref, review_host)
+    shown_crop = usable_crop(crop) if can_see_crop else None
     prompt = review_prompt(task, tool, site, target, arguments, history, with_image=bool(shown_crop))
     user_content: Any = (
         [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": shown_crop}}]

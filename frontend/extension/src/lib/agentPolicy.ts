@@ -151,7 +151,7 @@ const PAGE_TOOLS = new Set([
  * "Order history" is not one. Matched on the `labelForms` of the label.
  */
 const PURCHASE =
-  /\b(buy|pay|purchase|checkout|check out|donate|pre-?order)\b|\b(place|submit|complete|confirm)( your| the| my| an)? order\b|^order( now)?$|\bplace (a )?bid\b|\bbid now\b|\b(continue|proceed|go) to (payment|checkout)\b|\b(complete|make|confirm|submit) (the |a |your )?payment\b|\badd funds\b/;
+  /\b(buy|pay|purchase|checkout|check out|donate|pre-?order)\b|\b(place|submit|complete|confirm)( your| the| my| an| a)? order\b|^order( now)?$|\bplace (a |an )?bid\b|\bbid now\b|\b(continue|proceed|go) to (payment|checkout)\b|\b(complete|make|confirm|submit) (the |a |your )?payment\b|\badd funds\b/;
 const PURCHASE_FA = /خرید|پرداخت|سفارش|تسویه|اهدا|کمک مالی/;
 /** Persian words that buy even on a link; "سفارش" there is usually "my orders". */
 const PURCHASE_FA_LINK = /خرید|پرداخت|اهدا/;
@@ -159,13 +159,21 @@ const PURCHASE_FA_LINK = /خرید|پرداخت|اهدا/;
 const MONEY =
   /\b(sell|trade|swap|withdraw|deposit (funds|money|now)|make a deposit|transfer funds|transfer money|send money|wire transfer|place (a |the )?trade|execute (a |the )?trade|exchange now|convert funds|top up|redeem)\b|^(deposit|withdrawal)$/;
 const MONEY_FA = /معامله|فروش(?!گاه|نده)|برداشت|واریز|انتقال وجه|حواله|کارت به کارت|شارژ حساب/;
-/** Words that make a new account. */
-const SIGN_UP = /\b(sign ?up|create (an |a |my |your |new )?account|join now|open (an |a )?account|get started free)\b|^register( now| here| for free)?$|\bregister (an |a |my |your )?account\b/;
+/**
+ * Words that make a new account. The verb and "account" may have a few words
+ * between them (an adjective, a service name): "create a new account",
+ * "create your free account", "open a business account".
+ */
+const SIGN_UP = /\b(sign ?up|join now|get started free)\b|\b(create|open|register)( [\p{L}]+){0,3} account\b|\bcreate account\b|\bregister( now| here| for free)?\b/u;
 const SIGN_UP_FA = /ثبت ?نام|ایجاد حساب|ساخت حساب|افتتاح حساب|عضویت|عضو شوید/;
-/** Words that delete for good. */
+/**
+ * Words that delete for good. "delete"/"close" and "account" may have a few
+ * words between them (a service name): "delete your instagram account",
+ * "close my paypal account".
+ */
 const DELETE_FOREVER =
-  /\b(delete (forever|permanently|for good)|permanently (delete|remove|erase)|empty (the )?(trash|bin|recycle bin)|delete (all|everything)|erase (all|everything)|purge|wipe|shred|factory reset|delete (my |the |your )?account|close (my |the |your )?account)\b/;
-const DELETE_FOREVER_FA = /حذف (دائم|دائمی|همیشگی|برای همیشه|کامل)|خالی کردن سطل|پاک کردن (همه|کل)|حذف (همه|همه‌ی|کل)|حذف حساب|بستن حساب/;
+  /\b(delete (forever|permanently|for good)|permanently (delete|remove|erase)|empty (the )?(trash|bin|recycle bin)|delete (all|everything)|erase (all|everything)|purge|wipe|shred|factory reset)\b|\b(delete|close|deactivate|deregister)( [\p{L}]+){0,3} account\b|\b(delete|close) account\b/u;
+const DELETE_FOREVER_FA = /حذف (دائم|دائمی|همیشگی|برای همیشه|کامل)|خالی کردن سطل|پاک کردن (همه|کل)|حذف (همه|همه‌ی|کل)|حذف حساب|بستن حساب|غیرفعال ?سازی حساب/;
 /** Words that send, publish or reply (the administrator can relax these). */
 const SEND = /\b(send|reply|forward|post|publish|share|subscribe|unsubscribe|tweet|comment)\b/;
 const SEND_FA = /ارسال|فرستادن|بفرست|انتشار|منتشر|پست|پاسخ|بازارسال|هدایت|اشتراک|ثبت/;
@@ -482,7 +490,19 @@ function submitVerdict(element: ElementInfo, page: { url: string; host: string }
   if (consentPage(page.url) || said.some((label) => matches(label, AUTHORIZE, AUTHORIZE_FA))) {
     return verdict("sensitive", "authorization", `Sending this form may give a program access to an account, or change what keeps one safe.`);
   }
-  return asks(!approvals(ctx).submit, "submit", `Sending the form${destination(element.formAction)}${element.name ? ` from ${named(element)}` : ""}.`);
+  const dest = `${destination(element.formAction)}${element.name ? ` from ${named(element)}` : ""}`;
+  // A form whose sending button confirms, sends or deletes is judged by that word, not by the softer "submit" case:
+  // a "Confirm transfer" or "Send message" form must not slip past the send/delete/confirm gates.
+  if (said.some((label) => matches(label, CONFIRM, CONFIRM_FA))) {
+    return verdict("sensitive", "sensitive_label", `Sending this form may confirm, transfer or cancel something${dest}.`);
+  }
+  if (said.some((label) => matches(label, DELETE, DELETE_FA))) {
+    return asks(!approvals(ctx).delete, "delete_label", `Sending this form may delete something${dest}.`);
+  }
+  if (said.some((label) => matches(label, SEND, SEND_FA))) {
+    return asks(!approvals(ctx).send, "sensitive_label", `Sending this form may send or publish something${dest}.`);
+  }
+  return asks(!approvals(ctx).submit, "submit", `Sending the form${dest}.`);
 }
 
 /** Roles of fields that hold text a person types. */

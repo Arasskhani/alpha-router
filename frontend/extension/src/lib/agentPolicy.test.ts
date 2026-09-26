@@ -100,7 +100,12 @@ describe("clicking", () => {
     ["Sign up", "account_creation"],
     ["Create account", "account_creation"],
     ["Create your account", "account_creation"],
+    ["Create a new account", "account_creation"],
+    ["Create a free account", "account_creation"],
+    ["Create your free account", "account_creation"],
+    ["Open a business account", "account_creation"],
     ["Register", "account_creation"],
+    ["Register for free", "account_creation"],
     ["ثبت نام", "account_creation"],
     ["ثبت‌نام", "account_creation"],
     ["عضویت", "account_creation"],
@@ -110,6 +115,10 @@ describe("clicking", () => {
     ["Empty the recycle bin", "permanent_deletion"],
     ["Delete account", "permanent_deletion"],
     ["Close my account", "permanent_deletion"],
+    ["Delete your Instagram account", "permanent_deletion"],
+    ["Delete my Google account", "permanent_deletion"],
+    ["Close your PayPal account", "permanent_deletion"],
+    ["Deactivate your account", "permanent_deletion"],
     ["Delete all", "permanent_deletion"],
     ["حذف دائم", "permanent_deletion"],
     ["حذف برای همیشه", "permanent_deletion"],
@@ -119,9 +128,12 @@ describe("clicking", () => {
     expect(classify("click", { element: el({ name }) })).toMatchObject({ class: "blocked", reason });
   });
 
-  it.each(["فروشگاه", "Sales report", "Registration desk hours", "Deposit slip archive"])("a label with a money word inside another word, or about it, acts: %s", (name) => {
-    expect(classify("click", { element: el({ name }) })).toMatchObject({ class: "act" });
-  });
+  it.each(["فروشگاه", "Sales report", "Registration desk hours", "Deposit slip archive", "Account settings", "Your account overview", "Account activity"])(
+    "a label with a money or account word about something else acts: %s",
+    (name) => {
+      expect(classify("click", { element: el({ name }) })).toMatchObject({ class: "act" });
+    },
+  );
 
   it.each([
     "Buy now",
@@ -355,6 +367,19 @@ describe("the rest", () => {
     expect(classify("submit_form", { element: el({ name: "Pay now", submits: true }) })).toMatchObject({ class: "blocked", reason: "purchase_label" });
   });
 
+  it("a form whose sending button confirms, sends or deletes is judged by that word, not the softer submit case", () => {
+    // The button that sends the form (formButton) carries the word, even if the element asked about is a field.
+    const confirm = el({ role: "textbox", name: "Amount", formButton: ["Confirm transfer"] });
+    expect(classify("submit_form", { element: confirm }, OPEN)).toMatchObject({ class: "sensitive", reason: "sensitive_label" });
+    // And it stays sensitive even when the admin relaxed plain form submits.
+    const relaxSubmit: PolicyContext = { ...OPEN, approvals: { ...DEFAULT_APPROVALS, submit: false } };
+    expect(classify("submit_form", { element: confirm }, relaxSubmit)).toMatchObject({ class: "sensitive", reason: "sensitive_label" });
+    // A send/delete form button follows the send/delete gate, not submit.
+    expect(classify("submit_form", { element: el({ role: "textbox", name: "Body", formButton: ["Send message"] }) })).toMatchObject({ class: "sensitive", reason: "sensitive_label" });
+    expect(classify("submit_form", { element: el({ role: "textbox", name: "Reason", formButton: ["Delete item"] }) })).toMatchObject({ class: "sensitive", reason: "delete_label" });
+    expect(classify("submit_form", { element: el({ role: "textbox", name: "Body", formButton: ["Send message"] }, ), }, relaxSubmit)).toMatchObject({ class: "sensitive" });
+  });
+
   it("opening a page on the same site acts; another site asks; a blocked one or a special scheme is refused", () => {
     expect(classify("navigate", { args: { url: "https://shop.example.com/help" } })).toMatchObject({ class: "act", reason: "same_site" });
     expect(classify("tab_open", { args: { url: "https://partner.org/" } }, RULES)).toMatchObject({
@@ -410,6 +435,14 @@ describe("who agrees", () => {
     ["blocked", "auto", "refuse"],
   ] as const)("a %s action in %s mode: %s", (cls, mode, approval) => {
     expect(approvalFor({ class: cls, reason: "x", message: "x" }, mode)).toBe(approval);
+  });
+});
+
+describe("keys and typing into a cross-site frame's focus", () => {
+  it("a key press on a focused cross-site frame is unjudgeable, so it asks", () => {
+    const frame = el({ role: "frame", name: "Login", tag: "iframe", frame: { host: "id.example" } });
+    expect(classify("press_key", { args: { key: "Enter" }, element: frame })).toMatchObject({ class: "sensitive", reason: "other_site_frame" });
+    expect(classify("type_text", { element: frame })).toMatchObject({ class: "sensitive", reason: "other_site_frame" });
   });
 });
 

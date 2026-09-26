@@ -973,10 +973,33 @@ const KEYS: Record<string, { code: string; keyCode: number }> = {
   " ": { code: "Space", keyCode: 32 },
 };
 
-/** The element that has the keyboard: the focused element, followed into open shadow roots; null for the page itself. */
+/**
+ * The element that has the keyboard: the focused element, followed into open
+ * shadow roots and into same-site frames. When the focus is in a frame from
+ * another site, this page cannot see into it, so the frame element itself is
+ * returned - `describeFocus` marks it, and the rules treat it as unjudgeable.
+ */
 function focusedElement(doc: Document): Element | null {
   let el: Element | null = doc.activeElement;
-  while (el?.shadowRoot?.activeElement) el = el.shadowRoot.activeElement;
+  for (let depth = 0; el && depth < MAX_FRAME_DEPTH; depth += 1) {
+    if (el.shadowRoot?.activeElement) {
+      el = el.shadowRoot.activeElement;
+      continue;
+    }
+    const tag = el.tagName?.toUpperCase();
+    if (tag === "IFRAME" || tag === "FRAME") {
+      const inner = frameDocument(el);
+      const innerFocus = inner?.activeElement ?? null;
+      // A frame of this site with the keyboard inside it: follow the focus in. Otherwise
+      // (another site, or nothing focused within) the frame itself is where the keyboard is.
+      if (innerFocus && innerFocus !== inner?.body && innerFocus !== inner?.documentElement) {
+        el = innerFocus;
+        continue;
+      }
+      return el;
+    }
+    break;
+  }
   return el && el !== doc.body && el !== doc.documentElement ? el : null;
 }
 
@@ -984,6 +1007,12 @@ function focusedElement(doc: Document): Element | null {
 export function describeFocus(doc: Document, isVisible: Visibility): Result<{ element?: ElementInfo }> {
   const el = focusedElement(doc);
   if (!el) return { ok: true };
+  const tag = el.tagName.toUpperCase();
+  // Focus inside a frame from another site: report it as a frame the rules cannot judge, with the site it names.
+  if (tag === "IFRAME" || tag === "FRAME") {
+    const name = clip(squash(el.getAttribute("title") ?? el.getAttribute("name") ?? ""), NAME_CHARS);
+    return { ok: true, element: { ref: refFor(el), role: "frame", name, tag: tag.toLowerCase(), frame: { host: frameHost(el) } } };
+  }
   const role = roleOf(el) ?? (headingLevel(el) !== null ? "heading" : "text");
   return { ok: true, element: describeElement(el, role, isVisible, true) };
 }

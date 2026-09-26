@@ -513,6 +513,67 @@ class TestReview:
         assert any(part.get("type") == "image_url" and part["image_url"]["url"] == crop for part in content)
         assert any(part.get("type") == "text" and "crop of the page" in part["text"] for part in content)
 
+    async def test_a_crop_is_dropped_when_the_review_model_is_not_on_the_screenshot_list(self, client, browser, auto_mode, db_session, monkeypatch):
+        # The review model may read page text (required) but is not among the models allowed screenshots.
+        await save_extension_settings(
+            db_session,
+            ExtensionSettings(
+                agent_auto_mode=True,
+                agent_review_model=f"model::{auto_mode.id}",
+                page_content_models=(f"model::{auto_mode.id}",),
+                screenshot_models=(f"model::{auto_mode.id + 1}",),
+            ),
+        )
+        await db_session.commit()
+        monkeypatch.setattr(extension_agent, "supports_vision", lambda **_: True)
+        model = AsyncMock(return_value=_reply('{"decision": "allow", "reason": "Fits."}'))
+        monkeypatch.setattr(extension_agent, "acompletion", model)
+        resp = await client.post("/api/extension/review-action", json={**REVIEW, "crop": "data:image/jpeg;base64,/9j/AAAQ"}, headers=browser.headers)
+        assert resp.status_code == 200
+        content = model.await_args_list[0].kwargs["messages"][1]["content"]
+        assert isinstance(content, str)
+
+    async def test_a_crop_of_an_internal_site_is_dropped_for_a_model_not_allowed_internal(self, client, browser, auto_mode, db_session, monkeypatch):
+        await save_extension_settings(
+            db_session,
+            ExtensionSettings(
+                agent_auto_mode=True,
+                agent_review_model=f"model::{auto_mode.id}",
+                page_content_models=(f"model::{auto_mode.id}",),
+                internal_sites=("*.example.com",),
+                internal_models=(f"model::{auto_mode.id + 1}",),
+            ),
+        )
+        await db_session.commit()
+        monkeypatch.setattr(extension_agent, "supports_vision", lambda **_: True)
+        model = AsyncMock(return_value=_reply('{"decision": "allow", "reason": "Fits."}'))
+        monkeypatch.setattr(extension_agent, "acompletion", model)
+        # shop.example.com is internal; the review model is not on the internal list, so its crop is dropped.
+        resp = await client.post("/api/extension/review-action", json={**REVIEW, "crop": "data:image/jpeg;base64,/9j/AAAQ"}, headers=browser.headers)
+        assert resp.status_code == 200
+        assert isinstance(model.await_args_list[0].kwargs["messages"][1]["content"], str)
+
+    async def test_a_crop_of_an_internal_site_reaches_a_model_allowed_internal(self, client, browser, auto_mode, db_session, monkeypatch):
+        await save_extension_settings(
+            db_session,
+            ExtensionSettings(
+                agent_auto_mode=True,
+                agent_review_model=f"model::{auto_mode.id}",
+                page_content_models=(f"model::{auto_mode.id}",),
+                internal_sites=("*.example.com",),
+                internal_models=(f"model::{auto_mode.id}",),
+                screenshot_models=(f"model::{auto_mode.id}",),
+            ),
+        )
+        await db_session.commit()
+        monkeypatch.setattr(extension_agent, "supports_vision", lambda **_: True)
+        model = AsyncMock(return_value=_reply('{"decision": "allow", "reason": "Fits."}'))
+        monkeypatch.setattr(extension_agent, "acompletion", model)
+        resp = await client.post("/api/extension/review-action", json={**REVIEW, "crop": "data:image/jpeg;base64,/9j/AAAQ"}, headers=browser.headers)
+        assert resp.status_code == 200
+        content = model.await_args_list[0].kwargs["messages"][1]["content"]
+        assert isinstance(content, list)
+
     async def test_a_crop_is_ignored_when_the_reviewer_cannot_see_images(self, client, browser, auto_mode, db_session, monkeypatch):
         await save_extension_settings(
             db_session,

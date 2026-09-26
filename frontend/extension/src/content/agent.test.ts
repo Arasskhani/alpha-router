@@ -454,6 +454,18 @@ describe("acting", () => {
     expect(describeFocus(document, visible)).toEqual({ ok: true });
   });
 
+  it("reports focus inside a frame from another site as a frame the rules cannot judge", () => {
+    // A detached iframe, so happy-dom does not fetch it; contentDocument null stands for a cross-site frame.
+    page(`<p>x</p>`);
+    const frame = document.createElement("iframe");
+    frame.setAttribute("src", "https://id.example/login");
+    frame.setAttribute("title", "Sign in");
+    document.body.appendChild(frame);
+    Object.defineProperty(frame, "contentDocument", { value: null, configurable: true });
+    Object.defineProperty(document, "activeElement", { value: frame, configurable: true });
+    expect(describeFocus(document, visible)).toMatchObject({ ok: true, element: { role: "frame", name: "Sign in", frame: { host: "id.example" } } });
+  });
+
   it("scrolls the page, or to an element", () => {
     page(`<button>Far away</button>`);
     const button = document.querySelector("button")!;

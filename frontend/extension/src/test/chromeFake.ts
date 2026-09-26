@@ -190,6 +190,48 @@ export function installChromeFake(options: { version?: string } = {}) {
       onClicked,
     },
     commands: { onCommand: event() },
+    debugger: (() => {
+      const onEvent = event<(source: { tabId?: number }, method: string, params?: object) => void>();
+      const onDetach = event<(source: { tabId?: number }, reason: string) => void>();
+      const attached = new Set<number>();
+      return {
+        attached,
+        onEvent,
+        onDetach,
+        /** How the next sendCommand answers: a map method -> result, or a thrown message. */
+        answers: new Map<string, unknown>(),
+        sent: [] as Array<{ method: string; params?: object; tabId?: number }>,
+        /** Set to a message to make the next attach fail (a policy blocking it). */
+        attachError: null as string | null,
+        attach: vi.fn((target: { tabId?: number }, _version: string, cb: () => void) => {
+          if (fake.debugger.attachError) {
+            (chrome.runtime as { lastError?: { message: string } }).lastError = { message: fake.debugger.attachError };
+            cb();
+            delete (chrome.runtime as { lastError?: unknown }).lastError;
+            return;
+          }
+          if (target.tabId != null) attached.add(target.tabId);
+          cb();
+        }),
+        detach: vi.fn((target: { tabId?: number }, cb: () => void) => {
+          if (target.tabId != null) attached.delete(target.tabId);
+          cb();
+        }),
+        sendCommand: vi.fn((target: { tabId?: number }, method: string, params: object, cb: (r?: unknown) => void) => {
+          fake.debugger.sent.push({ tabId: target.tabId, method, params });
+          cb(fake.debugger.answers.get(method));
+        }),
+        /** Deliver a CDP event as Chrome would (e.g. Input.dragIntercepted). */
+        emitEvent(tabId: number, method: string, params?: object) {
+          onEvent.emit({ tabId }, method, params);
+        },
+        /** End the session as Chrome would when the user presses Cancel on the bar. */
+        emitDetach(tabId: number, reason = "canceled_by_user") {
+          attached.delete(tabId);
+          onDetach.emit({ tabId }, reason);
+        },
+      };
+    })(),
     windows: {
       WINDOW_ID_CURRENT: -2,
       /** The window of the page asking: the side panel's. */

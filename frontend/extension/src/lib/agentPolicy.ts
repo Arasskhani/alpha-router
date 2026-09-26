@@ -97,7 +97,7 @@ export const DEFAULT_APPROVALS: Approvals = { send: true, submit: true, delete: 
  * marks the organisation's internal sites, and which models may see them
  * and screenshots at all.
  */
-export type DataRules = {
+type DataRules = {
   /** Sites internal to the organisation, as patterns (`*.example.com`). */
   internalSites: string[];
   /** This run's model may read internal sites' pages and see their screenshots. */
@@ -106,7 +106,7 @@ export type DataRules = {
   modelSeesScreenshots: boolean;
 };
 
-export const OPEN_DATA_RULES: DataRules = { internalSites: [], modelSeesInternal: true, modelSeesScreenshots: true };
+const OPEN_DATA_RULES: DataRules = { internalSites: [], modelSeesInternal: true, modelSeesScreenshots: true };
 
 export type PolicyContext = {
   policy: SitePolicy;

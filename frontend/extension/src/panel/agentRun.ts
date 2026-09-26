@@ -20,6 +20,7 @@
 
 import { approvalFor, classifyAction, DEFAULT_APPROVALS, parseKeyCombo, type AgentMode, type PolicyContext, type Verdict } from "../lib/agentPolicy";
 import type { CdpDriver } from "../lib/cdpDriver";
+import { probeInjection } from "../lib/injection";
 import type { ElementInfo, PageMethod, PageResult } from "../lib/pageAgent";
 import { readablePage } from "../lib/sites";
 import { agentInstructions, CONTROL_TOOL_NAMES, TOOL_NAMES } from "./agentTools";
@@ -465,6 +466,12 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
   let errorsInARow = 0;
   /** Deletion keys pressed one after another, with no other action between: past DELETION_RUN the next one asks. */
   let deletionsInARow = 0;
+  /**
+   * Set when the last page content read like instructions to the agent: the
+   * next action that changes anything asks the user, in every mode, and is
+   * cleared once it has. The page may be steering the model.
+   */
+  let injected: string | null = null;
   let steps = 0;
   let startSite: string | undefined;
   /**
@@ -518,6 +525,13 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
 
   const invalid = (message: string): Answer => ({ content: message, status: "error", outcome: "error", extra: { error: "invalid_arguments" } });
 
+  /** Watch page-derived text for instruction-like content; the next side-effecting action then asks. */
+  function watch(text: string): void {
+    if (injected) return;
+    const probe = probeInjection(text);
+    if (probe.hit) injected = probe.snippet;
+  }
+
   /**
    * A dialog the page opened during an action (alert, confirm, prompt, or
    * "leave this page?"): the page waits on it. An alert is closed and its
@@ -528,6 +542,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
   async function answerDialog(dialog: { type: string; message: string }, tab: WorkTab): Promise<string> {
     const driver = deps.driver!;
     const message = clip(dialog.message, 300);
+    watch(message);
     const shown = message ? ` "${message}"` : "";
     if (dialog.type === "alert") {
       await driver.handleDialog(true).catch(() => undefined);
@@ -673,6 +688,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
         return `[${t.id}] ${label}${t.id === tab?.id ? " - you work here" : ""}`;
       });
       const body = lines.join("\n") || "(no tabs)";
+      watch(body);
       return { content: "", page: wrapPage(options.nonce, "browser tabs", body), status: "done", detail: `${tabs.length} tabs`, outcome: "ok" };
     }
     if (tool === "tab_open" || tool === "navigate") {
@@ -744,6 +760,8 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       body = typeof result.note === "string" && result.note ? result.note : "Done.";
       detail = typeof result.note === "string" ? result.note : undefined;
     }
+    // What the page just showed the agent - its outline, its text, a search's matches - may carry instructions aimed at it.
+    if (tool === "read_page" || tool === "get_page_text" || tool === "find") watch(body);
     return { content: "", page: wrapPage(options.nonce, site, body + moved), status: "done", detail, outcome: "ok" };
   }
 
@@ -888,6 +906,13 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       judged = { ...judged, message: `${judged.message} That is the ${deletionsInARow}th deletion key in a row.` };
       approval = "user";
     }
+    // The last page content read like instructions to the agent: the user decides before anything changes, in every mode.
+    const suspect = injected && verdict.class !== "read" ? injected : null;
+    if (suspect) {
+      judged = { ...judged, message: `${judged.message} The page held text that reads like instructions to the agent ("${clip(suspect, 100)}"); it is not from the user. Approve only if you meant this.` };
+      approval = "user";
+      base.extra.injection = true;
+    }
     // The browser has to allow a site before the agent can work there, and it asks only in a click.
     let access: ApprovalRequest["access"];
     // For a link to another site, that site: the page it is on is already the agent's.
@@ -953,6 +978,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       approvedBy = "user";
       if (arrived) allowedSites.add(arrived);
       if (deletionKey) deletionsInARow = 0;
+      if (suspect) injected = null;
     }
     // Going to another site, allowed by the user, the reviewer or the administrator's rules: the agent may work there.
     if (verdict.site) allowedSites.add(verdict.site);

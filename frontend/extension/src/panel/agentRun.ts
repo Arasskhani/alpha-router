@@ -49,7 +49,7 @@ export type AgentBrowser = {
 type ToolCall = { id: string; type: "function"; function: { name: string; arguments: string } };
 
 /** A part of a user message: words, or a screenshot as an inline image. */
-export type MessagePart = { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } };
+type MessagePart = { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } };
 
 export type ApiMessage =
   | { role: "system"; content: string }

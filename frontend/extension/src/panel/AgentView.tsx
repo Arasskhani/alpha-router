@@ -18,9 +18,11 @@ import { fromTabScript, isExtensionMessage } from "../lib/messages";
 import { readablePage } from "../lib/sites";
 import { DisconnectedError, TemporaryError } from "../lib/tokens";
 import { useActivePage, useSiteAccess } from "./activePage";
+import { chooseDriver } from "../lib/driver";
+import { DEFAULT_MAX_SIDE } from "../lib/coords";
 import { createAgentBrowser, type PanelBrowser } from "./agentBrowser";
-import { runAgent, type AgentDeps, type AgentEventReport, type ApprovalRequest, type RunOutcome, type StepView } from "./agentRun";
-import { AGENT_TOOLS } from "./agentTools";
+import { runAgent, type AgentDeps, type AgentEventReport, type ApprovalRequest, type ControlDriver, type RunOutcome, type StepView } from "./agentRun";
+import { agentToolsFor } from "./agentTools";
 import { pickModel, textModels, type ChatModel } from "./conversation";
 import type { Me } from "./types";
 
@@ -239,8 +241,9 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
     if (kept) events.current = [...batch, ...events.current].slice(-MAX_QUEUED_EVENTS);
   }
 
-  function deps(model: string): AgentDeps {
+  function deps(model: string, driver: ControlDriver | null): AgentDeps {
     const { api } = getClient();
+    const browserTools = agentToolsFor({ fullControl: driver !== null });
     return {
       async model(messages, stepSignal) {
         for (let attempt = 0; ; attempt += 1) {
@@ -248,7 +251,7 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
             const response = await api.request("/api/chat/completions", {
               method: "POST",
               // No chat, no history, no assistant message id: each step stands alone.
-              body: JSON.stringify({ model, messages, stream: true, browser_tools: AGENT_TOOLS, browser_tool_choice: "auto" }),
+              body: JSON.stringify({ model, messages, stream: true, browser_tools: browserTools, browser_tool_choice: "auto" }),
               signal: stepSignal,
             });
             if (!response.ok) throw await ApiError.from(response);
@@ -269,6 +272,7 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
         }
       },
       browser: browser.current!,
+      driver,
       approve: (request, stepSignal) =>
         new Promise<boolean>((resolve) => {
           let settled = false;
@@ -340,14 +344,37 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
     setLog([{ kind: "task", id: run, text: task }]);
     setRunning(true);
     setStarting(false);
+    // Full control: the admin's switch and the user's grant, a model that reads images, and a tab to attach to.
+    const readsImages = Boolean(models?.find((m) => m.id === modelId)?.supports_vision);
+    const wantsControl = Boolean(me.features.full_control);
+    let driver: ControlDriver | null = null;
+    let stopDriver: (() => Promise<void>) | null = null;
     try {
+      if (wantsControl && activePage?.tabId != null) {
+        if (!readsImages) {
+          append({ kind: "text", id: `${run}-driver`, text: "Working without full control: this model does not read images. Choose a vision model for a real mouse and screenshots." });
+        } else {
+          const choice = await chooseDriver(activePage.tabId, { fullControl: true, maxSide: DEFAULT_MAX_SIDE });
+          if (choice.mode === "cdp") {
+            driver = choice.driver;
+            stopDriver = () => choice.driver.stop();
+            choice.driver.onDetached((reason) => {
+              if (reason === "canceled_by_user") abort.abort();
+            });
+            append({ kind: "text", id: `${run}-driver`, text: "Full control is on: a real mouse and keyboard, and screenshots. Chrome shows its debugging bar while this runs." });
+          } else {
+            append({ kind: "text", id: `${run}-driver`, text: `Working without full control: ${choice.reason}.` });
+          }
+        }
+      }
       const result = await runAgent(
         { task, mode, maxSteps, rules, runId: run, nonce: randomHex(6), modelRef: modelId },
-        deps(modelId),
+        deps(modelId, driver),
         abort.signal,
       );
       append({ kind: "result", id: `${run}-end`, outcome: result.outcome, summary: result.summary });
     } finally {
+      await stopDriver?.().catch(() => undefined);
       await browser.current?.cleanup().catch(() => undefined);
       await flush();
       setRunning(false);

@@ -19,7 +19,7 @@ const ref = { type: "string", description: "The element's reference from read_pa
 const url = { type: "string", description: "A full http or https address." };
 const maxChars = { type: "integer", minimum: 1000, maximum: 30000, description: "How much to return, in characters." };
 
-export const AGENT_TOOLS: ToolSchema[] = [
+const AGENT_TOOLS: ToolSchema[] = [
   tool("tabs_list", "List the open tabs of this window: their ids, titles and sites, and which one you work in."),
   tool("tab_open", "Open a page in a new tab and work in it.", { url }, ["url"]),
   tool("tab_switch", "Work in another open tab, by its id from tabs_list.", { tab_id: { type: "integer" } }, ["tab_id"]),

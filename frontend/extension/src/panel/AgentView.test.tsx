@@ -360,3 +360,51 @@ describe("a run", () => {
     expect(host.textContent).toContain("does not allow the browser agent to use this model");
   });
 });
+
+describe("full control", () => {
+  const VISION = [{ id: "model::1", name: "Vision Model", kinds: ["text"], default_kinds: ["chat"], supports_vision: true }];
+
+  it("attaches the debugger, says so, offers the control tools, and detaches after the run", async () => {
+    server.routes["GET /api/chat/models"] = () => json(200, VISION);
+    chromeFake.debugger.answers.set("Page.getLayoutMetrics", { cssVisualViewport: { width: 1280, height: 720 } });
+    await render({ ...ME, features: { ...ME.features, full_control: true } });
+    await start("Look at the page.");
+    await until(() => host.textContent!.includes("Done."), "the run to finish");
+    expect(host.textContent).toContain("Full control is on");
+    const body = server.calls.filter((c) => c.path === "/api/chat/completions")[0].body as { browser_tools: Array<{ function: { name: string } }> };
+    expect(body.browser_tools.map((t) => t.function.name)).toEqual(expect.arrayContaining(["computer", "screenshot", "zoom", "click"]));
+    // Attached for the run, and let go afterwards.
+    expect(chromeFake.debugger.attach).toHaveBeenCalled();
+    expect(chromeFake.debugger.attached.has(tabId)).toBe(false);
+    expect(pageCalls.some((c) => c.method === "visuals_show")).toBe(true);
+  });
+
+  it("stays standard with a model that does not read images, and says why", async () => {
+    await render({ ...ME, features: { ...ME.features, full_control: true } });
+    await start("Look at the page.");
+    await until(() => host.textContent!.includes("Done."), "the run to finish");
+    expect(host.textContent).toContain("does not read images");
+    expect(chromeFake.debugger.attach).not.toHaveBeenCalled();
+    const body = server.calls.filter((c) => c.path === "/api/chat/completions")[0].body as { browser_tools: Array<{ function: { name: string } }> };
+    expect(body.browser_tools.map((t) => t.function.name)).not.toContain("computer");
+  });
+
+  it("falls back, and says why, when Chrome refuses the attach", async () => {
+    server.routes["GET /api/chat/models"] = () => json(200, VISION);
+    chromeFake.debugger.attachError = "blocked by policy";
+    await render({ ...ME, features: { ...ME.features, full_control: true } });
+    await start("Look at the page.");
+    await until(() => host.textContent!.includes("Done."), "the run to finish");
+    expect(host.textContent).toContain("Working without full control");
+    expect(host.textContent).toContain("blocked by policy");
+  });
+
+  it("does nothing different when the feature is off", async () => {
+    server.routes["GET /api/chat/models"] = () => json(200, VISION);
+    await render();
+    await start("Look at the page.");
+    await until(() => host.textContent!.includes("Done."), "the run to finish");
+    expect(chromeFake.debugger.attach).not.toHaveBeenCalled();
+    expect(host.textContent).not.toContain("full control");
+  });
+});

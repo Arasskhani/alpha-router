@@ -12,7 +12,7 @@ import { modifiersMask, type Send } from "./input";
 type KeyDef = { key: string; code: string; vk: number; text?: string };
 
 /** The named keys the agent may press (Claude in Chrome's set), with their CDP fields. */
-export const NAMED_KEYS: Record<string, KeyDef> = {
+const NAMED_KEYS: Record<string, KeyDef> = {
   Enter: { key: "Enter", code: "Enter", vk: 13, text: "\r" },
   Tab: { key: "Tab", code: "Tab", vk: 9, text: "\t" },
   Escape: { key: "Escape", code: "Escape", vk: 27 },

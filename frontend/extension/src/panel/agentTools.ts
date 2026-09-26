@@ -62,16 +62,72 @@ export const AGENT_TOOLS: ToolSchema[] = [
   tool("done", "Finish: say what you did, or why the task cannot be done.", { summary: { type: "string" } }, ["summary"]),
 ];
 
-export const TOOL_NAMES = new Set(AGENT_TOOLS.map((t) => t.function.name));
+const coordinate = {
+  type: "array",
+  items: { type: "number" },
+  minItems: 2,
+  maxItems: 2,
+  description: "[x, y] in the pixels of the last screenshot.",
+};
+
+/**
+ * Full control: the page as an image, and a real mouse and keyboard at
+ * coordinates in it. Offered only when the run drives the page through the
+ * CDP driver and the model reads images; the ref-based tools stay available.
+ */
+export const CONTROL_TOOLS: ToolSchema[] = [
+  tool(
+    "screenshot",
+    "See the page as an image. Coordinates you give to computer are in this image's pixels; take a new screenshot after the page changes.",
+  ),
+  tool(
+    "zoom",
+    "See a region of the page magnified, for small text or controls. The region is [x0, y0, x1, y1] in the last screenshot's pixels.",
+    { region: { type: "array", items: { type: "number" }, minItems: 4, maxItems: 4 } },
+    ["region"],
+  ),
+  tool(
+    "computer",
+    "Use the mouse and keyboard on the page, at coordinates from the last screenshot: left_click, right_click, double_click, triple_click, hover, left_click_drag (from start_coordinate to coordinate), scroll (at coordinate, scroll_direction, scroll_amount ticks), type (text into the focused field), key (a key or shortcut such as Enter, ArrowDown, ctrl+a), wait (seconds).",
+    {
+      action: {
+        type: "string",
+        enum: ["left_click", "right_click", "double_click", "triple_click", "hover", "left_click_drag", "scroll", "type", "key", "wait"],
+      },
+      coordinate,
+      start_coordinate: coordinate,
+      text: { type: "string", description: "What to type, or the key to press." },
+      scroll_direction: { type: "string", enum: ["up", "down", "left", "right"] },
+      scroll_amount: { type: "integer", minimum: 1, maximum: 10 },
+      modifiers: { type: "string", description: "Held keys for a click: ctrl, shift, alt, cmd, joined with +." },
+      duration: { type: "number", minimum: 0, maximum: 10 },
+    },
+    ["action"],
+  ),
+];
+
+export const TOOL_NAMES = new Set([...AGENT_TOOLS, ...CONTROL_TOOLS].map((t) => t.function.name));
+export const CONTROL_TOOL_NAMES = new Set(CONTROL_TOOLS.map((t) => t.function.name));
+
+/** The tools a run offers the model: the ref-based set, plus full control when the run has it. */
+export function agentToolsFor(options: { fullControl: boolean }): ToolSchema[] {
+  return options.fullControl ? [...AGENT_TOOLS, ...CONTROL_TOOLS] : AGENT_TOOLS;
+}
 
 /** The standing instructions; `nonce` is the run's page-content tag suffix. */
-export function agentInstructions(nonce: string): string {
+export function agentInstructions(nonce: string, options: { fullControl?: boolean } = {}): string {
   const tag = `untrusted_page_content_${nonce}`;
+  const control = options.fullControl
+    ? [
+        "- You also have full control: screenshot shows the page as an image, and computer uses a real mouse and keyboard at coordinates in that image. Take a screenshot first, act, then take another to see the result. Prefer references from read_page or find when they name the element precisely; use coordinates for canvases, menus that open on hover, drag and drop, and anything references cannot reach.",
+      ]
+    : [];
   return [
     "You are Alpharouter's browser agent. You act in the user's browser, in the tab next to the side panel, to do what the user asked - and nothing else.",
     "",
     "How to work:",
     "- Start with read_page. Elements are listed with references such as [e12]; use them with click, type_text, select_option, submit_form and scroll. A reference goes stale when the page changes: read the page again.",
+    ...control,
     "- Take one small step at a time, and check what happened before the next one.",
     "- Use ask_user when you need something only the user knows, or a choice only they can make.",
     "- When the task is complete, call done with a short summary of what you did. If it cannot be done, call done and say why.",

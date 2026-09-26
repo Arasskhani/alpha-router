@@ -51,7 +51,8 @@ export class CdpDriver {
     return this.css;
   }
 
-  private async cssPoint(point: Point): Promise<Point> {
+  /** A point in the last screenshot's pixels as the CSS pixel it names, clamped to the viewport. */
+  async toCss(point: Point): Promise<Point> {
     if (!this.frame || !this.css) await this.refreshViewport();
     const css = frameToCss(point, this.frame!);
     return clampToViewport(css, this.css!);
@@ -76,22 +77,22 @@ export class CdpDriver {
     point: Point,
     options: { button?: MouseButton; clickCount?: number; modifiers?: readonly string[] } = {},
   ): Promise<void> {
-    await click(this.session.send.bind(this.session), await this.cssPoint(point), options);
+    await click(this.session.send.bind(this.session), await this.toCss(point), options);
   }
 
   async hover(point: Point, modifiers: readonly string[] = []): Promise<void> {
-    await hover(this.session.send.bind(this.session), await this.cssPoint(point), modifiers);
+    await hover(this.session.send.bind(this.session), await this.toCss(point), modifiers);
   }
 
   async scroll(point: Point, delta: { x?: number; y?: number }): Promise<void> {
-    await scrollBy(this.session.send.bind(this.session), await this.cssPoint(point), delta);
+    await scrollBy(this.session.send.bind(this.session), await this.toCss(point), delta);
   }
 
   async drag(from: Point, to: Point): Promise<{ intercepted: boolean }> {
     return await drag(
       this.session.send.bind(this.session),
-      await this.cssPoint(from),
-      await this.cssPoint(to),
+      await this.toCss(from),
+      await this.toCss(to),
       () => this.session.takeDragData(),
     );
   }

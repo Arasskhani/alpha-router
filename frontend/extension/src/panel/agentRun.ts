@@ -19,9 +19,10 @@
  */
 
 import { approvalFor, classifyAction, type AgentMode, type PolicyContext, type Verdict } from "../lib/agentPolicy";
+import type { CdpDriver } from "../lib/cdpDriver";
 import type { ElementInfo, PageMethod, PageResult } from "../lib/pageAgent";
 import { readablePage } from "../lib/sites";
-import { agentInstructions, TOOL_NAMES } from "./agentTools";
+import { agentInstructions, CONTROL_TOOL_NAMES, TOOL_NAMES } from "./agentTools";
 
 export type WorkTab = { id: number; url: string; host: string | null; title: string };
 
@@ -47,8 +48,12 @@ export type AgentBrowser = {
 
 type ToolCall = { id: string; type: "function"; function: { name: string; arguments: string } };
 
+/** A part of a user message: words, or a screenshot as an inline image. */
+export type MessagePart = { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } };
+
 export type ApiMessage =
-  | { role: "system" | "user"; content: string }
+  | { role: "system"; content: string }
+  | { role: "user"; content: string | MessagePart[] }
   | { role: "assistant"; content: string | null; tool_calls?: ToolCall[] }
   | { role: "tool"; tool_call_id: string; content: string };
 
@@ -87,9 +92,14 @@ export type AgentEventReport = {
   detail: Record<string, unknown>;
 };
 
+/** The run's driver under full control: input and screenshots (cdpDriver.ts); absent on the dom path. */
+export type ControlDriver = Pick<CdpDriver, "screenshot" | "zoom" | "click" | "hover" | "scroll" | "drag" | "type" | "key" | "toCss">;
+
 export type AgentDeps = {
   model(messages: ApiMessage[], signal: AbortSignal): Promise<ModelReply>;
   browser: AgentBrowser;
+  /** Attached by the caller (chooseDriver) when the run has full control; the caller stops it after the run. */
+  driver?: ControlDriver | null;
   approve(request: ApprovalRequest, signal: AbortSignal): Promise<boolean>;
   askUser(question: string, signal: AbortSignal): Promise<string>;
   review(input: ReviewInput, signal: AbortSignal): Promise<{ decision: "allow" | "ask"; reason: string }>;
@@ -155,21 +165,46 @@ function pageText(page: NonNullable<Entry["page"]>, whole: boolean): string {
   return `${page.open}\n${body}\n${page.close}`;
 }
 
+/** What an image costs the model, counted as if it were this much text. */
+const IMAGE_CHARS = 1500;
+/** How many of the latest screenshots stay in the conversation; older ones are dropped, with a note. */
+export const SCREENSHOTS_KEPT = 3;
+const OMITTED_SHOT: MessagePart = { type: "text", text: "(an earlier screenshot, left out to save space)" };
+
 function size(message: ApiMessage): number {
   const calls = message.role === "assistant" ? JSON.stringify(message.tool_calls ?? []).length : 0;
+  if (Array.isArray(message.content)) {
+    return message.content.reduce((sum, part) => sum + (part.type === "text" ? part.text.length : IMAGE_CHARS), 0);
+  }
   return (typeof message.content === "string" ? message.content.length : 0) + calls;
 }
 
+function hasImage(message: ApiMessage): boolean {
+  return Array.isArray(message.content) && message.content.some((part) => part.type === "image_url");
+}
+
+/** All but the last SCREENSHOTS_KEPT screenshots replaced by a note, so a long run stays affordable. */
+function withRecentScreenshots(messages: ApiMessage[]): ApiMessage[] {
+  const shots = messages.flatMap((message, index) => (hasImage(message) ? [index] : []));
+  const keep = new Set(shots.slice(-SCREENSHOTS_KEPT));
+  return messages.map((message, index): ApiMessage => {
+    if (message.role !== "user" || !Array.isArray(message.content) || keep.has(index) || !hasImage(message)) return message;
+    return { role: "user", content: message.content.map((part) => (part.type === "image_url" ? OMITTED_SHOT : part)) };
+  });
+}
+
 /**
- * The conversation as the model reads it: older page content cut short, and
- * - when it is still too long - the oldest steps left out whole, a tool call
- * never without its answer.
+ * The conversation as the model reads it: older page content cut short, only
+ * the latest screenshots kept, and - when it is still too long - the oldest
+ * steps left out whole, a tool call never without its answer.
  */
 export function conversation(entries: Entry[]): ApiMessage[] {
   const pageIndexes = entries.flatMap((entry, index) => (entry.page ? [index] : []));
   const whole = new Set(pageIndexes.slice(-WHOLE_PAGE_RESULTS));
-  const messages = entries.map((entry, index) =>
-    entry.page && entry.message.role === "tool" ? { ...entry.message, content: pageText(entry.page, whole.has(index)) } : entry.message,
+  const messages = withRecentScreenshots(
+    entries.map((entry, index) =>
+      entry.page && entry.message.role === "tool" ? { ...entry.message, content: pageText(entry.page, whole.has(index)) } : entry.message,
+    ),
   );
   const [system, task, ...rest] = messages;
   // Steps: an assistant message and the tool answers after it.
@@ -294,10 +329,72 @@ function describeAction(tool: string, a: Record<string, unknown>, element?: Elem
   }
 }
 
+/** A computer action in words, naming what it touches when that is known. */
+function describeComputer(a: Record<string, unknown>, element?: ElementInfo): string {
+  const action = String(a.action ?? "");
+  const where = element ? ` ${element.role}${element.name ? ` "${clip(element.name, 80)}"` : ""}` : "";
+  const at = (value: unknown) => {
+    const p = point(value);
+    return p ? ` at (${p.x}, ${p.y})` : "";
+  };
+  switch (action) {
+    case "left_click":
+      return `Click${where}${at(a.coordinate)}`;
+    case "right_click":
+      return `Right-click${where}${at(a.coordinate)}`;
+    case "double_click":
+      return `Double-click${where}${at(a.coordinate)}`;
+    case "triple_click":
+      return `Triple-click${where}${at(a.coordinate)}`;
+    case "hover":
+      return `Hover over${where}${at(a.coordinate)}`;
+    case "left_click_drag":
+      return `Drag${where}${at(a.start_coordinate)} to${at(a.coordinate)}`;
+    case "scroll":
+      return `Scroll ${String(a.scroll_direction ?? "down")}${at(a.coordinate)}`;
+    case "type":
+      return `Type ${typed(typeof a.text === "string" ? a.text : "")}${element ? ` into${where}` : ""}`;
+    case "key":
+      return `Press ${clip(String(a.text ?? ""), 40)}${element ? ` in${where}` : ""}`;
+    case "wait":
+      return `Wait ${Number(a.duration) || 1} s`;
+    default:
+      return `computer: ${clip(action, 40)}`;
+  }
+}
+
 const ELEMENT_TOOLS = new Set(["click", "type_text", "select_option", "submit_form"]);
-const PAGE_TOOLS = new Set(["read_page", "find", "get_page_text", "click", "type_text", "select_option", "submit_form", "press_key", "scroll", "wait_for"]);
+const PAGE_TOOLS = new Set([
+  "read_page",
+  "find",
+  "get_page_text",
+  "click",
+  "type_text",
+  "select_option",
+  "submit_form",
+  "press_key",
+  "scroll",
+  "wait_for",
+  "screenshot",
+  "zoom",
+  "computer",
+]);
 /** Actions after which a page may be loading. */
-const MAY_LOAD = new Set(["click", "submit_form", "press_key", "navigate", "tab_open", "tab_switch"]);
+const MAY_LOAD = new Set(["click", "submit_form", "press_key", "navigate", "tab_open", "tab_switch", "computer"]);
+
+/** What a computer action is, as the rules know actions: the tool it amounts to, and where the element comes from. */
+const COMPUTER_ACTIONS: Record<string, { as: string; element: "point" | "start" | "focus" | "none"; kind?: "left" | "right" | "double" | "triple" }> = {
+  left_click: { as: "click", element: "point", kind: "left" },
+  right_click: { as: "click", element: "point", kind: "right" },
+  double_click: { as: "click", element: "point", kind: "double" },
+  triple_click: { as: "click", element: "point", kind: "triple" },
+  hover: { as: "scroll", element: "point" },
+  left_click_drag: { as: "click", element: "start" },
+  scroll: { as: "scroll", element: "none" },
+  type: { as: "type_text", element: "focus" },
+  key: { as: "press_key", element: "focus" },
+  wait: { as: "wait_for", element: "none" },
+};
 
 type Answer = {
   content: string;
@@ -311,7 +408,16 @@ type Answer = {
   site?: string;
   extra?: Record<string, unknown>;
   finish?: string;
+  /** A screenshot to show the model after this step's answers, as an inline image. */
+  image?: { url: string; caption: string };
 };
+
+function point(value: unknown): { x: number; y: number } | null {
+  if (!Array.isArray(value) || value.length !== 2) return null;
+  const [x, y] = value;
+  if (typeof x !== "number" || typeof y !== "number" || !Number.isFinite(x) || !Number.isFinite(y)) return null;
+  return { x, y };
+}
 
 function originPattern(url: string): { pattern: string; host: string } | null {
   const page = readablePage(url);
@@ -320,7 +426,7 @@ function originPattern(url: string): { pattern: string; host: string } | null {
 
 export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: AbortSignal): Promise<RunResult> {
   const entries: Entry[] = [
-    { message: { role: "system", content: agentInstructions(options.nonce) } },
+    { message: { role: "system", content: agentInstructions(options.nonce, { fullControl: Boolean(deps.driver) }) } },
     { message: { role: "user", content: options.task } },
   ];
   const history: string[] = [];
@@ -370,6 +476,109 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     });
   }
 
+  /** Best-effort: the visuals never fail a run. */
+  async function visual(method: PageMethod, a: Record<string, unknown>, tab: WorkTab | null): Promise<void> {
+    if (!tab || !deps.driver) return;
+    await deps.browser.page(method, a, tab, signal).catch(() => undefined);
+  }
+
+  const invalid = (message: string): Answer => ({ content: message, status: "error", outcome: "error", extra: { error: "invalid_arguments" } });
+
+  /** Full control: screenshots and the real mouse and keyboard, through the run's driver. */
+  async function control(tool: string, a: Record<string, unknown>, tab: WorkTab): Promise<Answer> {
+    const driver = deps.driver;
+    if (!driver) return { content: "Full control is not on for this run: use read_page and the reference tools.", status: "error", outcome: "error", extra: { error: "no_control" } };
+    const site = tab.host ?? "";
+    const race = <T>(work: Promise<T>) => Promise.race([work, stopped]);
+    if (tool === "screenshot") {
+      const shot = await race(driver.screenshot());
+      check();
+      const size = `${shot.frame.width}×${shot.frame.height}`;
+      return {
+        content: `Screenshot taken (${size} pixels). Coordinates for computer are in these pixels.`,
+        status: "done",
+        detail: size,
+        outcome: "ok",
+        image: { url: shot.dataUrl, caption: `The page (${size}). Coordinates for computer are in this image's pixels.` },
+      };
+    }
+    if (tool === "zoom") {
+      const r = Array.isArray(a.region) ? a.region.map(Number) : [];
+      if (r.length !== 4 || r.some((n) => !Number.isFinite(n)) || r[2] <= r[0] || r[3] <= r[1]) return invalid("zoom needs region [x0, y0, x1, y1] with x1 > x0 and y1 > y0.");
+      const shot = await race(driver.zoom({ x: r[0], y: r[1], width: r[2] - r[0], height: r[3] - r[1] }));
+      check();
+      return {
+        content: `Zoomed into [${r.join(", ")}].`,
+        status: "done",
+        detail: `[${r.join(", ")}]`,
+        outcome: "ok",
+        image: { url: shot.dataUrl, caption: "That region, magnified. Its pixels are not page coordinates: use the last full screenshot for those." },
+      };
+    }
+    // computer
+    const action = String(a.action ?? "");
+    const spec = COMPUTER_ACTIONS[action];
+    if (!spec) return invalid("computer needs one of: left_click, right_click, double_click, triple_click, hover, left_click_drag, scroll, type, key, wait.");
+    const modifiers = typeof a.modifiers === "string" ? a.modifiers.split("+").map((m) => m.trim()).filter(Boolean) : [];
+    let note: string;
+    if (spec.element === "point" || action === "scroll") {
+      const p = point(a.coordinate);
+      if (!p) return invalid(`${action} needs coordinate [x, y].`);
+      const css = await driver.toCss(p);
+      if (action === "scroll") {
+        const ticks = Math.min(10, Math.max(1, Number(a.scroll_amount) || 3));
+        const px = ticks * 100;
+        const dir = String(a.scroll_direction ?? "down");
+        const delta = dir === "up" ? { y: -px } : dir === "left" ? { x: -px } : dir === "right" ? { x: px } : { y: px };
+        await visual("visuals_cursor", { x: css.x, y: css.y }, tab);
+        await race(driver.scroll(p, delta));
+        note = `Scrolled ${dir} ${ticks} ticks at (${p.x}, ${p.y}).`;
+      } else if (action === "hover") {
+        await visual("visuals_cursor", { x: css.x, y: css.y }, tab);
+        await race(driver.hover(p, modifiers));
+        note = `Hovering at (${p.x}, ${p.y}).`;
+      } else {
+        await visual("visuals_cursor", { x: css.x, y: css.y, click: spec.kind }, tab);
+        const clickCount = spec.kind === "double" ? 2 : spec.kind === "triple" ? 3 : 1;
+        await race(driver.click(p, { button: spec.kind === "right" ? "right" : "left", clickCount, modifiers }));
+        note = `${spec.kind === "right" ? "Right-clicked" : spec.kind === "double" ? "Double-clicked" : spec.kind === "triple" ? "Triple-clicked" : "Clicked"} at (${p.x}, ${p.y}).`;
+      }
+    } else if (action === "left_click_drag") {
+      const from = point(a.start_coordinate);
+      const to = point(a.coordinate);
+      if (!from || !to) return invalid("left_click_drag needs start_coordinate and coordinate.");
+      const cssTo = await driver.toCss(to);
+      await visual("visuals_cursor", { x: cssTo.x, y: cssTo.y }, tab);
+      const result = await race(driver.drag(from, to));
+      note = `Dragged from (${from.x}, ${from.y}) to (${to.x}, ${to.y})${result.intercepted ? "" : " (as a pointer drag)"}.`;
+    } else if (action === "type") {
+      const text = typeof a.text === "string" ? a.text : "";
+      if (!text) return invalid("type needs text.");
+      await race(driver.type(text));
+      note = `Typed ${text.length} characters.`;
+    } else if (action === "key") {
+      const key = typeof a.text === "string" ? a.text.trim() : "";
+      if (!key) return invalid("key needs the key to press in text, such as Enter or ctrl+a.");
+      const pressed = await race(driver.key(key));
+      if (!pressed) return { content: `The agent cannot press "${clip(key, 40)}".`, status: "error", detail: "Unknown key", outcome: "error", extra: { error: "bad_key" } };
+      note = `Pressed ${key}.`;
+    } else {
+      const seconds = Math.min(10, Math.max(0, Number(a.duration) || 1));
+      await race(new Promise<void>((resolve) => setTimeout(resolve, seconds * 1000)));
+      note = `Waited ${seconds} s.`;
+    }
+    check();
+    let moved = "";
+    await race(deps.browser.settle());
+    check();
+    const after = await deps.browser.current();
+    check();
+    if (after?.host && after.host !== site && !allowedSites.has(after.host)) {
+      moved = `\nThe page is now on another site: ${after.host}. The user will be asked before you act there.`;
+    }
+    return { content: "", page: wrapPage(options.nonce, site, `${note}${moved}`), status: "done", detail: note, outcome: "ok" };
+  }
+
   /** Carry out one allowed action; everything the page says comes back wrapped. */
   async function execute(tool: string, a: Record<string, unknown>, tab: WorkTab | null): Promise<Answer> {
     const site = tab?.host ?? "";
@@ -415,6 +624,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       };
     }
     if (!tab) return { content: "The tab does not show a web page the agent can work on.", status: "error", outcome: "error", extra: { error: "no_page" } };
+    if (CONTROL_TOOL_NAMES.has(tool)) return control(tool, a, tab);
     const result = await page(tool as PageMethod, a, tab);
     if (!result.ok) {
       return {
@@ -503,6 +713,33 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
         element = described.element as ElementInfo;
       }
     }
+    // A computer action is judged as the action it amounts to, on what a click there (or the focus) would touch.
+    let judgedAs = name;
+    let judgedArgs = a;
+    let targetRect: { x: number; y: number; width: number; height: number } | undefined;
+    if (name === "computer") {
+      const spec = COMPUTER_ACTIONS[String(a.action ?? "")];
+      if (!spec) return invalid("computer needs one of: left_click, right_click, double_click, triple_click, hover, left_click_drag, scroll, type, key, wait.");
+      judgedAs = spec.as;
+      judgedArgs =
+        spec.as === "type_text" ? { text: a.text } : spec.as === "press_key" ? { key: a.text } : spec.as === "scroll" ? { direction: a.scroll_direction } : {};
+      if (workable && tab && pageNow && deps.driver) {
+        if (spec.element === "point" || spec.element === "start") {
+          const p = point(spec.element === "start" ? a.start_coordinate : a.coordinate);
+          if (!p) return invalid(`${String(a.action)} needs ${spec.element === "start" ? "start_coordinate" : "coordinate"} [x, y].`);
+          const css = await deps.driver.toCss(p);
+          const described = await page("describe_at", { x: css.x, y: css.y, activates: spec.as === "click" }, tab);
+          if (!described.ok) {
+            return { content: "", page: wrapPage(options.nonce, pageNow.host, described.message), status: "error", detail: described.message, outcome: "error", site: pageNow.host, extra: { error: described.error } };
+          }
+          element = described.element as ElementInfo;
+          targetRect = described.rect as typeof targetRect;
+        } else if (spec.element === "focus") {
+          const focus = await page("describe_focus", {}, tab);
+          if (focus.ok && focus.element) element = focus.element as ElementInfo;
+        }
+      }
+    }
     let target: SwitchTarget | undefined;
     if (name === "tab_switch") {
       const found = (await deps.browser.listTabs()).find((t) => t.id === Number(a.tab_id));
@@ -512,9 +749,9 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
         target = { id: found.id, url: found.url, host: found.host, title: found.title, readable };
       }
     }
-    const summary = describeAction(name, a, element, target);
+    const summary = name === "computer" ? describeComputer(a, element) : describeAction(name, a, element, target);
     const verdict = TOOL_NAMES.has(name)
-      ? classifyAction({ tool: name, args: a, page: pageNow, element, target: target && { url: target.url, host: target.host } }, options.rules)
+      ? classifyAction({ tool: judgedAs, args: judgedArgs, page: pageNow, element, target: target && { url: target.url, host: target.host } }, options.rules)
       : ({ class: "blocked", reason: "unknown_tool", message: `The agent has no tool called ${clip(name, 40)}.` } as Verdict);
     const base = {
       site: verdict.site ?? pageNow?.host,
@@ -552,7 +789,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     let access: ApprovalRequest["access"];
     // For a link to another site, that site: the page it is on is already the agent's.
     const needs =
-      name === "click" && verdict.site && element?.href && /^https?:/.test(element.href)
+      judgedAs === "click" && verdict.site && element?.href && /^https?:/.test(element.href)
         ? element.href
         : PAGE_TOOLS.has(name) && pageNow
           ? pageNow.url
@@ -594,9 +831,13 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     let approvedBy = approval === "none" ? (base.extra.review === "allow" ? "review" : "not_needed") : "user";
     if (approval === "user") {
       deps.onStep({ id: call.id, tool: name, summary, status: "waiting" });
+      if (targetRect) await visual("visuals_target", { rect: targetRect }, tab);
+      await visual("visuals_state", { state: "waiting" }, tab);
       const allowed = await deps.approve({ tool: name, summary, verdict: judged, review: reviewNote, access }, signal);
+      await visual("visuals_state", { state: "working" }, tab);
       check();
       if (!allowed) {
+        await visual("visuals_target", { rect: null }, tab);
         return {
           ...base,
           summary,
@@ -613,15 +854,27 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     }
     base.extra.approval = approvedBy;
     deps.onStep({ id: call.id, tool: name, summary, status: "running" });
-    const answer = await execute(name, a, tab);
-    return { ...answer, summary, site: answer.site ?? base.site, extra: { ...base.extra, ...(answer.extra ?? {}) } };
+    if (targetRect) await visual("visuals_target", { rect: targetRect }, tab);
+    let answer: Answer;
+    try {
+      answer = await execute(name, a, tab);
+    } finally {
+      if (targetRect) await visual("visuals_target", { rect: null }, tab);
+    }
+    return { ...answer, summary, site: answer.site ?? base.site, extra: { ...base.extra, ...(answer.extra ?? {}), ...(name === "computer" ? { action: String(a.action ?? "") } : {}) } };
   }
 
+  let lastTab: WorkTab | null = null;
   try {
     const first = await deps.browser.current();
     startSite = first?.host ?? undefined;
     // The user started the run on this page.
     if (startSite) allowedSites.add(startSite);
+    lastTab = first;
+    if (first?.host) {
+      await visual("visuals_show", {}, first);
+      await visual("visuals_state", { state: "working" }, first);
+    }
     for (steps = 1; steps <= options.maxSteps; steps += 1) {
       check();
       let reply: ModelReply;
@@ -647,9 +900,11 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       let skip: string | null = null;
       let finish: string | null = null;
       let tooManyErrors = false;
+      const images: NonNullable<Answer["image"]>[] = [];
       for (const call of calls) {
         const answer = await handle(call, skip);
         entries.push({ message: { role: "tool", tool_call_id: call.id, content: answer.content }, ...(answer.page ? { page: answer.page } : {}) });
+        if (answer.image) images.push(answer.image);
         const name = call.function.name;
         const said = answer.summary ?? describeAction(name, args(call.function.arguments) ?? {});
         deps.onStep({ id: call.id, tool: name, summary: said, status: answer.status, detail: answer.detail });
@@ -676,6 +931,13 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
         }
         if (finish !== null && !skip) skip = "Skipped: the task was already finished.";
       }
+      // Screenshots go after the step's answers, as images the model reads (tool answers carry text only).
+      for (const image of images) {
+        entries.push({
+          message: { role: "user", content: [{ type: "text", text: image.caption }, { type: "image_url", image_url: { url: image.url } }] },
+        });
+      }
+      lastTab = (await deps.browser.current()) ?? lastTab;
       if (finish !== null) {
         report("done");
         return { outcome: "done", summary: finish, steps };
@@ -694,7 +956,14 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       return { outcome: "stopped", summary: "Stopped.", steps };
     }
     report("failed");
+    await visual("visuals_state", { state: "error" }, lastTab);
     const message = err instanceof Error && err.message ? err.message : "The agent could not go on.";
     return { outcome: "failed", summary: message, steps };
+  } finally {
+    // The layer goes with the run; the panel shows the outcome.
+    const tab = lastTab;
+    if (tab && deps.driver) {
+      await deps.browser.page("visuals_hide", {}, tab).catch(() => undefined);
+    }
   }
 }

@@ -71,8 +71,22 @@ export type PolicyContext = {
   ownHosts: string[];
 };
 
-const READ_TOOLS = new Set(["tabs_list", "read_page", "find", "get_page_text", "scroll", "wait_for", "ask_user", "done"]);
-const PAGE_TOOLS = new Set(["read_page", "find", "get_page_text", "scroll", "wait_for", "click", "type_text", "select_option", "press_key", "submit_form"]);
+// screenshot and zoom are full control's reads: they show the page, so a page the agent may not work on is refused too.
+const READ_TOOLS = new Set(["tabs_list", "read_page", "find", "get_page_text", "scroll", "wait_for", "ask_user", "done", "screenshot", "zoom"]);
+const PAGE_TOOLS = new Set([
+  "read_page",
+  "find",
+  "get_page_text",
+  "scroll",
+  "wait_for",
+  "click",
+  "type_text",
+  "select_option",
+  "press_key",
+  "submit_form",
+  "screenshot",
+  "zoom",
+]);
 
 /**
  * Words on a button (or a link, in English) that buy, pay, bid or give

@@ -71,7 +71,9 @@ def _normalize_text(text: str) -> str:
 
 
 def _normalize_response_format(value: str | None) -> str:
-    # Product surface only uses mp3 for chat TTS.
+    # Chat TTS always asks for mp3. That is a preference: a model that speaks only
+    # raw pcm is answered as WAV (see speech_providers.openrouter), so what was
+    # delivered is ``result.format``, never this.
     del value
     return "mp3"
 
@@ -361,10 +363,10 @@ async def generate_speech(  # noqa: C901 -- Phase 4 split; complexity must not g
                 source_model=model_id,
                 source_prompt=text,
                 chat_session_id=body.chat_session_id,
-                file_name_hint=f"speech-{int(time.time())}.{response_format}",
+                file_name_hint=f"speech-{int(time.time())}.{result.format}",
                 metadata={
                     "voice": body.voice,
-                    "format": response_format,
+                    "format": result.format,
                     "characters": result.characters,
                     "duration_seconds": result.duration_seconds,
                 },
@@ -380,7 +382,7 @@ async def generate_speech(  # noqa: C901 -- Phase 4 split; complexity must not g
                     model_id,
                     params={
                         "voice": body.voice,
-                        "format": response_format,
+                        "format": result.format,
                         "duration_seconds": result.duration_seconds,
                         "characters": result.characters,
                     },
@@ -389,7 +391,7 @@ async def generate_speech(  # noqa: C901 -- Phase 4 split; complexity must not g
 
         response_out = {
             "data": [{"url": audio_url}] if audio_url else [],
-            "format": response_format,
+            "format": result.format,
             "voice": body.voice,
             "model": model_id,
             "characters": result.characters,

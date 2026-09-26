@@ -36,6 +36,8 @@ const MAX_QUEUED_EVENTS = 200;
 /** What the reviewer takes (the server's limits): an action's arguments as JSON, in bytes, and a task, in characters. */
 const REVIEW_ARGUMENT_BYTES = 4096;
 const MAX_TASK_CHARS = 4000;
+/** A crop sent to a vision reviewer is dropped past this many characters, so the request stays within the server's limit. */
+const MAX_CROP_CHARS = 200_000;
 /** When the server's per-minute limit is reached: how long to wait, and how often, before the run gives up. */
 const RATE_LIMIT_WAIT_MS = 15_000;
 const RATE_LIMIT_RETRIES = 3;
@@ -317,11 +319,13 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
         if (new TextEncoder().encode(JSON.stringify(input.arguments)).length > REVIEW_ARGUMENT_BYTES || input.task.length > MAX_TASK_CHARS) {
           return { decision: "ask", reason: "The action is too long for the reviewer to check in full." };
         }
+        // A crop too large for the server's limit is left out; the reviewer then judges without it.
+        const crop = input.crop && input.crop.length <= MAX_CROP_CHARS ? input.crop : undefined;
         try {
           const verdict = await api.json<{ decision?: string; reason?: string }>("/api/extension/review-action", {
             method: "POST",
             // A tab that shows no web page still names a place for the reviewer.
-            body: JSON.stringify({ ...input, site: input.site || "no web page" }),
+            body: JSON.stringify({ ...input, crop, site: input.site || "no web page" }),
             signal: stepSignal,
           });
           return verdict.decision === "allow"

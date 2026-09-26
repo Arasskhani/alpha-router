@@ -78,6 +78,8 @@ type ReviewInput = {
   target?: string;
   arguments: Record<string, unknown>;
   history: string[];
+  /** Under full control, a crop of the page around the target, as a data URL; the server shows it to a vision reviewer that may see this site. */
+  crop?: string;
 };
 
 type StepStatus = "running" | "waiting" | "done" | "denied" | "blocked" | "skipped" | "error" | "stopped";
@@ -523,6 +525,19 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     await deps.browser.page(method, a, tab, signal).catch(() => undefined);
   }
 
+  /** Take a screenshot with the layer veiled, best-effort; the data URL, or undefined on any failure. */
+  async function visualCapture(work: () => Promise<{ dataUrl: string }>, tab: WorkTab): Promise<string | undefined> {
+    await visual("visuals_veil", { veiled: true }, tab);
+    try {
+      const shot = await Promise.race([work(), stopped]);
+      return shot.dataUrl;
+    } catch {
+      return undefined;
+    } finally {
+      await visual("visuals_veil", { veiled: false }, tab);
+    }
+  }
+
   const invalid = (message: string): Answer => ({ content: message, status: "error", outcome: "error", extra: { error: "invalid_arguments" } });
 
   /** Watch page-derived text for instruction-like content; the next side-effecting action then asks. */
@@ -937,6 +952,12 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     let reviewNote: string | undefined;
     if (approval === "review") {
       deps.onStep({ id: call.id, tool: name, summary, status: "running", detail: "Checking with the reviewer…" });
+      // A crop around the target for a vision reviewer: only under full control, and only where a screenshot of this site may leave at all.
+      let crop: string | undefined;
+      if (deps.driver && targetRect && tab && options.rules.data?.modelSeesScreenshots !== false) {
+        const shot = await visualCapture(() => deps.driver!.zoom(targetRect!), tab);
+        if (shot) crop = shot;
+      }
       const verdictFromReview = await deps.review(
         {
           task: options.task,
@@ -945,6 +966,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
           target: element ? reviewTarget(element) : undefined,
           arguments: a,
           history: history.slice(-HISTORY_LINES),
+          crop,
         },
         signal,
       );

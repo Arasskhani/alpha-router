@@ -73,6 +73,7 @@ function harness(
 ) {
   const sent: ApiMessage[][] = [];
   const approvals: ApprovalRequest[] = [];
+  const reviewInputs: { crop?: string }[] = [];
   const browser = opts.browser ?? fakeBrowser();
   const driver = opts.driver === undefined ? fakeDriver() : opts.driver;
   const deps: AgentDeps = {
@@ -87,14 +88,17 @@ function harness(
       return opts.approve ?? true;
     }),
     askUser: vi.fn(async () => ""),
-    review: vi.fn(async () => ({ decision: opts.review ?? ("ask" as const), reason: "Not sure." })),
+    review: vi.fn(async (input: { crop?: string }) => {
+      reviewInputs.push(input);
+      return { decision: opts.review ?? ("ask" as const), reason: "Not sure." };
+    }),
     report: vi.fn(),
     onStep: vi.fn(),
     onText: vi.fn(),
   };
   const run = () =>
     runAgent({ task: "Go to the next step.", mode: opts.mode ?? "ask", maxSteps: 20, rules: opts.rules ?? RULES, runId: "run-1", nonce: NONCE }, deps, new AbortController().signal);
-  return { deps, browser, driver, sent, approvals, run };
+  return { deps, browser, driver, sent, approvals, reviewInputs, run };
 }
 
 const visualCalls = (browser: ReturnType<typeof fakeBrowser>) => browser.page.mock.calls.filter(([m]) => String(m).startsWith("visuals_")).map(([m, a]) => [m, a]);
@@ -438,5 +442,29 @@ describe("page content that reads like instructions", () => {
     });
     await h.run();
     expect(h.approvals).toHaveLength(0);
+  });
+});
+
+describe("the reviewer's crop", () => {
+  it("captures a crop of the target for the reviewer under full control", async () => {
+    const h = harness([{ text: "", toolCalls: [call("computer", { action: "left_click", coordinate: [200, 100] })] }, { text: "", toolCalls: [call("done", { summary: "ok" })] }], {
+      mode: "auto",
+      review: "allow",
+    });
+    await h.run();
+    expect(h.driver!.zoom).toHaveBeenCalledWith({ x: 190, y: 90, width: 40, height: 20 });
+    expect(h.reviewInputs[0]?.crop).toBe("data:image/jpeg;base64,ZOOM");
+  });
+
+  it("sends no crop when the model may not see screenshots of this site", async () => {
+    const rules: PolicyContext = { ...RULES, data: { internalSites: [], modelSeesInternal: true, modelSeesScreenshots: false } };
+    const h = harness([{ text: "", toolCalls: [call("computer", { action: "left_click", coordinate: [200, 100] })] }, { text: "", toolCalls: [call("done", { summary: "ok" })] }], {
+      mode: "auto",
+      review: "allow",
+      rules,
+    });
+    await h.run();
+    // The click on a plain "Next" is a read to the reviewer? No - it is an act; it went to review with no crop.
+    expect(h.reviewInputs[0]?.crop).toBeUndefined();
   });
 });

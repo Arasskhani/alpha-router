@@ -492,6 +492,67 @@ class TestReview:
         assert resp.json() == {"decision": "allow", "reason": "Asked for."}
         model.assert_awaited_once()
 
+    async def test_a_crop_reaches_a_vision_reviewer(self, client, browser, auto_mode, db_session, monkeypatch):
+        await save_extension_settings(
+            db_session,
+            ExtensionSettings(
+                agent_auto_mode=True,
+                agent_review_model=f"model::{auto_mode.id}",
+                page_content_models=(f"model::{auto_mode.id}",),
+            ),
+        )
+        await db_session.commit()
+        monkeypatch.setattr(extension_agent, "supports_vision", lambda **_: True)
+        model = AsyncMock(return_value=_reply('{"decision": "allow", "reason": "Fits."}'))
+        monkeypatch.setattr(extension_agent, "acompletion", model)
+        crop = "data:image/jpeg;base64,/9j/AAAQ"
+        resp = await client.post("/api/extension/review-action", json={**REVIEW, "crop": crop}, headers=browser.headers)
+        assert resp.status_code == 200, resp.text
+        content = model.await_args_list[0].kwargs["messages"][1]["content"]
+        assert isinstance(content, list)
+        assert any(part.get("type") == "image_url" and part["image_url"]["url"] == crop for part in content)
+        assert any(part.get("type") == "text" and "crop of the page" in part["text"] for part in content)
+
+    async def test_a_crop_is_ignored_when_the_reviewer_cannot_see_images(self, client, browser, auto_mode, db_session, monkeypatch):
+        await save_extension_settings(
+            db_session,
+            ExtensionSettings(
+                agent_auto_mode=True,
+                agent_review_model=f"model::{auto_mode.id}",
+                page_content_models=(f"model::{auto_mode.id}",),
+            ),
+        )
+        await db_session.commit()
+        monkeypatch.setattr(extension_agent, "supports_vision", lambda **_: False)
+        model = AsyncMock(return_value=_reply('{"decision": "allow", "reason": "Fits."}'))
+        monkeypatch.setattr(extension_agent, "acompletion", model)
+        resp = await client.post("/api/extension/review-action", json={**REVIEW, "crop": "data:image/jpeg;base64,/9j/AAAQ"}, headers=browser.headers)
+        assert resp.status_code == 200
+        content = model.await_args_list[0].kwargs["messages"][1]["content"]
+        assert isinstance(content, str)
+
+    async def test_a_remote_or_oversize_crop_is_dropped_even_for_a_vision_reviewer(self, client, browser, auto_mode, db_session, monkeypatch):
+        await save_extension_settings(
+            db_session,
+            ExtensionSettings(
+                agent_auto_mode=True,
+                agent_review_model=f"model::{auto_mode.id}",
+                page_content_models=(f"model::{auto_mode.id}",),
+            ),
+        )
+        await db_session.commit()
+        monkeypatch.setattr(extension_agent, "supports_vision", lambda **_: True)
+        model = AsyncMock(return_value=_reply('{"decision": "allow", "reason": "Fits."}'))
+        monkeypatch.setattr(extension_agent, "acompletion", model)
+        resp = await client.post(
+            "/api/extension/review-action",
+            json={**REVIEW, "crop": "https://evil.example/track.png"},
+            headers=browser.headers,
+        )
+        assert resp.status_code == 200
+        content = model.await_args_list[0].kwargs["messages"][1]["content"]
+        assert isinstance(content, str)
+
     async def test_no_budget_means_ask(self, client, browser, auto_mode, db_session, monkeypatch):
         await db_session.execute(BudgetPlan.__table__.update().values(monthly_budget_usd=0.0))
         await db_session.commit()

@@ -128,6 +128,8 @@ class ReviewActionIn(BaseModel):
     site: str = Field(..., min_length=1, max_length=253)
     #: The element: its role and accessible name.
     target: str | None = Field(None, max_length=300)
+    #: A crop of the page around the target, for a vision reviewer; a bounded JPEG/PNG/WebP data URL. Ignored otherwise.
+    crop: str | None = Field(None, max_length=250_000)
     arguments: dict[str, Any] = Field(default_factory=dict)
     #: The steps so far, one short line each.
     history: list[str] = Field(default_factory=list, max_length=20)
@@ -174,5 +176,6 @@ async def review_agent_action(
         target=body.target,
         arguments=body.arguments,
         history=[_clip(line, 300) for line in body.history],
+        crop=body.crop,
     )
     return verdict.to_json()

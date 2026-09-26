@@ -23,6 +23,7 @@ const SETTINGS = {
   agent_max_steps: 25,
   agent_auto_mode: false,
   agent_review_model: null,
+  full_control: false,
 };
 const DISTRIBUTION = {
   available: true,
@@ -219,6 +220,16 @@ describe("the browser extension card", () => {
       page_content_models: ["model::2", "model::1"],
     });
     expect(host.textContent).toContain("Browser extension settings saved.");
+  });
+
+  it("turns full control on and saves it", async () => {
+    serve();
+    await render();
+    const control = [...host.querySelectorAll("input[type=checkbox]")].find((c) => c.closest("label")?.textContent?.startsWith("Full control"))!;
+    expect((control as HTMLInputElement).checked).toBe(false);
+    await act(async () => (control as HTMLInputElement).click());
+    await save();
+    expect(lastPut).toEqual({ ...SETTINGS, full_control: true });
   });
 
   it("shows the server's reason when a setting cannot be saved", async () => {

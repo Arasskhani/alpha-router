@@ -25,6 +25,7 @@ type ExtensionSettings = {
   agent_max_steps: number;
   agent_auto_mode: boolean;
   agent_review_model: string | null;
+  full_control: boolean;
 };
 
 type Distribution = {
@@ -395,6 +396,23 @@ export default function ExtensionSettingsCard() {
                 Lets the agent act without asking on allowed sites. Every action is first checked against the
                 person's request by the review model, and anything it doubts is asked about. Payments are never
                 made; sending, submitting, deleting, confirming, transferring and downloading always ask first.
+              </span>
+            </span>
+          </label>
+          <label className="extension-admin__choice">
+            <input
+              type="checkbox"
+              checked={form.full_control}
+              disabled={locked}
+              onChange={(e) => patch({ full_control: e.target.checked })}
+            />
+            <span>
+              <strong>Full control</strong>
+              <span className="muted-text">
+                Lets the agent use a real mouse and keyboard on the page and see it in screenshots, for people who
+                also have the Browser Control tool and a model that reads images. It adds the debugger permission
+                to the extension package, so people load the new package; Chrome shows its debugging bar while the
+                agent runs. The same rules apply as for every other action.
               </span>
             </span>
           </label>

@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ElementInfo } from "../content/agent";
-import { approvalFor, classifyAction, type PolicyContext, type ProposedAction } from "./agentPolicy";
+import { approvalFor, classifyAction, consentPage, DEFAULT_APPROVALS, parseKeyCombo, type PolicyContext, type ProposedAction } from "./agentPolicy";
 
 const OPEN: PolicyContext = { policy: { allowed_sites: [], blocked_sites: [] }, serverHost: "ai.example.com", ownHosts: ["ai.example.com"] };
 const RULES: PolicyContext = {
@@ -64,24 +64,63 @@ describe("clicking", () => {
   });
 
   it.each([
-    "Send",
-    "Submit",
-    "Delete account",
-    "Remove item",
-    "Confirm",
-    "Transfer",
-    "Download report",
-    "Publish",
-    "Post comment",
-    "ارسال",
-    "حذف",
-    "تأیید و ادامه",
-    "تایید",
-    "انتقال وجه",
-    "دانلود فایل",
-    "انتشار",
-  ])("a button labelled %s always asks", (name) => {
-    expect(classify("click", { element: el({ name }) })).toMatchObject({ class: "sensitive", reason: "sensitive_label" });
+    ["Send", "sensitive_label"],
+    ["Submit", "submit"],
+    ["Delete draft", "delete_label"],
+    ["Remove item", "delete_label"],
+    ["Confirm", "sensitive_label"],
+    ["Transfer", "sensitive_label"],
+    ["Download report", "download"],
+    ["Publish", "sensitive_label"],
+    ["Post comment", "sensitive_label"],
+    ["Upload photo", "upload"],
+    ["Attach file", "upload"],
+    ["ارسال", "sensitive_label"],
+    ["حذف", "delete_label"],
+    ["تأیید و ادامه", "sensitive_label"],
+    ["تایید", "sensitive_label"],
+    ["انتقال", "sensitive_label"],
+    ["دانلود فایل", "download"],
+    ["بارگذاری تصویر", "upload"],
+    ["انتشار", "sensitive_label"],
+  ])("a button labelled %s asks, by default", (name, reason) => {
+    expect(classify("click", { element: el({ name }) })).toMatchObject({ class: "sensitive", reason });
+  });
+
+  it.each([
+    ["Sell", "money_label"],
+    ["Withdraw", "money_label"],
+    ["Send money", "money_label"],
+    ["Wire transfer", "money_label"],
+    ["Place trade", "money_label"],
+    ["انتقال وجه", "money_label"],
+    ["کارت به کارت", "money_label"],
+    ["برداشت", "money_label"],
+    ["فروش", "money_label"],
+    ["Sign up", "account_creation"],
+    ["Create account", "account_creation"],
+    ["Create your account", "account_creation"],
+    ["Register", "account_creation"],
+    ["ثبت نام", "account_creation"],
+    ["ثبت‌نام", "account_creation"],
+    ["عضویت", "account_creation"],
+    ["Delete forever", "permanent_deletion"],
+    ["Delete permanently", "permanent_deletion"],
+    ["Empty trash", "permanent_deletion"],
+    ["Empty the recycle bin", "permanent_deletion"],
+    ["Delete account", "permanent_deletion"],
+    ["Close my account", "permanent_deletion"],
+    ["Delete all", "permanent_deletion"],
+    ["حذف دائم", "permanent_deletion"],
+    ["حذف برای همیشه", "permanent_deletion"],
+    ["خالی کردن سطل زباله", "permanent_deletion"],
+    ["حذف حساب", "permanent_deletion"],
+  ])("a button labelled %s is never the agent's to press", (name, reason) => {
+    expect(classify("click", { element: el({ name }) })).toMatchObject({ class: "blocked", reason });
+  });
+
+  it.each(["فروشگاه", "Sales report", "Registration desk hours", "Deposit slip archive"])("a label with a money word inside another word, or about it, acts: %s", (name) => {
+    expect(classify("click", { element: el({ name }) })).toMatchObject({ class: "act" });
   });
 
   it.each([
@@ -134,16 +173,21 @@ describe("clicking", () => {
     expect(classify("click", { element: el({ name }) })).toMatchObject({ class: "blocked", reason: "purchase_label" });
   });
 
-  it("reads a sending word through invisible characters too", () => {
-    expect(classify("click", { element: el({ name: "Del\u2060ete account" }) })).toMatchObject({ class: "sensitive", reason: "sensitive_label" });
+  it("reads a deleting word through invisible characters too", () => {
+    expect(classify("click", { element: el({ name: "Del\u2060ete account" }) })).toMatchObject({ class: "blocked", reason: "permanent_deletion" });
+    expect(classify("click", { element: el({ name: "Del\u2060ete draft" }) })).toMatchObject({ class: "sensitive", reason: "delete_label" });
   });
 
-  it.each(["Subscribe", "Reply", "Forward", "Share", "Accept all", "I agree", "Book now", "Approve", "Cancel my subscription", "تاييد", "پاك كردن", "پاسخ", "ثبت نام"])(
+  it.each(["Subscribe", "Reply", "Forward", "Share", "Accept all", "I agree", "Book now", "Approve", "Cancel my subscription", "تاييد", "پاسخ"])(
     "a button labelled %s always asks",
     (name) => {
       expect(classify("click", { element: el({ name }) })).toMatchObject({ class: "sensitive", reason: "sensitive_label" });
     },
   );
+
+  it("asks before a button labelled پاك كردن (an Arabic kaf for a Persian one)", () => {
+    expect(classify("click", { element: el({ name: "پاك كردن" }) })).toMatchObject({ class: "sensitive", reason: "delete_label" });
+  });
 
   it.each(["Order history", "Booking history", "Shared files", "Accepted payments", "Cancel", "Sort order", "Payroll"])("a button labelled %s acts", (name) => {
     expect(classify("click", { element: el({ name }) })).toMatchObject({ class: "act" });
@@ -173,7 +217,8 @@ describe("clicking", () => {
 
   it("reads the words a control shows as well as its name, which a label can hide", () => {
     expect(classify("click", { element: el({ name: "Continue", text: "Place order" }) })).toMatchObject({ class: "blocked", reason: "purchase_label" });
-    expect(classify("click", { element: el({ name: "Next", text: "Delete account" }) })).toMatchObject({ class: "sensitive", reason: "sensitive_label" });
+    expect(classify("click", { element: el({ name: "Next", text: "Delete account" }) })).toMatchObject({ class: "blocked", reason: "permanent_deletion" });
+    expect(classify("click", { element: el({ name: "Next", text: "Delete message" }) })).toMatchObject({ class: "sensitive", reason: "delete_label" });
     expect(classify("submit_form", { element: el({ name: "Continue", text: "Pay now", submits: true }) })).toMatchObject({ class: "blocked" });
   });
 
@@ -237,7 +282,22 @@ describe("clicking", () => {
 
 describe("typing", () => {
   it("acts in an ordinary field", () => {
-    expect(classify("type_text", { element: el({ role: "textbox", name: "Delivery address", tag: "input" }) })).toMatchObject({ class: "act" });
+    expect(classify("type_text", { element: el({ role: "textbox", name: "Company name", tag: "input" }) })).toMatchObject({ class: "act" });
+  });
+
+  it.each(["Delivery address", "Phone", "Mobile number", "Date of birth", "Postal code", "شماره تلفن", "آدرس", "تاریخ تولد", "کد پستی"])(
+    "asks before giving a page personal details: %s",
+    (name) => {
+      expect(classify("type_text", { element: el({ role: "textbox", name, tag: "input" }) })).toMatchObject({ class: "sensitive", reason: "personal_data" });
+    },
+  );
+
+  it.each(["IBAN", "Sheba number", "Account number", "شبا"])("is refused in a bank account field, a secret: %s", (name) => {
+    expect(classify("type_text", { element: el({ role: "textbox", name, tag: "input" }) })).toMatchObject({ class: "blocked", reason: "sensitive_field" });
+  });
+
+  it("asks before typing into a telephone field, whatever it is called", () => {
+    expect(classify("type_text", { element: el({ role: "textbox", name: "Contact", tag: "input", type: "tel" }) })).toMatchObject({ class: "sensitive", reason: "personal_data" });
   });
 
   it("is refused in a password, card or one-time-code field", () => {
@@ -268,9 +328,9 @@ describe("the rest", () => {
     const search = el({ role: "searchbox", name: "Search", tag: "input", type: "search" });
     expect(classify("press_key", { args: { key: "Enter" }, element: search })).toMatchObject({ class: "act" });
     expect(classify("press_key", { args: { key: "Enter" }, element: el({ name: "Buy now" }) })).toMatchObject({ class: "blocked", reason: "purchase_label" });
-    expect(classify("press_key", { args: { key: "Space" }, element: el({ name: "Delete account" }) })).toMatchObject({
+    expect(classify("press_key", { args: { key: "Space" }, element: el({ name: "Delete draft" }) })).toMatchObject({
       class: "sensitive",
-      reason: "sensitive_label",
+      reason: "delete_label",
       message: expect.stringContaining("works like clicking it"),
     });
     expect(classify("press_key", { args: { key: "Enter" }, element: el({ name: "Next" }) })).toMatchObject({ class: "act" });
@@ -350,5 +410,170 @@ describe("who agrees", () => {
     ["blocked", "auto", "refuse"],
   ] as const)("a %s action in %s mode: %s", (cls, mode, approval) => {
     expect(approvalFor({ class: cls, reason: "x", message: "x" }, mode)).toBe(approval);
+  });
+});
+
+describe("full control's targets", () => {
+  it("asks before acting in a frame from another site, which the rules cannot see into", () => {
+    const frame = el({ role: "frame", name: "Payment", tag: "iframe", frame: { host: "pay.example" } });
+    expect(classify("click", { element: frame })).toMatchObject({ class: "sensitive", reason: "other_site_frame", message: expect.stringContaining("pay.example") });
+    expect(classify("type_text", { element: frame })).toMatchObject({ class: "sensitive", reason: "other_site_frame" });
+    expect(classify("press_key", { args: { key: "Enter" }, element: frame })).toMatchObject({ class: "sensitive", reason: "other_site_frame" });
+    expect(classify("click", { element: el({ role: "frame", name: "", tag: "iframe", frame: { host: null } }) })).toMatchObject({ class: "sensitive", reason: "other_site_frame" });
+  });
+
+  it.each(["www.google.com", "recaptcha.net", "newassets.hcaptcha.com", "challenges.cloudflare.com", "client-api.arkoselabs.com"])("leaves a CAPTCHA served from %s to the user", (host) => {
+    expect(classify("click", { element: el({ role: "frame", name: "", tag: "iframe", frame: { host } }) })).toMatchObject({ class: "blocked", reason: "captcha" });
+  });
+
+  it("asks before a target drawn too faint to see, or a couple of pixels in size", () => {
+    expect(classify("click", { element: el({ name: "Continue", hidden: "transparent" }) })).toMatchObject({ class: "sensitive", reason: "hidden_target" });
+    expect(classify("click", { element: el({ name: "Continue", hidden: "tiny" }) })).toMatchObject({ class: "sensitive", reason: "hidden_target" });
+    expect(classify("type_text", { element: el({ role: "textbox", name: "Name", tag: "input", hidden: "transparent" }) })).toMatchObject({ class: "sensitive", reason: "hidden_target" });
+    // The never list still wins over asking.
+    expect(classify("click", { element: el({ name: "Buy now", hidden: "transparent" }) })).toMatchObject({ class: "sensitive", reason: "hidden_target" });
+  });
+
+  it("never downloads a program", () => {
+    for (const href of ["https://shop.example.com/setup.exe", "https://shop.example.com/tool.msi?x=1", "https://cdn.example.com/a.dmg", "https://shop.example.com/run.sh"]) {
+      expect(classify("click", { element: el({ role: "link", name: "Download", tag: "a", href }) })).toMatchObject({ class: "blocked", reason: "executable_download" });
+    }
+    expect(classify("click", { element: el({ role: "link", name: "Download", tag: "a", href: "https://shop.example.com/report.pdf" }) })).toMatchObject({ class: "sensitive", reason: "download" });
+  });
+
+  it("asks before a file input, and before anything that gives a program access or changes what keeps an account safe", () => {
+    expect(classify("click", { element: el({ role: "button", name: "Choose file", tag: "input", type: "file" }) })).toMatchObject({ class: "sensitive", reason: "upload" });
+    expect(classify("click", { element: el({ role: "button", name: "Photo", tag: "input", type: "file" }) })).toMatchObject({ class: "sensitive", reason: "upload" });
+    for (const name of ["Allow access", "Authorize", "Allow", "Continue as Majid", "Generate API key", "Change password", "Turn on two-factor authentication", "اجازه دسترسی", "تغییر رمز عبور"]) {
+      expect(classify("click", { element: el({ name }) })).toMatchObject({ class: "sensitive", reason: "authorization" });
+    }
+  });
+
+  it("asks before every action on a page where a person hands a program access to their account", () => {
+    const consent = { url: "https://accounts.google.com/o/oauth2/v2/auth?client_id=1", host: "accounts.google.com" };
+    expect(classify("click", { page: consent, element: el({ name: "Next" }) })).toMatchObject({ class: "sensitive", reason: "authorization" });
+    expect(classify("type_text", { page: consent, element: el({ role: "textbox", name: "Email", tag: "input" }) })).toMatchObject({ class: "sensitive", reason: "authorization" });
+    expect(classify("submit_form", { page: consent, element: el({ role: "textbox", name: "Email", tag: "input" }) })).toMatchObject({ class: "sensitive", reason: "authorization" });
+    expect(classify("press_key", { page: consent, args: { key: "Tab" }, element: el({ role: "textbox", name: "Email", tag: "input" }) })).toMatchObject({ class: "sensitive", reason: "authorization" });
+    for (const url of ["https://github.com/login/oauth/authorize?client_id=x", "https://login.microsoftonline.com/common/oauth2/v2.0/authorize", "https://crm.example.com/oauth/authorize?x=1", "https://id.example.com/consent"]) {
+      expect(consentPage(url)).toBe(true);
+    }
+    for (const url of ["https://github.com/login", "https://shop.example.com/authorized-dealers", "https://docs.example.com/oauth-guide"]) expect(consentPage(url)).toBe(false);
+  });
+
+  it("judges a drag by what it takes and where it drops", () => {
+    const card = el({ role: "listitem", name: "Task 12", tag: "li" });
+    expect(classify("drag", { element: card, drop: el({ role: "list", name: "Done", tag: "ul" }) })).toMatchObject({ class: "act", reason: "drag" });
+    expect(classify("drag", { element: card })).toMatchObject({ class: "act", reason: "drag" });
+    expect(classify("drag", { element: card, drop: el({ role: "button", name: "Drop files here", tag: "div" }) })).toMatchObject({ class: "sensitive", reason: "upload" });
+    expect(classify("drag", { element: card, drop: el({ role: "button", name: "", tag: "input", type: "file" }) })).toMatchObject({ class: "sensitive", reason: "upload" });
+    expect(classify("drag", { element: card, drop: el({ name: "Buy now" }) })).toMatchObject({ class: "blocked", reason: "purchase_label" });
+    expect(classify("drag", { element: el({ role: "frame", name: "", tag: "iframe", frame: { host: "x.example" } }) })).toMatchObject({ class: "sensitive", reason: "other_site_frame" });
+    expect(classify("drag", {})).toMatchObject({ class: "blocked", reason: "no_element" });
+  });
+});
+
+describe("keys under full control", () => {
+  const field = el({ role: "textbox", name: "Message", tag: "textarea" });
+
+  it("parses what the model names", () => {
+    expect(parseKeyCombo("ctrl+shift+a")).toEqual({ key: "a", ctrl: true, alt: false, shift: true, meta: false });
+    expect(parseKeyCombo("cmd+Enter")).toEqual({ key: "Enter", ctrl: false, alt: false, shift: false, meta: true });
+    expect(parseKeyCombo("Return")).toMatchObject({ key: "Enter" });
+    expect(parseKeyCombo("space")).toMatchObject({ key: " " });
+    expect(parseKeyCombo("down")).toMatchObject({ key: "ArrowDown" });
+    expect(parseKeyCombo("f5")).toMatchObject({ key: "F5" });
+    expect(parseKeyCombo("bogus+a")).toBeNull();
+    expect(parseKeyCombo("")).toBeNull();
+    expect(parseKeyCombo(7)).toBeNull();
+  });
+
+  it("never pastes the clipboard", () => {
+    for (const key of ["ctrl+v", "cmd+v", "Ctrl+V", "meta+v"]) {
+      expect(classify("press_key", { args: { key }, element: field })).toMatchObject({ class: "blocked", reason: "clipboard" });
+    }
+  });
+
+  it("presses editing shortcuts, never the browser's own", () => {
+    for (const key of ["ctrl+a", "ctrl+c", "cmd+z", "ctrl+shift+z", "ctrl+Backspace", "ctrl+ArrowLeft", "shift+Home", "ctrl+b"]) {
+      expect(classify("press_key", { args: { key }, element: field })).toMatchObject({ class: "act" });
+    }
+    for (const key of ["ctrl+t", "ctrl+w", "cmd+n", "ctrl+l", "ctrl+p", "ctrl+s", "ctrl+f", "ctrl+plus", "ctrl+0", "ctrl+shift+t", "alt+ArrowLeft", "alt+F4", "F5", "f12"]) {
+      expect(classify("press_key", { args: { key }, element: field })).toMatchObject({ class: "blocked", reason: "browser_shortcut" });
+    }
+  });
+
+  it("shift+Enter in a message box is a new line, not a send", () => {
+    expect(classify("press_key", { args: { key: "shift+Enter" }, element: field })).toMatchObject({ class: "act" });
+    expect(classify("press_key", { args: { key: "Enter" }, element: field })).toMatchObject({ class: "sensitive", reason: "enter_sends" });
+  });
+});
+
+describe("what the administrator relaxed", () => {
+  const relaxed = (part: Partial<typeof DEFAULT_APPROVALS>): PolicyContext => ({ ...OPEN, approvals: { ...DEFAULT_APPROVALS, ...part } });
+
+  it("sending, deleting, downloading, uploading, forms and leaving the site become plain actions when relaxed", () => {
+    expect(classify("click", { element: el({ name: "Send" }) }, relaxed({ send: false }))).toMatchObject({ class: "act", reason: "sensitive_label" });
+    expect(classify("press_key", { args: { key: "Enter" }, element: el({ role: "textbox", name: "Message", tag: "textarea" }) }, relaxed({ send: false }))).toMatchObject({ class: "act", reason: "enter_sends" });
+    expect(classify("click", { element: el({ name: "Delete draft" }) }, relaxed({ delete: false }))).toMatchObject({ class: "act", reason: "delete_label" });
+    expect(classify("press_key", { args: { key: "Delete" } }, relaxed({ delete: false }))).toMatchObject({ class: "act", reason: "delete_key" });
+    expect(classify("click", { element: el({ name: "Download report" }) }, relaxed({ downloads: false }))).toMatchObject({ class: "act", reason: "download" });
+    expect(classify("click", { element: el({ role: "button", name: "Photo", tag: "input", type: "file" }) }, relaxed({ uploads: false }))).toMatchObject({ class: "act", reason: "upload" });
+    expect(classify("click", { element: el({ name: "Go", submits: true }) }, relaxed({ submit: false }))).toMatchObject({ class: "act", reason: "submit" });
+    expect(classify("submit_form", { element: el({ role: "textbox", name: "Email" }) }, relaxed({ submit: false }))).toMatchObject({ class: "act", reason: "submit" });
+    expect(classify("navigate", { args: { url: "https://partner.org/" } }, relaxed({ leave_sites: false }))).toMatchObject({ class: "act", reason: "other_site", site: "partner.org" });
+    expect(classify("click", { element: el({ role: "link", name: "Partner", tag: "a", href: "https://partner.org/" }) }, relaxed({ leave_sites: false }))).toMatchObject({ class: "act", reason: "other_site", site: "partner.org" });
+    expect(classify("tab_switch", { args: { tab_id: 4 }, target: { url: "https://partner.org/", host: "partner.org" } }, relaxed({ leave_sites: false }))).toMatchObject({ class: "act", reason: "other_site" });
+  });
+
+  it("never relaxes what is fixed: confirming, authorizing, personal details, the never list", () => {
+    const all = relaxed({ send: false, delete: false, downloads: false, uploads: false, submit: false, leave_sites: false, dialogs: false });
+    expect(classify("click", { element: el({ name: "Confirm" }) }, all)).toMatchObject({ class: "sensitive" });
+    expect(classify("click", { element: el({ name: "Allow access" }) }, all)).toMatchObject({ class: "sensitive", reason: "authorization" });
+    expect(classify("type_text", { element: el({ role: "textbox", name: "Phone", tag: "input" }) }, all)).toMatchObject({ class: "sensitive", reason: "personal_data" });
+    expect(classify("click", { element: el({ name: "Delete forever" }) }, all)).toMatchObject({ class: "blocked", reason: "permanent_deletion" });
+    expect(classify("click", { element: el({ name: "Buy now" }) }, all)).toMatchObject({ class: "blocked", reason: "purchase_label" });
+    expect(classify("click", { element: el({ name: "Sign up" }) }, all)).toMatchObject({ class: "blocked", reason: "account_creation" });
+  });
+});
+
+describe("read-only, protected and internal sites", () => {
+  const SITES: PolicyContext = {
+    ...OPEN,
+    policy: { allowed_sites: [], blocked_sites: [], read_only_sites: ["wiki.example.com"], protected_sites: ["*.shaparak.ir", "bank.example.com"] },
+  };
+  const wiki = { url: "https://wiki.example.com/page", host: "wiki.example.com" };
+  const gateway = { url: "https://sep.shaparak.ir/pay", host: "sep.shaparak.ir" };
+
+  it("reads a read-only site and never acts there", () => {
+    expect(classify("read_page", { page: wiki }, SITES)).toMatchObject({ class: "read" });
+    expect(classify("screenshot", { page: wiki }, SITES)).toMatchObject({ class: "read" });
+    expect(classify("scroll", { page: wiki }, SITES)).toMatchObject({ class: "read" });
+    expect(classify("click", { page: wiki, element: el({ name: "Edit" }) }, SITES)).toMatchObject({ class: "blocked", reason: "read_only_site" });
+    expect(classify("type_text", { page: wiki, element: el({ role: "textbox", name: "Search", tag: "input" }) }, SITES)).toMatchObject({ class: "blocked", reason: "read_only_site" });
+    expect(classify("press_key", { page: wiki, args: { key: "Enter" } }, SITES)).toMatchObject({ class: "blocked", reason: "read_only_site" });
+    expect(classify("navigate", { page: wiki, args: { url: "https://wiki.example.com/other" } }, SITES)).toMatchObject({ class: "act" });
+  });
+
+  it("never acts on a protected site, and says so", () => {
+    expect(classify("read_page", { page: gateway }, SITES)).toMatchObject({ class: "read" });
+    expect(classify("click", { page: gateway, element: el({ name: "Next" }) }, SITES)).toMatchObject({ class: "blocked", reason: "protected_site" });
+    expect(classify("submit_form", { page: gateway, element: el({ role: "textbox", name: "Email" }) }, SITES)).toMatchObject({ class: "blocked", reason: "protected_site" });
+    expect(classify("click", { element: el({ name: "Go", submits: true, formAction: "https://bank.example.com/login" }) }, SITES)).toMatchObject({ class: "blocked", reason: "protected_site" });
+  });
+
+  it("keeps internal sites from a model outside the organisation, and screenshots from one that may not see them", () => {
+    const intranet = { url: "https://crm.corp.example/leads", host: "crm.corp.example" };
+    const outside: PolicyContext = { ...OPEN, data: { internalSites: ["*.corp.example"], modelSeesInternal: false, modelSeesScreenshots: true } };
+    expect(classify("read_page", { page: intranet }, outside)).toMatchObject({ class: "blocked", reason: "internal_site" });
+    expect(classify("screenshot", { page: intranet }, outside)).toMatchObject({ class: "blocked", reason: "internal_site" });
+    expect(classify("click", { page: intranet, element: el({ name: "Next" }) }, outside)).toMatchObject({ class: "blocked", reason: "internal_site" });
+    expect(classify("navigate", { args: { url: "https://crm.corp.example/" } }, outside)).toMatchObject({ class: "blocked", reason: "internal_site" });
+    expect(classify("read_page", { page: SHOP }, outside)).toMatchObject({ class: "read" });
+    const inside: PolicyContext = { ...OPEN, data: { internalSites: ["*.corp.example"], modelSeesInternal: true, modelSeesScreenshots: false } };
+    expect(classify("read_page", { page: intranet }, inside)).toMatchObject({ class: "read" });
+    expect(classify("screenshot", { page: SHOP }, inside)).toMatchObject({ class: "blocked", reason: "screenshot_external" });
+    expect(classify("zoom", { page: SHOP }, inside)).toMatchObject({ class: "blocked", reason: "screenshot_external" });
+    expect(classify("read_page", { page: SHOP }, inside)).toMatchObject({ class: "read" });
   });
 });

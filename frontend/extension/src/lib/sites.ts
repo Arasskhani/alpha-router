@@ -11,6 +11,10 @@
 export type SitePolicy = {
   allowed_sites: string[];
   blocked_sites: string[];
+  /** Sites the agent reads and never acts on. */
+  read_only_sites?: string[];
+  /** Sites where the agent never acts: payment gateways, banks - whatever the administrator lists. */
+  protected_sites?: string[];
 };
 
 export type SiteRefusal = "site_blocked" | "site_not_allowed";

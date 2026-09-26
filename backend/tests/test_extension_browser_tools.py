@@ -407,6 +407,103 @@ class TestAStep:
 # --- refused --------------------------------------------------------------------
 
 
+SHOT = "data:image/jpeg;base64,/9j/4AAQSkZJRg=="
+VISION_RAW = json.dumps({"architecture": {"input_modalities": ["text", "image"], "output_modalities": ["text"]}})
+
+
+def _with_shot(*urls: str) -> list:
+    """A step that carries screenshots after the tool answers, as the panel sends them."""
+    parts = [
+        {"type": "text", "text": "Here is the page now."},
+        *({"type": "image_url", "image_url": {"url": u}} for u in urls),
+    ]
+    return [*TASK, {"role": "user", "content": parts}]
+
+
+class TestScreenshots:
+    """Screenshots reach the model only under full control, only to a vision model, and bounded."""
+
+    @pytest.fixture
+    async def control_on(self, db_session, user, agent_on) -> None:
+        from app.services.resource_access_service import AccessGrant
+
+        await set_chat_tool_access(
+            db_session,
+            "browser_control",
+            access_type="private",
+            grants=[AccessGrant(target_type="user", target=user.id)],
+        )
+        await save_extension_settings(db_session, ExtensionSettings(full_control=True))
+        await db_session.commit()
+
+    @pytest.fixture
+    async def vision(self, db_session) -> AIModel:
+        row = await _model(db_session, "gpt-vision")
+        row.pricing_raw = VISION_RAW
+        await db_session.commit()
+        return row
+
+    @pytest.mark.usefixtures("agent_on")
+    async def test_without_full_control(self, client, browser, models, provider):
+        resp = await client.post(
+            "/api/chat/completions", json=_body(models.a, _with_shot(SHOT)), headers=browser.headers
+        )
+        assert resp.status_code == 403
+        assert resp.json()["detail"]["code"] == "control_not_permitted"
+        assert provider.calls == []
+
+    @pytest.mark.usefixtures("agent_on")
+    async def test_the_switch_without_the_grant(self, client, browser, models, provider, db_session):
+        await save_extension_settings(db_session, ExtensionSettings(full_control=True))
+        await db_session.commit()
+        resp = await client.post(
+            "/api/chat/completions", json=_body(models.a, _with_shot(SHOT)), headers=browser.headers
+        )
+        assert resp.status_code == 403
+        assert resp.json()["detail"]["code"] == "control_not_permitted"
+
+    @pytest.mark.usefixtures("control_on")
+    async def test_a_model_that_cannot_read_images(self, client, browser, models, provider):
+        resp = await client.post(
+            "/api/chat/completions", json=_body(models.a, _with_shot(SHOT)), headers=browser.headers
+        )
+        assert resp.status_code == 400
+        assert resp.json()["detail"]["code"] == "model_not_vision"
+        assert provider.calls == []
+
+    @pytest.mark.usefixtures("control_on")
+    async def test_a_vision_model_gets_the_screenshot(self, client, browser, vision, provider):
+        resp = await client.post("/api/chat/completions", json=_body(vision, _with_shot(SHOT)), headers=browser.headers)
+        assert resp.status_code == 200, resp.text
+        assert len(provider.calls) == 1
+        sent = provider.calls[0]["messages"][-1]["content"]
+        assert any(part.get("type") == "image_url" for part in sent)
+
+    @pytest.mark.usefixtures("control_on")
+    @pytest.mark.parametrize(
+        ("urls", "code"),
+        [
+            pytest.param([SHOT] * 5, "too_many_images", id="too many"),
+            pytest.param(["https://evil.example/shot.jpg"], "image_not_inline", id="remote"),
+            pytest.param(["data:image/gif;base64,R0lGOD"], "image_not_inline", id="not jpeg/png/webp"),
+            pytest.param(["data:image/jpeg;base64," + "A" * 1_600_000], "image_too_large", id="huge"),
+        ],
+    )
+    async def test_bounds(self, client, browser, vision, provider, urls, code):
+        resp = await client.post(
+            "/api/chat/completions", json=_body(vision, _with_shot(*urls)), headers=browser.headers
+        )
+        assert resp.status_code in (400, 413), resp.text
+        assert resp.json()["detail"]["code"] == code
+        assert provider.calls == []
+
+    @pytest.mark.usefixtures("agent_on")
+    async def test_a_step_without_images_is_untouched(self, client, browser, models, provider):
+        # No screenshot, no full-control requirement: the ref-based agent works as before.
+        resp = await client.post("/api/chat/completions", json=_body(models.a), headers=browser.headers)
+        assert resp.status_code == 200, resp.text
+
+
 class TestRefused:
     """Every refusal comes before anything is spent: the provider is never called."""
 

@@ -585,6 +585,7 @@ class TestMe:
             "page_context": True,
             "agent": False,
             "auto_mode": False,
+            "full_control": False,
             "private_mode": True,
         }
         assert me["policy"] == {
@@ -594,6 +595,7 @@ class TestMe:
             "page_content_models": [],
             "agent_models": [],
             "agent_max_steps": 25,
+            "full_control": False,
         }
 
     async def test_the_agent_needs_its_own_grant(self, client, browser, db_session, user, redirect):
@@ -604,6 +606,27 @@ class TestMe:
         tokens = await _connect(client, browser, user, redirect)
         features = (await browser.get("/api/extension/me", headers=_bearer(tokens["access_token"]))).json()["features"]
         assert features["agent"] is True and features["auto_mode"] is False
+        # Full control needs the agent, its own grant, and the admin's switch: none of the last two yet.
+        assert features["full_control"] is False
+
+    async def test_full_control_needs_the_switch_and_its_own_grant(self, client, browser, db_session, user, redirect):
+        grant = [AccessGrant(target_type="user", target=user.id)]
+        await set_chat_tool_access(db_session, "browser_agent", access_type="private", grants=grant)
+        await set_chat_tool_access(db_session, "browser_control", access_type="private", grants=grant)
+        await db_session.commit()
+        tokens = await _connect(client, browser, user, redirect)
+        # The grant alone: the admin has not turned full control on.
+        me = (await browser.get("/api/extension/me", headers=_bearer(tokens["access_token"]))).json()
+        assert me["features"]["full_control"] is False and me["policy"]["full_control"] is False
+        await save_extension_settings(db_session, ExtensionSettings(full_control=True))
+        await db_session.commit()
+        me = (await browser.get("/api/extension/me", headers=_bearer(tokens["access_token"]))).json()
+        assert me["features"]["full_control"] is True and me["policy"]["full_control"] is True
+        # Without the grant, the switch alone is not enough.
+        await set_chat_tool_access(db_session, "browser_control", access_type="private", grants=[])
+        await db_session.commit()
+        me = (await browser.get("/api/extension/me", headers=_bearer(tokens["access_token"]))).json()
+        assert me["features"]["full_control"] is False
 
     async def test_switched_off_it_still_answers_with_everything_off(self, client, browser, db_session, user, redirect):
         tokens = await _connect(client, browser, user, redirect)

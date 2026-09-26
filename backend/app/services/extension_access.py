@@ -19,15 +19,17 @@ from app.services.resource_access_service import resolve_resource_access_subject
 
 EXTENSION_TOOL = "browser_extension"
 AGENT_TOOL = "browser_agent"
+#: Full control (a real mouse and keyboard, screenshots): needs the agent, and the admin's switch.
+CONTROL_TOOL = "browser_control"
 PRIVATE_MODE_TOOL = "private_mode"
 
 
 async def permitted_extension_tools(db: AsyncSession, user: User) -> frozenset[str]:
-    """Which of the extension's two tools this account may use."""
+    """Which of the extension's tools this account may use."""
     if not user.is_active:
         return frozenset()
     subject = await resolve_resource_access_subject(db, user_id=int(user.id))
-    return await permitted_tool_keys(db, subject, keys=[EXTENSION_TOOL, AGENT_TOOL])
+    return await permitted_tool_keys(db, subject, keys=[EXTENSION_TOOL, AGENT_TOOL, CONTROL_TOOL])
 
 
 async def extension_permitted(db: AsyncSession, user: User) -> bool:
@@ -40,7 +42,9 @@ async def extension_features(db: AsyncSession, user: User, settings: ExtensionSe
         allowed: frozenset[str] = frozenset()
     else:
         subject = await resolve_resource_access_subject(db, user_id=int(user.id))
-        allowed = await permitted_tool_keys(db, subject, keys=[EXTENSION_TOOL, AGENT_TOOL, PRIVATE_MODE_TOOL])
+        allowed = await permitted_tool_keys(
+            db, subject, keys=[EXTENSION_TOOL, AGENT_TOOL, CONTROL_TOOL, PRIVATE_MODE_TOOL]
+        )
     chat = EXTENSION_TOOL in allowed
     agent = chat and AGENT_TOOL in allowed
     return {
@@ -48,5 +52,6 @@ async def extension_features(db: AsyncSession, user: User, settings: ExtensionSe
         "page_context": chat,
         "agent": agent,
         "auto_mode": agent and settings.agent_auto_mode,
+        "full_control": agent and settings.full_control and CONTROL_TOOL in allowed,
         "private_mode": chat and PRIVATE_MODE_TOOL in allowed,
     }

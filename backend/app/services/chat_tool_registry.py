@@ -140,6 +140,16 @@ CHAT_TOOLS: tuple[ChatToolSpec, ...] = (
         icon="cursor",
         default_access=ACCESS_PRIVATE,
     ),
+    # Full control: the agent drives the page with a real mouse and keyboard and
+    # sees it in screenshots. It means nothing without Browser Agent, and the
+    # admin's full-control switch has to be on as well.
+    ChatToolSpec(
+        key="browser_control",
+        title="Browser Control",
+        description="Let the extension's agent use a real mouse and keyboard, and see the page",
+        icon="cursor",
+        default_access=ACCESS_PRIVATE,
+    ),
 )
 
 TOOL_BY_KEY: dict[str, ChatToolSpec] = {spec.key: spec for spec in CHAT_TOOLS}

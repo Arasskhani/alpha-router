@@ -267,6 +267,8 @@ async def extension_me(
             "page_content_models": list(settings.page_content_models),
             "agent_models": list(settings.agent_models),
             "agent_max_steps": settings.agent_max_steps,
+            # Full control: whether the admin turned it on; the feature flag says whether this user may use it.
+            "full_control": settings.full_control,
         }
     return {
         "user": {"username": user.username, "display_name": user.display_name, "email": user.email},

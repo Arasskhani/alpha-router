@@ -29,7 +29,7 @@ from app.models.connection import Connection
 from app.models.model_catalog import AIModel
 from app.models.user import User
 from app.services.client_ip import resolve_client_ip
-from app.services.extension_access import AGENT_TOOL, permitted_extension_tools
+from app.services.extension_access import AGENT_TOOL, CONTROL_TOOL, permitted_extension_tools
 from app.services.extension_page_context import (
     MAX_PAGE_CHARS,
     MAX_PAGE_IMAGES,
@@ -372,6 +372,79 @@ def _browser_tools_conflict(body: ChatRequest, tools: dict) -> str | None:
     return None
 
 
+#: Screenshots one agent step may carry, and how big each may be as a data URL.
+MAX_AGENT_IMAGES = 4
+MAX_AGENT_IMAGE_BYTES = 1_500_000
+_AGENT_IMAGE_PREFIXES = ("data:image/jpeg;base64,", "data:image/png;base64,", "data:image/webp;base64,")
+
+
+def _agent_image_parts(messages: list[dict]) -> list[str]:
+    """Every image part's URL in the step's messages, in order."""
+    found: list[str] = []
+    for message in messages:
+        content = message.get("content") if isinstance(message, dict) else None
+        if not isinstance(content, list):
+            continue
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") in {"image_url", "image", "input_image"}:
+                image = part.get("image_url")
+                url = (
+                    image.get("url")
+                    if isinstance(image, dict)
+                    else image
+                    if isinstance(image, str)
+                    else part.get("url")
+                )
+                found.append(str(url or ""))
+    return found
+
+
+def check_agent_images(messages: list[dict], *, full_control: bool, vision: bool) -> None:
+    """Refuse screenshots an agent step may not carry; raises HTTPException.
+
+    Screenshots reach the model only under full control, only for a model that
+    reads images, only as bounded JPEG/PNG/WebP data URLs - and never from a
+    remote address, which the server would otherwise be asked to fetch.
+    """
+    images = _agent_image_parts(messages)
+    if not images:
+        return
+    if not full_control:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "control_not_permitted", "message": "Screenshots need full control, which is not enabled."},
+        )
+    if not vision:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "model_not_vision",
+                "message": "This model cannot read screenshots. Choose a vision model.",
+            },
+        )
+    if len(images) > MAX_AGENT_IMAGES:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "too_many_images", "message": f"At most {MAX_AGENT_IMAGES} screenshots per step."},
+        )
+    for url in images:
+        if not url.startswith(_AGENT_IMAGE_PREFIXES):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "image_not_inline",
+                    "message": "Screenshots must be inline JPEG, PNG or WebP data URLs.",
+                },
+            )
+        if len(url) > MAX_AGENT_IMAGE_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail={"code": "image_too_large", "message": "A screenshot is larger than the step allows."},
+            )
+
+
 async def _browser_agent_tools(
     db: AsyncSession,
     request: Request,
@@ -396,15 +469,25 @@ async def _browser_agent_tools(
     conflict = _browser_tools_conflict(body, tools)
     if conflict:
         raise HTTPException(status_code=400, detail={"code": "browser_tools_conflict", "message": conflict})
-    if AGENT_TOOL not in await permitted_extension_tools(db, user):
+    permitted = await permitted_extension_tools(db, user)
+    if AGENT_TOOL not in permitted:
         raise HTTPException(
             status_code=403,
             detail={"code": "agent_not_permitted", "message": "The browser agent is not enabled for your account."},
         )
+    settings = await load_extension_settings(db)
     try:
-        model = await check_agent_model(db, model_ref=str(body.model or ""), settings=await load_extension_settings(db))
+        model = await check_agent_model(db, model_ref=str(body.model or ""), settings=settings)
     except PageContextRefused as exc:
         raise HTTPException(status_code=exc.status, detail=exc.detail()) from None
+    # Screenshots: only under full control, only to a model that reads images, and bounded.
+    vision = model is not None and supports_vision(
+        external_id=model.external_id or "",
+        is_image_model=bool(getattr(model, "is_image_model", False)),
+        pricing_raw=model.pricing_raw,
+        provider_type=model.provider_type,
+    )
+    check_agent_images(body.messages, full_control=settings.full_control and CONTROL_TOOL in permitted, vision=vision)
     if model is not None:
         payload["model"] = f"model::{model.id}"
     payload[BROWSER_TOOLS_BODY_KEY] = [tool.model_dump() for tool in body.browser_tools]

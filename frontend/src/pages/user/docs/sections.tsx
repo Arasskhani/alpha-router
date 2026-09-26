@@ -640,6 +640,10 @@ export const userManualSections: DocSection[] = [
             tools menu).
           </li>
           <li>Completed audio appears in the thread and in your Media library (unless Private mode).</li>
+          <li>
+            Audio arrives as MP3, or as WAV from models that produce only raw audio (Gemini TTS, for example). Downloads
+            keep that format.
+          </li>
           <li>Costs count against your monthly budget like other paid requests.</li>
         </ul>
         <Note>

@@ -18986,6 +18986,37 @@ p.error,
   color: var(--accent);
 }
 
+.extension-admin__probes {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+}
+
+.extension-admin__probes th,
+.extension-admin__probes td {
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+  text-align: start;
+  vertical-align: middle;
+}
+
+.extension-admin__probes th {
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.extension-admin__probe--ok {
+  color: var(--accent);
+}
+
+.extension-admin__probe--bad {
+  color: var(--danger);
+}
+
+.extension-admin__probe--none {
+  color: var(--muted);
+}
+
 .extension-admin__approvals {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));

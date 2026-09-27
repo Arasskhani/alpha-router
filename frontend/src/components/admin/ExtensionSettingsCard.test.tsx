@@ -66,6 +66,7 @@ const MODELS = [
   { ref: "model::2", label: "GPT B", provider: "openai", state: "ok" },
 ];
 
+let probed: string[] = [];
 let host: HTMLDivElement;
 let root: Root;
 let lastPut: Record<string, unknown> | null;
@@ -76,10 +77,17 @@ function serve(
     models?: object[];
     distribution?: object;
     put?: (body: Record<string, unknown>) => unknown;
+    probe?: (ref: string) => unknown;
+    probes?: Record<string, unknown>;
   } = {},
 ) {
   const models = overrides.models ?? MODELS;
   vi.mocked(api).mockImplementation((async (path: string, init?: RequestInit) => {
+    if (path.startsWith("/api/admin/extension/probe/")) {
+      probed.push(decodeURIComponent(path.slice("/api/admin/extension/probe/".length)));
+      if (overrides.probe) return overrides.probe(probed.at(-1)!);
+      return { model_ref: probed.at(-1), ran_at: "2026-09-27T10:00:00Z", vision: true, tool_calling: true, hits: 3, trials: 3, passed: true, detail: "Clicked inside the button in 3 of 3 trials." };
+    }
     if (path !== "/api/admin/extension/settings") throw new Error(`unexpected request to ${path}`);
     if (init?.method === "PUT") {
       lastPut = JSON.parse(String(init.body));
@@ -91,6 +99,7 @@ function serve(
       models,
       connections: CONNECTIONS,
       distribution: { ...DISTRIBUTION, ...overrides.distribution },
+      probes: overrides.probes ?? {},
     };
   }) as never);
 }
@@ -99,6 +108,7 @@ beforeEach(() => {
   vi.mocked(api).mockReset();
   readOnly.value = false;
   lastPut = null;
+  probed = [];
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -360,6 +370,53 @@ describe("site lists as typed", () => {
   it("are one pattern per line (or comma), trimmed, blank lines dropped", () => {
     expect(siteLines(" a.example \n\n*.b.example, c\n")).toEqual(["a.example", "*.b.example", "c"]);
     expect(siteLines("")).toEqual([]);
+  });
+});
+
+describe("the browser_control probe", () => {
+  const VISION = [
+    { ref: "model::1", label: "GPT A", provider: "openai", state: "ok", vision: true },
+    { ref: "model::2", label: "GPT B", provider: "openai", state: "ok", vision: false },
+  ];
+  const row = (label: string) => [...host.querySelectorAll(".extension-admin__probes tbody tr")].find((r) => r.textContent?.startsWith(label))!;
+
+  it("lists the models that read images, with their last result, and runs one on request", async () => {
+    serve({
+      models: VISION,
+      probes: { "model::1": { model_ref: "model::1", ran_at: "2026-09-26T10:00:00Z", vision: true, tool_calling: true, hits: 1, trials: 3, passed: false, detail: "Clicked inside the button in 1 of 3 trials." } },
+    });
+    await render();
+    expect(row("GPT A").textContent).toContain("Failed: 1 of 3");
+    expect([...host.querySelectorAll(".extension-admin__probes tbody tr")]).toHaveLength(1);
+    const run = row("GPT A").querySelector("button")!;
+    expect(run.textContent).toBe("Run probe");
+    await act(async () => run.click());
+    await act(async () => undefined);
+    expect(probed).toEqual(["model::1"]);
+    expect(row("GPT A").textContent).toContain("Passed: 3 of 3");
+    expect(host.querySelector(".extension-admin__probe--ok")).not.toBeNull();
+  });
+
+  it("says when a model never called the tool, and shows the failure of a probe that could not run", async () => {
+    serve({ models: VISION, probes: { "model::1": { model_ref: "model::1", ran_at: "2026-09-26T10:00:00Z", vision: true, tool_calling: false, hits: 0, trials: 3, passed: false, detail: "no tool" } }, probe: () => Promise.reject(new Error("Your budget does not cover the probe.")) });
+    await render();
+    expect(row("GPT A").textContent).toContain("No tool call");
+    await act(async () => row("GPT A").querySelector("button")!.click());
+    await act(async () => undefined);
+    expect(host.querySelector(".alert-error")?.textContent).toBe("The probe could not run: Your budget does not cover the probe.");
+  });
+
+  it("offers no button to a read-only administrator, and says when no model reads images", async () => {
+    readOnly.value = true;
+    serve({ models: VISION });
+    await render();
+    expect(row("GPT A").querySelector("button")).toBeNull();
+    act(() => root.unmount());
+    root = createRoot(host);
+    readOnly.value = false;
+    serve();
+    await render();
+    expect(host.textContent).toContain("No enabled chat model reads images.");
   });
 });
 

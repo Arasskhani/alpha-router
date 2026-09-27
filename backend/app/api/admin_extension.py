@@ -8,6 +8,7 @@ needs to force-install the extension with Group Policy.
 from __future__ import annotations
 
 import datetime
+import re
 from dataclasses import replace
 from typing import Literal
 
@@ -22,6 +23,7 @@ from app.services.client_ip import resolve_client_ip
 from app.services.extension_distribution import ExtensionUnavailable, current_build, distribution_payload
 from app.services.extension_keys import ExtensionKeyUnavailable, get_signing_key
 from app.services.extension_overview import extension_overview
+from app.services.extension_probe import load_results, run_probe
 from app.services.extension_settings import (
     DEFAULT_MAX_MINUTES,
     DEFAULT_MAX_TABS,
@@ -36,6 +38,7 @@ from app.services.extension_settings import (
     validated_update,
 )
 from app.services.extension_tokens import revoke_all_sessions
+from app.services.rate_limit import check_rate_limit
 from app.services.security_audit import log_security_event
 
 router = APIRouter(prefix="/api/admin/extension", tags=["admin-extension"])
@@ -105,6 +108,8 @@ async def _overview(db: AsyncSession, request: Request) -> dict:
         "models": await model_choices(db, settings),
         "connections": await connection_choices(db, settings),
         "distribution": distribution,
+        # The last browser_control probe per model, as run from this page.
+        "probes": await load_results(db),
     }
 
 
@@ -209,3 +214,37 @@ async def disconnect_all_browsers(
     )
     await db.commit()
     return {"disconnected": ended}
+
+
+#: Probes a minute from one administrator: each is three vision calls, billed to them.
+PROBES_PER_MINUTE = 6
+_MODEL_REF = re.compile(r"^model::\d{1,10}$")
+
+
+@router.post("/probe/{model_ref}")
+async def probe_model(
+    model_ref: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_chat_tools_write),
+) -> dict:
+    """Whether a model can drive the browser by pointing: three made-up pages, one button to click on each.
+
+    Costs three small vision calls, billed to the administrator who runs it.
+    The result is kept, so the page shows the last one for each model.
+    """
+    if not _MODEL_REF.match(model_ref):
+        raise HTTPException(status_code=400, detail="Name the model as model::<id>.")
+    await check_rate_limit(f"extension:probe:{int(admin.id)}", limit=PROBES_PER_MINUTE)
+    result = await run_probe(db, user=admin, model_ref=model_ref)
+    await log_security_event(
+        db,
+        actor=admin,
+        actor_ip=resolve_client_ip(request),
+        action="extension_model_probed",
+        resource_type="extension_settings",
+        resource_id="browser_extension",
+        detail={"model": result.model_ref, "passed": result.passed, "hits": result.hits, "trials": result.trials},
+    )
+    await db.commit()
+    return result.to_json()

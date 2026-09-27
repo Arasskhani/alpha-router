@@ -653,6 +653,7 @@ class TestTheAdminCard:
                 "provider": None,
                 "state": "deleted",
                 "connection_id": None,
+                "vision": False,
             },
             {
                 "ref": f"model::{embedder.id}",
@@ -660,6 +661,7 @@ class TestTheAdminCard:
                 "provider": "openai",
                 "state": "not_chat",
                 "connection_id": embedder.connection_id,
+                "vision": False,
             },
             {
                 "ref": f"model::{chat.id}",
@@ -667,6 +669,7 @@ class TestTheAdminCard:
                 "provider": "openai",
                 "state": "ok",
                 "connection_id": chat.connection_id,
+                "vision": False,
             },
             {
                 "ref": f"model::{off.id}",
@@ -674,6 +677,7 @@ class TestTheAdminCard:
                 "provider": "openai",
                 "state": "disabled",
                 "connection_id": off.connection_id,
+                "vision": False,
             },
             {
                 "ref": f"model::{review.id}",
@@ -681,6 +685,7 @@ class TestTheAdminCard:
                 "provider": "openai",
                 "state": "disabled",
                 "connection_id": review.connection_id,
+                "vision": False,
             },
         ]
         # The connections come too, with whether each address looks like the organisation's own.
@@ -703,6 +708,7 @@ class TestTheAdminCard:
                 "provider": "openai",
                 "state": "ok",
                 "connection_id": chat.connection_id,
+                "vision": False,
             }
         ]
 

@@ -45,6 +45,7 @@ from app.models.model_catalog import AIModel
 from app.models.system import SystemSetting
 from app.services.extension_package import SITE_ACCESS_MODES, SITE_ACCESS_PER_SITE
 from app.services.list_bounds import ADMIN_LIST_HARD_CAP
+from app.services.model_capabilities import model_media_flags, supports_vision
 from app.services.system_default_models import model_supports_text_chat
 
 logger = logging.getLogger(__name__)
@@ -549,6 +550,25 @@ async def _connection_list(db: AsyncSession, values: list[int]) -> tuple[int, ..
     return tuple(sorted(ids))
 
 
+def _reads_images(row: AIModel) -> bool:
+    external_id = str(row.external_id or "")
+    pricing_raw = cast("str | None", row.pricing_raw)
+    provider_type = cast("str | None", row.provider_type)
+    media = model_media_flags(
+        external_id=external_id,
+        is_image_model=bool(row.is_image_model),
+        is_video_model=bool(getattr(row, "is_video_model", False)),
+        pricing_raw=pricing_raw,
+        provider_type=provider_type,
+    )
+    return supports_vision(
+        external_id=external_id,
+        is_image_model=media["is_image_model"],
+        pricing_raw=pricing_raw,
+        provider_type=provider_type,
+    )
+
+
 #: What the settings page says about a model it lists.
 MODEL_OK = "ok"
 MODEL_DISABLED = "disabled"
@@ -604,6 +624,8 @@ async def model_choices(db: AsyncSession, settings: ExtensionSettings) -> list[d
                 "provider": row.provider_type,
                 "state": state,
                 "connection_id": int(row.connection_id) if row.connection_id is not None else None,
+                # Whether it reads images: only such a model can see screenshots, or be probed.
+                "vision": _reads_images(row),
             }
         )
     choices.extend(
@@ -613,6 +635,7 @@ async def model_choices(db: AsyncSession, settings: ExtensionSettings) -> list[d
             "provider": None,
             "state": MODEL_DELETED,
             "connection_id": None,
+            "vision": False,
         }
         for model_id in sorted(named - set(by_id))
     )

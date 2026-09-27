@@ -92,9 +92,31 @@ type ModelChoice = {
   provider: string | null;
   state: "ok" | "disabled" | "not_chat" | "deleted";
   connection_id?: number | null;
+  /** Whether it reads images: only such a model can see screenshots, or be probed. */
+  vision?: boolean;
 };
 
-type Overview = { settings: ExtensionSettings; models: ModelChoice[]; connections?: ConnectionChoice[]; distribution: Distribution };
+/** The last browser_control probe of a model: could it point at a button on a made-up page? */
+type ProbeResult = {
+  model_ref: string;
+  ran_at: string;
+  vision: boolean;
+  tool_calling: boolean;
+  hits: number;
+  trials: number;
+  passed: boolean;
+  detail: string;
+};
+
+type Overview = {
+  settings: ExtensionSettings;
+  models: ModelChoice[];
+  connections?: ConnectionChoice[];
+  distribution: Distribution;
+  probes?: Record<string, ProbeResult>;
+};
+
+const PROBE_PATH = "/api/admin/extension/probe";
 
 /**
  * The form keeps what the administrator types: the site lists one pattern per
@@ -307,6 +329,65 @@ function ConnectionChecklist({
   );
 }
 
+function probeSummary(result: ProbeResult | undefined): { text: string; tone: "ok" | "bad" | "none" } {
+  if (!result) return { text: "Not probed yet", tone: "none" };
+  const when = new Date(result.ran_at);
+  const date = Number.isNaN(when.getTime()) ? "" : ` (${when.toLocaleDateString()})`;
+  if (!result.vision) return { text: `Reads no images${date}`, tone: "bad" };
+  if (!result.tool_calling) return { text: `No tool call${date}`, tone: "bad" };
+  return { text: `${result.passed ? "Passed" : "Failed"}: ${result.hits} of ${result.trials}${date}`, tone: result.passed ? "ok" : "bad" };
+}
+
+function ProbeTable({
+  models,
+  probes,
+  probing,
+  disabled,
+  onProbe,
+}: {
+  models: ModelChoice[];
+  probes: Record<string, ProbeResult>;
+  probing: string | null;
+  disabled: boolean;
+  onProbe: (ref: string) => void;
+}) {
+  const candidates = models.filter((m) => m.state === "ok" && m.vision);
+  if (!candidates.length) return <p className="muted-text api-key-form__hint">No enabled chat model reads images.</p>;
+  return (
+    <table className="extension-admin__probes">
+      <thead>
+        <tr>
+          <th scope="col">Model</th>
+          <th scope="col">Last probe</th>
+          <th scope="col">
+            <span className="sr-only">Run</span>
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        {candidates.map((m) => {
+          const summary = probeSummary(probes[m.ref]);
+          return (
+            <tr key={m.ref}>
+              <td>{choiceLabel(m)}</td>
+              <td className={`extension-admin__probe extension-admin__probe--${summary.tone}`} title={probes[m.ref]?.detail}>
+                {summary.text}
+              </td>
+              <td>
+                {disabled ? null : (
+                  <button type="button" className="btn btn--ghost" disabled={probing !== null} onClick={() => onProbe(m.ref)}>
+                    {probing === m.ref ? "Probing…" : "Run probe"}
+                  </button>
+                )}
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
 export default function ExtensionSettingsCard() {
   const readOnly = useReadOnly();
   const [overview, setOverview] = useState<Overview | null>(null);
@@ -336,6 +417,24 @@ export default function ExtensionSettingsCard() {
 
   const models = overview?.models ?? [];
   const connections = overview?.connections ?? [];
+  const probes = overview?.probes ?? {};
+  const [probing, setProbing] = useState<string | null>(null);
+
+  /** Run the browser_control probe on one model; the result replaces the last one shown. */
+  async function probe(ref: string) {
+    if (readOnly || probing) return;
+    setProbing(ref);
+    setError("");
+    setNotice("");
+    try {
+      const result = await api<ProbeResult>(`${PROBE_PATH}/${encodeURIComponent(ref)}`, { method: "POST" });
+      setOverview((current) => (current ? { ...current, probes: { ...(current.probes ?? {}), [ref]: result } } : current));
+    } catch (err) {
+      setError(`The probe could not run: ${formatApiError(err)}`);
+    } finally {
+      setProbing(null);
+    }
+  }
 
   function patch(values: Partial<Form>) {
     setForm((current) => (current ? { ...current, ...values } : current));
@@ -855,6 +954,15 @@ export default function ExtensionSettingsCard() {
             <span className="settings-row__hint">
               None selected: any model. A model not here works from the page's text and references, without screenshots.
             </span>
+          </div>
+          <div className="extension-admin__field">
+            <span className="settings-row__title">Can it point? The browser_control probe</span>
+            <span className="settings-row__hint">
+              Shows a model three made-up pages with three buttons each and asks it to click one by its label, with the
+              agent&apos;s own tool. A model that cannot read the screenshot, or answers in words instead of a click,
+              will waste clicks and approvals under full control. Three small vision calls, billed to you.
+            </span>
+            <ProbeTable models={models} probes={probes} probing={probing} disabled={readOnly} onProbe={(ref) => void probe(ref)} />
           </div>
 
           <h3 className="settings-subsection-title">Full control: always ask before</h3>

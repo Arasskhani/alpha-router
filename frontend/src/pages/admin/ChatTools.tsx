@@ -4,7 +4,6 @@ import { Link } from "react-router-dom";
 import AdminPage from "../../components/AdminPage";
 import ChatToolIcon from "../../components/ChatToolIcon";
 import Modal from "../../components/Modal";
-import ExtensionSettingsCard from "../../components/admin/ExtensionSettingsCard";
 import ResourceAccessEditor from "../../components/admin/ResourceAccessEditor";
 import { api, formatApiError } from "../../api";
 import { useReadOnly } from "../../context/ReadOnlyContext";
@@ -192,7 +191,14 @@ export default function ChatTools() {
         </table>
       </div>
 
-      <ExtensionSettingsCard />
+      <section className="settings-section" aria-labelledby="extension-link-title">
+        <h2 id="extension-link-title">Browser extension</h2>
+        <p className="settings-section-desc">
+          The rows above say who may use the extension, its agent and full control. Everything else about it — the
+          sites it may work on, which models see page content and screenshots, what always asks, and what is happening
+          right now — is on <Link to="/admin/browser-extension">Browser Extension</Link>.
+        </p>
+      </section>
 
       <Modal
         open={editing !== null}

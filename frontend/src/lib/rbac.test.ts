@@ -51,6 +51,7 @@ describe("the nav and the permission map agree", () => {
     expect(chat?.items.map((item) => item.to)).toEqual([
       "/admin/chat-tools",
       "/admin/code-interpreter",
+      "/admin/browser-extension",
       "/admin/memory",
     ]);
     const data = adminNavSections.find((section) => section.categoryKey === "data_reports");

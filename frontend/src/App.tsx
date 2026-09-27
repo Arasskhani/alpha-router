@@ -29,6 +29,7 @@ const SignInActivity = lazy(() => import("./pages/admin/SignInActivity"));
 const Operations = lazy(() => import("./pages/admin/Operations"));
 const CodeInterpreter = lazy(() => import("./pages/admin/CodeInterpreter"));
 const ChatTools = lazy(() => import("./pages/admin/ChatTools"));
+const BrowserExtension = lazy(() => import("./pages/admin/BrowserExtension"));
 const DatabaseMonitor = lazy(() => import("./pages/admin/DatabaseMonitor"));
 const ChatPanel = lazy(() => import("./components/ChatPanel"));
 const Authentication = lazy(() => import("./pages/admin/Authentication"));
@@ -130,6 +131,7 @@ export default function App() {
         <Route path="debug" element={<Operations />} />
         <Route path="chat-tools" element={<ChatTools />} />
         <Route path="code-interpreter" element={<CodeInterpreter />} />
+        <Route path="browser-extension" element={<BrowserExtension />} />
         <Route path="database" element={<DatabaseMonitor />} />
         <Route path="agents" element={<AgentsOverview />} />
         <Route path="agents/studio" element={<AgentStudio />} />

@@ -2263,9 +2263,13 @@ export const docSections: DocSection[] = [
             <tr>
               <td>Privacy and audit</td>
               <td>
-                <strong>Save finished runs to the person&apos;s chat history</strong> (on): the task, the answer and
-                the step list — never screenshots or page text. <strong>People may mark a run private</strong> (on): a
-                private run is not saved to their history; its steps still reach Admin Logs. Fixed: screenshots, page
+                <strong>Save finished runs to the person&apos;s chat history</strong> (on): the extension sends the
+                task, how the run ended, its summary and the step list as the panel showed them to{" "}
+                <code>POST /api/extension/runs</code>, which takes nothing else, and the server makes a chat of two
+                messages (its <code>tools</code> field says <code>browser_agent</code>); page text, screenshots and
+                what was typed have no field to arrive in. <strong>People may mark a run private</strong> (on): with
+                Private Mode, the panel offers a <em>Private run</em> tick, and such a run is never sent; its steps
+                still reach Admin Logs. Fixed: screenshots, page
                 text, what the agent typed and code are never stored anywhere, and Admin Logs holds the site as a
                 host, never a page&apos;s full address. How long the rows stay is the retention policy&apos;s.
               </td>

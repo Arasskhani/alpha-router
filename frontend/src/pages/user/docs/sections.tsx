@@ -1141,9 +1141,12 @@ export const userManualSections: DocSection[] = [
           </li>
         </ul>
         <p>
-          Agent runs are not saved to your chat history. Each step is recorded for your administrators — the tool,
-          the site, whether you approved it, and how it ended; for typing, only how many characters, never the
-          text.
+          A finished run is saved to your chat history as one chat: your task, and one answer with how it ended and
+          the list of steps — never page text, screenshots or what was typed. The panel links to it when it is saved.
+          Tick <strong>Private run</strong> before you start (offered when you have Private Mode and your
+          administrator allows private runs) to keep a run out of your history; your administrator can also turn
+          saving off for everyone. Either way each step is recorded for your administrators — the tool, the site,
+          whether you approved it, and how it ended; for typing, only how many characters, never the text.
         </p>
       </>
     ),

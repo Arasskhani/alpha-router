@@ -2235,6 +2235,19 @@ export const docSections: DocSection[] = [
               </td>
             </tr>
             <tr>
+              <td>The browser_control probe</td>
+              <td>
+                Before a model is trusted with screenshots, <strong>Run probe</strong> beside it shows the model
+                three made-up pages — three look-alike buttons each, placed differently every time — and asks it,
+                with the agent&apos;s own <code>computer</code> tool, to click the one labelled <em>Continue</em>. A
+                trial passes when the click lands inside that button; the probe passes with two of three, and only
+                if the model answered every trial with a tool call at all. A model that reads no images is not
+                asked. The result (<code>POST /api/admin/extension/probe/model::&lt;id&gt;</code>) is kept per model
+                and shown in the table; each run costs three small vision calls, billed to the administrator, and is
+                recorded as <code>extension_model_probed</code>.
+              </td>
+            </tr>
+            <tr>
               <td>Modes and limits per run</td>
               <td>
                 <strong>Plan mode</strong> can be turned off (Ask is always offered; Auto is its own switch above), and

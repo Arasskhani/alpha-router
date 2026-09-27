@@ -23,7 +23,13 @@ from app.services.extension_distribution import ExtensionUnavailable, current_bu
 from app.services.extension_keys import ExtensionKeyUnavailable, get_signing_key
 from app.services.extension_overview import extension_overview
 from app.services.extension_settings import (
+    DEFAULT_MAX_MINUTES,
+    DEFAULT_MAX_TABS,
+    DEFAULT_SCREENSHOT_SIDE,
+    DEFAULT_SCREENSHOTS_KEPT,
+    TEMPLATE_BROWSER_VERSION,
     ExtensionSettingsError,
+    connection_choices,
     load_extension_settings,
     model_choices,
     save_extension_settings,
@@ -59,6 +65,20 @@ class ExtensionSettingsIn(BaseModel):
     internal_models: list[str] = Field(default_factory=list, max_length=_BODY_LIST_CAP)
     screenshot_models: list[str] = Field(default_factory=list, max_length=_BODY_LIST_CAP)
     relaxed_approvals: list[str] = Field(default_factory=list, max_length=32)
+    # The ranges are checked by validated_update, with messages that name them.
+    require_newest_package: bool = False
+    min_browser_version: int = TEMPLATE_BROWSER_VERSION
+    internal_connections: list[int] = Field(default_factory=list, max_length=_BODY_LIST_CAP)
+    external_screenshots: bool = True
+    plan_mode: bool = True
+    agent_default_mode: Literal["ask", "plan", "auto"] = "plan"
+    agent_max_minutes: int = DEFAULT_MAX_MINUTES
+    agent_max_tabs: int = DEFAULT_MAX_TABS
+    agent_runs_per_day: int | None = None
+    screenshot_max_side: int = DEFAULT_SCREENSHOT_SIDE
+    screenshots_kept: int = DEFAULT_SCREENSHOTS_KEPT
+    save_runs: bool = True
+    private_runs: bool = True
 
 
 async def _key_status(db: AsyncSession) -> dict:
@@ -80,7 +100,12 @@ async def _overview(db: AsyncSession, request: Request) -> dict:
     except ExtensionUnavailable as exc:
         build, unavailable = None, exc
     distribution = {**distribution_payload(build, unavailable), **await _key_status(db)}
-    return {"settings": settings.to_json(), "models": await model_choices(db, settings), "distribution": distribution}
+    return {
+        "settings": settings.to_json(),
+        "models": await model_choices(db, settings),
+        "connections": await connection_choices(db, settings),
+        "distribution": distribution,
+    }
 
 
 @router.get("/settings")

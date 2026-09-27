@@ -40,9 +40,14 @@ export type PanelBrowser = AgentBrowser & {
   cleanup(): Promise<void>;
 };
 
-export function createAgentBrowser(options: { startTabId: number | null; runId: string; windowId?: number }): PanelBrowser {
+/** Tabs one run may open when the administrator set no limit. */
+const DEFAULT_MAX_TABS = 10;
+
+export function createAgentBrowser(options: { startTabId: number | null; runId: string; windowId?: number; maxTabs?: number }): PanelBrowser {
   let working = options.startTabId;
   let groupId: number | null = null;
+  const maxTabs = Math.max(1, Math.floor(options.maxTabs ?? DEFAULT_MAX_TABS));
+  let opened = 0;
   /** Where the banner went up: tab id → the page it was put on. */
   const overlays = new Map<number, PageTarget>();
   const banner: OverlayRequest = { run: options.runId, label: OVERLAY_LABEL };
@@ -93,6 +98,9 @@ export function createAgentBrowser(options: { startTabId: number | null; runId: 
     },
 
     async openTab(url: string) {
+      // The administrator's limit on tabs a run opens: past it, the agent works in the tabs it has.
+      if (opened >= maxTabs) throw new Error(`This run may open at most ${maxTabs} tabs. Work in the tabs you have, or switch to one.`);
+      opened += 1;
       const tab = await chrome.tabs.create({ url, active: true });
       if (tab.id === undefined) throw new Error("The browser did not open the tab.");
       leave(working);

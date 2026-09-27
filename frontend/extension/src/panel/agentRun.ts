@@ -124,6 +124,10 @@ export type AgentOptions = {
   task: string;
   mode: AgentMode;
   maxSteps: number;
+  /** The run's time limit; past it, the run ends before its next step. Absent: no limit. */
+  maxMinutes?: number;
+  /** How many of the latest screenshots stay in the conversation (SCREENSHOTS_KEPT when absent). */
+  screenshotsKept?: number;
   rules: PolicyContext;
   runId: string;
   /** The page-content tag suffix for this run: random, fixed for the run. */
@@ -132,7 +136,7 @@ export type AgentOptions = {
   modelRef?: string;
 };
 
-export type RunOutcome = "done" | "stopped" | "max_steps" | "errors" | "failed";
+export type RunOutcome = "done" | "stopped" | "max_steps" | "max_minutes" | "errors" | "failed";
 
 export type RunResult = { outcome: RunOutcome; summary: string; steps: number };
 
@@ -198,10 +202,10 @@ function hasImage(message: ApiMessage): boolean {
   return Array.isArray(message.content) && message.content.some((part) => part.type === "image_url");
 }
 
-/** All but the last SCREENSHOTS_KEPT screenshots replaced by a note, so a long run stays affordable. */
-function withRecentScreenshots(messages: ApiMessage[]): ApiMessage[] {
+/** All but the last `kept` screenshots replaced by a note, so a long run stays affordable. */
+function withRecentScreenshots(messages: ApiMessage[], kept: number = SCREENSHOTS_KEPT): ApiMessage[] {
   const shots = messages.flatMap((message, index) => (hasImage(message) ? [index] : []));
-  const keep = new Set(shots.slice(-SCREENSHOTS_KEPT));
+  const keep = new Set(shots.slice(-Math.max(1, Math.floor(kept))));
   return messages.map((message, index): ApiMessage => {
     if (message.role !== "user" || !Array.isArray(message.content) || keep.has(index) || !hasImage(message)) return message;
     return { role: "user", content: message.content.map((part) => (part.type === "image_url" ? OMITTED_SHOT : part)) };
@@ -213,13 +217,14 @@ function withRecentScreenshots(messages: ApiMessage[]): ApiMessage[] {
  * the latest screenshots kept, and - when it is still too long - the oldest
  * steps left out whole, a tool call never without its answer.
  */
-export function conversation(entries: Entry[]): ApiMessage[] {
+export function conversation(entries: Entry[], screenshotsKept: number = SCREENSHOTS_KEPT): ApiMessage[] {
   const pageIndexes = entries.flatMap((entry, index) => (entry.page ? [index] : []));
   const whole = new Set(pageIndexes.slice(-WHOLE_PAGE_RESULTS));
   const messages = withRecentScreenshots(
     entries.map((entry, index) =>
       entry.page && entry.message.role === "tool" ? { ...entry.message, content: pageText(entry.page, whole.has(index)) } : entry.message,
     ),
+    screenshotsKept,
   );
   const [system, task, ...rest] = messages;
   // Steps: an assistant message and the tool answers after it.
@@ -764,7 +769,14 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     }
     if (tool === "tab_open" || tool === "navigate") {
       const url = String(a.url);
-      const next = tool === "tab_open" ? await deps.browser.openTab(url) : await deps.browser.navigate(url);
+      let next: WorkTab;
+      try {
+        next = tool === "tab_open" ? await deps.browser.openTab(url) : await deps.browser.navigate(url);
+      } catch (err) {
+        // The browser would not: the tab limit, a tab that is gone. The model is told, and the run goes on.
+        const message = err instanceof Error && err.message ? clip(err.message, 200) : "The browser could not open it.";
+        return { content: message, status: "error", detail: message, outcome: "error", extra: { error: "browser_refused" } };
+      }
       await Promise.race([deps.browser.settle(), stopped]);
       check();
       // Where the tab is once it settled - the browser answers the update with the page it was leaving -
@@ -1151,9 +1163,15 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     for (steps = 1; steps <= options.maxSteps; steps += 1) {
       check();
       await gate(lastTab);
+      // The administrator's time limit: a run past it ends here, before it asks the model again.
+      if (options.maxMinutes !== undefined && steps > 1 && Date.now() - started > options.maxMinutes * 60_000) {
+        steps -= 1;
+        report("max_minutes");
+        return { outcome: "max_minutes", summary: `The agent stopped at its time limit of ${options.maxMinutes} minutes.`, steps };
+      }
       let reply: ModelReply;
       try {
-        reply = await deps.model(conversation(entries), signal);
+        reply = await deps.model(conversation(entries, options.screenshotsKept), signal);
       } catch (err) {
         if (isAbort(err) || signal.aborted) throw abortError();
         throw err;

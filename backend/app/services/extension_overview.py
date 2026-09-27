@@ -11,24 +11,18 @@ two agree.
 
 from __future__ import annotations
 
-import datetime
-
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.extension import ExtensionEvent
 from app.models.user import User
 from app.services.extension_agent import EVENT_AGENT_STEP, EVENT_AGENT_TASK
+from app.services.extension_run_limits import older_version, start_of_today
 from app.services.extension_settings import ExtensionSettings
 from app.services.extension_tokens import open_sessions
 
 #: Outcomes of a step the rules refused or the user denied.
 _REFUSED_OUTCOMES = ("blocked", "denied")
-
-
-def _start_of_today() -> datetime.datetime:
-    now = datetime.datetime.now(datetime.UTC)
-    return datetime.datetime(now.year, now.month, now.day)
 
 
 async def _browsers(db: AsyncSession, latest_version: str | None) -> dict[str, int]:
@@ -53,32 +47,13 @@ async def _browsers(db: AsyncSession, latest_version: str | None) -> dict[str, i
         reported = str(row.extension_version or "")
         if not reported:
             unknown += 1
-        elif latest_version and _older(reported, latest_version):
+        elif latest_version and older_version(reported, latest_version):
             outdated += 1
     return {"connected": len(live), "outdated": outdated, "unknown_version": unknown}
 
 
-def _parts(version: str) -> tuple[int, ...]:
-    out: list[int] = []
-    for part in version.split("."):
-        try:
-            out.append(int(part))
-        except ValueError:
-            return ()
-    return tuple(out)
-
-
-def _older(reported: str, latest: str) -> bool:
-    """Whether ``reported`` is behind ``latest``; unreadable versions are not called old."""
-    left, right = _parts(reported), _parts(latest)
-    if not left or not right:
-        return False
-    width = max(len(left), len(right))
-    return left + (0,) * (width - len(left)) < right + (0,) * (width - len(right))
-
-
 async def _today(db: AsyncSession) -> dict[str, int]:
-    since = _start_of_today()
+    since = start_of_today()
     runs = await db.scalar(
         select(func.count())
         .select_from(ExtensionEvent)

@@ -644,14 +644,51 @@ class TestTheAdminCard:
         resp = await client.get("/api/admin/extension/settings")
         assert resp.status_code == 200, resp.text
         models = resp.json()["models"]
-        # By name; the unnamed disabled model and the unnamed embedder are not choices.
+        # By name; the unnamed disabled model and the unnamed embedder are not choices. Each names its
+        # connection, so the page can show which are inside the organisation.
         assert models == [
-            {"ref": "model::999999", "label": "Model 999999", "provider": None, "state": "deleted"},
-            {"ref": f"model::{embedder.id}", "label": "Model embedder", "provider": "openai", "state": "not_chat"},
-            {"ref": f"model::{chat.id}", "label": "Model gpt-chat", "provider": "openai", "state": "ok"},
-            {"ref": f"model::{off.id}", "label": "Model gpt-off", "provider": "openai", "state": "disabled"},
-            {"ref": f"model::{review.id}", "label": "Model gpt-review-off", "provider": "openai", "state": "disabled"},
+            {
+                "ref": "model::999999",
+                "label": "Model 999999",
+                "provider": None,
+                "state": "deleted",
+                "connection_id": None,
+            },
+            {
+                "ref": f"model::{embedder.id}",
+                "label": "Model embedder",
+                "provider": "openai",
+                "state": "not_chat",
+                "connection_id": embedder.connection_id,
+            },
+            {
+                "ref": f"model::{chat.id}",
+                "label": "Model gpt-chat",
+                "provider": "openai",
+                "state": "ok",
+                "connection_id": chat.connection_id,
+            },
+            {
+                "ref": f"model::{off.id}",
+                "label": "Model gpt-off",
+                "provider": "openai",
+                "state": "disabled",
+                "connection_id": off.connection_id,
+            },
+            {
+                "ref": f"model::{review.id}",
+                "label": "Model gpt-review-off",
+                "provider": "openai",
+                "state": "disabled",
+                "connection_id": review.connection_id,
+            },
         ]
+        # The connections come too, with whether each address looks like the organisation's own.
+        connections = resp.json()["connections"]
+        assert {c["id"] for c in connections} >= {chat.connection_id, off.connection_id}
+        assert all(
+            set(c) == {"id", "name", "provider", "host", "active", "looks_internal", "state"} for c in connections
+        )
 
     async def test_saving_answers_with_the_models_too(self, client, db_session, admin, built_extension):
         chat = await _model(db_session, "gpt-chat")
@@ -660,8 +697,55 @@ class TestTheAdminCard:
         resp = await client.put("/api/admin/extension/settings", json=body, headers=headers)
         assert resp.status_code == 200, resp.text
         assert resp.json()["models"] == [
-            {"ref": f"model::{chat.id}", "label": "Model gpt-chat", "provider": "openai", "state": "ok"}
+            {
+                "ref": f"model::{chat.id}",
+                "label": "Model gpt-chat",
+                "provider": "openai",
+                "state": "ok",
+                "connection_id": chat.connection_id,
+            }
         ]
+
+    async def test_the_new_sections_round_trip_through_the_api(self, client, db_session, admin, built_extension):
+        chat = await _model(db_session, "gpt-chat")
+        headers = _sign_in(client, admin)
+        body = {
+            "site_access": "per_site",
+            "agent_max_steps": 25,
+            "require_newest_package": True,
+            "min_browser_version": 142,
+            "internal_connections": [chat.connection_id],
+            "external_screenshots": False,
+            "plan_mode": True,
+            "agent_default_mode": "ask",
+            "agent_max_minutes": 30,
+            "agent_max_tabs": 5,
+            "agent_runs_per_day": 20,
+            "screenshot_max_side": 1600,
+            "screenshots_kept": 5,
+            "save_runs": False,
+            "private_runs": False,
+        }
+        resp = await client.put("/api/admin/extension/settings", json=body, headers=headers)
+        assert resp.status_code == 200, resp.text
+        saved = resp.json()["settings"]
+        for key, value in body.items():
+            assert saved[key] == value, key
+        # An unknown default mode is the request parser's to refuse; a mode that is off is the server's.
+        resp = await client.put(
+            "/api/admin/extension/settings", json={**body, "agent_default_mode": "skip"}, headers=headers
+        )
+        assert resp.status_code == 422
+        resp = await client.put(
+            "/api/admin/extension/settings", json={**body, "agent_default_mode": "auto"}, headers=headers
+        )
+        assert resp.status_code == 400
+        assert "Auto cannot be the default" in resp.json()["detail"]
+        resp = await client.put(
+            "/api/admin/extension/settings", json={**body, "internal_connections": [999999]}, headers=headers
+        )
+        assert resp.status_code == 400
+        assert "does not exist" in resp.json()["detail"]
 
     async def test_a_value_past_a_limit_is_refused_with_the_limit(self, client, admin, built_extension):
         """The server's own message, not the request parser's, for lists and steps past the settings' limits."""

@@ -72,7 +72,12 @@ def extension_version(revision: int) -> str:
 
 
 def package_settings_key(
-    *, origin: str, site_access: str, server_name: str, extra_permissions: Sequence[str] = ()
+    *,
+    origin: str,
+    site_access: str,
+    server_name: str,
+    extra_permissions: Sequence[str] = (),
+    min_browser_version: int | None = None,
 ) -> str:
     """The part of the fingerprint the server patches in: the origin, the site access and the name.
 
@@ -80,12 +85,16 @@ def package_settings_key(
     change of files (extension_distribution.package_revision). ``extra_permissions``
     are the manifest permissions an admin toggle adds (``debugger`` for full
     control, and later downloads, notifications, alarms): they change the package,
-    so a copy updates to the new permissions. Empty by default, so a server with
-    none keeps the settings key - and the version - it had before.
+    so a copy updates to the new permissions. ``min_browser_version`` is the
+    manifest's ``minimum_chrome_version`` when an admin raised it above the
+    template's. Both empty by default, so a server with neither keeps the
+    settings key - and the version - it had before.
     """
     inputs: dict[str, Any] = {"origin": origin, "site_access": site_access, "server_name": server_name}
     if extra_permissions:
         inputs["extra_permissions"] = sorted(extra_permissions)
+    if min_browser_version is not None:
+        inputs["min_browser_version"] = int(min_browser_version)
     return hashlib.sha256(json.dumps(inputs, sort_keys=True).encode("utf-8")).hexdigest()
 
 
@@ -96,13 +105,18 @@ def package_fingerprint(
     site_access: str,
     server_name: str,
     extra_permissions: Sequence[str] = (),
+    min_browser_version: int | None = None,
 ) -> str:
     """What the package is made from: the built files and everything the server patches in."""
     digest = hashlib.sha256()
     for name in sorted(files):
         digest.update(name.encode("utf-8") + b"\0" + hashlib.sha256(files[name]).digest())
     settings_key = package_settings_key(
-        origin=origin, site_access=site_access, server_name=server_name, extra_permissions=extra_permissions
+        origin=origin,
+        site_access=site_access,
+        server_name=server_name,
+        extra_permissions=extra_permissions,
+        min_browser_version=min_browser_version,
     )
     digest.update(settings_key.encode("ascii"))
     return digest.hexdigest()
@@ -143,19 +157,23 @@ def build_manifest(
     origin: str,
     site_access: str,
     extra_permissions: Sequence[str] = (),
+    min_browser_version: int | None = None,
 ) -> dict[str, Any]:
     """The template with everything that makes it this server's extension.
 
     ``extra_permissions`` are the manifest permissions an admin toggle adds
     (``debugger`` for full control, and later downloads, notifications, alarms).
     They are appended to the template's own, without duplicates and in a stable
-    order, so the manifest is reproducible.
+    order, so the manifest is reproducible. ``min_browser_version`` replaces the
+    template's ``minimum_chrome_version`` when an admin raised it.
     """
     if site_access not in SITE_ACCESS_MODES:
         raise ValueError(f"unknown site access mode {site_access!r}")
     manifest = copy.deepcopy(dict(template))
     server_pattern = f"{origin}/*"
     manifest["version"] = version
+    if min_browser_version is not None:
+        manifest["minimum_chrome_version"] = str(int(min_browser_version))
     # Never the app's build (a git describe string) in a file anyone can fetch.
     manifest.pop("version_name", None)
     manifest["key"] = public_key_b64

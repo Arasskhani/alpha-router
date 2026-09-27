@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent, type KeyboardEvent } from "react";
+import { Link } from "react-router-dom";
 
 import { api, formatApiError } from "../../api";
 import { useReadOnly } from "../../context/ReadOnlyContext";
@@ -28,6 +29,8 @@ const APPROVALS: { key: string; label: string; hint: string }[] = [
 ];
 const APPROVAL_KEYS = APPROVALS.map((a) => a.key);
 
+type AgentMode = "ask" | "plan" | "auto";
+
 type ExtensionSettings = {
   site_access: SiteAccess;
   allowed_sites: string[];
@@ -45,6 +48,30 @@ type ExtensionSettings = {
   full_control: boolean;
   enabled: boolean;
   relaxed_approvals: string[];
+  require_newest_package: boolean;
+  min_browser_version: number;
+  internal_connections: number[];
+  external_screenshots: boolean;
+  plan_mode: boolean;
+  agent_default_mode: AgentMode;
+  agent_max_minutes: number;
+  agent_max_tabs: number;
+  agent_runs_per_day: number | null;
+  screenshot_max_side: number;
+  screenshots_kept: number;
+  save_runs: boolean;
+  private_runs: boolean;
+};
+
+/** A connection the card can offer to tick as inside the organisation. */
+type ConnectionChoice = {
+  id: number;
+  name: string;
+  provider: string | null;
+  host: string;
+  active: boolean;
+  looks_internal: boolean;
+  state: "ok" | "deleted";
 };
 
 type Distribution = {
@@ -64,29 +91,41 @@ type ModelChoice = {
   label: string;
   provider: string | null;
   state: "ok" | "disabled" | "not_chat" | "deleted";
+  connection_id?: number | null;
 };
 
-type Overview = { settings: ExtensionSettings; models: ModelChoice[]; distribution: Distribution };
+type Overview = { settings: ExtensionSettings; models: ModelChoice[]; connections?: ConnectionChoice[]; distribution: Distribution };
 
 /**
  * The form keeps what the administrator types: the site lists one pattern per
  * line, and the steps as text, so the field can be cleared and typed again.
  */
+/** The numbers the card takes as text, each with its range and what to call it when it is out of range. */
+const NUMBERS = {
+  agent_max_steps: { min: 5, max: 100, label: "Most steps per task" },
+  agent_max_minutes: { min: 1, max: 180, label: "Most minutes per task" },
+  agent_max_tabs: { min: 1, max: 50, label: "Most tabs per task" },
+  agent_runs_per_day: { min: 1, max: 1000, label: "Runs per person per day", optional: true },
+  screenshot_max_side: { min: 800, max: 1600, label: "A screenshot's longest side" },
+  screenshots_kept: { min: 1, max: 5, label: "Screenshots kept" },
+  min_browser_version: { min: 116, max: 999, label: "Minimum browser version" },
+} as const;
+type NumberKey = keyof typeof NUMBERS;
+
 type Form = Omit<
   ExtensionSettings,
-  "allowed_sites" | "blocked_sites" | "read_only_sites" | "protected_sites" | "internal_sites" | "agent_max_steps"
+  "allowed_sites" | "blocked_sites" | "read_only_sites" | "protected_sites" | "internal_sites" | NumberKey
 > & {
   allowed_sites: string;
   blocked_sites: string;
   read_only_sites: string;
   protected_sites: string;
   internal_sites: string;
-  agent_max_steps: string;
-};
+} & Record<NumberKey, string>;
 
 const SETTINGS_PATH = "/api/admin/extension/settings";
-const MIN_STEPS = 5;
-const MAX_STEPS = 100;
+const MIN_STEPS = NUMBERS.agent_max_steps.min;
+const MAX_STEPS = NUMBERS.agent_max_steps.max;
 
 function toForm(settings: ExtensionSettings): Form {
   return {
@@ -97,7 +136,26 @@ function toForm(settings: ExtensionSettings): Form {
     protected_sites: settings.protected_sites.join("\n"),
     internal_sites: settings.internal_sites.join("\n"),
     agent_max_steps: String(settings.agent_max_steps),
+    agent_max_minutes: String(settings.agent_max_minutes ?? 20),
+    agent_max_tabs: String(settings.agent_max_tabs ?? 10),
+    agent_runs_per_day: settings.agent_runs_per_day == null ? "" : String(settings.agent_runs_per_day),
+    screenshot_max_side: String(settings.screenshot_max_side ?? 1280),
+    screenshots_kept: String(settings.screenshots_kept ?? 3),
+    min_browser_version: String(settings.min_browser_version ?? 116),
   };
+}
+
+/** A number the card took as text, checked against its range; a message when it is not usable. */
+export function numberField(key: NumberKey, raw: string): { value: number | null } | { error: string } {
+  const spec = NUMBERS[key];
+  const text = raw.trim();
+  if (!text && "optional" in spec && spec.optional) return { value: null };
+  const value = Number(text || Number.NaN);
+  if (!Number.isInteger(value) || value < spec.min || value > spec.max) {
+    const empty = "optional" in spec && spec.optional ? ", or empty" : "";
+    return { error: `${spec.label} must be a whole number from ${spec.min} to ${spec.max}${empty}.` };
+  }
+  return { value };
 }
 
 export function siteLines(text: string): string[] {
@@ -208,6 +266,47 @@ function ModelChecklist({
   );
 }
 
+function ConnectionChecklist({
+  connections,
+  selected,
+  disabled,
+  onChange,
+}: {
+  connections: ConnectionChoice[];
+  selected: number[];
+  disabled: boolean;
+  onChange: (next: number[]) => void;
+}) {
+  const chosen = new Set(selected);
+  const toggle = (id: number) => onChange(chosen.has(id) ? selected.filter((x) => x !== id) : [...selected, id].sort((a, b) => a - b));
+  const suggested = connections.filter((c) => c.state === "ok" && c.looks_internal && !chosen.has(c.id)).map((c) => c.id);
+  if (!connections.length) return <p className="muted-text api-key-form__hint">No connections yet.</p>;
+  return (
+    <div className="api-key-conn-picker">
+      <div className="api-key-conn-picker__list" role="group" aria-label="Connections inside the organisation">
+        {connections.map((c) => (
+          <label key={c.id} className={`api-key-conn-picker__option${c.state === "deleted" ? " extension-admin__stale-model" : ""}`}>
+            <input type="checkbox" checked={chosen.has(c.id)} disabled={disabled} onChange={() => toggle(c.id)} />
+            <span>
+              {c.name}
+              {c.provider ? <span className="muted-text"> · {c.provider}</span> : null}
+              {c.host ? <span className="muted-text"> · {c.host}</span> : null}
+              {c.state === "deleted" ? <span className="muted-text"> — no longer exists; still counts until removed</span> : null}
+              {c.looks_internal ? <span className="extension-admin__tag"> looks internal</span> : null}
+              {!c.active && c.state === "ok" ? <span className="muted-text"> (inactive)</span> : null}
+            </span>
+          </label>
+        ))}
+      </div>
+      {suggested.length ? (
+        <button type="button" className="btn btn--ghost" disabled={disabled} onClick={() => onChange([...selected, ...suggested].sort((a, b) => a - b))}>
+          Tick the {suggested.length === 1 ? "one" : String(suggested.length)} that {suggested.length === 1 ? "looks" : "look"} internal
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 export default function ExtensionSettingsCard() {
   const readOnly = useReadOnly();
   const [overview, setOverview] = useState<Overview | null>(null);
@@ -236,6 +335,7 @@ export default function ExtensionSettingsCard() {
   }, []);
 
   const models = overview?.models ?? [];
+  const connections = overview?.connections ?? [];
 
   function patch(values: Partial<Form>) {
     setForm((current) => (current ? { ...current, ...values } : current));
@@ -257,11 +357,15 @@ export default function ExtensionSettingsCard() {
   async function save(event: FormEvent) {
     event.preventDefault();
     if (!form || readOnly) return;
-    const steps = Number(form.agent_max_steps.trim() || Number.NaN);
-    if (!Number.isInteger(steps) || steps < MIN_STEPS || steps > MAX_STEPS) {
-      setNotice("");
-      setError(`Most steps per task must be a whole number from ${MIN_STEPS} to ${MAX_STEPS}.`);
-      return;
+    const numbers: Partial<Record<NumberKey, number | null>> = {};
+    for (const key of Object.keys(NUMBERS) as NumberKey[]) {
+      const checked = numberField(key, form[key]);
+      if ("error" in checked) {
+        setNotice("");
+        setError(checked.error);
+        return;
+      }
+      numbers[key] = checked.value;
     }
     setSaving(true);
     setError("");
@@ -277,7 +381,7 @@ export default function ExtensionSettingsCard() {
           read_only_sites: siteLines(form.read_only_sites),
           protected_sites: siteLines(form.protected_sites),
           internal_sites: siteLines(form.internal_sites),
-          agent_max_steps: steps,
+          ...numbers,
           agent_review_model: form.agent_review_model || null,
         }),
       });
@@ -339,6 +443,41 @@ export default function ExtensionSettingsCard() {
                 Tools grants say.
               </span>
             </span>
+          </label>
+
+          <label className="extension-admin__choice">
+            <input
+              type="checkbox"
+              checked={form.require_newest_package}
+              disabled={locked}
+              onChange={(e) => patch({ require_newest_package: e.target.checked })}
+            />
+            <span>
+              <strong>Require the newest package for the agent</strong>
+              <span className="muted-text">
+                A browser on an older package - or one that has not said which it runs - gets no agent step until
+                the person downloads the package again and loads it. Chat and page questions still work.
+              </span>
+            </span>
+          </label>
+          <label className="extension-admin__field extension-admin__field--inline">
+            <span className="settings-row__title">
+              Minimum browser version
+              <span className="settings-row__hint">
+                Chrome or Edge major version the package needs; raising it releases a new package. 116 is the
+                extension's own minimum.
+              </span>
+            </span>
+            <input
+              type="number"
+              className="settings-row__control"
+              min={NUMBERS.min_browser_version.min}
+              max={NUMBERS.min_browser_version.max}
+              step={1}
+              value={form.min_browser_version}
+              disabled={locked}
+              onChange={(e) => patch({ min_browser_version: e.target.value })}
+            />
           </label>
 
           <fieldset className="extension-admin__group" disabled={locked}>
@@ -520,6 +659,131 @@ export default function ExtensionSettingsCard() {
             ) : null}
             <span className="settings-row__hint">Required for Auto mode. Its cost is billed to the person.</span>
           </div>
+          <label className="extension-admin__choice">
+            <input
+              type="checkbox"
+              checked={form.plan_mode}
+              disabled={locked}
+              onChange={(e) => patch({ plan_mode: e.target.checked, ...(form.agent_default_mode === "plan" && !e.target.checked ? { agent_default_mode: "ask" as const } : {}) })}
+            />
+            <span>
+              <strong>Plan mode</strong>
+              <span className="muted-text">
+                The agent looks first, proposes a plan and the sites it means to work on, and once the person
+                approves it works those sites without asking at every step. The always-ask list still asks.
+              </span>
+            </span>
+          </label>
+          <label className="extension-admin__field extension-admin__field--inline">
+            <span className="settings-row__title">
+              Default mode
+              <span className="settings-row__hint">What a run starts in; each person may choose another that is on.</span>
+            </span>
+            <select
+              className="settings-row__control"
+              aria-label="Default mode"
+              value={form.agent_default_mode}
+              disabled={locked}
+              onChange={(e) => patch({ agent_default_mode: e.target.value as AgentMode })}
+            >
+              <option value="ask">Ask</option>
+              <option value="plan" disabled={!form.plan_mode}>
+                Plan
+              </option>
+              <option value="auto" disabled={!form.agent_auto_mode}>
+                Auto
+              </option>
+            </select>
+          </label>
+
+          <h3 className="settings-subsection-title">Limits per run</h3>
+          <div className="extension-admin__limits">
+            <label className="extension-admin__field extension-admin__field--inline">
+              <span className="settings-row__title">
+                Most minutes per task
+                <span className="settings-row__hint">A run past it ends at its next step.</span>
+              </span>
+              <input
+                type="number"
+                className="settings-row__control"
+                min={NUMBERS.agent_max_minutes.min}
+                max={NUMBERS.agent_max_minutes.max}
+                step={1}
+                value={form.agent_max_minutes}
+                disabled={locked}
+                onChange={(e) => patch({ agent_max_minutes: e.target.value })}
+              />
+            </label>
+            <label className="extension-admin__field extension-admin__field--inline">
+              <span className="settings-row__title">
+                Most tabs per task
+                <span className="settings-row__hint">Tabs the agent may open itself.</span>
+              </span>
+              <input
+                type="number"
+                className="settings-row__control"
+                min={NUMBERS.agent_max_tabs.min}
+                max={NUMBERS.agent_max_tabs.max}
+                step={1}
+                value={form.agent_max_tabs}
+                disabled={locked}
+                onChange={(e) => patch({ agent_max_tabs: e.target.value })}
+              />
+            </label>
+            <label className="extension-admin__field extension-admin__field--inline">
+              <span className="settings-row__title">
+                Runs per person per day
+                <span className="settings-row__hint">Empty: no limit. Counted from the runs in Admin Logs, by UTC day.</span>
+              </span>
+              <input
+                type="number"
+                className="settings-row__control"
+                min={NUMBERS.agent_runs_per_day.min}
+                max={NUMBERS.agent_runs_per_day.max}
+                step={1}
+                placeholder="No limit"
+                value={form.agent_runs_per_day}
+                disabled={locked}
+                onChange={(e) => patch({ agent_runs_per_day: e.target.value })}
+              />
+            </label>
+            <label className="extension-admin__field extension-admin__field--inline">
+              <span className="settings-row__title">
+                A screenshot&apos;s longest side
+                <span className="settings-row__hint">Pixels. Smaller is cheaper; larger reads small text better.</span>
+              </span>
+              <input
+                type="number"
+                className="settings-row__control"
+                min={NUMBERS.screenshot_max_side.min}
+                max={NUMBERS.screenshot_max_side.max}
+                step={1}
+                value={form.screenshot_max_side}
+                disabled={locked}
+                onChange={(e) => patch({ screenshot_max_side: e.target.value })}
+              />
+            </label>
+            <label className="extension-admin__field extension-admin__field--inline">
+              <span className="settings-row__title">
+                Screenshots kept
+                <span className="settings-row__hint">How many of the latest stay in the run&apos;s conversation.</span>
+              </span>
+              <input
+                type="number"
+                className="settings-row__control"
+                min={NUMBERS.screenshots_kept.min}
+                max={NUMBERS.screenshots_kept.max}
+                step={1}
+                value={form.screenshots_kept}
+                disabled={locked}
+                onChange={(e) => patch({ screenshots_kept: e.target.value })}
+              />
+            </label>
+          </div>
+          <p className="settings-row__hint">
+            The cursor, the coloured border and Chrome&apos;s debugging bar while the agent works, the toolbar badge,
+            and the pause when a person takes over the page are always on: nothing here can hide a run.
+          </p>
 
           <h3 className="settings-subsection-title">Full control: data location</h3>
           <label className="extension-admin__field">
@@ -550,6 +814,35 @@ export default function ExtensionSettingsCard() {
               screenshots.
             </span>
           </div>
+          <div className="extension-admin__field">
+            <span className="settings-row__title">Connections inside the organisation</span>
+            <ConnectionChecklist
+              connections={connections}
+              selected={form.internal_connections}
+              disabled={locked}
+              onChange={(next) => patch({ internal_connections: next })}
+            />
+            <span className="settings-row__hint">
+              Every model on a ticked connection may see internal sites, like a model chosen above. A connection whose
+              address is private (10.x, 172.16-31.x, 192.168.x, localhost, a single-word intranet name) is marked as
+              one that looks internal; tick it only if its models run inside the organisation.
+            </span>
+          </div>
+          <label className="extension-admin__choice">
+            <input
+              type="checkbox"
+              checked={form.external_screenshots}
+              disabled={locked}
+              onChange={(e) => patch({ external_screenshots: e.target.checked })}
+            />
+            <span>
+              <strong>Screenshots of other sites may go to models outside the organisation</strong>
+              <span className="muted-text">
+                Turned off, every screenshot goes only to models inside the organisation (the connections ticked and
+                the models chosen above). Without any of those, nothing is inside and this changes nothing.
+              </span>
+            </span>
+          </label>
           <div className="extension-admin__field">
             <span className="settings-row__title">Models that may see screenshots</span>
             <ModelChecklist
@@ -587,6 +880,27 @@ export default function ExtensionSettingsCard() {
               </label>
             ))}
           </div>
+
+          <h3 className="settings-subsection-title">Privacy and audit</h3>
+          <label className="extension-admin__choice">
+            <input type="checkbox" checked={form.save_runs} disabled={locked} onChange={(e) => patch({ save_runs: e.target.checked })} />
+            <span>
+              <strong>Save finished runs to the person&apos;s chat history</strong>
+              <span className="muted-text">The task, the answer and the list of steps - never screenshots or page text.</span>
+            </span>
+          </label>
+          <label className="extension-admin__choice">
+            <input type="checkbox" checked={form.private_runs} disabled={locked} onChange={(e) => patch({ private_runs: e.target.checked })} />
+            <span>
+              <strong>People may mark a run private</strong>
+              <span className="muted-text">A private run is not saved to their history. Its steps still go to Admin Logs.</span>
+            </span>
+          </label>
+          <p className="settings-row__hint">
+            Never stored, whatever is set here: screenshots, page text, what the agent typed, and code. Admin Logs
+            holds the site (the host, never a page&apos;s full address), the action and how it ended; how long the
+            rows stay is the <Link to="/admin/retention-policy">retention policy</Link>.
+          </p>
 
           {readOnly ? null : (
             <div className="dialog-actions">

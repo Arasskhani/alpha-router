@@ -128,10 +128,11 @@ describe("the docs", () => {
     ]) {
       expect(html).toContain(term);
     }
-    const card = "src/components/admin/ExtensionSettingsCard.tsx";
-    expect(html).toContain(
-      `${constantIn(card, "MIN_STEPS")} to ${constantIn(card, "MAX_STEPS")}`,
-    );
+    // The steps' range, as the card's own table of limits has it.
+    const card = readFileSync(join(__dirname, "..", "src/components/admin/ExtensionSettingsCard.tsx"), "utf8");
+    const steps = /agent_max_steps: \{ min: (\d+), max: (\d+)/.exec(card);
+    if (!steps) throw new Error("the card's step limits were not found");
+    expect(html).toContain(`${steps[1]} to ${steps[2]}`);
     expect(sectionHtml(docSections, "admin-chat-tools")).toContain(
       'href="#admin-browser-extension"',
     );

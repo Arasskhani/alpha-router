@@ -597,6 +597,12 @@ class TestMe:
             "page_content_models": [],
             "agent_models": [],
             "agent_max_steps": 25,
+            "agent_max_minutes": 20,
+            "agent_max_tabs": 10,
+            "agent_modes": ["ask", "plan"],
+            "agent_default_mode": "plan",
+            "screenshot_max_side": 1280,
+            "screenshots_kept": 3,
             "full_control": False,
             "approvals": {
                 "send": True,
@@ -607,7 +613,12 @@ class TestMe:
                 "uploads": True,
                 "dialogs": True,
             },
-            "data": {"internal_sites": [], "internal_models": None, "screenshot_models": None},
+            "data": {
+                "internal_sites": [],
+                "internal_models": None,
+                "screenshot_models": None,
+                "external_screenshots": True,
+            },
         }
 
     async def test_the_policy_carries_the_full_control_rules(self, client, browser, db_session, user, redirect):
@@ -629,6 +640,51 @@ class TestMe:
         assert policy["approvals"]["send"] is False
         assert policy["approvals"]["downloads"] is False
         assert policy["approvals"]["delete"] is True
+
+    async def test_the_policy_carries_the_limits_and_the_effective_data_lists(
+        self, client, browser, db_session, user, redirect
+    ):
+        from app.models.connection import Connection
+        from app.models.model_catalog import AIModel
+
+        connection = Connection(name="ollama-box", provider_type="custom", api_key_encrypted="x", is_active=True)
+        db_session.add(connection)
+        await db_session.flush()
+        inside = AIModel(
+            connection_id=connection.id,
+            external_id="llama",
+            display_name="llama",
+            provider_type="custom",
+            is_enabled=True,
+        )
+        db_session.add(inside)
+        await db_session.flush()
+        await save_extension_settings(
+            db_session,
+            ExtensionSettings(
+                internal_sites=("*.corp.example",),
+                internal_connections=(connection.id,),
+                internal_models=("model::77",),
+                screenshot_models=("model::77", "model::78"),
+                external_screenshots=False,
+                plan_mode=False,
+                agent_default_mode="ask",
+                agent_max_minutes=7,
+                agent_max_tabs=4,
+                screenshot_max_side=1000,
+                screenshots_kept=2,
+            ),
+        )
+        await db_session.commit()
+        tokens = await _connect(client, browser, user, redirect)
+        policy = (await browser.get("/api/extension/me", headers=_bearer(tokens["access_token"]))).json()["policy"]
+        assert (policy["agent_max_minutes"], policy["agent_max_tabs"]) == (7, 4)
+        assert (policy["agent_modes"], policy["agent_default_mode"]) == (["ask"], "ask")
+        assert (policy["screenshot_max_side"], policy["screenshots_kept"]) == (1000, 2)
+        # The model on the connection inside the organisation counts as internal; screenshots may not leave it.
+        assert policy["data"]["internal_models"] == sorted([f"model::{inside.id}", "model::77"])
+        assert policy["data"]["screenshot_models"] == ["model::77"]
+        assert policy["data"]["external_screenshots"] is False
 
     async def test_the_organisation_switch_turns_everything_off(self, client, browser, db_session, user, redirect):
         tokens = await _connect(client, browser, user, redirect)

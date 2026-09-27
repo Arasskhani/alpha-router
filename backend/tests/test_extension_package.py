@@ -139,6 +139,12 @@ class TestTheFingerprint:
             **settings, extra_permissions=["downloads", "debugger"]
         )
 
+    def test_a_raised_browser_version_changes_the_package_and_the_key_and_none_keeps_it(self):
+        settings = {"origin": "https://ai.example.com", "site_access": "per_site", "server_name": "Alpharouter"}
+        assert package_settings_key(**settings, min_browser_version=142) != package_settings_key(**settings)
+        assert package_settings_key(**settings, min_browser_version=None) == package_settings_key(**settings)
+        assert package_fingerprint(self.FILES, **settings, min_browser_version=142) != self._fp()
+
 
 class TestTheOrigin:
     @pytest.mark.parametrize(
@@ -164,7 +170,7 @@ class TestTheOrigin:
 
 
 class TestTheManifest:
-    def _manifest(self, site_access: str, extra_permissions=()) -> dict:
+    def _manifest(self, site_access: str, extra_permissions=(), min_browser_version=None) -> dict:
         return build_manifest(
             TEMPLATE,
             version="1.0.0.7",
@@ -172,7 +178,13 @@ class TestTheManifest:
             origin="https://ai.example.com",
             site_access=site_access,
             extra_permissions=extra_permissions,
+            min_browser_version=min_browser_version,
         )
+
+    def test_a_raised_minimum_browser_version_goes_into_the_manifest(self):
+        # Not raised: the template's own (this one has none) is left as it is.
+        assert "minimum_chrome_version" not in self._manifest("per_site")
+        assert self._manifest("per_site", min_browser_version=142)["minimum_chrome_version"] == "142"
 
     def test_it_is_this_servers_extension(self):
         manifest = self._manifest("per_site")

@@ -126,6 +126,16 @@ describe("the agent's models", () => {
     expect([...host.querySelectorAll('[role="radio"]')].map((b) => b.textContent)).toEqual(["Ask", "Plan", "Auto"]);
   });
 
+  it("offers only the modes the administrator left on, and starts in the one they chose", async () => {
+    await render({ ...ME, policy: { ...ME.policy!, agent_modes: ["ask"], agent_default_mode: "ask" } });
+    expect([...host.querySelectorAll('[role="radio"]')].map((b) => b.textContent)).toEqual(["Ask"]);
+    act(() => root.unmount());
+    root = createRoot(host);
+    await render({ ...ME, policy: { ...ME.policy!, agent_modes: ["ask", "plan"], agent_default_mode: "plan" } });
+    const on = [...host.querySelectorAll('[role="radio"]')].find((b) => b.getAttribute("aria-checked") === "true");
+    expect(on?.textContent).toBe("Plan");
+  });
+
   it("offers the plan tool to the model when Plan mode is chosen", async () => {
     replies = [toolFrame([{ id: "c1", name: "done", args: { summary: "ok" } }])];
     await render();

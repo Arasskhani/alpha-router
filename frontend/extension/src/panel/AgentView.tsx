@@ -20,9 +20,18 @@ import { readablePage } from "../lib/sites";
 import { DisconnectedError, TemporaryError } from "../lib/tokens";
 import { useActivePage, useSiteAccess } from "./activePage";
 import { chooseDriver } from "../lib/driver";
-import { DEFAULT_MAX_SIDE } from "../lib/coords";
+import { clampMaxSide } from "../lib/coords";
 import { createAgentBrowser, type PanelBrowser } from "./agentBrowser";
-import { runAgent, type AgentDeps, type AgentEventReport, type ApprovalRequest, type ControlDriver, type RunOutcome, type StepView } from "./agentRun";
+import {
+  runAgent,
+  SCREENSHOTS_KEPT,
+  type AgentDeps,
+  type AgentEventReport,
+  type ApprovalRequest,
+  type ControlDriver,
+  type RunOutcome,
+  type StepView,
+} from "./agentRun";
 import { agentToolsFor } from "./agentTools";
 import { createPauseGate, type PauseControl } from "./pauseGate";
 import { pickModel, textModels, type ChatModel } from "./conversation";
@@ -31,6 +40,8 @@ import type { Me } from "./types";
 const MODEL_KEY = "alpharouter.agentModel";
 const MODE_KEY = "alpharouter.agentMode";
 const DEFAULT_MAX_STEPS = 25;
+const DEFAULT_MAX_MINUTES = 20;
+const DEFAULT_MAX_TABS = 10;
 /** Events go to the server in batches of this many, and whatever is left when a run ends. */
 const EVENT_BATCH = 10;
 /** Events kept while the server cannot take them: the newest this many. */
@@ -109,6 +120,7 @@ const OUTCOME_LABEL: Record<RunOutcome, string> = {
   done: "Finished",
   stopped: "Stopped",
   max_steps: "Step limit reached",
+  max_minutes: "Time limit reached",
   errors: "Stopped after errors",
   failed: "Could not go on",
 };
@@ -150,6 +162,21 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
   const siteAccess = useSiteAccess(target?.pattern ?? null);
   const autoAllowed = me.features.auto_mode;
   const maxSteps = me.policy?.agent_max_steps ?? DEFAULT_MAX_STEPS;
+  /** The modes on offer: Ask always; Plan unless the administrator turned it off; Auto only when turned on. */
+  const modes = useMemo<AgentMode[]>(() => {
+    const offered = me.policy?.agent_modes;
+    const plan = !offered || offered.includes("plan");
+    return ["ask", ...(plan ? (["plan"] as const) : []), ...(autoAllowed ? (["auto"] as const) : [])];
+  }, [me, autoAllowed]);
+  /** What a run starts in: the administrator's choice when it is on offer; Ask otherwise (and from a server that has no such setting). */
+  const defaultMode = useMemo<AgentMode>(() => {
+    const wanted = me.policy?.agent_default_mode;
+    return (wanted === "plan" || wanted === "auto" || wanted === "ask") && modes.includes(wanted) ? wanted : "ask";
+  }, [me, modes]);
+  const maxMinutes = me.policy?.agent_max_minutes ?? DEFAULT_MAX_MINUTES;
+  const maxTabs = me.policy?.agent_max_tabs ?? DEFAULT_MAX_TABS;
+  const screenshotsKept = me.policy?.screenshots_kept ?? SCREENSHOTS_KEPT;
+  const maxSide = clampMaxSide(me.policy?.screenshot_max_side);
   const rules = useMemo<PolicyContext>(() => {
     // Both addresses: the server this copy talks to, and the one the server gives, if they differ.
     const own = [hostOf(server), hostOf(me.server.url)].filter((host): host is string => host !== null);
@@ -185,8 +212,9 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
         setModels(usable);
         setModelsFailed(false);
         setModelId(pickModel(usable, typeof stored[MODEL_KEY] === "string" ? stored[MODEL_KEY] : null)?.id ?? "");
+        // The person's last choice, when it is still on offer; else what the administrator set.
         const saved = stored[MODE_KEY];
-        setMode(saved === "plan" ? "plan" : autoAllowed && saved === "auto" ? "auto" : "ask");
+        setMode(typeof saved === "string" && (modes as string[]).includes(saved) ? (saved as AgentMode) : defaultMode);
       })
       .catch((err) => {
         if (!active) return;
@@ -197,7 +225,7 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
     return () => {
       active = false;
     };
-  }, [me, autoAllowed, modelLoads]);
+  }, [me, modes, defaultMode, modelLoads]);
 
   // Stop, a take-over and Resume from a banner the run put on a page: only from our own script in one of those tabs, for this run.
   useEffect(() => {
@@ -375,7 +403,7 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
     const abort = new AbortController();
     controller.current = abort;
     runId.current = run;
-    browser.current = createAgentBrowser({ startTabId: activePage?.tabId ?? null, runId: run });
+    browser.current = createAgentBrowser({ startTabId: activePage?.tabId ?? null, runId: run, maxTabs });
     const pauseGate = createPauseGate(abort.signal);
     pauseGate.onChange(setPaused);
     gate.current = pauseGate;
@@ -395,7 +423,7 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
         if (!readsImages) {
           append({ kind: "text", id: `${run}-driver`, text: "Working without full control: this model does not read images. Choose a vision model for a real mouse and screenshots." });
         } else {
-          const choice = await chooseDriver(activePage.tabId, { fullControl: true, maxSide: DEFAULT_MAX_SIDE });
+          const choice = await chooseDriver(activePage.tabId, { fullControl: true, maxSide });
           if (choice.mode === "cdp") {
             driver = choice.driver;
             stopDriver = () => choice.driver.stop();
@@ -409,7 +437,7 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
         }
       }
       const result = await runAgent(
-        { task, mode, maxSteps, rules, runId: run, nonce: randomHex(6), modelRef: modelId },
+        { task, mode, maxSteps, maxMinutes, screenshotsKept, rules, runId: run, nonce: randomHex(6), modelRef: modelId },
         deps(modelId, driver, startedAt),
         abort.signal,
       );
@@ -524,7 +552,7 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
           </button>
         )}
         <div className="agent__modes" role="radiogroup" aria-label="Mode">
-          {(["ask", "plan", ...(autoAllowed ? (["auto"] as const) : [])] as const).map((value) => (
+          {modes.map((value) => (
             <button
               key={value}
               type="button"

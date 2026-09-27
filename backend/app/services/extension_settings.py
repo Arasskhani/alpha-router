@@ -34,10 +34,13 @@ import re
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any, cast
 
+from urllib.parse import urlsplit
+
 import idna
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.connection import Connection
 from app.models.model_catalog import AIModel
 from app.models.system import SystemSetting
 from app.services.extension_package import SITE_ACCESS_MODES, SITE_ACCESS_PER_SITE
@@ -53,6 +56,33 @@ MIN_MAX_STEPS = 5
 MAX_MAX_STEPS = 100
 MAX_SITE_PATTERNS = 200
 MAX_MODEL_REFS = 500
+#: A run's time limit, in minutes.
+DEFAULT_MAX_MINUTES = 20
+MIN_MAX_MINUTES = 1
+MAX_MAX_MINUTES = 180
+#: Tabs one run may open.
+DEFAULT_MAX_TABS = 10
+MIN_MAX_TABS = 1
+MAX_MAX_TABS = 50
+#: Runs one person may start in a day (None: no limit).
+MAX_RUNS_PER_DAY = 1000
+#: A screenshot's longest side, in pixels, and how many of the latest stay in the conversation.
+DEFAULT_SCREENSHOT_SIDE = 1280
+MIN_SCREENSHOT_SIDE = 800
+MAX_SCREENSHOT_SIDE = 1600
+DEFAULT_SCREENSHOTS_KEPT = 3
+MIN_SCREENSHOTS_KEPT = 1
+MAX_SCREENSHOTS_KEPT = 5
+#: The manifest's minimum_chrome_version: the template's own, and how far an admin may raise it.
+TEMPLATE_BROWSER_VERSION = 116
+MAX_BROWSER_VERSION = 999
+MAX_INTERNAL_CONNECTIONS = 500
+
+#: The agent's modes: Ask (every action waits for the person), Plan (a plan is
+#: approved once, then the agent works the plan's sites), Auto (a review model
+#: checks each action).
+AGENT_MODES = ("ask", "plan", "auto")
+DEFAULT_AGENT_MODE = "plan"
 
 #: A host label as browsers accept it: underscores included (intranet hosts have them).
 _LABEL_RE = re.compile(r"^(?!-)[a-z0-9_-]{1,63}(?<!-)$")
@@ -107,6 +137,28 @@ class ExtensionSettings:
     #: An emergency stop: every agent run that began before this moment ends at its
     #: next step. ISO-8601 UTC, or None when no stop has been asked for.
     stop_runs_before: str | None = None
+    #: The agent works only from a browser that runs the package this server hands out now.
+    require_newest_package: bool = False
+    #: The manifest's minimum_chrome_version, when raised above the template's.
+    min_browser_version: int = TEMPLATE_BROWSER_VERSION
+    #: Connections inside the organisation (their ids): their models may see internal sites.
+    internal_connections: tuple[int, ...] = field(default_factory=tuple)
+    #: Whether screenshots of sites that are not internal may go to models outside the organisation.
+    external_screenshots: bool = True
+    #: Plan mode offered to people (Ask is always offered; Auto is ``agent_auto_mode``).
+    plan_mode: bool = True
+    #: The mode a run starts in unless the person chose another.
+    agent_default_mode: str = DEFAULT_AGENT_MODE
+    #: A run's limits: minutes, tabs it may open, and runs per person per day (None: no limit).
+    agent_max_minutes: int = DEFAULT_MAX_MINUTES
+    agent_max_tabs: int = DEFAULT_MAX_TABS
+    agent_runs_per_day: int | None = None
+    #: Screenshots: the longest side, and how many of the latest stay in the conversation.
+    screenshot_max_side: int = DEFAULT_SCREENSHOT_SIDE
+    screenshots_kept: int = DEFAULT_SCREENSHOTS_KEPT
+    #: Finished runs saved to the person's chat history; and whether a run may be private (not saved).
+    save_runs: bool = True
+    private_runs: bool = True
 
     def to_json(self) -> dict[str, Any]:
         data = asdict(self)
@@ -121,9 +173,18 @@ class ExtensionSettings:
             "internal_models",
             "screenshot_models",
             "relaxed_approvals",
+            "internal_connections",
         ):
             data[key] = list(data[key])
         return data
+
+    def modes_json(self) -> list[str]:
+        """The modes people may choose, in the order the panel offers them."""
+        return [
+            mode
+            for mode in AGENT_MODES
+            if mode == "ask" or (mode == "plan" and self.plan_mode) or (mode == "auto" and self.agent_auto_mode)
+        ]
 
     def approvals_json(self) -> dict[str, bool]:
         """Each relaxable case as the extension reads it: ``true`` when it still asks."""
@@ -233,20 +294,79 @@ def page_content_allowed(settings: ExtensionSettings, model_ref: str | None) -> 
     return not settings.page_content_models or (model_ref is not None and model_ref in settings.page_content_models)
 
 
-def screenshot_allowed(settings: ExtensionSettings, model_ref: str | None, host: str | None) -> bool:
+def internal_site(settings: ExtensionSettings, host: str | None) -> bool:
+    """Whether ``host`` is one of the organisation's own sites."""
+    return bool(host) and any(host_matches(host or "", pattern) for pattern in settings.internal_sites)
+
+
+def inside_organisation(settings: ExtensionSettings, model_ref: str | None, connection_id: int | None) -> bool:
+    """Whether the model may see the organisation's own data: on a connection inside
+    the organisation, or on the internal-models list. With neither list set, any model.
+    A model that cannot be named is never allowed once a list is set.
+    """
+    if not settings.internal_models and not settings.internal_connections:
+        return True
+    if connection_id is not None and int(connection_id) in settings.internal_connections:
+        return True
+    return model_ref is not None and model_ref in settings.internal_models
+
+
+def screenshot_allowed(
+    settings: ExtensionSettings, model_ref: str | None, host: str | None, *, connection_id: int | None = None
+) -> bool:
     """Whether a screenshot of ``host`` may go to the model ``model_ref`` names.
 
-    Two gates, both from the admin's data-location settings: a model must be
-    on the screenshot list (empty: any), and a screenshot of an internal site
-    must go to a model on the internal list (empty: any). A model that cannot
-    be named is never allowed when a list is set. ``host`` None (no web page)
-    is treated as not internal.
+    Three gates, all from the admin's data-location settings: a model must be
+    on the screenshot list (empty: any); a screenshot of an internal site must
+    go to a model inside the organisation (``inside_organisation``); and, when
+    screenshots of other sites may not leave the organisation, so must any
+    screenshot at all. ``host`` None (no web page) is treated as not internal.
     """
     if settings.screenshot_models and (model_ref is None or model_ref not in settings.screenshot_models):
         return False
-    if host and any(host_matches(host, pattern) for pattern in settings.internal_sites):
-        return not settings.internal_models or (model_ref is not None and model_ref in settings.internal_models)
+    if internal_site(settings, host) or not settings.external_screenshots:
+        return inside_organisation(settings, model_ref, connection_id)
     return True
+
+
+async def inside_model_refs(db: AsyncSession, settings: ExtensionSettings) -> set[str] | None:
+    """The models inside the organisation, as ``model::<id>`` refs: the internal list
+    plus every model on a connection inside the organisation. None when neither list
+    is set (any model).
+    """
+    if not settings.internal_models and not settings.internal_connections:
+        return None
+    refs = set(settings.internal_models)
+    if settings.internal_connections:
+        rows = await db.execute(select(AIModel.id).where(AIModel.connection_id.in_(settings.internal_connections)))
+        refs.update(f"model::{int(model_id)}" for model_id in rows.scalars().all())
+    return refs
+
+
+async def data_policy(db: AsyncSession, settings: ExtensionSettings) -> dict[str, Any]:
+    """The data-location rules as the extension applies them, with the lists made effective:
+    which models may see internal sites, and which may see screenshots at all (null: any).
+    """
+    inside = await inside_model_refs(db, settings)
+    screenshots: set[str] | None = set(settings.screenshot_models) or None
+    # Screenshots that may not leave the organisation go only to the models inside it.
+    if not settings.external_screenshots and inside is not None:
+        screenshots = inside if screenshots is None else screenshots & inside
+    return {
+        "internal_sites": list(settings.internal_sites),
+        "internal_models": sorted(inside) if inside is not None else None,
+        "screenshot_models": sorted(screenshots) if screenshots is not None else None,
+        "external_screenshots": settings.external_screenshots,
+    }
+
+
+def raised_browser_version(settings: ExtensionSettings, template: dict[str, Any] | None = None) -> int | None:
+    """The minimum browser version to put in the manifest, or None to leave the template's."""
+    base = TEMPLATE_BROWSER_VERSION
+    raw = (template or {}).get("minimum_chrome_version")
+    if isinstance(raw, str) and raw.split(".")[0].isdigit():
+        base = int(raw.split(".")[0])
+    return int(settings.min_browser_version) if int(settings.min_browser_version) > base else None
 
 
 def _timestamp(value: Any) -> str | None:
@@ -270,6 +390,18 @@ def _strings(value: Any) -> tuple[str, ...]:
     if not isinstance(value, list):
         return ()
     return tuple(str(item) for item in value if isinstance(item, str))
+
+
+def _ints(value: Any) -> tuple[int, ...]:
+    if not isinstance(value, list):
+        return ()
+    return tuple(
+        sorted({int(item) for item in value if isinstance(item, int) and not isinstance(item, bool) and item > 0})
+    )
+
+
+def _bounded(value: Any, low: int, high: int, default: int) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) and low <= value <= high else default
 
 
 def parse_settings(raw: str | None) -> ExtensionSettings:
@@ -310,6 +442,33 @@ def parse_settings(raw: str | None) -> ExtensionSettings:
         screenshot_models=_strings(data.get("screenshot_models")),
         relaxed_approvals=tuple(key for key in _strings(data.get("relaxed_approvals")) if key in APPROVAL_KEYS),
         stop_runs_before=_timestamp(data.get("stop_runs_before")),
+        require_newest_package=bool(data.get("require_newest_package")),
+        min_browser_version=_bounded(
+            data.get("min_browser_version"), TEMPLATE_BROWSER_VERSION, MAX_BROWSER_VERSION, defaults.min_browser_version
+        ),
+        internal_connections=_ints(data.get("internal_connections")),
+        external_screenshots=bool(data.get("external_screenshots", True)),
+        plan_mode=bool(data.get("plan_mode", True)),
+        agent_default_mode=(
+            data["agent_default_mode"] if data.get("agent_default_mode") in AGENT_MODES else defaults.agent_default_mode
+        ),
+        agent_max_minutes=_bounded(
+            data.get("agent_max_minutes"), MIN_MAX_MINUTES, MAX_MAX_MINUTES, defaults.agent_max_minutes
+        ),
+        agent_max_tabs=_bounded(data.get("agent_max_tabs"), MIN_MAX_TABS, MAX_MAX_TABS, defaults.agent_max_tabs),
+        agent_runs_per_day=(
+            data["agent_runs_per_day"]
+            if isinstance(data.get("agent_runs_per_day"), int) and 1 <= data["agent_runs_per_day"] <= MAX_RUNS_PER_DAY
+            else None
+        ),
+        screenshot_max_side=_bounded(
+            data.get("screenshot_max_side"), MIN_SCREENSHOT_SIDE, MAX_SCREENSHOT_SIDE, defaults.screenshot_max_side
+        ),
+        screenshots_kept=_bounded(
+            data.get("screenshots_kept"), MIN_SCREENSHOTS_KEPT, MAX_SCREENSHOTS_KEPT, defaults.screenshots_kept
+        ),
+        save_runs=bool(data.get("save_runs", True)),
+        private_runs=bool(data.get("private_runs", True)),
     )
 
 
@@ -372,6 +531,24 @@ async def _model_list(
     return tuple(f"model::{i}" for i in sorted(ids))
 
 
+async def _connection_list(db: AsyncSession, values: list[int]) -> tuple[int, ...]:
+    """Connection ids, each of which must exist; raises ExtensionSettingsError."""
+    if len(values) > MAX_INTERNAL_CONNECTIONS:
+        raise ExtensionSettingsError(f"Connections inside the organisation: at most {MAX_INTERNAL_CONNECTIONS}.")
+    ids: set[int] = set()
+    for value in values:
+        if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= _MAX_MODEL_ID:
+            raise ExtensionSettingsError(f"Connections inside the organisation: {value!r} is not a connection.")
+        ids.add(value)
+    if not ids:
+        return ()
+    found = set((await db.execute(select(Connection.id).where(Connection.id.in_(ids)))).scalars().all())
+    missing = sorted(ids - {int(i) for i in found})
+    if missing:
+        raise ExtensionSettingsError(f"Connections inside the organisation: connection {missing[0]} does not exist.")
+    return tuple(sorted(ids))
+
+
 #: What the settings page says about a model it lists.
 MODEL_OK = "ok"
 MODEL_DISABLED = "disabled"
@@ -426,13 +603,88 @@ async def model_choices(db: AsyncSession, settings: ExtensionSettings) -> list[d
                 "label": str(row.display_name or row.external_id or f"Model {model_id}"),
                 "provider": row.provider_type,
                 "state": state,
+                "connection_id": int(row.connection_id) if row.connection_id is not None else None,
             }
         )
     choices.extend(
-        {"ref": f"model::{model_id}", "label": f"Model {model_id}", "provider": None, "state": MODEL_DELETED}
+        {
+            "ref": f"model::{model_id}",
+            "label": f"Model {model_id}",
+            "provider": None,
+            "state": MODEL_DELETED,
+            "connection_id": None,
+        }
         for model_id in sorted(named - set(by_id))
     )
     choices.sort(key=lambda choice: (choice["label"].casefold(), choice["ref"]))
+    return choices
+
+
+def looks_internal(base_url: str | None) -> bool:
+    """Whether a connection's address looks like the organisation's own: a private
+    or loopback address, localhost, or a single-label intranet name. A suggestion
+    for the administrator to confirm, never a decision.
+    """
+    try:
+        host = (urlsplit((base_url or "").strip()).hostname or "").strip("[]").lower()
+    except ValueError:
+        return False
+    if not host:
+        return False
+    if host == "localhost" or host.endswith(".localhost") or host.endswith(".local") or host.endswith(".internal"):
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return "." not in host
+    return ip.is_private or ip.is_loopback or ip.is_link_local
+
+
+async def connection_choices(db: AsyncSession, settings: ExtensionSettings) -> list[dict[str, Any]]:
+    """The connections the settings page offers to tick as inside the organisation.
+
+    Every connection, with what it is called, where it points, and whether its
+    address looks internal; a ticked one that no longer exists is listed too,
+    so it can be seen and removed.
+    """
+    rows = (
+        (await db.execute(select(Connection).order_by(Connection.name, Connection.id).limit(ADMIN_LIST_HARD_CAP)))
+        .scalars()
+        .all()
+    )
+    choices: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    for row in rows:
+        seen.add(int(row.id))
+        host = ""
+        try:
+            host = urlsplit(str(row.base_url or "")).hostname or ""
+        except ValueError:
+            host = ""
+        choices.append(
+            {
+                "id": int(row.id),
+                "name": str(row.name),
+                "provider": row.provider_type,
+                "host": host,
+                "active": bool(row.is_active),
+                "looks_internal": looks_internal(cast("str | None", row.base_url)),
+                "state": "ok",
+            }
+        )
+    choices.extend(
+        {
+            "id": cid,
+            "name": f"Connection {cid}",
+            "provider": None,
+            "host": "",
+            "active": False,
+            "looks_internal": False,
+            "state": "deleted",
+        }
+        for cid in settings.internal_connections
+        if cid not in seen
+    )
     return choices
 
 
@@ -456,12 +708,49 @@ async def validated_update(
     internal_models: list[str] | None = None,
     screenshot_models: list[str] | None = None,
     relaxed_approvals: list[str] | None = None,
+    require_newest_package: bool = False,
+    min_browser_version: int = TEMPLATE_BROWSER_VERSION,
+    internal_connections: list[int] | None = None,
+    external_screenshots: bool = True,
+    plan_mode: bool = True,
+    agent_default_mode: str = DEFAULT_AGENT_MODE,
+    agent_max_minutes: int = DEFAULT_MAX_MINUTES,
+    agent_max_tabs: int = DEFAULT_MAX_TABS,
+    agent_runs_per_day: int | None = None,
+    screenshot_max_side: int = DEFAULT_SCREENSHOT_SIDE,
+    screenshots_kept: int = DEFAULT_SCREENSHOTS_KEPT,
+    save_runs: bool = True,
+    private_runs: bool = True,
 ) -> ExtensionSettings:
     """The settings an administrator asked for, checked; raises ExtensionSettingsError."""
     if site_access not in SITE_ACCESS_MODES:
         raise ExtensionSettingsError("Site access must be per site or all sites.")
     if not MIN_MAX_STEPS <= int(agent_max_steps) <= MAX_MAX_STEPS:
         raise ExtensionSettingsError(f"Agent steps must be between {MIN_MAX_STEPS} and {MAX_MAX_STEPS}.")
+    if not MIN_MAX_MINUTES <= int(agent_max_minutes) <= MAX_MAX_MINUTES:
+        raise ExtensionSettingsError(f"Run time must be between {MIN_MAX_MINUTES} and {MAX_MAX_MINUTES} minutes.")
+    if not MIN_MAX_TABS <= int(agent_max_tabs) <= MAX_MAX_TABS:
+        raise ExtensionSettingsError(f"Tabs per run must be between {MIN_MAX_TABS} and {MAX_MAX_TABS}.")
+    if agent_runs_per_day is not None and not 1 <= int(agent_runs_per_day) <= MAX_RUNS_PER_DAY:
+        raise ExtensionSettingsError(f"Runs per person per day must be between 1 and {MAX_RUNS_PER_DAY}, or empty.")
+    if not MIN_SCREENSHOT_SIDE <= int(screenshot_max_side) <= MAX_SCREENSHOT_SIDE:
+        raise ExtensionSettingsError(
+            f"A screenshot's longest side must be between {MIN_SCREENSHOT_SIDE} and {MAX_SCREENSHOT_SIDE} pixels."
+        )
+    if not MIN_SCREENSHOTS_KEPT <= int(screenshots_kept) <= MAX_SCREENSHOTS_KEPT:
+        raise ExtensionSettingsError(
+            f"Screenshots kept must be between {MIN_SCREENSHOTS_KEPT} and {MAX_SCREENSHOTS_KEPT}."
+        )
+    if not TEMPLATE_BROWSER_VERSION <= int(min_browser_version) <= MAX_BROWSER_VERSION:
+        raise ExtensionSettingsError(
+            f"The minimum browser version must be between {TEMPLATE_BROWSER_VERSION} and {MAX_BROWSER_VERSION}."
+        )
+    if agent_default_mode not in AGENT_MODES:
+        raise ExtensionSettingsError("The default mode must be ask, plan or auto.")
+    if agent_default_mode == "plan" and not plan_mode:
+        raise ExtensionSettingsError("Plan cannot be the default mode while Plan mode is turned off.")
+    if agent_default_mode == "auto" and not agent_auto_mode:
+        raise ExtensionSettingsError("Auto cannot be the default mode while Auto mode is turned off.")
     review = (agent_review_model or "").strip() or None
     # The review model has to answer for every action in Auto mode: it must work today.
     review_list = await _model_list(db, "Review model", [review] if review else [], enabled_only=True)
@@ -488,6 +777,19 @@ async def validated_update(
         internal_models=await _model_list(db, "Models for internal sites", internal_models or []),
         screenshot_models=await _model_list(db, "Models allowed screenshots", screenshot_models or []),
         relaxed_approvals=tuple(key for key in APPROVAL_KEYS if key in set(relaxed_approvals or [])),
+        require_newest_package=bool(require_newest_package),
+        min_browser_version=int(min_browser_version),
+        internal_connections=await _connection_list(db, internal_connections or []),
+        external_screenshots=bool(external_screenshots),
+        plan_mode=bool(plan_mode),
+        agent_default_mode=agent_default_mode,
+        agent_max_minutes=int(agent_max_minutes),
+        agent_max_tabs=int(agent_max_tabs),
+        agent_runs_per_day=int(agent_runs_per_day) if agent_runs_per_day is not None else None,
+        screenshot_max_side=int(screenshot_max_side),
+        screenshots_kept=int(screenshots_kept),
+        save_runs=bool(save_runs),
+        private_runs=bool(private_runs),
     )
     # The reviewer reads what the agent found on pages: element names, the text it would type.
     if updated.agent_auto_mode and not page_content_allowed(updated, updated.agent_review_model):

@@ -43,6 +43,13 @@ from app.services.extension_page_context import (
     page_share_events,
     page_shares,
 )
+from app.services.extension_distribution import ExtensionUnavailable, current_build
+from app.services.extension_run_limits import (
+    check_daily_runs,
+    check_data_location,
+    check_package_version,
+    check_run_time,
+)
 from app.services.extension_settings import ExtensionSettings, load_extension_settings, parse_timestamp
 from app.services.attachment_extract import processed_attachment_payload_async
 from app.services.attachment_from_media_service import attachments_from_existing_media
@@ -330,6 +337,17 @@ def _extension_session_id(request: Request) -> str | None:
     return getattr(request.state, "extension_session_id", None)
 
 
+async def _package_version(db: AsyncSession, request: Request, settings: ExtensionSettings) -> str | None:
+    """The package this server hands out now, when the settings need it compared; else None."""
+    if not settings.require_newest_package:
+        return None
+    try:
+        build = await current_build(db, request_host=request.url.hostname, client_ip=resolve_client_ip(request))
+    except ExtensionUnavailable:
+        return None
+    return build.version
+
+
 def _client_app(request: Request) -> str:
     return EXTENSION_CLIENT_APP if _extension_session_id(request) else CHAT_CLIENT_APP
 
@@ -505,7 +523,15 @@ async def _browser_agent_tools(
     settings = await load_extension_settings(db)
     check_runs_stopped(settings, body.browser_run_started_at)
     try:
+        # The run's limits: its time, the person's runs today, and the package the browser runs.
+        check_run_time(settings, body.browser_run_started_at)
+        await check_daily_runs(db, settings, int(user.id))
+        await check_package_version(
+            db, settings, _extension_session_id(request), await _package_version(db, request, settings)
+        )
         model = await check_agent_model(db, model_ref=str(body.model or ""), settings=settings)
+        # Where the step's pages and screenshots may go: the same rules the extension keeps, read off the step itself.
+        check_data_location(settings, model, body.messages, has_images=bool(_agent_image_parts(body.messages)))
     except PageContextRefused as exc:
         raise HTTPException(status_code=exc.status, detail=exc.detail()) from None
     # Screenshots: only under full control, only to a model that reads images, and bounded.

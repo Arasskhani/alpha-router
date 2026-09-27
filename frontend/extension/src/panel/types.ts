@@ -17,6 +17,15 @@ export type Me = {
     page_content_models: string[];
     agent_models: string[];
     agent_max_steps: number;
+    /** A run's other limits: minutes, and tabs it may open. */
+    agent_max_minutes?: number;
+    agent_max_tabs?: number;
+    /** The modes on offer, and the one a run starts in unless the person chose another. */
+    agent_modes?: string[];
+    agent_default_mode?: string;
+    /** Screenshots: the longest side, and how many of the latest stay in the conversation. */
+    screenshot_max_side?: number;
+    screenshots_kept?: number;
     /** The sensitive cases that still ask; a missing one asks. */
     approvals?: Partial<Approvals>;
     /** Where content may go: the organisation's internal sites, and the models that may see them and screenshots (null: any). */

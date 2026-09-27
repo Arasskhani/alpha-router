@@ -18958,6 +18958,34 @@ p.error,
   font-size: 0.75rem;
 }
 
+.extension-admin__limits {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
+  gap: 0.5rem 1.5rem;
+}
+
+.extension-admin__limits .settings-row__title {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.extension-admin__limits .settings-row__control,
+.extension-admin__field--inline .settings-row__control {
+  width: 7rem;
+  flex: none;
+}
+
+.extension-admin__tag {
+  display: inline-block;
+  margin-inline-start: 0.4rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  color: var(--accent);
+}
+
 .extension-admin__approvals {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));

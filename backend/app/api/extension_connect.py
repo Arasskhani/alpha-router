@@ -34,7 +34,7 @@ from app.services.extension_access import extension_features, extension_permitte
 from app.services.extension_distribution import ExtensionUnavailable, current_build
 from app.services.extension_keys import ExtensionKeyUnavailable, get_signing_key
 from app.services.extension_package import CONNECTED_PAGE, MIN_SUPPORTED_VERSION, normalize_origin
-from app.services.extension_settings import load_extension_settings
+from app.services.extension_settings import data_policy, load_extension_settings
 from app.services.extension_tokens import (
     AUDIT_CONNECTED,
     AUDIT_DISCONNECTED,
@@ -274,16 +274,20 @@ async def extension_me(
             "page_content_models": list(settings.page_content_models),
             "agent_models": list(settings.agent_models),
             "agent_max_steps": settings.agent_max_steps,
+            # The run's other limits, and the modes on offer with the one a run starts in.
+            "agent_max_minutes": settings.agent_max_minutes,
+            "agent_max_tabs": settings.agent_max_tabs,
+            "agent_modes": settings.modes_json(),
+            "agent_default_mode": settings.agent_default_mode,
+            "screenshot_max_side": settings.screenshot_max_side,
+            "screenshots_kept": settings.screenshots_kept,
             # Full control: whether the admin turned it on; the feature flag says whether this user may use it.
             "full_control": settings.full_control,
             # Which sensitive cases still ask (true), so the extension can relax the rest.
             "approvals": settings.approvals_json(),
-            # Where page content may go: the internal sites, and which models may see them and screenshots (null: any).
-            "data": {
-                "internal_sites": list(settings.internal_sites),
-                "internal_models": list(settings.internal_models) or None,
-                "screenshot_models": list(settings.screenshot_models) or None,
-            },
+            # Where page content may go: the internal sites, and which models may see them and screenshots
+            # (null: any). The lists are effective ones: a model on a connection inside the organisation counts.
+            "data": await data_policy(db, settings),
         }
     return {
         "user": {"username": user.username, "display_name": user.display_name, "email": user.email},

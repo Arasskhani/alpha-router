@@ -148,6 +148,60 @@ describe("a paused run", () => {
   });
 });
 
+describe("the administrator's limits on a run", () => {
+  it("ends the run at its time limit, before the next model call", async () => {
+    const h = harness([click(), click(), done()]);
+    vi.useFakeTimers({ now: 1_000_000 });
+    try {
+      // Time passes while the model answers the second step.
+      (h.deps.model as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+        vi.setSystemTime(Date.now() + 4 * 60_000);
+        return [click(), click(), done()][h.modelCalls()] ?? { text: "Done.", toolCalls: [] };
+      });
+      const result = await runAgent(
+        { task: "Go on.", mode: "auto", maxSteps: 20, maxMinutes: 5, rules: RULES, runId: "run-1", nonce: "0123456789ab" },
+        h.deps,
+        h.abort.signal,
+      );
+      expect(result.outcome).toBe("max_minutes");
+      expect(result.summary).toContain("5 minutes");
+      expect(result.steps).toBe(2);
+      expect((h.deps.report as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0]).toMatchObject({ kind: "agent_task", outcome: "max_minutes" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps only as many screenshots as the administrator allows", async () => {
+    const shot = () => ({ text: "", toolCalls: [call("screenshot")] });
+    const h = harness([shot(), shot(), shot(), done()]);
+    const sent: number[] = [];
+    (h.deps.model as ReturnType<typeof vi.fn>).mockImplementation(async (messages: Array<{ content: unknown }>) => {
+      sent.push(messages.filter((m) => Array.isArray(m.content) && m.content.some((p: { type: string }) => p.type === "image_url")).length);
+      return [shot(), shot(), shot(), done()][sent.length - 1] ?? { text: "Done.", toolCalls: [] };
+    });
+    await runAgent(
+      { task: "Look.", mode: "auto", maxSteps: 20, screenshotsKept: 1, rules: RULES, runId: "run-1", nonce: "0123456789ab" },
+      h.deps,
+      h.abort.signal,
+    );
+    // Three screenshots were taken; the model only ever sees the latest one.
+    expect(sent).toEqual([0, 1, 1, 1]);
+  });
+
+  it("tells the model when the browser would not open a tab, and goes on", async () => {
+    const browser = fakeBrowser();
+    browser.openTab.mockRejectedValue(new Error("This run may open at most 2 tabs. Work in the tabs you have, or switch to one."));
+    const h = harness([{ text: "", toolCalls: [call("tab_open", { url: "https://partner.org/" })] }, done()], { browser, mode: "ask" });
+    const result = await h.run();
+    expect(result.outcome).toBe("done");
+    // The step goes waiting (the site asks), running, then error: the last word is what the model was told.
+    const last = h.steps.filter((step) => step.tool === "tab_open").at(-1);
+    expect(last?.status).toBe("error");
+    expect(last?.detail).toContain("at most 2 tabs");
+  });
+});
+
 describe("the agent's own input", () => {
   it("goes out inside a window the page knows about, opened before and closed after", async () => {
     const h = harness([click(), { text: "", toolCalls: [call("computer", { action: "type", text: "hi" })] }, done()]);

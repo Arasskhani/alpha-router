@@ -49,6 +49,7 @@ from app.services.extension_settings import (
     ExtensionSettings,
     extra_package_permissions,
     load_extension_settings,
+    raised_browser_version,
 )
 
 UNAVAILABLE_NOT_BUILT = "not_built"
@@ -281,12 +282,23 @@ async def current_build(db: AsyncSession, *, request_host: str | None, client_ip
         raise ExtensionUnavailable(UNAVAILABLE_KEY_UNREADABLE, str(exc)) from exc
     settings = await load_extension_settings(db)
     extras = extra_package_permissions(settings)
+    # The template's own minimum stays as it is; only a raised one goes into the package (and its version).
+    min_browser = raised_browser_version(settings, template)
     fingerprint = package_fingerprint(
-        files, origin=origin, site_access=settings.site_access, server_name=PRODUCT_NAME, extra_permissions=extras
+        files,
+        origin=origin,
+        site_access=settings.site_access,
+        server_name=PRODUCT_NAME,
+        extra_permissions=extras,
+        min_browser_version=min_browser,
     )
     # And the settings on their own: going back to earlier ones must give a newer version, not the old number.
     settings_key = package_settings_key(
-        origin=origin, site_access=settings.site_access, server_name=PRODUCT_NAME, extra_permissions=extras
+        origin=origin,
+        site_access=settings.site_access,
+        server_name=PRODUCT_NAME,
+        extra_permissions=extras,
+        min_browser_version=min_browser,
     )
     version = extension_version(await package_revision(fingerprint, settings_key))
     manifest = build_manifest(
@@ -296,6 +308,7 @@ async def current_build(db: AsyncSession, *, request_host: str | None, client_ip
         origin=origin,
         site_access=settings.site_access,
         extra_permissions=extras,
+        min_browser_version=min_browser,
     )
     config = extension_config(origin=origin, server_name=PRODUCT_NAME, version=version)
     return ExtensionBuild(

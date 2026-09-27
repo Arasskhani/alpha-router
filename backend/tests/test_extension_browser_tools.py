@@ -807,3 +807,222 @@ class TestAnAdministratorsStop:
         provider.reply(*CLICK_REPLY)
         resp = await client.post("/api/chat/completions", json=_body(models.a), headers=browser.headers)
         assert resp.status_code == 200, resp.text
+
+
+def _began(minutes_ago: float) -> int:
+    return int((datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=minutes_ago)).timestamp() * 1000)
+
+
+@pytest.mark.usefixtures("agent_on")
+class TestTheRunsLimits:
+    """The administrator's limits on a run, checked at each step before anything is spent."""
+
+    async def test_a_run_past_its_time_is_refused_and_one_within_it_goes_on(
+        self, client, browser, models, provider, db_session
+    ):
+        await save_extension_settings(db_session, ExtensionSettings(agent_max_minutes=5))
+        await db_session.commit()
+        provider.reply(*CLICK_REPLY)
+        resp = await client.post(
+            "/api/chat/completions", json=_body(models.a, browser_run_started_at=_began(8)), headers=browser.headers
+        )
+        assert resp.status_code == 403
+        assert resp.json()["detail"]["code"] == "run_too_long"
+        assert "5 minutes" in resp.json()["detail"]["message"]
+        assert provider.calls == []
+        # Inside the limit, and a little past it (the extension ends the run itself; clocks differ).
+        resp = await client.post(
+            "/api/chat/completions", json=_body(models.a, browser_run_started_at=_began(6)), headers=browser.headers
+        )
+        assert resp.status_code == 200, resp.text
+
+    async def test_the_days_runs_are_counted_from_admin_logs(self, client, browser, models, provider, db_session, user):
+        from app.models.extension import ExtensionEvent
+
+        await save_extension_settings(db_session, ExtensionSettings(agent_runs_per_day=2))
+        for _ in range(2):
+            db_session.add(
+                ExtensionEvent(actor_user_id=user.id, actor_username=user.username, kind="agent_task", outcome="done")
+            )
+        # Somebody else's run, and one of yesterday's, do not count.
+        other = User(username="someone", email="s@test", hashed_password="x", auth_provider="local", is_active=True)
+        db_session.add(other)
+        await db_session.flush()
+        db_session.add(
+            ExtensionEvent(actor_user_id=other.id, actor_username="someone", kind="agent_task", outcome="done")
+        )
+        db_session.add(
+            ExtensionEvent(
+                actor_user_id=user.id,
+                actor_username=user.username,
+                kind="agent_task",
+                outcome="done",
+                created_at=datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
+                - datetime.timedelta(days=1, minutes=1),
+            )
+        )
+        await db_session.commit()
+        provider.reply(*CLICK_REPLY)
+        resp = await client.post("/api/chat/completions", json=_body(models.a), headers=browser.headers)
+        assert resp.status_code == 403
+        assert resp.json()["detail"]["code"] == "daily_runs_reached"
+        assert provider.calls == []
+        # One run fewer, and the step goes through.
+        await save_extension_settings(db_session, ExtensionSettings(agent_runs_per_day=3))
+        await db_session.commit()
+        resp = await client.post("/api/chat/completions", json=_body(models.a), headers=browser.headers)
+        assert resp.status_code == 200, resp.text
+
+    async def test_the_newest_package_can_be_required(self, client, browser, models, provider, db_session, monkeypatch):
+        from types import SimpleNamespace as NS
+
+        from app.api import chat as chat_api
+
+        monkeypatch.setattr(chat_api, "current_build", AsyncMock(return_value=NS(version="1.0.0.9")))
+        await save_extension_settings(db_session, ExtensionSettings(require_newest_package=True))
+        await db_session.commit()
+        provider.reply(*CLICK_REPLY)
+        # This browser never said which package it runs: treated as older.
+        resp = await client.post("/api/chat/completions", json=_body(models.a), headers=browser.headers)
+        assert resp.status_code == 403
+        assert resp.json()["detail"]["code"] == "package_outdated"
+        assert "1.0.0.9" in resp.json()["detail"]["message"]
+        assert provider.calls == []
+        from app.models.extension import ExtensionSession
+
+        await db_session.execute(
+            update(ExtensionSession)
+            .where(ExtensionSession.id == browser.session_id)
+            .values(extension_version="1.0.0.8")
+        )
+        await db_session.commit()
+        resp = await client.post("/api/chat/completions", json=_body(models.a), headers=browser.headers)
+        assert resp.status_code == 403
+        await db_session.execute(
+            update(ExtensionSession)
+            .where(ExtensionSession.id == browser.session_id)
+            .values(extension_version="1.0.0.9")
+        )
+        await db_session.commit()
+        resp = await client.post("/api/chat/completions", json=_body(models.a), headers=browser.headers)
+        assert resp.status_code == 200, resp.text
+
+    async def test_without_the_switch_an_old_package_is_not_refused(
+        self, client, browser, models, provider, db_session
+    ):
+        provider.reply(*CLICK_REPLY)
+        resp = await client.post("/api/chat/completions", json=_body(models.a), headers=browser.headers)
+        assert resp.status_code == 200, resp.text
+
+
+def _with_page(site: str, *, images: bool = False) -> list:
+    """A step whose tool answer carries page content from `site`, as the panel wraps it."""
+    page = f'<untrusted_page_content_ab12cd34 site="{site}">\nWelcome\n</untrusted_page_content_ab12cd34>'
+    messages = [
+        *TASK,
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "read_page", "arguments": "{}"}}],
+        },
+        {"role": "tool", "tool_call_id": "c1", "content": page},
+    ]
+    if images:
+        messages.append(
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": "The page."}, {"type": "image_url", "image_url": {"url": SHOT}}],
+            }
+        )
+    return messages
+
+
+class TestDataLocationOnTheServer:
+    """The rules the extension keeps, read off the step the server was sent."""
+
+    @pytest.fixture
+    async def control_on(self, db_session, user, agent_on) -> None:
+        from app.services.resource_access_service import AccessGrant
+
+        await set_chat_tool_access(
+            db_session,
+            "browser_control",
+            access_type="private",
+            grants=[AccessGrant(target_type="user", target=user.id)],
+        )
+
+    @pytest.fixture
+    async def vision(self, db_session) -> AIModel:
+        row = await _model(db_session, "gpt-vision")
+        row.pricing_raw = VISION_RAW
+        await db_session.commit()
+        return row
+
+    @pytest.mark.usefixtures("agent_on")
+    async def test_an_internal_sites_page_goes_only_to_a_model_inside_the_organisation(
+        self, client, browser, models, provider, db_session
+    ):
+        await save_extension_settings(
+            db_session,
+            ExtensionSettings(internal_sites=("*.corp.example",), internal_connections=(models.b.connection_id,)),
+        )
+        await db_session.commit()
+        provider.reply(*CLICK_REPLY)
+        resp = await client.post(
+            "/api/chat/completions", json=_body(models.a, _with_page("app.corp.example")), headers=browser.headers
+        )
+        assert resp.status_code == 403
+        assert resp.json()["detail"] == {
+            "code": "internal_site_not_allowed",
+            "message": "Your administrator keeps app.corp.example inside the organisation: this model may not see it.",
+            "site": "app.corp.example",
+        }
+        assert provider.calls == []
+        # A model on a connection inside the organisation may; and any model may see another site.
+        resp = await client.post(
+            "/api/chat/completions", json=_body(models.b, _with_page("app.corp.example")), headers=browser.headers
+        )
+        assert resp.status_code == 200, resp.text
+        provider.reply(*CLICK_REPLY)
+        resp = await client.post(
+            "/api/chat/completions", json=_body(models.a, _with_page("shop.example.com")), headers=browser.headers
+        )
+        assert resp.status_code == 200, resp.text
+
+    @pytest.mark.usefixtures("control_on")
+    async def test_screenshots_go_only_to_a_model_on_the_screenshot_list(
+        self, client, browser, models, vision, provider, db_session
+    ):
+        await save_extension_settings(
+            db_session, ExtensionSettings(full_control=True, screenshot_models=(f"model::{models.a.id}",))
+        )
+        await db_session.commit()
+        resp = await client.post("/api/chat/completions", json=_body(vision, _with_shot(SHOT)), headers=browser.headers)
+        assert resp.status_code == 403
+        assert resp.json()["detail"]["code"] == "screenshots_not_allowed"
+        assert provider.calls == []
+
+    @pytest.mark.usefixtures("control_on")
+    async def test_screenshots_kept_inside_the_organisation(
+        self, client, browser, models, vision, provider, db_session
+    ):
+        await save_extension_settings(
+            db_session,
+            ExtensionSettings(
+                full_control=True, internal_connections=(models.a.connection_id,), external_screenshots=False
+            ),
+        )
+        await db_session.commit()
+        resp = await client.post("/api/chat/completions", json=_body(vision, _with_shot(SHOT)), headers=browser.headers)
+        assert resp.status_code == 403
+        assert resp.json()["detail"]["code"] == "screenshots_not_allowed"
+        # The vision model moved inside the organisation: allowed.
+        await save_extension_settings(
+            db_session,
+            ExtensionSettings(
+                full_control=True, internal_connections=(vision.connection_id,), external_screenshots=False
+            ),
+        )
+        await db_session.commit()
+        resp = await client.post("/api/chat/completions", json=_body(vision, _with_shot(SHOT)), headers=browser.headers)
+        assert resp.status_code == 200, resp.text

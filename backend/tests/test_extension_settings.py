@@ -425,3 +425,183 @@ class TestAnAdminsChange:
         assert changed.site_access == "all_sites"
         with pytest.raises(ExtensionSettingsError, match="per site or all sites"):
             await validated_update(db_session, ExtensionSettings(), **_update(site_access="some_sites"))
+
+
+class TestTheRunLimits:
+    def test_defaults(self):
+        s = ExtensionSettings()
+        assert (s.agent_max_minutes, s.agent_max_tabs, s.agent_runs_per_day) == (20, 10, None)
+        assert (s.screenshot_max_side, s.screenshots_kept) == (1280, 3)
+        assert (s.plan_mode, s.agent_default_mode, s.agent_auto_mode) == (True, "plan", False)
+        assert s.modes_json() == ["ask", "plan"]
+        assert (s.require_newest_package, s.min_browser_version) == (False, 116)
+        assert (s.internal_connections, s.external_screenshots) == ((), True)
+        assert (s.save_runs, s.private_runs) == (True, True)
+
+    def test_a_stored_value_out_of_range_falls_back_to_the_default(self):
+        stored = {
+            "agent_max_minutes": 0,
+            "agent_max_tabs": 999,
+            "agent_runs_per_day": 0,
+            "screenshot_max_side": 100,
+            "screenshots_kept": 9,
+            "min_browser_version": 12,
+            "agent_default_mode": "skip",
+            "internal_connections": [3, "x", 0, -1, True, 3],
+        }
+        s = parse_settings(json.dumps(stored))
+        assert (s.agent_max_minutes, s.agent_max_tabs, s.agent_runs_per_day) == (20, 10, None)
+        assert (s.screenshot_max_side, s.screenshots_kept, s.min_browser_version) == (1280, 3, 116)
+        assert s.agent_default_mode == "plan"
+        assert s.internal_connections == (3,)
+
+    def test_modes_on_offer_follow_the_switches(self):
+        assert ExtensionSettings(plan_mode=False).modes_json() == ["ask"]
+        assert ExtensionSettings(agent_auto_mode=True, agent_review_model="model::1").modes_json() == [
+            "ask",
+            "plan",
+            "auto",
+        ]
+
+    @pytest.mark.parametrize(
+        ("overrides", "message"),
+        [
+            ({"agent_max_minutes": 0}, "Run time"),
+            ({"agent_max_minutes": 181}, "Run time"),
+            ({"agent_max_tabs": 51}, "Tabs per run"),
+            ({"agent_runs_per_day": 0}, "Runs per person"),
+            ({"screenshot_max_side": 799}, "longest side"),
+            ({"screenshots_kept": 6}, "Screenshots kept"),
+            ({"min_browser_version": 115}, "minimum browser version"),
+            ({"agent_default_mode": "skip"}, "default mode"),
+            ({"agent_default_mode": "plan", "plan_mode": False}, "Plan cannot be the default"),
+            ({"agent_default_mode": "auto"}, "Auto cannot be the default"),
+            ({"internal_connections": [999999]}, "does not exist"),
+        ],
+    )
+    async def test_a_value_past_its_limit_is_refused_by_name(self, db_session, overrides, message):
+        with pytest.raises(ExtensionSettingsError, match=message):
+            await validated_update(db_session, ExtensionSettings(), **_update(**overrides))
+
+    async def test_the_limits_round_trip(self, db_session):
+        model = await _model(db_session, "gpt-limits")
+        updated = await validated_update(
+            db_session,
+            ExtensionSettings(),
+            **_update(
+                agent_max_minutes=5,
+                agent_max_tabs=3,
+                agent_runs_per_day=12,
+                screenshot_max_side=800,
+                screenshots_kept=1,
+                min_browser_version=142,
+                require_newest_package=True,
+                plan_mode=False,
+                agent_default_mode="ask",
+                internal_connections=[model.connection_id],
+                external_screenshots=False,
+                save_runs=False,
+                private_runs=False,
+            ),
+        )
+        await save_extension_settings(db_session, updated)
+        await db_session.commit()
+        again = await load_extension_settings(db_session)
+        assert again == updated
+        assert (again.agent_max_minutes, again.agent_max_tabs, again.agent_runs_per_day) == (5, 3, 12)
+        assert again.internal_connections == (model.connection_id,)
+        assert again.modes_json() == ["ask"]
+        assert again.to_json()["internal_connections"] == [model.connection_id]
+
+
+class TestInsideTheOrganisation:
+    def test_any_model_when_nothing_is_marked_internal(self):
+        from app.services.extension_settings import inside_organisation
+
+        assert inside_organisation(ExtensionSettings(), "model::7", 3) is True
+        assert inside_organisation(ExtensionSettings(), None, None) is True
+
+    def test_a_connection_inside_the_organisation_counts_like_the_internal_list(self):
+        from app.services.extension_settings import inside_organisation
+
+        s = ExtensionSettings(internal_connections=(3,), internal_models=("model::5",))
+        assert inside_organisation(s, "model::9", 3) is True
+        assert inside_organisation(s, "model::5", 8) is True
+        assert inside_organisation(s, "model::9", 8) is False
+        assert inside_organisation(s, None, None) is False
+
+    def test_screenshots_kept_inside_the_organisation(self):
+        from app.services.extension_settings import screenshot_allowed
+
+        s = ExtensionSettings(internal_connections=(3,), external_screenshots=False)
+        # Any site: a screenshot may not leave the organisation.
+        assert screenshot_allowed(s, "model::9", "shop.example.com", connection_id=3) is True
+        assert screenshot_allowed(s, "model::9", "shop.example.com", connection_id=8) is False
+        # With nothing marked internal the switch cannot tell inside from outside, so it restricts nothing.
+        assert screenshot_allowed(ExtensionSettings(external_screenshots=False), "model::9", "shop.example.com") is True
+
+    def test_an_internal_site_takes_a_model_on_an_internal_connection(self):
+        from app.services.extension_settings import screenshot_allowed
+
+        s = ExtensionSettings(internal_sites=("*.corp.example",), internal_connections=(3,))
+        assert screenshot_allowed(s, "model::9", "app.corp.example", connection_id=3) is True
+        assert screenshot_allowed(s, "model::9", "app.corp.example", connection_id=8) is False
+        assert screenshot_allowed(s, "model::9", "shop.example.com", connection_id=8) is True
+
+    async def test_the_effective_lists_the_extension_gets(self, db_session):
+        from app.services.extension_settings import data_policy, inside_model_refs
+
+        inside = await _model(db_session, "gpt-inside")
+        outside = await _model(db_session, "gpt-outside")
+        listed = await _model(db_session, "gpt-listed")
+        s = ExtensionSettings(
+            internal_sites=("*.corp.example",),
+            internal_connections=(inside.connection_id,),
+            internal_models=(f"model::{listed.id}",),
+            screenshot_models=(f"model::{outside.id}", f"model::{inside.id}"),
+            external_screenshots=False,
+        )
+        assert await inside_model_refs(db_session, s) == {f"model::{inside.id}", f"model::{listed.id}"}
+        policy = await data_policy(db_session, s)
+        assert policy["internal_models"] == sorted([f"model::{inside.id}", f"model::{listed.id}"])
+        # Screenshots may not leave: the screenshot list narrows to the models inside.
+        assert policy["screenshot_models"] == [f"model::{inside.id}"]
+        assert policy["external_screenshots"] is False
+        assert (await data_policy(db_session, ExtensionSettings()))["internal_models"] is None
+
+    @pytest.mark.parametrize(
+        ("base_url", "internal"),
+        [
+            ("http://10.0.0.5:8000/v1", True),
+            ("https://192.168.1.20/v1", True),
+            ("http://172.16.4.4/v1", True),
+            ("http://localhost:11434/v1", True),
+            ("http://ollama.internal/v1", True),
+            ("http://llm-box/v1", True),
+            ("https://api.openai.com/v1", False),
+            ("https://8.8.8.8/v1", False),
+            ("", False),
+            (None, False),
+        ],
+    )
+    def test_an_address_that_looks_internal(self, base_url, internal):
+        from app.services.extension_settings import looks_internal
+
+        assert looks_internal(base_url) is internal
+
+
+class TestTheBrowserVersion:
+    def test_only_a_raised_version_changes_the_package(self):
+        from app.services.extension_settings import raised_browser_version
+
+        assert raised_browser_version(ExtensionSettings()) is None
+        assert raised_browser_version(ExtensionSettings(min_browser_version=116)) is None
+        assert raised_browser_version(ExtensionSettings(min_browser_version=142)) == 142
+        # The template's own minimum is what counts as not raised.
+        assert (
+            raised_browser_version(ExtensionSettings(min_browser_version=120), {"minimum_chrome_version": "120"})
+            is None
+        )
+        assert (
+            raised_browser_version(ExtensionSettings(min_browser_version=142), {"minimum_chrome_version": "120"}) == 142
+        )

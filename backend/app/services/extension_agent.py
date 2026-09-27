@@ -57,7 +57,7 @@ MAX_DETAIL_BYTES = 4096
 
 #: How a step or a run can end, as Admin Logs shows it.
 STEP_OUTCOMES = frozenset({"ok", "error", "denied", "blocked", "skipped", "stopped"})
-TASK_OUTCOMES = frozenset({"done", "stopped", "max_steps", "errors", "failed"})
+TASK_OUTCOMES = frozenset({"done", "stopped", "max_steps", "max_minutes", "errors", "failed"})
 
 _ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
@@ -403,7 +403,12 @@ async def review_action(
         is_image_model=bool(ai_model.is_image_model),
         pricing_raw=cast("str | None", ai_model.pricing_raw),
         provider_type=provider,
-    ) and screenshot_allowed(settings, model_ref, review_host)
+    ) and screenshot_allowed(
+        settings,
+        model_ref,
+        review_host,
+        connection_id=int(ai_model.connection_id) if ai_model.connection_id is not None else None,
+    )
     shown_crop = usable_crop(crop) if can_see_crop else None
     prompt = review_prompt(task, tool, site, target, arguments, history, with_image=bool(shown_crop))
     user_content: Any = (

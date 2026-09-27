@@ -79,6 +79,15 @@ describe("the browser the agent uses", () => {
     expect(browser.workingTab()).toBe(second.id);
   });
 
+  it("opens no more tabs than the administrator allows a run", async () => {
+    const start = chromeFake.tabs.add({ url: "https://shop.example.com/", active: true });
+    const browser = createAgentBrowser({ startTabId: start.id!, runId: "run-1", maxTabs: 2 });
+    await browser.openTab("https://partner.org/a");
+    await browser.openTab("https://partner.org/b");
+    await expect(browser.openTab("https://partner.org/c")).rejects.toThrow("at most 2 tabs");
+    expect(chromeFake.tabs.created).toHaveLength(2);
+  });
+
   it("switches only to a tab of this window", async () => {
     const start = chromeFake.tabs.add({ url: "https://shop.example.com/", active: true });
     const other = chromeFake.tabs.add({ url: "https://docs.example.com/", title: "Docs" });

@@ -3,6 +3,7 @@
  */
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const readOnly = vi.hoisted(() => ({ value: false }));
@@ -12,7 +13,7 @@ vi.mock("../../lib/clipboard", () => ({ copyTextToClipboard: vi.fn(async () => t
 
 import { api } from "../../api";
 import { copyTextToClipboard } from "../../lib/clipboard";
-import ExtensionSettingsCard, { siteLines } from "./ExtensionSettingsCard";
+import ExtensionSettingsCard, { numberField, siteLines } from "./ExtensionSettingsCard";
 
 const SETTINGS = {
   site_access: "per_site",
@@ -31,7 +32,24 @@ const SETTINGS = {
   full_control: false,
   enabled: true,
   relaxed_approvals: [],
+  require_newest_package: false,
+  min_browser_version: 116,
+  internal_connections: [],
+  external_screenshots: true,
+  plan_mode: true,
+  agent_default_mode: "plan",
+  agent_max_minutes: 20,
+  agent_max_tabs: 10,
+  agent_runs_per_day: null,
+  screenshot_max_side: 1280,
+  screenshots_kept: 3,
+  save_runs: true,
+  private_runs: true,
 };
+const CONNECTIONS = [
+  { id: 1, name: "OpenAI", provider: "openai", host: "api.openai.com", active: true, looks_internal: false, state: "ok" },
+  { id: 2, name: "Ollama box", provider: "custom", host: "10.0.0.5", active: true, looks_internal: true, state: "ok" },
+];
 const DISTRIBUTION = {
   available: true,
   reason: null,
@@ -66,11 +84,12 @@ function serve(
     if (init?.method === "PUT") {
       lastPut = JSON.parse(String(init.body));
       if (overrides.put) return overrides.put(lastPut!);
-      return { settings: { ...SETTINGS, ...lastPut }, models, distribution: DISTRIBUTION };
+      return { settings: { ...SETTINGS, ...lastPut }, models, connections: CONNECTIONS, distribution: DISTRIBUTION };
     }
     return {
       settings: { ...SETTINGS, ...overrides.settings },
       models,
+      connections: CONNECTIONS,
       distribution: { ...DISTRIBUTION, ...overrides.distribution },
     };
   }) as never);
@@ -91,7 +110,13 @@ afterEach(() => {
 });
 
 async function render() {
-  await act(async () => root.render(<ExtensionSettingsCard />));
+  await act(async () =>
+    root.render(
+      <MemoryRouter>
+        <ExtensionSettingsCard />
+      </MemoryRouter>,
+    ),
+  );
   await act(async () => undefined);
 }
 
@@ -335,5 +360,86 @@ describe("site lists as typed", () => {
   it("are one pattern per line (or comma), trimmed, blank lines dropped", () => {
     expect(siteLines(" a.example \n\n*.b.example, c\n")).toEqual(["a.example", "*.b.example", "c"]);
     expect(siteLines("")).toEqual([]);
+  });
+});
+
+describe("the numbers the card takes as text", () => {
+  it("are checked against their range, by name", () => {
+    expect(numberField("agent_max_minutes", " 30 ")).toEqual({ value: 30 });
+    expect(numberField("agent_max_minutes", "0")).toEqual({ error: "Most minutes per task must be a whole number from 1 to 180." });
+    expect(numberField("screenshots_kept", "2.5")).toMatchObject({ error: expect.stringContaining("Screenshots kept") });
+    expect(numberField("min_browser_version", "115")).toMatchObject({ error: expect.stringContaining("116 to 999") });
+  });
+
+  it("let the daily limit be empty, meaning none", () => {
+    expect(numberField("agent_runs_per_day", "")).toEqual({ value: null });
+    expect(numberField("agent_runs_per_day", "abc")).toEqual({ error: "Runs per person per day must be a whole number from 1 to 1000, or empty." });
+  });
+});
+
+describe("the sections added for R1", () => {
+  const checkbox = (label: string) =>
+    [...host.querySelectorAll("input[type=checkbox]")].find((c) => c.closest("label")?.textContent?.startsWith(label)) as HTMLInputElement;
+
+  it("shows the limits and the switches as stored, and saves what changed", async () => {
+    serve({ settings: { agent_max_minutes: 45, agent_runs_per_day: 12, save_runs: false } });
+    await render();
+    expect((field("Most minutes per task") as HTMLInputElement).value).toBe("45");
+    expect((field("Runs per person per day") as HTMLInputElement).value).toBe("12");
+    expect(checkbox("Save finished runs").checked).toBe(false);
+    expect(checkbox("Plan mode").checked).toBe(true);
+    await type(field("Most tabs per task"), "4");
+    await type(field("Runs per person per day"), "");
+    await act(async () => checkbox("Require the newest package").click());
+    await act(async () => checkbox("Screenshots of other sites may go").click());
+    await save();
+    expect(lastPut).toMatchObject({
+      agent_max_minutes: 45,
+      agent_max_tabs: 4,
+      agent_runs_per_day: null,
+      require_newest_package: true,
+      external_screenshots: false,
+      save_runs: false,
+      min_browser_version: 116,
+    });
+  });
+
+  it("refuses a limit that is missing before anything is sent (out of range, the browser's own check stops the form)", async () => {
+    serve();
+    await render();
+    await type(field("Most minutes per task"), "");
+    await save();
+    expect(lastPut).toBeNull();
+    expect(host.querySelector(".alert-error")?.textContent).toBe("Most minutes per task must be a whole number from 1 to 180.");
+  });
+
+  it("offers the modes that are on as the default, and falls back to Ask when Plan is turned off", async () => {
+    serve();
+    await render();
+    const select = host.querySelector("select[aria-label='Default mode']") as HTMLSelectElement;
+    expect(select.value).toBe("plan");
+    expect((select.querySelector("option[value=auto]") as HTMLOptionElement).disabled).toBe(true);
+    await act(async () => checkbox("Plan mode").click());
+    expect(select.value).toBe("ask");
+    expect((select.querySelector("option[value=plan]") as HTMLOptionElement).disabled).toBe(true);
+    await save();
+    expect(lastPut).toMatchObject({ plan_mode: false, agent_default_mode: "ask" });
+  });
+
+  it("lists the connections, marks the ones that look internal, and ticks them on request", async () => {
+    serve();
+    await render();
+    const rows = checklist("Connections inside the organisation");
+    expect(rows).toEqual([
+      [expect.stringContaining("OpenAI"), false],
+      [expect.stringContaining("Ollama box"), false],
+    ]);
+    expect(rows[1][0]).toContain("looks internal");
+    expect(rows[0][0]).not.toContain("looks internal");
+    const tick = [...host.querySelectorAll("button")].find((b) => b.textContent?.startsWith("Tick the one that looks internal"))!;
+    await act(async () => tick.click());
+    expect(checklist("Connections inside the organisation")[1][1]).toBe(true);
+    await save();
+    expect(lastPut).toMatchObject({ internal_connections: [2] });
   });
 });

@@ -8,6 +8,7 @@ settlement are real, on the test database.
 
 from __future__ import annotations
 
+import datetime
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -752,3 +753,53 @@ class TestTheAttempt:
             attempt.record_text(ProviderAttempt.delta_text(chunk))
         assert not attempt.has_tool_calls
         assert attempt.billable_text == "Hello"
+
+
+class TestAnAdministratorsStop:
+    """A stop ends the runs that were under way, and leaves later ones alone."""
+
+    @staticmethod
+    def _at(offset_seconds: int) -> str:
+        return (datetime.datetime.now(datetime.UTC) + datetime.timedelta(seconds=offset_seconds)).isoformat()
+
+    async def test_a_run_that_began_before_the_stop_is_refused(self, client, browser, models, provider, db_session, agent_on):
+        await save_extension_settings(db_session, ExtensionSettings(stop_runs_before=self._at(0)))
+        await db_session.commit()
+        provider.reply(*CLICK_REPLY)
+        began = int((datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=1)).timestamp() * 1000)
+        resp = await client.post(
+            "/api/chat/completions",
+            json=_body(models.a, browser_run_started_at=began),
+            headers=browser.headers,
+        )
+        assert resp.status_code == 403
+        assert resp.json()["detail"]["code"] == "runs_stopped"
+        assert provider.calls == []
+
+    async def test_a_run_that_began_after_the_stop_goes_on(self, client, browser, models, provider, db_session, agent_on):
+        await save_extension_settings(db_session, ExtensionSettings(stop_runs_before=self._at(-60)))
+        await db_session.commit()
+        provider.reply(*CLICK_REPLY)
+        began = int(datetime.datetime.now(datetime.UTC).timestamp() * 1000)
+        resp = await client.post(
+            "/api/chat/completions",
+            json=_body(models.a, browser_run_started_at=began),
+            headers=browser.headers,
+        )
+        assert resp.status_code == 200, resp.text
+
+    async def test_a_step_that_does_not_say_when_it_began_is_refused_while_a_stop_stands(
+        self, client, browser, models, provider, db_session, agent_on
+    ):
+        """An older extension cannot outlast a stop by leaving the field out."""
+        await save_extension_settings(db_session, ExtensionSettings(stop_runs_before=self._at(0)))
+        await db_session.commit()
+        provider.reply(*CLICK_REPLY)
+        resp = await client.post("/api/chat/completions", json=_body(models.a), headers=browser.headers)
+        assert resp.status_code == 403
+        assert resp.json()["detail"]["code"] == "runs_stopped"
+
+    async def test_without_a_stop_nothing_changes(self, client, browser, models, provider, db_session, agent_on):
+        provider.reply(*CLICK_REPLY)
+        resp = await client.post("/api/chat/completions", json=_body(models.a), headers=browser.headers)
+        assert resp.status_code == 200, resp.text

@@ -7,6 +7,8 @@ needs to force-install the extension with Group Policy.
 
 from __future__ import annotations
 
+import datetime
+from dataclasses import replace
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -19,6 +21,7 @@ from app.models.user import User
 from app.services.client_ip import resolve_client_ip
 from app.services.extension_distribution import ExtensionUnavailable, current_build, distribution_payload
 from app.services.extension_keys import ExtensionKeyUnavailable, get_signing_key
+from app.services.extension_overview import extension_overview
 from app.services.extension_settings import (
     ExtensionSettingsError,
     load_extension_settings,
@@ -26,6 +29,7 @@ from app.services.extension_settings import (
     save_extension_settings,
     validated_update,
 )
+from app.services.extension_tokens import revoke_all_sessions
 from app.services.security_audit import log_security_event
 
 router = APIRouter(prefix="/api/admin/extension", tags=["admin-extension"])
@@ -112,3 +116,71 @@ async def replace_extension_settings(
     )
     await db.commit()
     return await _overview(db, request)
+
+
+async def _package_version(db: AsyncSession, request: Request) -> str | None:
+    try:
+        build = await current_build(db, request_host=request.url.hostname, client_ip=resolve_client_ip(request))
+    except ExtensionUnavailable:
+        return None
+    return build.version
+
+
+@router.get("/overview")
+async def read_extension_overview(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_chat_tools),
+) -> dict:
+    """The tiles: the switch, connected browsers, what the agent did today, the package."""
+    settings = await load_extension_settings(db)
+    return await extension_overview(db, settings, package_version=await _package_version(db, request))
+
+
+@router.post("/stop-runs")
+async def stop_extension_runs(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_chat_tools_write),
+) -> dict:
+    """End every agent run that is under way: each one stops at its next step.
+
+    The stop is a moment, not a flag, so a run started after it is unaffected
+    and nothing has to be turned back on.
+    """
+    current = await load_extension_settings(db)
+    moment = datetime.datetime.now(datetime.UTC).isoformat()
+    updated = replace(current, stop_runs_before=moment)
+    await save_extension_settings(db, updated)
+    await log_security_event(
+        db,
+        actor=admin,
+        actor_ip=resolve_client_ip(request),
+        action="extension_runs_stopped",
+        resource_type="extension_settings",
+        resource_id="browser_extension",
+        detail={"stop_runs_before": moment},
+    )
+    await db.commit()
+    return {"stop_runs_before": moment}
+
+
+@router.post("/disconnect-all")
+async def disconnect_all_browsers(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_chat_tools_write),
+) -> dict:
+    """Disconnect every browser. People connect again from the extension's side panel."""
+    ended = await revoke_all_sessions(db)
+    await log_security_event(
+        db,
+        actor=admin,
+        actor_ip=resolve_client_ip(request),
+        action="extension_disconnected_all",
+        resource_type="extension_settings",
+        resource_id="browser_extension",
+        detail={"sessions": ended},
+    )
+    await db.commit()
+    return {"disconnected": ended}

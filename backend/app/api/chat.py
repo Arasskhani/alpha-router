@@ -1,6 +1,7 @@
 """In-app chat using enabled models (admin + user)."""
 
 import asyncio
+import datetime
 import json
 import re
 from typing import Any, Literal
@@ -42,7 +43,7 @@ from app.services.extension_page_context import (
     page_share_events,
     page_shares,
 )
-from app.services.extension_settings import load_extension_settings
+from app.services.extension_settings import ExtensionSettings, load_extension_settings, parse_timestamp
 from app.services.attachment_extract import processed_attachment_payload_async
 from app.services.attachment_from_media_service import attachments_from_existing_media
 from app.services.attachment_policy import (
@@ -301,6 +302,9 @@ class ChatRequest(BaseModel):
     extension_page_context: ExtensionPageContextIn | None = None
     #: The browser extension agent's tools for this step; the reply streams the model's tool calls.
     browser_tools: list[BrowserToolIn] | None = Field(None, min_length=1, max_length=MAX_BROWSER_TOOLS)
+    #: When this agent run began (epoch milliseconds), so an administrator's emergency
+    #: stop can end runs that started before it. Only the extension sends it.
+    browser_run_started_at: int | None = Field(None, ge=0, le=4_102_444_800_000)
     browser_tool_choice: Literal["auto", "none", "required"] | None = None
 
     @model_validator(mode="after")
@@ -401,6 +405,29 @@ def _agent_image_parts(messages: list[dict]) -> list[str]:
     return found
 
 
+def check_runs_stopped(settings: ExtensionSettings, run_started_at: int | None) -> None:
+    """Refuse a step of a run the administrator stopped; raises HTTPException.
+
+    The stop names a moment: every run that began before it ends at its next
+    step. A run that does not say when it began is treated as older than any
+    stop, so an old extension cannot outlast one.
+    """
+    stopped_before = parse_timestamp(settings.stop_runs_before)
+    if stopped_before is None:
+        return
+    began = (
+        datetime.datetime.fromtimestamp(run_started_at / 1000, tz=datetime.UTC) if run_started_at is not None else None
+    )
+    if began is None or began < stopped_before:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "runs_stopped",
+                "message": "Your administrator stopped the browser agent's runs. Start a new one.",
+            },
+        )
+
+
 def check_agent_images(messages: list[dict], *, full_control: bool, vision: bool) -> None:
     """Refuse screenshots an agent step may not carry; raises HTTPException.
 
@@ -476,6 +503,7 @@ async def _browser_agent_tools(
             detail={"code": "agent_not_permitted", "message": "The browser agent is not enabled for your account."},
         )
     settings = await load_extension_settings(db)
+    check_runs_stopped(settings, body.browser_run_started_at)
     try:
         model = await check_agent_model(db, model_ref=str(body.model or ""), settings=settings)
     except PageContextRefused as exc:

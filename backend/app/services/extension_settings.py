@@ -26,6 +26,7 @@ Who may use the extension and its agent at all is the Chat Tools ACL
 
 from __future__ import annotations
 
+import datetime
 import ipaddress
 import json
 import logging
@@ -103,6 +104,9 @@ class ExtensionSettings:
     screenshot_models: tuple[str, ...] = field(default_factory=tuple)
     #: Which sensitive cases the admin relaxed to plain actions (a subset of APPROVAL_KEYS).
     relaxed_approvals: tuple[str, ...] = field(default_factory=tuple)
+    #: An emergency stop: every agent run that began before this moment ends at its
+    #: next step. ISO-8601 UTC, or None when no stop has been asked for.
+    stop_runs_before: str | None = None
 
     def to_json(self) -> dict[str, Any]:
         data = asdict(self)
@@ -245,6 +249,23 @@ def screenshot_allowed(settings: ExtensionSettings, model_ref: str | None, host:
     return True
 
 
+def _timestamp(value: Any) -> str | None:
+    """An ISO-8601 UTC moment as stored, or None when it is not one."""
+    return value if isinstance(value, str) and parse_timestamp(value) is not None else None
+
+
+def parse_timestamp(value: str | None) -> datetime.datetime | None:
+    """``stop_runs_before`` as a timezone-aware datetime, or None when unset or unreadable."""
+    text = (value or "").strip()
+    if not text:
+        return None
+    try:
+        moment = datetime.datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return moment if moment.tzinfo is not None else moment.replace(tzinfo=datetime.UTC)
+
+
 def _strings(value: Any) -> tuple[str, ...]:
     if not isinstance(value, list):
         return ()
@@ -288,6 +309,7 @@ def parse_settings(raw: str | None) -> ExtensionSettings:
         internal_models=_strings(data.get("internal_models")),
         screenshot_models=_strings(data.get("screenshot_models")),
         relaxed_approvals=tuple(key for key in _strings(data.get("relaxed_approvals")) if key in APPROVAL_KEYS),
+        stop_runs_before=_timestamp(data.get("stop_runs_before")),
     )
 
 

@@ -256,7 +256,7 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
     if (kept) events.current = [...batch, ...events.current].slice(-MAX_QUEUED_EVENTS);
   }
 
-  function deps(model: string, driver: ControlDriver | null): AgentDeps {
+  function deps(model: string, driver: ControlDriver | null, startedAt: number): AgentDeps {
     const { api } = getClient();
     const browserTools = agentToolsFor({ fullControl: driver !== null, plan: mode === "plan" });
     return {
@@ -266,7 +266,15 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
             const response = await api.request("/api/chat/completions", {
               method: "POST",
               // No chat, no history, no assistant message id: each step stands alone.
-              body: JSON.stringify({ model, messages, stream: true, browser_tools: browserTools, browser_tool_choice: "auto" }),
+              // The run's start goes with every step, so an administrator's stop can end it.
+              body: JSON.stringify({
+                model,
+                messages,
+                stream: true,
+                browser_tools: browserTools,
+                browser_tool_choice: "auto",
+                browser_run_started_at: startedAt,
+              }),
               signal: stepSignal,
             });
             if (!response.ok) throw await ApiError.from(response);
@@ -352,6 +360,8 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
     // One run at a time: a second one would take over the Stop buttons and leave the first running unseen.
     if (controller.current) return;
     const run = `run-${randomHex(8)}`;
+    // When this run began: every step carries it, so an administrator's stop can end it.
+    const startedAt = Date.now();
     const abort = new AbortController();
     controller.current = abort;
     runId.current = run;
@@ -386,7 +396,7 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
       }
       const result = await runAgent(
         { task, mode, maxSteps, rules, runId: run, nonce: randomHex(6), modelRef: modelId },
-        deps(modelId, driver),
+        deps(modelId, driver, startedAt),
         abort.signal,
       );
       append({ kind: "result", id: `${run}-end`, outcome: result.outcome, summary: result.summary });

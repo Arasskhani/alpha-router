@@ -750,3 +750,44 @@ async def purge_ended_sessions(db: AsyncSession) -> int:
         if len(ids) < _PURGE_BATCH:
             break
     return deleted
+
+
+REVOKED_BY_ADMIN = "admin"
+
+
+async def open_sessions(db: AsyncSession) -> list[ExtensionSession]:
+    """Every browser still connected, across all accounts, newest first.
+
+    Only sessions that a request could still use: not revoked, not past either
+    lifetime. A sign-out everywhere is judged per user, so the caller joins
+    against the owner's token version rather than filtering here.
+    """
+    now = _now()
+    rows = (
+        (
+            await db.execute(
+                select(ExtensionSession)
+                .where(
+                    ExtensionSession.revoked_at.is_(None),
+                    ExtensionSession.refresh_expires_at > now,
+                    ExtensionSession.absolute_expires_at > now,
+                )
+                .order_by(ExtensionSession.created_at.desc(), ExtensionSession.id)
+                .limit(5000)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return list(rows)
+
+
+async def revoke_all_sessions(db: AsyncSession, *, reason: str = REVOKED_BY_ADMIN) -> int:
+    """End every connected browser; returns how many were ended. The caller commits."""
+    result = await db.execute(
+        update(ExtensionSession)
+        .where(ExtensionSession.revoked_at.is_(None))
+        .values(revoked_at=_now(), revoked_reason=reason[:32]),
+        execution_options=_NO_SYNC,
+    )
+    return _rowcount(result)

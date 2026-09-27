@@ -726,3 +726,93 @@ def test_the_build_is_found_in_the_image_and_in_a_checkout(tmp_path):
     services = checkout / "backend" / "app" / "services" / "extension_distribution.py"
     services.parent.mkdir(parents=True)
     assert resolve_extension_dist(services) == checkout / "frontend" / "dist-extension"
+
+
+class TestTheOverviewAndTheOperations:
+    """The tiles an administrator sees, and the two buttons beside them."""
+
+    async def test_the_tiles_count_browsers_and_what_the_agent_did(
+        self, client, db_session, admin, user, built_extension
+    ):
+        from app.models.extension import ExtensionEvent
+        from app.services.extension_tokens import create_session
+
+        # Two browsers: one on the package this server hands out, one behind it.
+        await create_session(db_session, user=user, device_name="new", user_agent="UA", ip="1.1.1.1", extension_version="1.0.0.1")
+        await create_session(db_session, user=user, device_name="old", user_agent="UA", ip="1.1.1.1", extension_version="0.9.0.0")
+        db_session.add_all(
+            [
+                ExtensionEvent(kind="agent_task", outcome="done", detail_json="{}"),
+                ExtensionEvent(kind="agent_step", outcome="blocked", detail_json="{}"),
+                ExtensionEvent(kind="agent_step", outcome="denied", detail_json="{}"),
+                ExtensionEvent(kind="agent_step", outcome="ok", detail_json="{}"),
+            ]
+        )
+        await db_session.commit()
+        _sign_in(client, admin)
+        body = (await client.get("/api/admin/extension/overview")).json()
+        assert body["enabled"] is True
+        assert body["browsers"]["connected"] == 2
+        assert body["browsers"]["outdated"] == 1
+        assert body["today"] == {"agent_runs": 1, "actions_refused": 2}
+        assert body["package_version"] == "1.0.0.1"
+
+    async def test_a_browser_that_never_said_its_version_is_unknown_not_old(
+        self, client, db_session, admin, user, built_extension
+    ):
+        from app.services.extension_tokens import create_session
+
+        await create_session(db_session, user=user, device_name="quiet", user_agent="UA", ip="1.1.1.1")
+        await db_session.commit()
+        _sign_in(client, admin)
+        browsers = (await client.get("/api/admin/extension/overview")).json()["browsers"]
+        assert browsers == {"connected": 1, "outdated": 0, "unknown_version": 1}
+
+    async def test_stopping_the_runs_records_a_moment_and_audits_it(self, client, db_session, admin, built_extension):
+        headers = _sign_in(client, admin)
+        resp = await client.post("/api/admin/extension/stop-runs", headers=headers)
+        assert resp.status_code == 200, resp.text
+        moment = resp.json()["stop_runs_before"]
+        assert moment
+        assert (await load_extension_settings(db_session)).stop_runs_before == moment
+        rows = (
+            (
+                await db_session.execute(
+                    select(SecurityAuditEvent).where(SecurityAuditEvent.action == "extension_runs_stopped")
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(rows) == 1
+
+    async def test_disconnecting_every_browser_ends_them_and_audits_it(
+        self, client, db_session, admin, user, built_extension
+    ):
+        from app.services.extension_tokens import create_session, list_sessions
+
+        await create_session(db_session, user=user, device_name="one", user_agent="UA", ip="1.1.1.1")
+        await create_session(db_session, user=user, device_name="two", user_agent="UA", ip="1.1.1.1")
+        await db_session.commit()
+        headers = _sign_in(client, admin)
+        resp = await client.post("/api/admin/extension/disconnect-all", headers=headers)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["disconnected"] == 2
+        assert await list_sessions(db_session, user) == []
+        rows = (
+            (
+                await db_session.execute(
+                    select(SecurityAuditEvent).where(SecurityAuditEvent.action == "extension_disconnected_all")
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(rows) == 1
+
+    async def test_a_read_only_administrator_may_look_but_not_act(self, client, db_session, built_extension):
+        reader = await _user(db_session, "reader", roles=["read_only_super_admin"])
+        headers = _sign_in(client, reader)
+        assert (await client.get("/api/admin/extension/overview")).status_code == 200
+        assert (await client.post("/api/admin/extension/stop-runs", headers=headers)).status_code == 403
+        assert (await client.post("/api/admin/extension/disconnect-all", headers=headers)).status_code == 403

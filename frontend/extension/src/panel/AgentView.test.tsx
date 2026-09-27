@@ -50,6 +50,7 @@ beforeEach(() => {
   server = createServerFake();
   server.routes["GET /api/chat/models"] = () => json(200, MODELS);
   server.routes["POST /api/extension/events"] = () => json(200, { recorded: 1 });
+  server.routes["POST /api/extension/runs"] = () => json(200, { chat_id: "chat-run-1" });
   replies = [];
   server.routes["POST /api/chat/completions"] = (init) => sse(replies.shift() ?? toolFrame([{ id: "end", name: "done", args: { summary: "Done." } }]), { signal: init.signal }).response;
   const tab = chromeFake.tabs.add({ url: "https://shop.example.com/cart", title: "Cart", active: true });
@@ -468,6 +469,79 @@ describe("a run", () => {
     await start("Do something.");
     await until(() => host.textContent!.includes("Could not go on"), "the failure");
     expect(host.textContent).toContain("does not allow the browser agent to use this model");
+  });
+});
+
+describe("a finished run", () => {
+  const RUN = [toolFrame([{ id: "c1", name: "read_page" }]), toolFrame([{ id: "c2", name: "click", args: { ref: "e1" } }]), toolFrame([{ id: "c3", name: "done", args: { summary: "Moved to the next step." } }])];
+
+  it("is saved to the chat history as the task, the answer and the steps, and says so", async () => {
+    replies = [...RUN];
+    await render();
+    await start("Go to the next step.");
+    await until(() => Boolean(host.querySelector('[role="alertdialog"]')), "the approval card");
+    await act(async () => button("Allow").click());
+    await until(() => host.textContent!.includes("Saved to your chat history"), "the saved note");
+    const saved = server.callsTo("POST", "/api/extension/runs");
+    expect(saved).toHaveLength(1);
+    expect(saved[0].body).toMatchObject({
+      task: "Go to the next step.",
+      outcome: "done",
+      summary: "Moved to the next step.",
+      model: "model::1",
+      mode: "ask",
+      steps: [
+        { tool: "read_page", summary: "Read the page", status: "done" },
+        { tool: "click", summary: 'Click "Next"', status: "done" },
+        { tool: "done", summary: "Finish", status: "done" },
+      ],
+    });
+    expect(JSON.stringify(saved[0].body)).not.toContain(OUTLINE.slice(0, 20));
+    const link = host.querySelector("a.agent__saved, .agent__saved a") as HTMLAnchorElement;
+    expect(link.href).toBe(`${SERVER}/app/chat?session=chat-run-1`);
+  });
+
+  it("is not saved when the administrator keeps no runs, nor as a private run, and the toggle shows only when allowed", async () => {
+    replies = [...RUN];
+    await render({ ...ME, policy: { ...ME.policy!, save_runs: false } });
+    expect(host.querySelector(".agent__private")).toBeNull();
+    await start("Go to the next step.");
+    await until(() => Boolean(host.querySelector('[role="alertdialog"]')), "the approval card");
+    await act(async () => button("Allow").click());
+    await until(() => host.textContent!.includes("Finished"), "the run to end");
+    expect(server.callsTo("POST", "/api/extension/runs")).toHaveLength(0);
+    expect(host.textContent).not.toContain("Saved to your chat history");
+
+    act(() => root.unmount());
+    root = createRoot(host);
+    replies = [...RUN];
+    await render({ ...ME, features: { ...ME.features, private_mode: true } });
+    const toggle = host.querySelector(".agent__private input") as HTMLInputElement;
+    expect(toggle).not.toBeNull();
+    await act(async () => toggle.click());
+    await start("Go to the next step.");
+    await until(() => Boolean(host.querySelector('[role="alertdialog"]')), "the approval card");
+    await act(async () => button("Allow").click());
+    await until(() => host.textContent!.includes("Finished"), "the run to end");
+    expect(server.callsTo("POST", "/api/extension/runs")).toHaveLength(0);
+    // Without Private Mode, or with private runs turned off, there is no toggle.
+    act(() => root.unmount());
+    root = createRoot(host);
+    await render({ ...ME, features: { ...ME.features, private_mode: true }, policy: { ...ME.policy!, private_runs: false } });
+    expect(host.querySelector(".agent__private")).toBeNull();
+  });
+
+  it("goes on quietly when the server would not save it", async () => {
+    server.routes["POST /api/extension/runs"] = () => json(403, { detail: { code: "runs_not_saved", message: "No." } });
+    replies = [...RUN];
+    await render();
+    await start("Go to the next step.");
+    await until(() => Boolean(host.querySelector('[role="alertdialog"]')), "the approval card");
+    await act(async () => button("Allow").click());
+    await until(() => host.textContent!.includes("Finished"), "the run to end");
+    await act(async () => undefined);
+    expect(host.textContent).not.toContain("Saved to your chat history");
+    expect(button("Start")).toBeTruthy();
   });
 });
 

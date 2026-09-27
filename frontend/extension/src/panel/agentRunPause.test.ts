@@ -243,3 +243,24 @@ describe("the agent's own input", () => {
     expect(h.steps.some((step) => step.status === "error")).toBe(false);
   });
 });
+
+describe("what a step keeps for the saved run", () => {
+  it("has the length of what was typed, never the text", async () => {
+    const { keptSummary } = await import("./agentRun");
+    expect(keptSummary("type_text", { ref: "e3", text: "SAVE10" }, 'Type "SAVE10" into "Coupon"')).toBe('Type 6 characters into "Coupon"');
+    expect(keptSummary("computer", { action: "type", text: "hello" }, 'Type "hello" into "Name"')).toBe('Type 5 characters into "Name"');
+    // A summary that does not carry the text as shown still says only how much was typed.
+    expect(keptSummary("type_text", { text: "secret" }, "Typed something")).toBe("Type 6 characters");
+    expect(keptSummary("click", { ref: "e1" }, 'Click "Next"')).toBeUndefined();
+    expect(keptSummary("computer", { action: "left_click" }, "Click at (1, 2)")).toBeUndefined();
+  });
+
+  it("reaches the panel with the step", async () => {
+    const h = harness([{ text: "", toolCalls: [call("computer", { action: "type", text: "hi there" })] }, done()]);
+    await h.run();
+    const typed = h.steps.filter((step) => step.tool === "computer").at(-1);
+    expect(typed?.summary).toContain('"hi there"');
+    expect(typed?.kept).toBe('Type 8 characters into textbox "Coupon"');
+    expect(typed?.kept).not.toContain("hi there");
+  });
+});

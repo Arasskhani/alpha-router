@@ -718,3 +718,96 @@ class TestTheVerdict:
     def test_the_reason_is_cut_short(self):
         verdict = parse_verdict(json.dumps({"decision": "ask", "reason": "x" * 1000}))
         assert len(verdict.reason) == 200
+
+
+# --- saved runs ------------------------------------------------------------------------
+
+
+RUN = {
+    "task": "Apply the coupon SAVE10 and go to the next step.",
+    "outcome": "done",
+    "summary": "The coupon was applied and the next step opened.",
+    "steps": [
+        {"tool": "read_page", "summary": "Read the page", "status": "done"},
+        {"tool": "type_text", "summary": 'Type "SAVE10" into "Coupon"', "status": "done"},
+        {
+            "tool": "click",
+            "summary": 'Click "Buy now"',
+            "status": "blocked",
+            "detail": "Purchases are never made by the agent.",
+        },
+        {"tool": "click", "summary": 'Click "Next"', "status": "done"},
+    ],
+    "model": "model::4",
+    "mode": "plan",
+    "duration_ms": 95_000,
+}
+
+
+@pytest.mark.usefixtures("agent_on")
+class TestSavedRuns:
+    async def test_a_finished_run_becomes_a_chat_of_the_task_and_the_answer(
+        self, client, browser, user, session_factory
+    ):
+        from sqlalchemy import select as sql_select
+
+        from app.models.chat import ChatMessage, ChatSession
+
+        resp = await client.post("/api/extension/runs", json=RUN, headers=browser.headers)
+        assert resp.status_code == 200, resp.text
+        chat_id = resp.json()["chat_id"]
+        async with session_factory() as fresh:
+            session = await fresh.get(ChatSession, chat_id)
+            assert session is not None and session.user_id == user.id
+            assert session.title == RUN["task"]
+            assert session.model_id == "model::4"
+            assert session.tools == {"browser_agent": True}
+            assert session.private_mode is False
+            rows = list(
+                (
+                    await fresh.execute(
+                        sql_select(ChatMessage).where(ChatMessage.session_id == chat_id).order_by(ChatMessage.sequence)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        assert [row.role for row in rows] == ["user", "assistant"]
+        assert rows[0].content == RUN["task"]
+        answer = rows[1].content
+        assert answer.startswith("**Finished**")
+        assert "The coupon was applied" in answer
+        assert "**Steps (4)**" in answer
+        assert '3. Click "Buy now" - refused by the rules - Purchases are never made by the agent.' in answer
+        assert '4. Click "Next" - done' in answer
+        assert "1 min 35 s, plan mode" in answer
+
+    async def test_saving_is_refused_when_the_administrator_keeps_no_runs(self, client, browser, db_session):
+        from app.services.extension_settings import ExtensionSettings, save_extension_settings
+
+        await save_extension_settings(db_session, ExtensionSettings(save_runs=False))
+        await db_session.commit()
+        resp = await client.post("/api/extension/runs", json=RUN, headers=browser.headers)
+        assert resp.status_code == 403
+        assert resp.json()["detail"]["code"] == "runs_not_saved"
+
+    async def test_only_what_the_panel_showed_fits(self, client, browser):
+        # Page text, screenshots and typed text have no field to arrive in; a stray one is refused.
+        stray = {**RUN, "page_text": "secret page"}
+        assert (await client.post("/api/extension/runs", json=stray, headers=browser.headers)).status_code == 422
+        long_step = {**RUN, "steps": [{"tool": "type_text", "summary": "x" * 201, "status": "done"}]}
+        assert (await client.post("/api/extension/runs", json=long_step, headers=browser.headers)).status_code == 422
+        many = {**RUN, "steps": [{"tool": "click", "summary": "Click", "status": "done"}] * 201}
+        assert (await client.post("/api/extension/runs", json=many, headers=browser.headers)).status_code == 422
+
+    async def test_needs_the_agent_and_a_connected_browser(self, client, browser, db_session, user):
+        headers = _sign_in(client, user)
+        resp = await client.post("/api/extension/runs", json=RUN, headers=headers)
+        assert resp.status_code == 400
+        assert resp.json()["detail"]["code"] == "extension_only"
+        await set_chat_tool_access(db_session, "browser_agent", access_type="private", grants=[])
+        await db_session.commit()
+        client.cookies.clear()
+        resp = await client.post("/api/extension/runs", json=RUN, headers=browser.headers)
+        assert resp.status_code == 403
+        assert resp.json()["detail"]["code"] == "agent_not_permitted"

@@ -26,6 +26,9 @@ export type Me = {
     /** Screenshots: the longest side, and how many of the latest stay in the conversation. */
     screenshot_max_side?: number;
     screenshots_kept?: number;
+    /** Whether finished runs are kept as chats, and whether the person may keep one out. */
+    save_runs?: boolean;
+    private_runs?: boolean;
     /** The sensitive cases that still ask; a missing one asks. */
     approvals?: Partial<Approvals>;
     /** Where content may go: the organisation's internal sites, and the models that may see them and screenshots (null: any). */

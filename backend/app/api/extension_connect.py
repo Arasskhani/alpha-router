@@ -281,6 +281,9 @@ async def extension_me(
             "agent_default_mode": settings.agent_default_mode,
             "screenshot_max_side": settings.screenshot_max_side,
             "screenshots_kept": settings.screenshots_kept,
+            # Whether finished runs are kept as chats, and whether the person may keep one out.
+            "save_runs": settings.save_runs,
+            "private_runs": settings.private_runs,
             # Full control: whether the admin turned it on; the feature flag says whether this user may use it.
             "full_control": settings.full_control,
             # Which sensitive cases still ask (true), so the extension can relax the rest.

@@ -42,6 +42,9 @@ const MODE_KEY = "alpharouter.agentMode";
 const DEFAULT_MAX_STEPS = 25;
 const DEFAULT_MAX_MINUTES = 20;
 const DEFAULT_MAX_TABS = 10;
+/** What the server takes of a saved run: this many steps, each this long. */
+const MAX_SAVED_STEPS = 200;
+const MAX_SAVED_STEP_CHARS = 200;
 /** Events go to the server in batches of this many, and whatever is left when a run ends. */
 const EVENT_BATCH = 10;
 /** Events kept while the server cannot take them: the newest this many. */
@@ -75,7 +78,8 @@ type LogItem =
   | { kind: "task"; id: string; text: string }
   | { kind: "step"; id: string; step: StepView }
   | { kind: "text"; id: string; text: string }
-  | { kind: "result"; id: string; outcome: RunOutcome; summary: string };
+  | { kind: "result"; id: string; outcome: RunOutcome; summary: string }
+  | { kind: "saved"; id: string; chatId: string };
 
 type Props = {
   me: Me;
@@ -150,6 +154,10 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
   const [banner, setBanner] = useState("");
   /** The person took over the page (or paused from here): the run waits for Resume. */
   const [paused, setPaused] = useState(false);
+  /** A private run: not saved to the person's chat history (its steps still go to Admin Logs). */
+  const [privateRun, setPrivateRun] = useState(false);
+  /** The run's steps as they ended, in order, for the chat it becomes. */
+  const stepsTaken = useRef<Map<string, StepView>>(new Map());
   const controller = useRef<AbortController | null>(null);
   const gate = useRef<PauseControl | null>(null);
   const browser = useRef<PanelBrowser | null>(null);
@@ -177,6 +185,10 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
   const maxTabs = me.policy?.agent_max_tabs ?? DEFAULT_MAX_TABS;
   const screenshotsKept = me.policy?.screenshots_kept ?? SCREENSHOTS_KEPT;
   const maxSide = clampMaxSide(me.policy?.screenshot_max_side);
+  /** Finished runs become chats unless the administrator turned that off. */
+  const savesRuns = me.policy?.save_runs !== false;
+  /** A run may be kept out of the history when the person has Private Mode and the administrator allows private runs. */
+  const privateOffered = savesRuns && me.features.private_mode && me.policy?.private_runs !== false;
   const rules = useMemo<PolicyContext>(() => {
     // Both addresses: the server this copy talks to, and the one the server gives, if they differ.
     const own = [hostOf(server), hostOf(me.server.url)].filter((host): host is string => host !== null);
@@ -263,6 +275,7 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
   }
 
   function showStep(step: StepView) {
+    stepsTaken.current.set(step.id, step);
     setLog((items) => {
       const at = items.findIndex((item) => item.kind === "step" && item.id === step.id);
       if (at < 0) return [...items, { kind: "step", id: step.id, step }];
@@ -394,6 +407,42 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
     };
   }
 
+  /**
+   * The finished run, kept as a chat of the person's: the task, how it ended,
+   * and each step as the panel showed it - never page text or screenshots,
+   * which the panel does not send and the server would not take.
+   */
+  async function saveRun(run: string, finished: { task: string; outcome: RunOutcome; summary: string; model: string; mode: AgentMode; startedAt: number }) {
+    const steps = [...stepsTaken.current.values()]
+      .filter((step) => step.status !== "running" && step.status !== "waiting")
+      .slice(0, MAX_SAVED_STEPS)
+      .map((step) => ({
+        tool: step.tool,
+        // Never what was typed: the kept form has its length instead.
+        summary: (step.kept ?? step.summary).slice(0, MAX_SAVED_STEP_CHARS),
+        status: step.status,
+        ...(step.detail ? { detail: step.detail.slice(0, MAX_SAVED_STEP_CHARS) } : {}),
+      }));
+    try {
+      const { chat_id } = await getClient().api.json<{ chat_id: string }>("/api/extension/runs", {
+        method: "POST",
+        body: JSON.stringify({
+          task: finished.task,
+          outcome: finished.outcome,
+          summary: finished.summary.slice(0, MAX_TASK_CHARS),
+          steps,
+          model: finished.model,
+          mode: finished.mode,
+          duration_ms: Math.min(86_400_000, Math.max(0, Date.now() - finished.startedAt)),
+        }),
+      });
+      append({ kind: "saved", id: `${run}-saved`, chatId: chat_id });
+    } catch (err) {
+      if (err instanceof DisconnectedError) disconnected.current();
+      // Not saved (the administrator turned it off since, or the server was busy): the run is still in Admin Logs.
+    }
+  }
+
   async function begin(task: string) {
     // One run at a time: a second one would take over the Stop buttons and leave the first running unseen.
     if (controller.current) return;
@@ -403,6 +452,7 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
     const abort = new AbortController();
     controller.current = abort;
     runId.current = run;
+    stepsTaken.current = new Map();
     browser.current = createAgentBrowser({ startTabId: activePage?.tabId ?? null, runId: run, maxTabs });
     const pauseGate = createPauseGate(abort.signal);
     pauseGate.onChange(setPaused);
@@ -442,6 +492,9 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
         abort.signal,
       );
       append({ kind: "result", id: `${run}-end`, outcome: result.outcome, summary: result.summary });
+      if (savesRuns && !(privateOffered && privateRun)) {
+        await saveRun(run, { task, outcome: result.outcome, summary: result.summary, model: modelId, mode, startedAt });
+      }
     } finally {
       await stopDriver?.().catch(() => undefined);
       await browser.current?.cleanup().catch(() => undefined);
@@ -566,6 +619,12 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
             </button>
           ))}
         </div>
+        {privateOffered && (
+          <label className="agent__private">
+            <input type="checkbox" checked={privateRun} disabled={running} onChange={(event) => setPrivateRun(event.target.checked)} />
+            Private run
+          </label>
+        )}
       </header>
 
       {banner && (
@@ -597,6 +656,16 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
                 <strong>{OUTCOME_LABEL[item.outcome]}</strong>
                 <p className="agent__summary">{item.summary}</p>
               </div>
+            );
+          }
+          if (item.kind === "saved") {
+            return (
+              <p key={item.id} className="agent__text agent__saved">
+                Saved to your chat history.{" "}
+                <a href={`${server}/app/chat?session=${encodeURIComponent(item.chatId)}`} target="_blank" rel="noopener noreferrer">
+                  Open it
+                </a>
+              </p>
             );
           }
           const { step } = item;

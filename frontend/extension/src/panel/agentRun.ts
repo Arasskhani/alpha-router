@@ -85,8 +85,8 @@ type ReviewInput = {
 
 type StepStatus = "running" | "waiting" | "done" | "denied" | "blocked" | "skipped" | "error" | "stopped";
 
-/** One line of the step log. */
-export type StepView = { id: string; tool: string; summary: string; status: StepStatus; detail?: string };
+/** One line of the step log. `kept` is the summary as it may be saved: without what was typed. */
+export type StepView = { id: string; tool: string; summary: string; status: StepStatus; detail?: string; kept?: string };
 
 export type AgentEventReport = {
   kind: "agent_step" | "agent_task";
@@ -279,6 +279,17 @@ function address(url: unknown): string {
 /** The text to be typed, in full up to a size, then its start and its length. */
 function typed(text: string): string {
   return text.length <= MAX_SHOWN_TEXT ? `"${text}"` : `"${text.slice(0, MAX_SHOWN_TEXT)}…" (${text.length} characters in all)`;
+}
+
+/**
+ * A step's summary as it may be kept after the run: what the person saw,
+ * less the text that was typed, which is never stored - only its length.
+ */
+export function keptSummary(tool: string, a: Record<string, unknown>, summary: string): string | undefined {
+  const text = tool === "type_text" || (tool === "computer" && a.action === "type") ? a.text : undefined;
+  if (typeof text !== "string" || !text) return undefined;
+  const shown = typed(text);
+  return summary.includes(shown) ? summary.replace(shown, `${text.length} characters`) : `Type ${text.length} characters`;
 }
 
 function whereTo(url: unknown): string {
@@ -1199,7 +1210,8 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
         if (answer.image) images.push(answer.image);
         const name = call.function.name;
         const said = answer.summary ?? describeAction(name, args(call.function.arguments) ?? {});
-        deps.onStep({ id: call.id, tool: name, summary: said, status: answer.status, detail: answer.detail });
+        const kept = keptSummary(name, args(call.function.arguments) ?? {}, said);
+        deps.onStep({ id: call.id, tool: name, summary: said, status: answer.status, detail: answer.detail, ...(kept ? { kept } : {}) });
         if (answer.status !== "skipped") {
           deps.report({
             kind: "agent_step",

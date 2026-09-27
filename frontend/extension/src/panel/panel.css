@@ -734,6 +734,20 @@ button {
   color: var(--accent-contrast);
 }
 
+.agent__private {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.8125rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.agent__saved {
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+
 .agent__text {
   margin: 0.4rem 0;
   line-height: 1.5;

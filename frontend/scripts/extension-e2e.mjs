@@ -42,8 +42,8 @@
  *      filled in and sent once the user allows each action; a password
  *      field and a "Buy now" button refused; a page that tries to send the
  *      agent to another site stopped by the user's Deny; a blocked site
- *      refused; Stop on the page's banner; its steps in Admin Logs and none
- *      of it in the chat history;
+ *      refused; Stop on the page's banner; its steps in Admin Logs, and each
+ *      run saved as a chat of the task and the steps, with no page text;
  *  13. disconnecting this browser from Settings → Extension in the web app,
  *      after which the panel asks to connect again;
  *  14. with EXT_E2E_POLICY=1, run as root: Chromium's managed policy
@@ -560,6 +560,8 @@ async function main() {
         agent_models: [modelRef],
         agent_auto_mode: false,
         agent_review_model: null,
+        // The agent scripts are written for Ask mode: every action waits for the person.
+        agent_default_mode: "ask",
         // Full control for the control step: the package then carries the debugger permission.
         full_control: true,
       },
@@ -1076,7 +1078,7 @@ async function main() {
     await page.close();
   });
 
-  await step("the agent's steps are in Admin Logs, and none of it in the chat history", async () => {
+  await step("the agent's steps are in Admin Logs, and each run is a chat of the task and the steps alone", async () => {
     expect(agentTasks.length, "the agent did not run");
     const logs = await callJson("/api/admin/admin-logs?source=browser_extension&limit=200");
     const steps = logs.items.filter((item) => item.action === "agent_step" && item.actor_username === USER);
@@ -1088,8 +1090,27 @@ async function main() {
     const typed = steps.find((s) => s.detail?.chars === AGENT_NAME.length);
     expect(typed, "the typing step is not recorded with its length");
     expect(!JSON.stringify(logs.items).includes(AGENT_NAME), "what the agent typed is in Admin Logs");
-    for (const task of agentTasks) expect(!(await findChat(task)), `the agent's task “${task}” was saved as a chat`);
-    return `${steps.length} steps, ${runs.length} runs`;
+    // Each run became a chat: the task, then one answer with the steps - and nothing a page said, nor what was typed.
+    let saved = 0;
+    const seen = new Set();
+    for (const task of agentTasks) {
+      const chat = await findChat(task);
+      if (!chat) continue;
+      saved += 1;
+      // Two runs of the same task (Stop, and the take-over) share a title; each chat is deleted once.
+      if (!seen.has(chat.id)) serverUndo.push({ name: `delete the run's chat “${task.slice(0, 40)}…”`, fn: () => callJson(`/api/user/chats/sessions/${encodeURIComponent(chat.id)}`, { method: "DELETE" }) });
+      seen.add(chat.id);
+      expect(chat.messages.length === 2, `the run's chat has ${chat.messages.length} messages`);
+      const answer = answerTo(chat.messages, task);
+      expect(answer?.role === "assistant" && answer.content.includes("**Steps ("), "the run's chat does not list its steps");
+      // The model's own answer may repeat what a page showed it; the step list never carries what was typed.
+      const stepList = answer.content.slice(answer.content.indexOf("**Steps ("));
+      expect(!stepList.includes(AGENT_NAME), "what the agent typed is in the run's step list");
+      expect(!stepList.includes(VISIBLE), "page text is in the run's step list");
+      if (task.startsWith(AGENT_TASKS.form)) expect(stepList.includes(`${AGENT_NAME.length} characters`), "the typing step does not say how much was typed");
+    }
+    expect(saved === agentTasks.length, `${saved} of ${agentTasks.length} runs were saved as chats`);
+    return `${steps.length} steps, ${runs.length} runs, ${saved} chats`;
   });
 
   await step("disconnecting this browser from Settings → Extension ends the panel's session", async () => {

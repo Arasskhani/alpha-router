@@ -48,6 +48,7 @@ EXTENSION_SCOPE: frozenset[tuple[str, str]] = frozenset(
         ("POST", "/api/extension/revoke"),
         ("POST", "/api/extension/events"),
         ("POST", "/api/extension/review-action"),
+        ("POST", "/api/extension/runs"),
     }
 )
 #: Open to a connected browser even when the extension is switched off for the

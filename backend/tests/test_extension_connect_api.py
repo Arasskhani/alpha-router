@@ -603,6 +603,8 @@ class TestMe:
             "agent_default_mode": "plan",
             "screenshot_max_side": 1280,
             "screenshots_kept": 3,
+            "save_runs": True,
+            "private_runs": True,
             "full_control": False,
             "approvals": {
                 "send": True,

@@ -29,10 +29,22 @@ from app.services.extension_agent import (
     agent_event_rows,
     review_action,
 )
+from app.services.extension_runs import (
+    MAX_STEP_CHARS,
+    MAX_STEPS,
+    MAX_SUMMARY_CHARS,
+    MAX_TASK_CHARS,
+    FinishedRun,
+    RunNotSaved,
+    RunStep,
+    save_run,
+)
 from app.services.extension_settings import load_extension_settings
 from app.services.rate_limit import check_rate_limit
 
 router = APIRouter(tags=["extension"])
+#: Runs saved a minute from one connected browser: one per run at most, and runs take longer than that.
+RUNS_SAVED_PER_MINUTE = 20
 
 #: Calls to ``events`` a minute from one connected browser: batches, so far fewer are needed.
 EVENTS_CALLS_PER_MINUTE = 120
@@ -179,3 +191,58 @@ async def review_agent_action(
         crop=body.crop,
     )
     return verdict.to_json()
+
+
+class RunStepIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tool: str = Field(..., min_length=1, max_length=64)
+    summary: str = Field("", max_length=MAX_STEP_CHARS)
+    status: Literal["done", "denied", "blocked", "skipped", "error", "stopped"]
+    detail: str | None = Field(None, max_length=MAX_STEP_CHARS)
+
+
+class FinishedRunIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    task: str = Field(..., min_length=1, max_length=MAX_TASK_CHARS)
+    outcome: Literal["done", "stopped", "max_steps", "max_minutes", "errors", "failed"]
+    summary: str = Field("", max_length=MAX_SUMMARY_CHARS)
+    steps: list[RunStepIn] = Field(default_factory=list, max_length=MAX_STEPS)
+    model: str | None = Field(None, max_length=64)
+    mode: Literal["ask", "plan", "auto"] | None = None
+    duration_ms: int | None = Field(None, ge=0, le=86_400_000)
+
+
+@router.post("/api/extension/runs")
+async def save_finished_run(
+    body: FinishedRunIn,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """A finished run, kept as a chat of the person's: the task, the answer, the steps.
+
+    Only what the panel showed the person - never page text, screenshots or
+    what was typed, which the panel does not send and this would not take.
+    Refused when the administrator does not keep runs; a private run is never
+    sent here at all.
+    """
+    session_id = await _agent_session(request, db, user)
+    await check_rate_limit(f"extension:runs:{session_id}", limit=RUNS_SAVED_PER_MINUTE)
+    settings = await load_extension_settings(db)
+    run = FinishedRun(
+        task=body.task,
+        outcome=body.outcome,
+        summary=body.summary,
+        steps=tuple(RunStep(step.tool, step.summary, step.status, step.detail) for step in body.steps),
+        model=body.model,
+        mode=body.mode,
+        duration_ms=body.duration_ms,
+    )
+    try:
+        chat_id = await save_run(db, settings, user_id=int(user.id), run=run)
+    except RunNotSaved as exc:
+        raise _refusal(403, "runs_not_saved", str(exc)) from None
+    await db.commit()
+    return {"chat_id": chat_id}

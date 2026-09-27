@@ -17,7 +17,7 @@ from app.api.deps import get_current_user, require_active_user
 from app.database import get_db
 from app.models.user import User
 from app.services.client_ip import resolve_client_ip
-from app.services.extension_access import extension_permitted
+from app.services.extension_access import extension_permitted, refusal_message
 from app.services.extension_distribution import (
     ExtensionBuild,
     ExtensionUnavailable,
@@ -65,7 +65,7 @@ async def download_extension(
 ) -> Response:
     """The extension for this server, as a ZIP for Load unpacked."""
     if not await extension_permitted(db, user):
-        raise HTTPException(status_code=403, detail="The browser extension is not enabled for your account.")
+        raise HTTPException(status_code=403, detail=await refusal_message(db))
     build, unavailable = await _build_or_none(db, request)
     if build is None:
         raise HTTPException(status_code=503, detail=unavailable.message if unavailable else "Unavailable")

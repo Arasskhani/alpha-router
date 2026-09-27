@@ -747,3 +747,69 @@ class TestMyConnections:
             resp = await browser.request(method, path, headers=_bearer(tokens["access_token"]))
             assert resp.status_code == 403
             assert resp.json()["detail"]["code"] == "extension_scope"
+
+
+class TestTheOrganisationSwitch:
+    """Off, the extension is refused for everyone: no new browser, and no call from an old one."""
+
+    async def _turn_off(self, db_session):
+        await save_extension_settings(db_session, ExtensionSettings(enabled=False))
+        await db_session.commit()
+
+    async def test_no_browser_can_be_authorized(self, client, db_session, user, redirect):
+        await self._turn_off(db_session)
+        resp = await _authorize(client, _sign_in(client, user), redirect)
+        assert resp.status_code == 403
+        detail = resp.json()["detail"]
+        assert detail["code"] == "not_permitted"
+        # The reason is the administrator's, not the account's: the panel says which.
+        assert detail["message"] == "Your administrator turned the browser extension off."
+
+    async def test_a_code_taken_before_it_went_off_buys_no_tokens(self, client, browser, db_session, user, redirect):
+        headers = _sign_in(client, user)
+        allowed = await _authorize(client, headers, redirect)
+        code = _query(allowed.json()["redirect_to"])["code"]
+        await self._turn_off(db_session)
+        resp = await browser.post(
+            "/api/extension/token",
+            json={
+                "grant_type": "authorization_code",
+                "code": code,
+                "code_verifier": VERIFIER,
+                "redirect_uri": redirect,
+            },
+        )
+        assert resp.status_code == 400
+        assert resp.json()["detail"]["message"] == "Your administrator turned the browser extension off."
+
+    async def test_a_connected_browser_is_refused_its_calls(self, client, browser, db_session, user, redirect):
+        tokens = await _connect(client, browser, user, redirect)
+        await self._turn_off(db_session)
+        resp = await browser.get("/api/chat/models", headers=_bearer(tokens["access_token"]))
+        assert resp.status_code == 403
+        assert resp.json()["detail"]["code"] == "extension_not_permitted"
+        assert resp.json()["detail"]["message"] == "Your administrator turned the browser extension off."
+
+    async def test_the_session_survives_and_works_again_when_it_is_turned_back_on(
+        self, client, browser, db_session, user, redirect
+    ):
+        tokens = await _connect(client, browser, user, redirect)
+        await self._turn_off(db_session)
+        assert (await browser.get("/api/chat/models", headers=_bearer(tokens["access_token"]))).status_code == 403
+        await save_extension_settings(db_session, ExtensionSettings(enabled=True))
+        await db_session.commit()
+        assert (await browser.get("/api/chat/models", headers=_bearer(tokens["access_token"]))).status_code == 200
+
+    async def test_me_still_answers_so_the_panel_can_say_why(self, client, browser, db_session, user, redirect):
+        tokens = await _connect(client, browser, user, redirect)
+        await self._turn_off(db_session)
+        resp = await browser.get("/api/extension/me", headers=_bearer(tokens["access_token"]))
+        assert resp.status_code == 200
+        assert resp.json()["features"]["chat"] is False
+
+    async def test_the_download_is_refused_with_the_same_reason(self, client, db_session, user):
+        await self._turn_off(db_session)
+        _sign_in(client, user)
+        resp = await client.get("/api/extension/download")
+        assert resp.status_code == 403
+        assert resp.json()["detail"] == "Your administrator turned the browser extension off."

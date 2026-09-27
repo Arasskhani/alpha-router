@@ -12,7 +12,7 @@ from app.core.security import decode_access_token
 from app.database import get_db
 from app.models.user import User
 from app.services.client_ip import resolve_client_ip
-from app.services.extension_access import extension_permitted
+from app.services.extension_access import extension_permitted, refusal_message
 from app.services.extension_tokens import (
     ExtensionTokenError,
     is_extension_access_token,
@@ -82,10 +82,8 @@ async def _extension_user(request: Request, token: str, db: AsyncSession) -> Use
         if not user.is_active:
             raise _extension_refusal(403, "account_disabled", "Your account is disabled.")
         if not await extension_permitted(db, user):
-            # The session stays: re-enabling the extension for the user restores it.
-            raise _extension_refusal(
-                403, "extension_not_permitted", "The browser extension is not enabled for your account."
-            )
+            # The session stays: turning the extension back on restores it.
+            raise _extension_refusal(403, "extension_not_permitted", await refusal_message(db))
     session_id = str(found.session.id)
     request.state.extension_session_id = session_id
     if needs_touch(found.session):

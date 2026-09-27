@@ -30,7 +30,7 @@ from app.database import get_db
 from app.models.extension import ExtensionSession
 from app.models.user import User
 from app.services.client_ip import resolve_client_ip
-from app.services.extension_access import extension_features, extension_permitted
+from app.services.extension_access import extension_features, extension_permitted, refusal_message
 from app.services.extension_distribution import ExtensionUnavailable, current_build
 from app.services.extension_keys import ExtensionKeyUnavailable, get_signing_key
 from app.services.extension_package import CONNECTED_PAGE, MIN_SUPPORTED_VERSION, normalize_origin
@@ -133,7 +133,7 @@ async def authorize_extension(
     if body.code_challenge_method != "S256" or not is_valid_challenge(body.code_challenge):
         raise _refusal(400, "invalid_request", "The extension sent an unusable PKCE challenge.")
     if not await extension_permitted(db, user):
-        raise _refusal(403, "not_permitted", "The browser extension is not enabled for your account.")
+        raise _refusal(403, "not_permitted", await refusal_message(db))
     code = await create_auth_code(user=user, redirect_uri=body.redirect_uri, code_challenge=body.code_challenge)
     return {"redirect_to": f"{body.redirect_uri}?{urlencode({'code': code, 'state': body.state})}"}
 
@@ -159,7 +159,7 @@ async def _exchange_code(db: AsyncSession, body: TokenIn, request: Request, ip: 
         raise ExtensionTokenError("invalid_request", "code, code_verifier and redirect_uri are required.")
     user = await redeem_auth_code(db, code=body.code, code_verifier=body.code_verifier, redirect_uri=body.redirect_uri)
     if not await extension_permitted(db, user):
-        raise ExtensionTokenError("not_permitted", "The browser extension is not enabled for your account.")
+        raise ExtensionTokenError("not_permitted", await refusal_message(db))
     pair = await create_session(
         db,
         user=user,

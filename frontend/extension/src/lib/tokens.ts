@@ -34,6 +34,8 @@
  * the caller tries later).
  */
 
+import { packageVersion } from "./version";
+
 export type StoredAccess = { token: string; expiresAt: number; sessionId: string };
 
 export type TokenResponse = {
@@ -162,7 +164,13 @@ export function createTokenManager(deps: TokenManagerDeps) {
       credentials: "omit",
       cache: "no-store",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ grant_type: "refresh_token", refresh_token: refreshToken, attempt }),
+      body: JSON.stringify({
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+        attempt,
+        // So an administrator sees which browsers still run an older package.
+        extension_version: packageVersion(),
+      }),
       signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS),
     });
   }

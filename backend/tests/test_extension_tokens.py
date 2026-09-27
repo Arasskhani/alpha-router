@@ -1005,3 +1005,50 @@ class TestCleanup:
         await scheduler.job_extension_session_cleanup()
         async with session_factory() as fresh:
             assert (await fresh.execute(select(ExtensionSession.id))).first() is None
+
+
+class TestTheReportedPackageVersion:
+    """A browser tells the server which package it runs, so an admin can see who is behind."""
+
+    async def test_it_is_kept_from_the_connection(self, db_session, user, session_factory):
+        pair = await create_session(
+            db_session, user=user, device_name="Chrome", user_agent="UA", ip="10.0.0.5", extension_version="1.2.3.4"
+        )
+        await db_session.commit()
+        assert (await _row(session_factory, pair.session_id)).extension_version == "1.2.3.4"
+
+    async def test_a_refresh_brings_it_up_to_date(self, db_session, user, session_factory, clock):
+        pair = await create_session(
+            db_session, user=user, device_name="Chrome", user_agent="UA", ip="10.0.0.5", extension_version="1.0.0.1"
+        )
+        await db_session.commit()
+        await refresh_session(db_session, pair.refresh_token, extension_version="1.0.0.9")
+        await db_session.commit()
+        assert (await _row(session_factory, pair.session_id)).extension_version == "1.0.0.9"
+
+    async def test_a_refresh_that_sends_none_keeps_the_last_one(self, db_session, user, session_factory, clock):
+        pair = await create_session(
+            db_session, user=user, device_name="Chrome", user_agent="UA", ip="10.0.0.5", extension_version="1.0.0.1"
+        )
+        await db_session.commit()
+        await refresh_session(db_session, pair.refresh_token)
+        await db_session.commit()
+        assert (await _row(session_factory, pair.session_id)).extension_version == "1.0.0.1"
+
+    @pytest.mark.parametrize(
+        "raw", ["", "   ", None, "not-a-version", "1.2.3.4.5", "1.2.3; DROP TABLE", "9" * 40, "v1.2", "1..2"]
+    )
+    async def test_anything_that_is_not_a_version_is_not_stored(self, db_session, user, session_factory, raw):
+        pair = await create_session(
+            db_session, user=user, device_name="Chrome", user_agent="UA", ip="10.0.0.5", extension_version=raw
+        )
+        await db_session.commit()
+        assert (await _row(session_factory, pair.session_id)).extension_version is None
+
+    @pytest.mark.parametrize("raw", ["1", "1.2", "1.2.3", "1.2.3.4", "0.0.0.0"])
+    async def test_every_shape_chrome_accepts_is_kept(self, db_session, user, session_factory, raw):
+        pair = await create_session(
+            db_session, user=user, device_name="Chrome", user_agent="UA", ip="10.0.0.5", extension_version=raw
+        )
+        await db_session.commit()
+        assert (await _row(session_factory, pair.session_id)).extension_version == raw

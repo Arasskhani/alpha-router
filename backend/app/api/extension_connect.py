@@ -146,6 +146,8 @@ class TokenIn(BaseModel):
     device_name: str | None = Field(default=None, max_length=256)
     refresh_token: str | None = Field(default=None, max_length=256)
     attempt: str | None = Field(default=None, pattern=_ATTEMPT_RE)
+    #: The package version this browser runs, so an admin can see who is on an old one.
+    extension_version: str | None = Field(default=None, max_length=32)
 
 
 def _token_refusal(code: str, message: str) -> HTTPException:
@@ -164,6 +166,7 @@ async def _exchange_code(db: AsyncSession, body: TokenIn, request: Request, ip: 
         device_name=body.device_name,
         user_agent=request.headers.get("user-agent"),
         ip=ip,
+        extension_version=body.extension_version,
     )
     await log_security_event(
         db,
@@ -181,7 +184,9 @@ async def _refresh(db: AsyncSession, body: TokenIn, ip: str | None) -> TokenPair
     if not body.refresh_token:
         raise ExtensionTokenError("invalid_request", "refresh_token is required.")
     await check_rate_limit(f"extension:refresh:{token_hash(body.refresh_token)[:32]}", limit=REFRESH_LIMIT_PER_TOKEN)
-    return await refresh_session(db, body.refresh_token, attempt=body.attempt, ip=ip)
+    return await refresh_session(
+        db, body.refresh_token, attempt=body.attempt, ip=ip, extension_version=body.extension_version
+    )
 
 
 @router.post("/api/extension/token")

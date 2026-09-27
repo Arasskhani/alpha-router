@@ -62,7 +62,7 @@ function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
-type RefreshBody = { grant_type: string; refresh_token: string; attempt: string };
+type RefreshBody = { grant_type: string; refresh_token: string; attempt: string; extension_version?: string };
 
 /** What each refresh request sent, oldest first. */
 function sent(fetchImpl: ReturnType<typeof vi.fn>): RefreshBody[] {
@@ -335,6 +335,20 @@ describe("connecting and disconnecting", () => {
     expect(state.refresh).toBeNull();
     expect(state.attempt).toBeNull();
     expect(state.writes.slice(-3)).toEqual(["access:cleared", "attempt:cleared", "refresh:cleared"]);
+  });
+
+  it("tells the server which package this browser runs, when the manifest can be read", async () => {
+    const manifest = { runtime: { getManifest: () => ({ version: "1.2.3.4" }) } };
+    vi.stubGlobal("chrome", manifest);
+    try {
+      const { storage } = memoryStorage({ token: "old", expiresAt: NOW, sessionId: "s" }, "alpha-router-ext-rt-0");
+      const fetchImpl = vi.fn(async () => json(200, pair(1)));
+      const { tokens } = manager(storage, fetchImpl as unknown as typeof fetch);
+      await tokens.accessToken();
+      expect(sent(fetchImpl)[0].extension_version).toBe("1.2.3.4");
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("refuses a response without tokens", async () => {

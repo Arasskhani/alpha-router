@@ -8,3 +8,18 @@ export function compareVersions(a: string, b: string): number {
   }
   return 0;
 }
+
+/**
+ * This copy's package version, for the server's record of who runs what.
+ * Undefined wherever the manifest cannot be read, so a caller that only wants
+ * to mention it never fails for the want of it.
+ */
+export function packageVersion(): string | undefined {
+  try {
+    // Through globalThis: a bare `chrome` throws where the global is not declared at all.
+    const runtime = (globalThis as { chrome?: { runtime?: { getManifest?: () => { version?: string } } } }).chrome?.runtime;
+    return runtime?.getManifest?.().version || undefined;
+  } catch {
+    return undefined;
+  }
+}

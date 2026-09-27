@@ -25,6 +25,8 @@ from app.database import Base
 
 DEVICE_NAME_MAX_CHARS = 64
 USER_AGENT_MAX_CHARS = 255
+#: A Chrome extension version ("1.0.3.12"): four numbers at most, so this is ample.
+EXTENSION_VERSION_MAX_CHARS = 32
 
 
 class ExtensionSession(Base):
@@ -53,6 +55,9 @@ class ExtensionSession(Base):
     last_used_at = Column(DateTime, nullable=True)
     last_ip = Column(String(64), nullable=True)
     user_agent = Column(String(USER_AGENT_MAX_CHARS), nullable=True)
+    #: The package version this browser reported when it connected or last refreshed.
+    #: Null for a browser that connected before the field existed, or one that sent none.
+    extension_version = Column(String(EXTENSION_VERSION_MAX_CHARS), nullable=True)
     revoked_at = Column(DateTime, nullable=True)
     revoked_reason = Column(String(32), nullable=True)
 

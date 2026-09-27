@@ -60,7 +60,12 @@ from app.branding import PRODUCT_SLUG
 from app.config import get_settings
 from app.core.redis_client import get_redis
 from app.database import AsyncSessionLocal
-from app.models.extension import DEVICE_NAME_MAX_CHARS, USER_AGENT_MAX_CHARS, ExtensionSession
+from app.models.extension import (
+    DEVICE_NAME_MAX_CHARS,
+    EXTENSION_VERSION_MAX_CHARS,
+    USER_AGENT_MAX_CHARS,
+    ExtensionSession,
+)
 from app.models.user import User
 from app.services.observability import increment
 from app.services.security_audit import log_security_event
@@ -212,6 +217,22 @@ def clean_device_name(raw: str | None) -> str:
     return " ".join(text.split())[:DEVICE_NAME_MAX_CHARS].rstrip()
 
 
+#: A Chrome extension version: up to four numbers joined by dots.
+_VERSION_RE = re.compile(r"^\d{1,9}(?:\.\d{1,9}){0,3}$")
+
+
+def clean_extension_version(raw: str | None) -> str | None:
+    """The version a browser reports, or None when it sends nothing usable.
+
+    Only the shape Chrome itself accepts is kept, so a browser cannot write
+    arbitrary text into a column the overview reads back.
+    """
+    text = (raw or "").strip()
+    if not text or len(text) > EXTENSION_VERSION_MAX_CHARS or not _VERSION_RE.match(text):
+        return None
+    return text
+
+
 # --- authorization codes -------------------------------------------------
 
 _mem_lock = asyncio.Lock()
@@ -337,6 +358,7 @@ async def create_session(
     device_name: str | None,
     user_agent: str | None,
     ip: str | None,
+    extension_version: str | None = None,
 ) -> TokenPair:
     """A new connected browser; the caller commits."""
     now = _now()
@@ -357,6 +379,7 @@ async def create_session(
         last_used_at=now,
         last_ip=(ip or "")[:64] or None,
         user_agent=(user_agent or "")[:USER_AGENT_MAX_CHARS] or None,
+        extension_version=clean_extension_version(extension_version),
     )
     db.add(session)
     await db.flush()
@@ -510,7 +533,12 @@ def _answer_may_have_been_lost(session: ExtensionSession, now: datetime.datetime
 
 
 async def refresh_session(
-    db: AsyncSession, refresh_token: str | None, *, attempt: str | None = None, ip: str | None = None
+    db: AsyncSession,
+    refresh_token: str | None,
+    *,
+    attempt: str | None = None,
+    ip: str | None = None,
+    extension_version: str | None = None,
 ) -> TokenPair:
     """The next pair for a refresh token; raises ExtensionTokenError(invalid_grant). The caller commits.
 
@@ -543,6 +571,12 @@ async def refresh_session(
                     refresh_expires_at=min(now + REFRESH_IDLE_LIFETIME, current.absolute_expires_at),
                     prior_refresh_token_hash=presented,
                     prior_refresh_valid_until=now + REFRESH_GRACE,
+                    # A browser that sends no version leaves the last one it did report.
+                    **(
+                        {"extension_version": version}
+                        if (version := clean_extension_version(extension_version))
+                        else {}
+                    ),
                 ),
                 execution_options=_NO_SYNC,
             )

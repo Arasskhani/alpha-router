@@ -99,6 +99,7 @@ describe("finishing a connection", () => {
       code_verifier: verifier,
       redirect_uri: REDIRECT,
       device_name: expect.any(String),
+      extension_version: expect.any(String),
     });
     expect(state.refresh).toBe("rt");
     expect(await pending()).toBeUndefined();

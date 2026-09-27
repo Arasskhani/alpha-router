@@ -12,6 +12,7 @@
  * and the state ties the answer to the attempt this browser started.
  */
 
+import { packageVersion } from "./version";
 import { challengeFor, createState, createVerifier } from "./pkce";
 import type { TokenManager, TokenResponse } from "./tokens";
 
@@ -111,6 +112,7 @@ export async function finishConnect(search: string, deps: FinishDeps): Promise<C
         code_verifier: pending.verifier,
         redirect_uri: connectedPageUrl(),
         device_name: deviceName(),
+        extension_version: packageVersion(),
       }),
     });
   } catch {

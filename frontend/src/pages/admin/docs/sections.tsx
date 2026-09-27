@@ -2221,10 +2221,53 @@ export const docSections: DocSection[] = [
               <td>Data location (full control)</td>
               <td>
                 <strong>Internal sites</strong> are the organization&apos;s own (e.g. <code>*.corp.example</code>).
-                Their pages and screenshots go only to the <strong>models that may see internal sites</strong> (none
-                selected: any). <strong>Models that may see screenshots</strong> limits which models get an image of
-                any site at all; a model not on it works from the page&apos;s text and references. The extension
-                enforces this, and the server re-checks every page and screenshot a request declares.
+                Their pages and screenshots go only to models <em>inside the organization</em>: the{" "}
+                <strong>models that may see internal sites</strong>, plus every model on a{" "}
+                <strong>connection inside the organization</strong> (a tick per connection; one whose address is
+                private — 10.x, 172.16–31.x, 192.168.x, localhost, a single-word intranet name — is marked as looking
+                internal, for you to confirm). With neither set, any model. <strong>Models that may see
+                screenshots</strong> limits which models get an image of any site at all; a model not on it works
+                from the page&apos;s text and references. <strong>Screenshots of other sites may go to models
+                outside the organization</strong>, on by default: off, every screenshot stays with the models inside.
+                The extension enforces all of this, and the server re-checks each agent step it is sent — the sites
+                its page content names and whether it carries screenshots — and refuses what the rules do not allow
+                (<code>internal_site_not_allowed</code>, <code>screenshots_not_allowed</code>).
+              </td>
+            </tr>
+            <tr>
+              <td>Modes and limits per run</td>
+              <td>
+                <strong>Plan mode</strong> can be turned off (Ask is always offered; Auto is its own switch above), and
+                the <strong>default mode</strong> is what a run starts in unless the person chose another that is
+                on — Plan by default. <strong>Most minutes per task</strong> (20): a run past it ends before its next
+                step, and the server refuses a step of a run that is two minutes past it (<code>run_too_long</code>).{" "}
+                <strong>Most tabs per task</strong> (10): the agent is told when it cannot open another.{" "}
+                <strong>Runs per person per day</strong> (empty: no limit): counted from the runs in Admin Logs by
+                UTC day; past it, no step is served (<code>daily_runs_reached</code>) until the next day. Screenshots:
+                the <strong>longest side</strong> (1280 px, 800–1600) and how many of the latest are{" "}
+                <strong>kept</strong> in the conversation (3, 1–5); the rest are replaced by a note, so a long run
+                stays affordable.
+              </td>
+            </tr>
+            <tr>
+              <td>Package</td>
+              <td>
+                <strong>Require the newest package for the agent</strong> (off): on, a browser that reports an older
+                package than this server hands out — or none — gets no agent step (<code>package_outdated</code>)
+                until the person loads the new package; chat and page questions still work. <strong>Minimum browser
+                version</strong> (116, the extension&apos;s own): raising it puts the number in the package&apos;s
+                manifest, so an older Chrome or Edge will not load it; like every change to the package, it releases
+                a new version.
+              </td>
+            </tr>
+            <tr>
+              <td>Privacy and audit</td>
+              <td>
+                <strong>Save finished runs to the person&apos;s chat history</strong> (on): the task, the answer and
+                the step list — never screenshots or page text. <strong>People may mark a run private</strong> (on): a
+                private run is not saved to their history; its steps still reach Admin Logs. Fixed: screenshots, page
+                text, what the agent typed and code are never stored anywhere, and Admin Logs holds the site as a
+                host, never a page&apos;s full address. How long the rows stay is the retention policy&apos;s.
               </td>
             </tr>
             <tr>
@@ -2331,7 +2374,8 @@ export const docSections: DocSection[] = [
           </li>
           <li>
             <code>agent_task</code> — each run: how it ended (<code>done</code>, <code>stopped</code>,{" "}
-            <code>max_steps</code>, <code>errors</code> for three failed actions in a row, <code>failed</code>), how
+            <code>max_steps</code>, <code>max_minutes</code>, <code>errors</code> for three failed actions in a row,{" "}
+            <code>failed</code>), how
             many steps, the model and how long it took.
           </li>
         </ul>

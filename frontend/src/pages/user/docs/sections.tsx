@@ -1032,7 +1032,8 @@ export const userManualSections: DocSection[] = [
                 <strong>Ask</strong> mode: you are asked first. <strong>Plan</strong> mode: the agent proposes a plan
                 and the sites it will work on and waits for you to approve it once; then it acts on those sites without
                 asking each time. <strong>Auto</strong> mode (when your administrator turned it on): a review model
-                checks each action against your task, and asks you when it is not sure.
+                checks each action against your task, and asks you when it is not sure. Your administrator chooses
+                which modes are offered and which one a run starts in; the panel remembers the one you last chose.
               </td>
             </tr>
             <tr>
@@ -1081,8 +1082,9 @@ export const userManualSections: DocSection[] = [
             agent looks at the page again before it acts, since you may have changed it.
           </li>
           <li>
-            A run also ends when the agent says it is done, at your administrator&apos;s step limit, or after three
-            failed steps in a row. Closing the side panel ends it too.
+            A run also ends when the agent says it is done, at your administrator&apos;s step or time limit, or after
+            three failed steps in a row. Closing the side panel ends it too. Your administrator may also limit how
+            many tabs a run opens and how many runs you start in a day.
           </li>
           <li>
             Your administrator can stop every run at once. Yours then ends at its next step and the panel says so;

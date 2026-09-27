@@ -21,7 +21,8 @@ import {
   type Result,
   type Visibility,
 } from "./agent";
-import { hideOverlay, runStopped, showOverlay, type StopSender } from "./overlay";
+import { hideOverlay, runStopped, showOverlay, type PanelSender } from "./overlay";
+import { resumeTakeover, runPaused, setDispatching, stopWatching, watchTakeover } from "./takeover";
 import { hideTarget, hideVisuals, moveCursor, pulseClick, setHighlightState, showTarget, showVisuals, veilVisuals, type ClickKind, type HighlightState } from "./visuals";
 
 /** What the panel can ask of the page. */
@@ -46,7 +47,9 @@ export type PageMethod =
   | "visuals_state"
   | "visuals_cursor"
   | "visuals_target"
-  | "visuals_veil";
+  | "visuals_veil"
+  | "takeover_dispatch"
+  | "takeover_resume";
 
 const HIGHLIGHT_STATES = new Set<HighlightState>(["working", "waiting", "paused", "error"]);
 const CLICK_KINDS = new Set<ClickKind>(["left", "right", "double", "triple"]);
@@ -57,7 +60,7 @@ function num(value: unknown): number | null {
 
 const RUN_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
-/** What changes the page: refused for a run the user stopped from this page's banner. */
+/** What changes the page: refused for a run the user stopped from this page's banner, or took over. */
 const ACTS = new Set(["click", "type_text", "select_option", "submit_form", "press_key"]);
 
 function count(value: unknown): number | undefined {
@@ -69,12 +72,13 @@ export async function runAgentCall(
   method: unknown,
   rawArgs: unknown,
   isVisible: Visibility,
-  send: StopSender,
+  send: PanelSender,
   run?: unknown,
 ): Promise<Result> {
   const args = rawArgs && typeof rawArgs === "object" ? (rawArgs as Record<string, unknown>) : {};
-  if (typeof method === "string" && ACTS.has(method) && runStopped(run)) {
-    return { ok: false, error: "stopped", message: "The user stopped the agent on this page." };
+  if (typeof method === "string" && ACTS.has(method)) {
+    if (runStopped(run)) return { ok: false, error: "stopped", message: "The user stopped the agent on this page." };
+    if (runPaused(run)) return { ok: false, error: "paused", message: "The user took over this page. Wait for them to resume." };
   }
   try {
     switch (method) {
@@ -108,11 +112,21 @@ export async function runAgentCall(
         const run = typeof args.run === "string" && RUN_ID.test(args.run) ? args.run : null;
         if (!run) return { ok: false, error: "bad_request", message: "The overlay needs the run's id." };
         const label = typeof args.label === "string" ? args.label.slice(0, 120) : "Alpharouter is working on this page";
-        showOverlay(doc, run, label, send);
+        // The banner and the watch for a take-over share a life: the agent is working on this page.
+        showOverlay(doc, run, label, send, () => resumeTakeover(doc, run, true));
+        if (!runStopped(run)) watchTakeover(doc, run, send);
         return { ok: true };
       }
-      case "hide_overlay":
-        hideOverlay(doc, typeof args.run === "string" ? args.run : undefined);
+      case "hide_overlay": {
+        const run = typeof args.run === "string" ? args.run : undefined;
+        hideOverlay(doc, run);
+        stopWatching(run);
+        return { ok: true };
+      }
+      case "takeover_dispatch":
+        return { ok: true, ...setDispatching(args.on === true) };
+      case "takeover_resume":
+        resumeTakeover(doc, typeof args.run === "string" ? args.run : undefined, false);
         return { ok: true };
       case "visuals_show":
         showVisuals(doc);

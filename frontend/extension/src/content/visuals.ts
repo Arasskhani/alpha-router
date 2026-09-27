@@ -143,6 +143,12 @@ export function hideVisuals(doc: Document): void {
   host?.remove();
 }
 
+/** The highlight's state now, or null when the layer is not up. */
+export function highlightState(doc: Document): HighlightState | null {
+  const state = (doc.getElementById(VISUALS_ID) as Host | null)?.__parts?.frame.dataset.state;
+  return state && state in STATE_COLOR ? (state as HighlightState) : null;
+}
+
 export function setHighlightState(doc: Document, state: HighlightState): void {
   const host = doc.getElementById(VISUALS_ID) as Host | null;
   const frame = host?.__parts?.frame;

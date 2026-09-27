@@ -488,6 +488,14 @@ describe("acting", () => {
   });
 });
 
+/** The banner's Stop: the last of its buttons (Resume, hidden until a take-over, comes first). */
+function stopButton(host: HTMLElement): HTMLButtonElement {
+  const buttons = [...(host as unknown as { __label: HTMLElement }).__label.parentElement!.querySelectorAll("button")];
+  const stop = buttons.find((button) => button.textContent === "Stop");
+  if (!stop) throw new Error("no Stop button");
+  return stop;
+}
+
 describe("the overlay", () => {
   it("shows a Stop button that tells the panel which run to stop", () => {
     page("<p>Page</p>");
@@ -497,7 +505,7 @@ describe("the overlay", () => {
     expect(host).not.toBeNull();
     // Closed: the page cannot reach inside.
     expect(host.shadowRoot).toBeNull();
-    const button = (host as unknown as { __label: HTMLElement }).__label.parentElement!.querySelector("button")!;
+    const button = stopButton(host);
     button.click();
     expect(send).toHaveBeenCalledWith({ type: "agent-stop", run: "run-7" });
     hideOverlay(document, "run-other");
@@ -510,7 +518,7 @@ describe("the overlay", () => {
     page("<p>Page</p>");
     showOverlay(document, "run-9", "Working", () => Promise.reject(new Error("Receiving end does not exist.")));
     const host = document.getElementById(OVERLAY_ID)!;
-    (host as unknown as { __label: HTMLElement }).__label.parentElement!.querySelector("button")!.click();
+    stopButton(host).click();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(document.getElementById(OVERLAY_ID)).toBeNull();
   });
@@ -520,7 +528,7 @@ describe("the overlay", () => {
     page("<p>Page</p>");
     showOverlay(document, "run-10", "Working", () => undefined);
     const host = document.getElementById(OVERLAY_ID)!;
-    (host as unknown as { __label: HTMLElement }).__label.parentElement!.querySelector("button")!.click();
+    stopButton(host).click();
     expect(document.getElementById(OVERLAY_ID)).not.toBeNull();
     vi.advanceTimersByTime(5000);
     expect(document.getElementById(OVERLAY_ID)).toBeNull();
@@ -566,7 +574,7 @@ describe("a run stopped from the page", () => {
     const send = vi.fn();
     await runAgentCall(document, "show_overlay", { run: "run-stopped-1", label: "Working" }, visible, send);
     const host = document.getElementById(OVERLAY_ID)!;
-    (host as unknown as { __label: HTMLElement }).__label.parentElement!.querySelector("button")!.click();
+    stopButton(host).click();
     expect(send).toHaveBeenCalledWith({ type: "agent-stop", run: "run-stopped-1" });
     const ref = snapshot(document, { isVisible: visible }).elements[0].ref;
     const clicked = vi.fn();

@@ -1043,6 +1043,39 @@ async function main() {
     return `${took} ms`;
   });
 
+  await step("taking over the page pauses the agent, and Resume lets it go on", async () => {
+    expect(panel, "no side panel");
+    const task = `${AGENT_TASKS.stop}: read this and wait (${NONCE})`;
+    agentTasks.push(task);
+    const page = await context.newPage();
+    await page.goto(site.agentUrl("agent-shop.html"));
+    await agentStart(page, task);
+    await panel.until(agentPanel("root.innerText.includes('Wait 10 seconds')"), "the agent to wait", 30_000);
+    const overlay = page.locator("#alpharouter-agent-overlay");
+    await overlay.waitFor({ state: "attached", timeout: 10_000 });
+    expect((await overlay.getAttribute("data-paused")) === null, "the banner shows a pause before any");
+    // The person clicks on the page: a real click, and not one the agent sent.
+    await page.mouse.click(20, 20);
+    await panel.until(agentSays("You took over"), "the panel to say the person took over", 8_000);
+    expect((await overlay.getAttribute("data-paused")) === "1", "the banner does not show the pause");
+    // The agent's wait runs out meanwhile; paused, the run goes no further than that.
+    await panel.until(agentPanel("root.innerText.includes('Waited 10')"), "the wait to end", 15_000);
+    await sleep(1500);
+    expect(!(await panel.run(agentSays("Waited:"))), "the run went on while paused");
+    expect(!(await panel.run(agentIdle)), "the run ended while paused");
+    // Resume on the banner: left of Stop, which sits at the right end (the shadow root is closed, so by position).
+    const box = await overlay.boundingBox();
+    expect(box, "the banner has no box");
+    await page.mouse.click(box.x + box.width - 95, box.y + box.height / 2);
+    // Resumed, not stopped: the run goes on to its own end.
+    await panel.until(agentSays("Waited:"), "the run to go on", 30_000);
+    expect(!(await panel.run(agentPanel("root.querySelector('.agent__result--stopped') !== null"))), "Stop was pressed instead of Resume");
+    await panel.until(agentIdle, "the run to end");
+    await sleep(300);
+    expect((await overlay.count()) === 0, "the banner stayed on the page");
+    await page.close();
+  });
+
   await step("the agent's steps are in Admin Logs, and none of it in the chat history", async () => {
     expect(agentTasks.length, "the agent did not run");
     const logs = await callJson("/api/admin/admin-logs?source=browser_extension&limit=200");

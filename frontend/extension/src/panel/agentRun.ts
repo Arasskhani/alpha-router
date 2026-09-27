@@ -24,6 +24,7 @@ import { probeInjection } from "../lib/injection";
 import type { ElementInfo, PageMethod, PageResult } from "../lib/pageAgent";
 import { readablePage } from "../lib/sites";
 import { agentInstructions, CONTROL_TOOL_NAMES, TOOL_NAMES } from "./agentTools";
+import type { PauseGate } from "./pauseGate";
 
 export type WorkTab = { id: number; url: string; host: string | null; title: string };
 
@@ -98,11 +99,16 @@ export type AgentEventReport = {
 /** The run's driver under full control: input and screenshots (cdpDriver.ts); absent on the dom path. */
 export type ControlDriver = Pick<CdpDriver, "screenshot" | "zoom" | "click" | "hover" | "scroll" | "drag" | "type" | "key" | "toCss" | "takeDialog" | "handleDialog">;
 
+/** What the run is doing, as the page's border shows it. */
+export type RunState = "working" | "waiting" | "paused";
+
 export type AgentDeps = {
   model(messages: ApiMessage[], signal: AbortSignal): Promise<ModelReply>;
   browser: AgentBrowser;
   /** Attached by the caller (chooseDriver) when the run has full control; the caller stops it after the run. */
   driver?: ControlDriver | null;
+  /** The person's pause (a take-over, or the panel's button): the loop waits at it at each safe point. */
+  pause?: PauseGate;
   approve(request: ApprovalRequest, signal: AbortSignal): Promise<boolean>;
   askUser(question: string, signal: AbortSignal): Promise<string>;
   review(input: ReviewInput, signal: AbortSignal): Promise<{ decision: "allow" | "ask"; reason: string }>;
@@ -529,6 +535,24 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     await deps.browser.page(method, a, tab, signal).catch(() => undefined);
   }
 
+  /** What the run is doing: the page's border (under full control). */
+  async function state(next: RunState, tab: WorkTab | null): Promise<void> {
+    await visual("visuals_state", { state: next }, tab);
+  }
+
+  /**
+   * A safe point: while the person has the run paused, nothing goes on until
+   * they resume - or stop. What was under way (a judgment, an approval) is
+   * done again after, since the page may have changed under them.
+   */
+  async function gate(tab: WorkTab | null): Promise<void> {
+    if (!deps.pause?.paused()) return;
+    await state("paused", tab);
+    await Promise.race([deps.pause.wait(), stopped]);
+    check();
+    await state("working", tab);
+  }
+
   /** Take a screenshot with the layer veiled, best-effort; the data URL, or undefined on any failure. */
   async function visualCapture(work: () => Promise<{ dataUrl: string }>, tab: WorkTab): Promise<string | undefined> {
     await visual("visuals_veil", { veiled: true }, tab);
@@ -543,6 +567,15 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
   }
 
   const invalid = (message: string): Answer => ({ content: message, status: "error", outcome: "error", extra: { error: "invalid_arguments" } });
+
+  /** The person took over the page before this action landed: not a failure of the agent's, and not counted as one. */
+  const tookOver = (): Answer => ({
+    content: "Not done: the user took over the page. Once they resume, look at the page again before acting.",
+    status: "skipped",
+    detail: "The user took over",
+    outcome: "skipped",
+    extra: { error: "took_over" },
+  });
 
   /** Watch page-derived text for instruction-like content; the next side-effecting action then asks. */
   function watch(text: string): void {
@@ -570,7 +603,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     const kind = dialog.type === "beforeunload" ? "asks whether to leave the page" : dialog.type === "prompt" ? "asks for an answer" : "asks to confirm";
     let accept: boolean;
     if ((options.rules.approvals ?? DEFAULT_APPROVALS).dialogs) {
-      await visual("visuals_state", { state: "waiting" }, tab);
+      await state("waiting", tab);
       accept = await deps.approve(
         {
           tool: "dialog",
@@ -579,7 +612,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
         },
         signal,
       );
-      await visual("visuals_state", { state: "working" }, tab);
+      await state("working", tab);
       check();
     } else {
       accept = dialog.type !== "prompt";
@@ -595,6 +628,20 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     if (!driver) return { content: "Full control is not on for this run: use read_page and the reference tools.", status: "error", outcome: "error", extra: { error: "no_control" } };
     const site = tab.host ?? "";
     const race = <T>(work: Promise<T>) => Promise.race([work, stopped]);
+    /**
+     * The agent's own input, inside a window the page knows about: a trusted
+     * event outside one is the person's, and pauses the run. A page already
+     * paused - the person took over an instant ago - gets nothing.
+     */
+    const dispatch = async <T>(work: () => Promise<T>): Promise<T | null> => {
+      const opened = await deps.browser.page("takeover_dispatch", { on: true }, tab, signal).catch(() => null);
+      if (opened?.ok && opened.paused === true) return null;
+      try {
+        return await race(work());
+      } finally {
+        await visual("takeover_dispatch", { on: false }, tab);
+      }
+    };
     // The layer is veiled for a capture: the model must never see the cursor or the border.
     const capture = async <T>(work: () => Promise<T>): Promise<T> => {
       await visual("visuals_veil", { veiled: true }, tab);
@@ -645,16 +692,16 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
         const dir = String(a.scroll_direction ?? "down");
         const delta = dir === "up" ? { y: -px } : dir === "left" ? { x: -px } : dir === "right" ? { x: px } : { y: px };
         await visual("visuals_cursor", { x: css.x, y: css.y }, tab);
-        await race(driver.scroll(p, delta));
+        if ((await dispatch(() => driver.scroll(p, delta))) === null) return tookOver();
         note = `Scrolled ${dir} ${ticks} ticks at (${p.x}, ${p.y}).`;
       } else if (action === "hover") {
         await visual("visuals_cursor", { x: css.x, y: css.y }, tab);
-        await race(driver.hover(p, modifiers));
+        if ((await dispatch(() => driver.hover(p, modifiers))) === null) return tookOver();
         note = `Hovering at (${p.x}, ${p.y}).`;
       } else {
         await visual("visuals_cursor", { x: css.x, y: css.y, click: spec.kind }, tab);
         const clickCount = spec.kind === "double" ? 2 : spec.kind === "triple" ? 3 : 1;
-        await race(driver.click(p, { button: spec.kind === "right" ? "right" : "left", clickCount, modifiers }));
+        if ((await dispatch(() => driver.click(p, { button: spec.kind === "right" ? "right" : "left", clickCount, modifiers }))) === null) return tookOver();
         note = `${spec.kind === "right" ? "Right-clicked" : spec.kind === "double" ? "Double-clicked" : spec.kind === "triple" ? "Triple-clicked" : "Clicked"} at (${p.x}, ${p.y}).`;
       }
     } else if (action === "left_click_drag") {
@@ -663,17 +710,19 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       if (!from || !to) return invalid("left_click_drag needs start_coordinate and coordinate.");
       const cssTo = await driver.toCss(to);
       await visual("visuals_cursor", { x: cssTo.x, y: cssTo.y }, tab);
-      const result = await race(driver.drag(from, to));
+      const result = await dispatch(() => driver.drag(from, to));
+      if (result === null) return tookOver();
       note = `Dragged from (${from.x}, ${from.y}) to (${to.x}, ${to.y})${result.intercepted ? "" : " (as a pointer drag)"}.`;
     } else if (action === "type") {
       const text = typeof a.text === "string" ? a.text : "";
       if (!text) return invalid("type needs text.");
-      await race(driver.type(text));
+      if ((await dispatch(() => driver.type(text))) === null) return tookOver();
       note = `Typed ${text.length} characters.`;
     } else if (action === "key") {
       const key = typeof a.text === "string" ? a.text.trim() : "";
       if (!key) return invalid("key needs the key to press in text, such as Enter or ctrl+a.");
-      const pressed = await race(driver.key(key));
+      const pressed = await dispatch(() => driver.key(key));
+      if (pressed === null) return tookOver();
       if (!pressed) return { content: `The agent cannot press "${clip(key, 40)}".`, status: "error", detail: "Unknown key", outcome: "error", extra: { error: "bad_key" } };
       note = `Pressed ${key}.`;
     } else {
@@ -744,6 +793,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     if (!tab) return { content: "The tab does not show a web page the agent can work on.", status: "error", outcome: "error", extra: { error: "no_page" } };
     if (CONTROL_TOOL_NAMES.has(tool)) return control(tool, a, tab);
     const result = await page(tool as PageMethod, a, tab);
+    if (!result.ok && result.error === "paused") return tookOver();
     if (!result.ok) {
       return {
         content: "",
@@ -1028,9 +1078,9 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     if (approval === "user") {
       deps.onStep({ id: call.id, tool: name, summary, status: "waiting" });
       if (targetRect) await visual("visuals_target", { rect: targetRect }, tab);
-      await visual("visuals_state", { state: "waiting" }, tab);
+      await state("waiting", tab);
       const allowed = await deps.approve({ tool: name, summary, verdict: judged, review: reviewNote, access }, signal);
-      await visual("visuals_state", { state: "working" }, tab);
+      await state("working", tab);
       check();
       if (!allowed) {
         await visual("visuals_target", { rect: null }, tab);
@@ -1051,6 +1101,8 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     // Going to another site, allowed by the user, the reviewer or the administrator's rules: the agent may work there.
     if (verdict.site) allowedSites.add(verdict.site);
     base.extra.approval = approvedBy;
+    // The person may have taken over meanwhile: nothing is pressed until they resume, and the point is judged again then.
+    await gate(tab);
     // Judged twice: what is under the point just before the press. The page may have changed since -
     // a layout shift, a dialog, an element that moved - and then the press is not made.
     if (pressAt && element && targetRect && tab) {
@@ -1091,12 +1143,11 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     // The user started the run on this page.
     if (startSite) allowedSites.add(startSite);
     lastTab = first;
-    if (first?.host) {
-      await visual("visuals_show", {}, first);
-      await visual("visuals_state", { state: "working" }, first);
-    }
+    if (first?.host) await visual("visuals_show", {}, first);
+    await state("working", first);
     for (steps = 1; steps <= options.maxSteps; steps += 1) {
       check();
+      await gate(lastTab);
       let reply: ModelReply;
       try {
         reply = await deps.model(conversation(entries), signal);

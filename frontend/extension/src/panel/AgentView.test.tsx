@@ -198,6 +198,72 @@ describe("a run", () => {
     expect(pageCalls.some((c) => c.method === "click")).toBe(false);
   });
 
+  /**
+   * A run that read the page (its banner is up there) and now waits on the
+   * model for its second step; `finish` has the model answer with a second
+   * read, after which the third step ends the run.
+   */
+  async function pageReadThenModelBusy(): Promise<{ run: string; finish: () => void }> {
+    let stream: ReturnType<typeof sse> | null = null;
+    let steps = 0;
+    server.routes["POST /api/chat/completions"] = (init) => {
+      steps += 1;
+      if (steps === 1) return sse(toolFrame([{ id: "c1", name: "read_page" }]), { signal: init.signal }).response;
+      if (steps > 2) return sse(toolFrame([{ id: "end", name: "done", args: { summary: "Done." } }]), { signal: init.signal }).response;
+      stream = sse([], { open: true, signal: init.signal });
+      return stream.response;
+    };
+    await render();
+    await start("Wait for it.");
+    await until(() => Boolean(stream), "the second step");
+    const finish = () => {
+      for (const frame of toolFrame([{ id: "c2", name: "read_page" }])) stream!.push(frame);
+      stream!.finish();
+    };
+    return { run: pageCalls.find((c) => c.banner)?.banner?.run ?? "", finish };
+  }
+
+  it("pauses when the person takes over the page, and goes on from Resume in the panel", async () => {
+    const { run, finish } = await pageReadThenModelBusy();
+    // From another tab, or another run: not this run's.
+    await act(async () => {
+      chromeFake.runtime.deliver({ type: "agent-takeover", run }, { id: EXTENSION_ID, url: "https://evil.example.net/", tab: { id: 999 } as chrome.tabs.Tab });
+      chromeFake.runtime.deliver({ type: "agent-takeover", run: "run-other" }, { id: EXTENSION_ID, url: "https://shop.example.com/cart", tab: { id: tabId } as chrome.tabs.Tab });
+    });
+    expect(host.textContent).not.toContain("You took over");
+    await act(async () => {
+      chromeFake.runtime.deliver({ type: "agent-takeover", run }, { id: EXTENSION_ID, url: "https://shop.example.com/cart", tab: { id: tabId } as chrome.tabs.Tab });
+    });
+    await until(() => host.textContent!.includes("You took over"), "the paused card");
+    // The model's answer arrives while paused: the run waits before its next action.
+    await act(async () => finish());
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    });
+    expect(pageCalls.filter((c) => c.method === "read_page")).toHaveLength(1);
+    await act(async () => button("Resume").click());
+    await until(() => !host.textContent!.includes("You took over"), "the card to go");
+    // The page was told first, then the run went on: the second read, and the end.
+    expect(pageCalls.some((c) => c.method === "takeover_resume" && c.args.run === run)).toBe(true);
+    await until(() => host.textContent!.includes("Done."), "the run to finish");
+    expect(pageCalls.filter((c) => c.method === "read_page")).toHaveLength(2);
+  });
+
+  it("goes on when the page's banner says Resume, from our script in that tab only", async () => {
+    const { run, finish } = await pageReadThenModelBusy();
+    const from = { id: EXTENSION_ID, url: "https://shop.example.com/cart", tab: { id: tabId } as chrome.tabs.Tab };
+    await act(async () => chromeFake.runtime.deliver({ type: "agent-takeover", run }, from));
+    await until(() => host.textContent!.includes("You took over"), "the paused card");
+    await act(async () => chromeFake.runtime.deliver({ type: "agent-resume", run }, { url: "https://evil.example.net/", tab: { id: 999 } as chrome.tabs.Tab }));
+    expect(host.textContent).toContain("You took over");
+    await act(async () => chromeFake.runtime.deliver({ type: "agent-resume", run }, from));
+    await until(() => !host.textContent!.includes("You took over"), "the card to go");
+    // The page resumed itself: the panel does not tell it again.
+    expect(pageCalls.some((c) => c.method === "takeover_resume")).toBe(false);
+    await act(async () => finish());
+    await until(() => host.textContent!.includes("Done"), "the run to finish");
+  });
+
   it("stops with the panel's Stop while the model is still answering", async () => {
     let finish: (() => void) | null = null;
     server.routes["POST /api/chat/completions"] = (init) => {

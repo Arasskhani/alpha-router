@@ -23,6 +23,7 @@ import { DEFAULT_MAX_SIDE } from "../lib/coords";
 import { createAgentBrowser, type PanelBrowser } from "./agentBrowser";
 import { runAgent, type AgentDeps, type AgentEventReport, type ApprovalRequest, type ControlDriver, type RunOutcome, type StepView } from "./agentRun";
 import { agentToolsFor } from "./agentTools";
+import { createPauseGate, type PauseControl } from "./pauseGate";
 import { pickModel, textModels, type ChatModel } from "./conversation";
 import type { Me } from "./types";
 
@@ -134,7 +135,10 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
   const [question, setQuestion] = useState<{ text: string; resolve: (answer: string) => void } | null>(null);
   const [answer, setAnswer] = useState("");
   const [banner, setBanner] = useState("");
+  /** The person took over the page (or paused from here): the run waits for Resume. */
+  const [paused, setPaused] = useState(false);
   const controller = useRef<AbortController | null>(null);
+  const gate = useRef<PauseControl | null>(null);
   const browser = useRef<PanelBrowser | null>(null);
   const runId = useRef<string | null>(null);
   const events = useRef<AgentEventReport[]>([]);
@@ -194,12 +198,15 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
     };
   }, [me, autoAllowed, modelLoads]);
 
-  // Stop from a banner the run put on a page: only from our own script in one of those tabs, for this run.
+  // Stop, a take-over and Resume from a banner the run put on a page: only from our own script in one of those tabs, for this run.
   useEffect(() => {
     const listener = (message: unknown, sender: chrome.runtime.MessageSender) => {
-      if (!isExtensionMessage(message) || message.type !== "agent-stop" || message.run !== runId.current) return;
+      if (!isExtensionMessage(message) || !("run" in message) || message.run !== runId.current) return;
       const tabs = browser.current?.bannerTabs() ?? [];
-      if (tabs.some((tabId) => fromTabScript(sender, tabId))) controller.current?.abort();
+      if (!tabs.some((tabId) => fromTabScript(sender, tabId))) return;
+      if (message.type === "agent-stop") controller.current?.abort();
+      else if (message.type === "agent-takeover") gate.current?.pause();
+      else if (message.type === "agent-resume") gate.current?.resume();
     };
     chrome.runtime.onMessage.addListener(listener);
     return () => chrome.runtime.onMessage.removeListener(listener);
@@ -353,6 +360,7 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
       },
       onStep: showStep,
       onText: (text) => append({ kind: "text", id: randomHex(6), text }),
+      pause: gate.current ?? undefined,
     };
   }
 
@@ -366,6 +374,9 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
     controller.current = abort;
     runId.current = run;
     browser.current = createAgentBrowser({ startTabId: activePage?.tabId ?? null, runId: run });
+    const pauseGate = createPauseGate(abort.signal);
+    pauseGate.onChange(setPaused);
+    gate.current = pauseGate;
     setBanner("");
     setDraft("");
     setLog([{ kind: "task", id: run, text: task }]);
@@ -405,11 +416,28 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
       await browser.current?.cleanup().catch(() => undefined);
       await flush();
       setRunning(false);
+      setPaused(false);
       setApproval(null);
       setQuestion(null);
+      if (gate.current === pauseGate) gate.current = null;
       if (controller.current === abort) controller.current = null;
       busy.current = false;
     }
+  }
+
+  /**
+   * Resume from the panel: the page is told first, so it takes the agent's
+   * next action, then the run goes on. (Resume on the page's banner tells us,
+   * the other way round.)
+   */
+  async function resume() {
+    const pending = gate.current;
+    if (!pending?.paused()) return;
+    const run = runId.current;
+    if (run && browser.current?.workingTab() != null) {
+      await browser.current.page("takeover_resume", { run }).catch(() => undefined);
+    }
+    pending.resume();
   }
 
   function start() {
@@ -564,6 +592,21 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
               </button>
               <button type="button" className="btn" onClick={() => approval.resolve(false)} disabled={approval.asking}>
                 Deny
+              </button>
+            </div>
+          </div>
+        )}
+
+        {paused && (
+          <div className="agent__card" role="status" aria-label="You took over">
+            <p className="agent__card-title">You took over</p>
+            <p className="agent__card-action">The agent is paused while you use the page. Resume when you are ready, or stop the run.</p>
+            <div className="panel__actions">
+              <button type="button" className="btn btn--primary" onClick={() => void resume()}>
+                Resume
+              </button>
+              <button type="button" className="btn" onClick={stop}>
+                Stop
               </button>
             </div>
           </div>

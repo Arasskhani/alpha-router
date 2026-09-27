@@ -13,16 +13,21 @@ export type ExtensionMessage =
   /** A right-click action or the shortcut left work for the panel. */
   | { type: "pending-action" }
   /** The agent's overlay on a page: the person watching pressed Stop for this run. */
-  | { type: "agent-stop"; run: string };
+  | { type: "agent-stop"; run: string }
+  /** The person took over the page this run works on: it pauses until they resume. */
+  | { type: "agent-takeover"; run: string }
+  /** The person pressed Resume on the page's banner. */
+  | { type: "agent-resume"; run: string };
 
-const TYPES = new Set<ExtensionMessage["type"]>(["auth-changed", "pending-action", "agent-stop"]);
+const TYPES = new Set<ExtensionMessage["type"]>(["auth-changed", "pending-action", "agent-stop", "agent-takeover", "agent-resume"]);
+const RUN_MESSAGES = new Set<string>(["agent-stop", "agent-takeover", "agent-resume"]);
 const RUN_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
 export function isExtensionMessage(value: unknown): value is ExtensionMessage {
   if (!value || typeof value !== "object") return false;
   const { type, run } = value as { type?: unknown; run?: unknown };
   if (typeof type !== "string" || !TYPES.has(type as ExtensionMessage["type"])) return false;
-  return type !== "agent-stop" || (typeof run === "string" && RUN_ID.test(run));
+  return !RUN_MESSAGES.has(type) || (typeof run === "string" && RUN_ID.test(run));
 }
 
 /**

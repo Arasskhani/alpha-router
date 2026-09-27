@@ -35,6 +35,7 @@ const ERRORS = new Set([
   "bad_request",
   "not_found",
   "stopped",
+  "paused",
   "failed",
   // Set on this side, never by the page.
   "moved",
@@ -147,6 +148,8 @@ export function cleanPageResult(method: PageMethod, raw: unknown): PageResult {
       const element = cleanElement(v.element);
       return element ? { ok: true, element } : failure("failed", "The focused element could not be read.");
     }
+    case "takeover_dispatch":
+      return { ok: true, paused: v.paused === true };
     default:
       return { ok: true, note: str(v.note, MAX_MESSAGE) };
   }

@@ -18,11 +18,27 @@ afterEach(() => {
 });
 
 describe("messages between the extension's pages", () => {
-  it.each([{ type: "auth-changed" }, { type: "pending-action" }, { type: "agent-stop", run: "run-12_a" }])("accepts %o", (message) => {
+  it.each([
+    { type: "auth-changed" },
+    { type: "pending-action" },
+    { type: "agent-stop", run: "run-12_a" },
+    { type: "agent-takeover", run: "run-12_a" },
+    { type: "agent-resume", run: "run-12_a" },
+  ])("accepts %o", (message) => {
     expect(isExtensionMessage(message)).toBe(true);
   });
 
-  it.each([null, "auth-changed", {}, { type: "unknown" }, { type: 7 }, { type: "agent-stop" }, { type: "agent-stop", run: "a b" }])(
+  it.each([
+    null,
+    "auth-changed",
+    {},
+    { type: "unknown" },
+    { type: 7 },
+    { type: "agent-stop" },
+    { type: "agent-stop", run: "a b" },
+    { type: "agent-takeover" },
+    { type: "agent-resume", run: "" },
+  ])(
     "refuses %o",
     (message) => {
       expect(isExtensionMessage(message)).toBe(false);

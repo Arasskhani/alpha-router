@@ -1,5 +1,6 @@
 /**
- * The banner the agent shows on the page it works on, with a Stop button.
+ * The banner the agent shows on the page it works on, with a Stop button -
+ * and, once the person has taken over (takeover.ts), a Resume button.
  *
  * A person watching the page sees that Alpharouter is acting on it and can
  * stop it from right there. The banner lives in a closed shadow root, so the
@@ -21,10 +22,14 @@ function styled<K extends keyof HTMLElementTagNameMap>(doc: Document, tag: K, st
 }
 
 /**
- * Sends the stop request; the content script passes chrome.runtime.sendMessage,
- * tests pass a spy. A rejected promise means nobody is listening.
+ * Sends a message to the side panel; the content script passes
+ * chrome.runtime.sendMessage, tests pass a spy. A rejected promise means
+ * nobody is listening.
  */
-export type StopSender = (message: { type: "agent-stop"; run: string }) => unknown;
+export type PanelSender = (message: { type: "agent-stop" | "agent-takeover" | "agent-resume"; run: string }) => unknown;
+
+/** What the banner says while the person has taken over. */
+export const PAUSED_LABEL = "You took over";
 
 /** After Stop, the side panel takes the banner off; if it cannot, the banner goes by itself after this. */
 const STOP_FALLBACK_MS = 5000;
@@ -86,29 +91,34 @@ function setStyles(el: HTMLElement, styles: Styles): void {
   for (const [name, value] of Object.entries(styles)) el.style.setProperty(name, value, "important");
 }
 
+type Host = HTMLElement & { __label?: HTMLElement; __resume?: HTMLButtonElement; __working?: string };
+
 /**
  * Show (or update) the banner for run `run`; Stop sends `agent-stop` for that
- * run. The panel shows it with every action, so a banner the page removed
- * comes back.
+ * run, and Resume - shown only while the person has taken over - calls
+ * `onResume`. The panel shows the banner with every action, so a banner the
+ * page removed comes back; while paused, a new label is kept for later and
+ * the banner goes on saying the person took over.
  */
-export function showOverlay(doc: Document, run: string, label: string, send: StopSender): void {
+export function showOverlay(doc: Document, run: string, label: string, send: PanelSender, onResume?: () => void): void {
   // A run stopped here does not come back on this page.
   if (runStopped(run)) return;
-  let host = doc.getElementById(OVERLAY_ID);
+  let host = doc.getElementById(OVERLAY_ID) as Host | null;
   if (host && host.dataset.run !== run) {
     host.remove();
     host = null;
   }
   if (host) {
     setStyles(host, HOST_STYLES);
-    const text = (host as HTMLElement & { __label?: HTMLElement }).__label;
-    if (text) text.textContent = label;
+    host.__working = label;
+    if (host.__label && host.dataset.paused !== "1") host.__label.textContent = label;
     return;
   }
   const root = doc.body ?? doc.documentElement;
-  host = styled(doc, "div", HOST_STYLES);
+  host = styled(doc, "div", HOST_STYLES) as Host;
   host.id = OVERLAY_ID;
   host.dataset.run = run;
+  host.__working = label;
   const shadow = host.attachShadow({ mode: "closed" });
   const box = styled(doc, "div", {
     display: "flex",
@@ -125,15 +135,24 @@ export function showOverlay(doc: Document, run: string, label: string, send: Sto
   box.setAttribute("role", "status");
   const text = styled(doc, "span", { overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" });
   text.textContent = label;
-  const stop = styled(doc, "button", {
+  const buttonStyles: Styles = {
     cursor: "pointer",
     padding: "4px 10px",
     border: "0",
     "border-radius": "6px",
-    background: "#e5484d",
     color: "#ffffff",
     font: "600 12px/1.3 system-ui, -apple-system, 'Segoe UI', sans-serif",
+  };
+  // Resume: only while the person has taken over; the watch (takeover.ts) shows and hides it.
+  const resume = styled(doc, "button", { ...buttonStyles, background: "#2eaadc", display: "none" });
+  resume.type = "button";
+  resume.textContent = "Resume";
+  resume.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onResume?.();
   });
+  const stop = styled(doc, "button", { ...buttonStyles, background: "#e5484d" });
   stop.type = "button";
   stop.textContent = "Stop";
   stop.addEventListener("click", (event) => {
@@ -153,10 +172,24 @@ export function showOverlay(doc: Document, run: string, label: string, send: Sto
     }
     Promise.resolve(sent).catch(() => hideOverlay(doc, run));
   });
-  box.append(text, stop);
+  box.append(text, resume, stop);
   shadow.append(box);
-  (host as HTMLElement & { __label?: HTMLElement }).__label = text;
+  host.__label = text;
+  host.__resume = resume;
   root.append(host);
+}
+
+/**
+ * The person took over (`paused`), or is done: the banner says so and shows
+ * Resume, or goes back to what the panel last had it say.
+ */
+export function setOverlayPaused(doc: Document, run: string, paused: boolean): void {
+  const host = doc.getElementById(OVERLAY_ID) as Host | null;
+  if (!host || host.dataset.run !== run) return;
+  if (paused) host.dataset.paused = "1";
+  else delete host.dataset.paused;
+  if (host.__label) host.__label.textContent = paused ? PAUSED_LABEL : (host.__working ?? "");
+  if (host.__resume) setStyles(host.__resume, { display: paused ? "inline-block" : "none" });
 }
 
 export function hideOverlay(doc: Document, run?: string): void {

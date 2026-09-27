@@ -16,8 +16,8 @@ type ContentApi = {
   agent: (method: unknown, args: unknown, run?: unknown) => Promise<Result>;
 };
 
-/** The overlay's Stop, to the side panel: it rejects when nobody listens (the panel closed, the extension reloaded). */
-function sendStop(message: { type: "agent-stop"; run: string }): Promise<unknown> {
+/** The banner's Stop and Resume, and a take-over, to the side panel: it rejects when nobody listens (the panel closed, the extension reloaded). */
+function sendToPanel(message: { type: "agent-stop" | "agent-takeover" | "agent-resume"; run: string }): Promise<unknown> {
   try {
     return Promise.resolve(chrome.runtime.sendMessage(message));
   } catch (err) {
@@ -38,5 +38,5 @@ scope.__alpharouter = {
       isTextVisible: isTextRendered,
       isBlock: isBlockDisplayed,
     }),
-  agent: (method, args, run) => runAgentCall(document, method, args, isRendered, sendStop, run),
+  agent: (method, args, run) => runAgentCall(document, method, args, isRendered, sendToPanel, run),
 };

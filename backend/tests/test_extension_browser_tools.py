@@ -762,7 +762,9 @@ class TestAnAdministratorsStop:
     def _at(offset_seconds: int) -> str:
         return (datetime.datetime.now(datetime.UTC) + datetime.timedelta(seconds=offset_seconds)).isoformat()
 
-    async def test_a_run_that_began_before_the_stop_is_refused(self, client, browser, models, provider, db_session, agent_on):
+    async def test_a_run_that_began_before_the_stop_is_refused(
+        self, client, browser, models, provider, db_session, agent_on
+    ):
         await save_extension_settings(db_session, ExtensionSettings(stop_runs_before=self._at(0)))
         await db_session.commit()
         provider.reply(*CLICK_REPLY)
@@ -776,7 +778,9 @@ class TestAnAdministratorsStop:
         assert resp.json()["detail"]["code"] == "runs_stopped"
         assert provider.calls == []
 
-    async def test_a_run_that_began_after_the_stop_goes_on(self, client, browser, models, provider, db_session, agent_on):
+    async def test_a_run_that_began_after_the_stop_goes_on(
+        self, client, browser, models, provider, db_session, agent_on
+    ):
         await save_extension_settings(db_session, ExtensionSettings(stop_runs_before=self._at(-60)))
         await db_session.commit()
         provider.reply(*CLICK_REPLY)

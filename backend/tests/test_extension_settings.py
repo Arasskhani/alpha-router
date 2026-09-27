@@ -240,7 +240,11 @@ class TestDataLocation:
         updated = await validated_update(
             db_session,
             ExtensionSettings(),
-            **_update(internal_sites=["*.corp.example"], internal_models=[f"model::{model.id}"], screenshot_models=[f"model::{model.id}"]),
+            **_update(
+                internal_sites=["*.corp.example"],
+                internal_models=[f"model::{model.id}"],
+                screenshot_models=[f"model::{model.id}"],
+            ),
         )
         assert updated.internal_sites == ("*.corp.example",)
         assert updated.internal_models == (f"model::{model.id}",)
@@ -298,7 +302,9 @@ class TestApprovals:
         }
 
     async def test_an_admin_relaxes_a_subset_and_the_rest_still_ask(self, db_session):
-        updated = await validated_update(db_session, ExtensionSettings(), **_update(relaxed_approvals=["send", "downloads"]))
+        updated = await validated_update(
+            db_session, ExtensionSettings(), **_update(relaxed_approvals=["send", "downloads"])
+        )
         assert set(updated.relaxed_approvals) == {"send", "downloads"}
         assert updated.approvals_json()["send"] is False
         assert updated.approvals_json()["downloads"] is False

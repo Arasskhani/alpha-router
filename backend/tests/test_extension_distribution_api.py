@@ -738,8 +738,12 @@ class TestTheOverviewAndTheOperations:
         from app.services.extension_tokens import create_session
 
         # Two browsers: one on the package this server hands out, one behind it.
-        await create_session(db_session, user=user, device_name="new", user_agent="UA", ip="1.1.1.1", extension_version="1.0.0.1")
-        await create_session(db_session, user=user, device_name="old", user_agent="UA", ip="1.1.1.1", extension_version="0.9.0.0")
+        await create_session(
+            db_session, user=user, device_name="new", user_agent="UA", ip="1.1.1.1", extension_version="1.0.0.1"
+        )
+        await create_session(
+            db_session, user=user, device_name="old", user_agent="UA", ip="1.1.1.1", extension_version="0.9.0.0"
+        )
         db_session.add_all(
             [
                 ExtensionEvent(kind="agent_task", outcome="done", detail_json="{}"),

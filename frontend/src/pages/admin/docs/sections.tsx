@@ -2183,6 +2183,18 @@ export const docSections: DocSection[] = [
               </td>
             </tr>
             <tr>
+              <td>Always on, not settings</td>
+              <td>
+                What a person sees of a run is fixed, so that no configuration can make the agent work unseen: the
+                banner with Stop on every page it works on; under full control, the cursor that moves to each
+                target, the coloured border (cyan working, amber waiting for the person, grey paused, red on an
+                error) and Chrome&apos;s debugging bar; the coloured dot on the toolbar button for the length of a
+                run; and the <strong>take-over pause</strong> - a click, key or scroll of the person&apos;s own on
+                the page holds the run until they press Resume, on the banner or in the panel, and the agent
+                judges the page afresh before it goes on.
+              </td>
+            </tr>
+            <tr>
               <td>Extension on for the organization</td>
               <td>
                 On by default. Off stops the extension for everyone at once and refuses new connections, whatever the

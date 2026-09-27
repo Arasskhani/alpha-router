@@ -1075,6 +1075,12 @@ export const userManualSections: DocSection[] = [
             run at once.
           </li>
           <li>
+            <strong>Taking over pauses it.</strong> Click, type or scroll on the page the agent is working on and
+            it stops what it was about to do; the banner says <em>You took over</em> and offers <strong>Resume</strong>,
+            and so does the panel. Nothing happens on that page until you press Resume (or Stop). After a resume the
+            agent looks at the page again before it acts, since you may have changed it.
+          </li>
+          <li>
             A run also ends when the agent says it is done, at your administrator&apos;s step limit, or after three
             failed steps in a row. Closing the side panel ends it too.
           </li>
@@ -1082,7 +1088,11 @@ export const userManualSections: DocSection[] = [
             Your administrator can stop every run at once. Yours then ends at its next step and the panel says so;
             start it again and it runs normally.
           </li>
-          <li>Tabs the agent opens are grouped under <strong>Alpharouter</strong> in the tab strip.</li>
+          <li>
+            Tabs the agent opens are grouped under <strong>Alpharouter</strong> in the tab strip, and the Alpharouter
+            button in the toolbar carries a coloured dot for as long as a run is on — cyan while it works, amber while
+            it waits for you, grey while you have taken over — so you can see it from any tab.
+          </li>
         </ul>
         <Warn>
           The agent acts in your own signed-in tabs, as you. Read the approval cards, and prefer Ask mode on sites

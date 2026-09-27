@@ -1077,7 +1077,7 @@ export const docSections: DocSection[] = [
             </tr>
             <tr>
               <td>Chat experience</td>
-              <td>Chat Tools, Code Interpreter</td>
+              <td>Chat Tools, Code Interpreter, Browser Extension</td>
             </tr>
             <tr>
               <td>People &amp; access</td>
@@ -2085,10 +2085,33 @@ export const docSections: DocSection[] = [
             <strong>Nobody has it</strong> until you grant it; it needs Browser Agent and the Full control setting.
           </li>
         </ul>
+        <h3>Right now</h3>
+        <p>
+          Path: <code>/admin/browser-extension</code>, under <strong>Chat experience</strong>. The page opens on six
+          tiles — whether the extension is on, whether full control is on, how many browsers are connected (and how
+          many of those run an older package), how many agent runs there have been today, how many actions were
+          refused today, and which package version this server hands out. The tiles read the same rows as Admin Logs,
+          so they answer &ldquo;is anything happening right now&rdquo; without a search.
+        </p>
+        <p>Two operations sit beneath them, for when the answer is not the one you wanted:</p>
+        <ul>
+          <li>
+            <strong>Stop all agent runs now</strong> — every run under way ends at its next step, and the person is
+            told their administrator stopped it. It records a moment, not a switch: a run started after it is
+            unaffected, and there is nothing to turn back on. Audited as <code>extension_runs_stopped</code>.
+          </li>
+          <li>
+            <strong>Disconnect all browsers</strong> — every connected browser is signed out. People connect again
+            from the extension&apos;s side panel, so use it when tokens may have gone astray rather than to pause the
+            extension (the on/off setting below is the pause). Audited as <code>extension_disconnected_all</code>.
+          </li>
+        </ul>
+        <p>
+          Both need write access to Chat Tools; a read-only administrator sees the tiles without the buttons.
+        </p>
         <h3>Settings</h3>
         <p>
-          Path: <code>/admin/chat-tools</code>, the <strong>Browser extension</strong> card. Every save is audited
-          as <code>extension_settings_updated</code>.
+          The rest of the same page. Every save is audited as <code>extension_settings_updated</code>.
         </p>
         <DocsTable>
           <thead>

@@ -1078,6 +1078,10 @@ export const userManualSections: DocSection[] = [
             A run also ends when the agent says it is done, at your administrator&apos;s step limit, or after three
             failed steps in a row. Closing the side panel ends it too.
           </li>
+          <li>
+            Your administrator can stop every run at once. Yours then ends at its next step and the panel says so;
+            start it again and it runs normally.
+          </li>
           <li>Tabs the agent opens are grouped under <strong>Alpharouter</strong> in the tab strip.</li>
         </ul>
         <Warn>

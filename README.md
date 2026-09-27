@@ -31,6 +31,9 @@ run the same Compose stack on Linux or any other Docker-capable environment.
   video generation, speech, and Code Interpreter
 - **Code Interpreter** — networkless disposable containers, measured
   per-model compatibility, Redis admission leases, and cancel-on-Stop
+- **Browser extension** — Alpharouter in Chrome and Edge: chat in the side
+  panel, questions about the page in front of you, and an agent that works in
+  your own tabs under admin-set rules (see below)
 - **Media** — uploads and generated files (images, video, sandbox artifacts)
   with ACL, quotas, and HTTP Range for video
 - **Identity** — local accounts with optional TOTP, plus LDAP/Active Directory,
@@ -198,6 +201,7 @@ docker compose logs -f alpha-router
 alpha-router/
 ├── backend/          FastAPI application, gateway, schedulers, and services
 ├── frontend/         React and Vite single-page application
+│   └── extension/    Chrome and Edge extension (side panel, browser agent)
 ├── sandbox/          Isolated code-interpreter image
 ├── sandbox-broker/   Internal Docker sandbox controller
 ├── deploy/           SeaweedFS support, registry compose overlay
@@ -348,6 +352,33 @@ The OpenRouter adapter negotiates the wire format per model: mp3 first, `pcm`
 for models that accept nothing else (Gemini TTS), learned from a format refusal
 for models it does not know. Raw pcm is stored as WAV, so the stored MIME type
 and the reported `format` always match the bytes.
+
+## Browser extension
+
+Each installation builds and signs its own copy of the extension, and a copy
+works only with the server it came from. People download it from **Settings →
+Browser extension** and load it unpacked; the panel tells them when a newer
+package is available.
+
+Administrators manage it at **Admin → Chat experience → Browser Extension**
+(`/admin/browser-extension`): the organisation on/off switch, the sites the
+agent may read and the sites it may never act on, which models may receive
+page content and screenshots, full control, the agent's limits and modes, and
+which approvals it always asks for. Two operations sit on the same page for an
+incident — **Stop all agent runs now** and **Disconnect all browsers**. Who may
+use the extension, its agent and full control stays on **Chat Tools**
+(`browser_extension`, `browser_agent`, `browser_control`); the last two are
+granted to nobody by default.
+
+With full control on, the agent attaches Chrome's debugger for the length of a
+run to use real mouse and keyboard input and take screenshots. Chrome shows its
+"started debugging this browser" bar throughout, a cursor and a glow show what
+the agent is doing, and the deterministic rules in the extension - not the
+model - decide what each action may touch. Purchases, account creation, card
+and ID numbers, permanent deletions, executable downloads, trades, CAPTCHAs and
+passwords are refused in every mode. Screenshots and page text are never
+stored; `page_context`, `agent_step` and `agent_task` rows in Admin Logs record
+what happened without recording contents.
 
 ## External clients
 

@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { PolicyContext } from "../lib/agentPolicy";
 import type { PageResult } from "../lib/pageAgent";
-import { runAgent, type AgentBrowser, type AgentDeps, type ControlDriver, type ModelReply, type StepView } from "./agentRun";
+import { runAgent, type AgentBrowser, type AgentDeps, type ControlDriver, type ModelReply, type RunState, type StepView } from "./agentRun";
 import { createPauseGate } from "./pauseGate";
 
 const RULES: PolicyContext = { policy: { allowed_sites: [], blocked_sites: [] }, serverHost: "ai.example.com", ownHosts: ["ai.example.com"] };
@@ -64,6 +64,7 @@ function harness(replies: ModelReply[], opts: { browser?: ReturnType<typeof fake
   const gate = createPauseGate(abort.signal);
   const browser = opts.browser ?? fakeBrowser();
   const driver = opts.driver === undefined ? fakeDriver() : opts.driver;
+  const states: RunState[] = [];
   const steps: StepView[] = [];
   let modelCalls = 0;
   const deps: AgentDeps = {
@@ -74,6 +75,7 @@ function harness(replies: ModelReply[], opts: { browser?: ReturnType<typeof fake
     browser,
     driver,
     pause: gate,
+    onState: (state) => states.push(state),
     approve: vi.fn(async () => true),
     askUser: vi.fn(async () => ""),
     review: vi.fn(async () => ({ decision: "allow" as const, reason: "" })),
@@ -82,7 +84,7 @@ function harness(replies: ModelReply[], opts: { browser?: ReturnType<typeof fake
     onText: vi.fn(),
   };
   const run = () => runAgent({ task: "Go on.", mode: opts.mode ?? "auto", maxSteps: 20, rules: RULES, runId: "run-1", nonce: "0123456789ab" }, deps, abort.signal);
-  return { deps, browser, driver, gate, abort, steps, run, modelCalls: () => modelCalls };
+  return { deps, browser, driver, gate, abort, states, steps, run, modelCalls: () => modelCalls };
 }
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -90,7 +92,7 @@ const stateCalls = (browser: ReturnType<typeof fakeBrowser>) => browser.page.moc
 const dispatchCalls = (browser: ReturnType<typeof fakeBrowser>) => browser.page.mock.calls.filter(([m]) => m === "takeover_dispatch").map(([, a]) => (a as { on: boolean }).on);
 
 describe("a paused run", () => {
-  it("waits before asking the model again, shows paused on the page, and goes on when resumed", async () => {
+  it("waits before asking the model again, shows paused on the page and the badge, and goes on when resumed", async () => {
     const h = harness([click(), done()]);
     // Paused before the run starts: it waits at its first safe point.
     h.gate.pause();
@@ -98,11 +100,12 @@ describe("a paused run", () => {
     await tick();
     await tick();
     expect(h.modelCalls()).toBe(0);
+    expect(h.states).toEqual(["working", "paused"]);
     expect(stateCalls(h.browser)).toEqual(["working", "paused"]);
     h.gate.resume();
     const result = await finished;
     expect(result.outcome).toBe("done");
-    expect(stateCalls(h.browser).slice(0, 3)).toEqual(["working", "paused", "working"]);
+    expect(h.states.slice(0, 3)).toEqual(["working", "paused", "working"]);
     expect((h.driver as ReturnType<typeof fakeDriver>).click).toHaveBeenCalledTimes(1);
   });
 

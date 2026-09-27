@@ -225,6 +225,7 @@ describe("a run", () => {
 
   it("pauses when the person takes over the page, and goes on from Resume in the panel", async () => {
     const { run, finish } = await pageReadThenModelBusy();
+    expect(chromeFake.action.badge).toMatchObject({ text: "\u25CF", color: "#2eaadc" });
     // From another tab, or another run: not this run's.
     await act(async () => {
       chromeFake.runtime.deliver({ type: "agent-takeover", run }, { id: EXTENSION_ID, url: "https://evil.example.net/", tab: { id: 999 } as chrome.tabs.Tab });
@@ -235,11 +236,9 @@ describe("a run", () => {
       chromeFake.runtime.deliver({ type: "agent-takeover", run }, { id: EXTENSION_ID, url: "https://shop.example.com/cart", tab: { id: tabId } as chrome.tabs.Tab });
     });
     await until(() => host.textContent!.includes("You took over"), "the paused card");
-    // The model's answer arrives while paused: the run waits before its next action.
+    // The model's answer arrives while paused: the run waits before its next action, and the badge shows the pause.
     await act(async () => finish());
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    });
+    await until(() => chromeFake.action.badge.color === "#969696", "the grey badge");
     expect(pageCalls.filter((c) => c.method === "read_page")).toHaveLength(1);
     await act(async () => button("Resume").click());
     await until(() => !host.textContent!.includes("You took over"), "the card to go");
@@ -247,6 +246,7 @@ describe("a run", () => {
     expect(pageCalls.some((c) => c.method === "takeover_resume" && c.args.run === run)).toBe(true);
     await until(() => host.textContent!.includes("Done."), "the run to finish");
     expect(pageCalls.filter((c) => c.method === "read_page")).toHaveLength(2);
+    expect(chromeFake.action.badge.text).toBe("");
   });
 
   it("goes on when the page's banner says Resume, from our script in that tab only", async () => {

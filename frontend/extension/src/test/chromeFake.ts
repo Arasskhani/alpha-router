@@ -61,6 +61,8 @@ export function installChromeFake(options: { version?: string } = {}) {
   const onMessage = event<(message: unknown, sender: chrome.runtime.MessageSender, respond: (r?: unknown) => void) => unknown>();
   const onChanged = event();
   const onInstalled = event();
+  const onStartup = event();
+  const onPanelClosed = event<(info: { windowId: number }) => void>();
   const onClicked = event();
   const onActivated = event<(info: { tabId: number; windowId: number }) => void>();
   const onUpdated = event<(tabId: number, change: Record<string, unknown>, tab: chrome.tabs.Tab) => void>();
@@ -78,6 +80,7 @@ export function installChromeFake(options: { version?: string } = {}) {
       getManifest: () => ({ version: options.version ?? "1.0.0.1", manifest_version: 3 }),
       onMessage,
       onInstalled,
+      onStartup,
       /** Messages sent by the code under test; a page never receives its own. */
       sent: [] as unknown[],
       sendMessage: vi.fn(async (message: unknown) => {
@@ -183,6 +186,21 @@ export function installChromeFake(options: { version?: string } = {}) {
     sidePanel: {
       open: vi.fn(async () => undefined),
       setPanelBehavior: vi.fn(async () => undefined),
+      onClosed: onPanelClosed,
+    },
+    action: {
+      /** The toolbar button as the code under test left it: badge text and colour, and its title. */
+      badge: { text: "", color: "", title: "Open Alpharouter" },
+      setBadgeText: vi.fn(async ({ text }: { text: string }) => {
+        fake.action.badge.text = text;
+      }),
+      setBadgeBackgroundColor: vi.fn(async ({ color }: { color: string }) => {
+        fake.action.badge.color = color;
+      }),
+      setBadgeTextColor: vi.fn(async (_details: { color: string }) => undefined),
+      setTitle: vi.fn(async ({ title }: { title: string }) => {
+        fake.action.badge.title = title;
+      }),
     },
     contextMenus: {
       create: vi.fn(),

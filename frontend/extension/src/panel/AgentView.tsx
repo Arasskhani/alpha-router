@@ -12,6 +12,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ApiError } from "../lib/api";
 import { DEFAULT_APPROVALS, type AgentMode, type PolicyContext } from "../lib/agentPolicy";
+import { clearBadge, showBadge } from "../lib/badge";
 import { ChatStreamError, readChatStream } from "../lib/chatStream";
 import { getClient } from "../lib/client";
 import { fromTabScript, isExtensionMessage } from "../lib/messages";
@@ -361,6 +362,7 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
       onStep: showStep,
       onText: (text) => append({ kind: "text", id: randomHex(6), text }),
       pause: gate.current ?? undefined,
+      onState: (state) => void showBadge(state),
     };
   }
 
@@ -382,6 +384,7 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
     setLog([{ kind: "task", id: run, text: task }]);
     setRunning(true);
     setStarting(false);
+    void showBadge("working");
     // Full control: the admin's switch and the user's grant, a model that reads images, and a tab to attach to.
     const readsImages = Boolean(models?.find((m) => m.id === modelId)?.supports_vision);
     const wantsControl = Boolean(me.features.full_control);
@@ -414,6 +417,7 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
     } finally {
       await stopDriver?.().catch(() => undefined);
       await browser.current?.cleanup().catch(() => undefined);
+      await clearBadge();
       await flush();
       setRunning(false);
       setPaused(false);

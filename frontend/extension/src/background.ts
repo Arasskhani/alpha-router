@@ -8,6 +8,7 @@
  * menu, even when the panel is closed.
  */
 
+import { clearBadge } from "./lib/badge";
 import { createMenus, handleMenuClick } from "./lib/menus";
 
 function openThePanelFromTheToolbar(): void {
@@ -23,4 +24,9 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 // Registered on every start, before anything else: a click that woke the worker must find it.
 chrome.contextMenus.onClicked.addListener(handleMenuClick);
+// The badge belongs to a run in the side panel. A panel that closes ends its run,
+// but may not get to take the badge off: the worker does, when the panel closes
+// (Chrome 142+) and when the browser starts.
+chrome.sidePanel.onClosed?.addListener(() => void clearBadge());
+chrome.runtime.onStartup.addListener(() => void clearBadge());
 openThePanelFromTheToolbar();

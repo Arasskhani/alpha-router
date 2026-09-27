@@ -99,7 +99,7 @@ export type AgentEventReport = {
 /** The run's driver under full control: input and screenshots (cdpDriver.ts); absent on the dom path. */
 export type ControlDriver = Pick<CdpDriver, "screenshot" | "zoom" | "click" | "hover" | "scroll" | "drag" | "type" | "key" | "toCss" | "takeDialog" | "handleDialog">;
 
-/** What the run is doing, as the page's border shows it. */
+/** What the run is doing, as the page's border and the toolbar badge show it. */
 export type RunState = "working" | "waiting" | "paused";
 
 export type AgentDeps = {
@@ -109,6 +109,8 @@ export type AgentDeps = {
   driver?: ControlDriver | null;
   /** The person's pause (a take-over, or the panel's button): the loop waits at it at each safe point. */
   pause?: PauseGate;
+  /** Each change of what the run is doing, for the toolbar badge. */
+  onState?(state: RunState): void;
   approve(request: ApprovalRequest, signal: AbortSignal): Promise<boolean>;
   askUser(question: string, signal: AbortSignal): Promise<string>;
   review(input: ReviewInput, signal: AbortSignal): Promise<{ decision: "allow" | "ask"; reason: string }>;
@@ -535,8 +537,9 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     await deps.browser.page(method, a, tab, signal).catch(() => undefined);
   }
 
-  /** What the run is doing: the page's border (under full control). */
+  /** What the run is doing: the page's border (under full control) and the badge. */
   async function state(next: RunState, tab: WorkTab | null): Promise<void> {
+    deps.onState?.(next);
     await visual("visuals_state", { state: next }, tab);
   }
 

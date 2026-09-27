@@ -28,6 +28,15 @@ describe("the service worker", () => {
     expect(chromeFake.contextMenus.create).toHaveBeenCalledTimes(5);
   });
 
+  it("takes a run's badge off the toolbar when the panel closes, and when the browser starts", () => {
+    chromeFake.action.badge.text = "\u25CF";
+    chromeFake.sidePanel.onClosed.emit({ windowId: 3 });
+    expect(chromeFake.action.setBadgeText).toHaveBeenCalledWith({ text: "" });
+    chromeFake.action.setBadgeText.mockClear();
+    chromeFake.runtime.onStartup.emit();
+    expect(chromeFake.action.setBadgeText).toHaveBeenCalledWith({ text: "" });
+  });
+
   it("answers a menu click from the moment it starts", () => {
     const tab = { id: 7, windowId: 3, url: "https://example.com/", title: "Example" } as chrome.tabs.Tab;
     chromeFake.contextMenus.onClicked.emit({ menuItemId: "alpharouter-summarize", pageUrl: tab.url } as never, tab as never);

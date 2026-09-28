@@ -239,6 +239,10 @@ describe("real fields", () => {
   it.each(["Password", "Card number", "Passport number", "رمز عبور", "کد ملی", "One-time code"])("never types into %s", (name) => {
     expect(typing(name).class).toBe("blocked");
   });
+
+  it.each(["Passport", "Passport #", "Passport No.", "Passport ID"])("never types into %s, a text input like any other", (name) => {
+    expect(typing(name, { type: "text" })).toMatchObject({ class: "blocked", reason: "id_field" });
+  });
 });
 
 describe("Enter in a field", () => {

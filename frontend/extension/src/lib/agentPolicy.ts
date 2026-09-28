@@ -270,7 +270,7 @@ function labelForms(text: string): string[] {
   );
 }
 /** Fields for a person's identity documents. */
-const ID_FIELD = /\b(ssn|social security|passport (number|no|id|#)|national id|national identity|tax id|id number|identity number)\b|^passport$/i;
+const ID_FIELD = /\b(ssn|social security|national id|national identity|tax id|id number|identity number)\b|\bpassport( (number|no|id)\b| ?#|$)/i;
 const ID_FIELD_FA = /کد\s?ملی|شماره\s?ملی|شناسنامه|گذرنامه|پاسپورت/;
 /** Fields for a person's contact and bank details: typing there asks (IBAN and Sheba numbers are secrets to sensitive.ts, and refused). */
 const PERSONAL_FIELD = /\b(phone|mobile|telephone|address|street|date of birth|birth ?date|birthday|postal ?code|zip ?code|pin ?code|account number|bank account|routing number|sort code)\b/i;
@@ -568,7 +568,8 @@ function typeVerdict(element: ElementInfo, page: { url: string; host: string }, 
     blocked("sensitive_field", `The agent never types into ${named(element)}: passwords, card numbers and codes are for the user to enter. Sign in yourself, then tell the agent to go on.`);
   if (element.sensitive) return secret();
   const field = `${element.name} ${element.type ?? ""}`;
-  if (matches(field, ID_FIELD, ID_FIELD_FA)) {
+  // By its name alone: an input's type ("text") after it would hide a field called just "Passport".
+  if (matches(element.name, ID_FIELD, ID_FIELD_FA)) {
     return blocked("id_field", `The agent never types into ${named(element)}: identity numbers are for the user to enter.`);
   }
   // The page judges the field by everything it says about it; its name is checked here as well.

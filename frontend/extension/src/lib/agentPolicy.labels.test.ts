@@ -280,6 +280,14 @@ describe("what is typed", () => {
     ["a Sheba number", "IR270170000000100324200001"],
     ["a national ID", "0012345679"],
     ["a card number inside a sentence", "my card is 4111111111111111 thanks"],
+    ["a card number and its expiry", "4111 1111 1111 1111 12/27"],
+    ["a card number with dots", "4111.1111.1111.1111"],
+    ["a card number with no-break spaces", "4111\u00a01111\u00a01111\u00a01111"],
+    ["a card number with zero-width spaces", "4111\u200b1111\u200b1111\u200b1111"],
+    ["a card number in full-width digits", "４１１１１１１１１１１１１１１１"],
+    ["an IBAN and the words after it", "DE89 3704 0044 0532 0130 00 is mine"],
+    ["a Sheba number in groups, and thanks", "IR27 0170 0000 0010 0324 2000 01 thanks"],
+    ["a national ID as the card writes it", "001-234567-9"],
   ])("never types %s, whatever the field is called", (_what, text) => {
     expect(typing(text)).toMatchObject({ class: "blocked", reason: "secret_text" });
   });
@@ -289,6 +297,9 @@ describe("what is typed", () => {
     ["an order number", "Order 20260928"],
     ["ten digits that are no national ID", "0012345678"],
     ["plain words", "See you at noon."],
+    ["a phone number", "Call 415-555-0123"],
+    ["a date", "2026-09-28"],
+    ["a word that starts like an IBAN", "DE89 is my postcode prefix"],
   ])("types %s", (_what, text) => {
     expect(typing(text).class).toBe("act");
   });

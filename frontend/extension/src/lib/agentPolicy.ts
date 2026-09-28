@@ -507,40 +507,79 @@ function asciiDigits(text: string): string {
   return text.replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06f0)).replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660));
 }
 
-/** A card number in the text: 13 to 19 digits, spaces or dashes between, that pass the Luhn check. */
-function cardNumberIn(text: string): boolean {
-  for (const match of asciiDigits(text).matchAll(/(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)/g)) {
-    const digits = match[0].replace(/\D/g, "");
-    let sum = 0;
-    for (let i = 0; i < digits.length; i += 1) {
-      let d = Number(digits[digits.length - 1 - i]);
-      if (i % 2 === 1) {
-        d *= 2;
-        if (d > 9) d -= 9;
-      }
-      sum += d;
+/**
+ * Text as the number checks read it: compatibility forms folded (full-width
+ * digits, a no-break space), the invisible format characters dropped (a
+ * zero-width space between two groups hides nothing), Persian and
+ * Arabic-Indic digits read as ASCII ones.
+ */
+function scanned(text: string): string {
+  return asciiDigits(text.normalize("NFKC").replace(/\p{Cf}/gu, ""));
+}
+
+function luhn(digits: string): boolean {
+  let sum = 0;
+  for (let i = 0; i < digits.length; i += 1) {
+    let d = Number(digits[digits.length - 1 - i]);
+    if (i % 2 === 1) {
+      d *= 2;
+      if (d > 9) d -= 9;
     }
-    if (sum % 10 === 0 && !/^(\d)\1+$/.test(digits)) return true;
+    sum += d;
+  }
+  return sum % 10 === 0 && !/^(\d)\1+$/.test(digits);
+}
+
+/**
+ * A card number in the text: 13 to 19 digits that pass the Luhn check,
+ * written whole or in groups (spaces, dashes or dots between). Any run of
+ * whole groups counts, so the expiry after a number ("4111 1111 1111 1111
+ * 12/27") does not hide it.
+ */
+function cardNumberIn(text: string): boolean {
+  for (const match of scanned(text).matchAll(/\d+(?:[ .-]\d+)*/g)) {
+    const groups = match[0].split(/[ .-]/);
+    for (let first = 0; first < groups.length; first += 1) {
+      let digits = "";
+      for (let last = first; last < groups.length && digits.length <= 19; last += 1) {
+        digits += groups[last];
+        if (digits.length >= 13 && digits.length <= 19 && luhn(digits)) return true;
+      }
+    }
   }
   return false;
 }
 
-/** An IBAN - Sheba in Iran - in the text: two letters, two check digits and the rest, whose mod 97 is 1. */
+function mod97(alnum: string): number {
+  const moved = `${alnum.slice(4)}${alnum.slice(0, 4)}`.replace(/[A-Z]/g, (c) => String(c.charCodeAt(0) - 55));
+  let rest = 0;
+  for (const digit of moved) rest = (rest * 10 + Number(digit)) % 97;
+  return rest;
+}
+
+/**
+ * An IBAN - Sheba in Iran - in the text: two letters, two check digits and
+ * the rest, 15 to 34 characters in all, whose mod 97 is 1. Written in groups,
+ * any number of the groups that follow may be its end, so the words after
+ * it ("… 00 is mine") do not hide it.
+ */
 function ibanIn(text: string): boolean {
-  for (const match of asciiDigits(text).toUpperCase().matchAll(/\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]){11,30}\b/g)) {
-    const iban = match[0].replace(/ /g, "");
-    const moved = `${iban.slice(4)}${iban.slice(0, 4)}`.replace(/[A-Z]/g, (c) => String(c.charCodeAt(0) - 55));
-    let rest = 0;
-    for (const digit of moved) rest = (rest * 10 + Number(digit)) % 97;
-    if (rest === 1) return true;
+  for (const match of scanned(text).toUpperCase().matchAll(/(?<![A-Z0-9])[A-Z]{2}\d{2}[A-Z0-9]*(?: [A-Z0-9]+)*/g)) {
+    let iban = "";
+    for (const group of match[0].split(" ")) {
+      iban += group;
+      if (iban.length > 34) break;
+      if (iban.length >= 15 && /^[A-Z]{2}\d{2}[A-Z0-9]+$/.test(iban) && mod97(iban) === 1) return true;
+    }
   }
   return false;
 }
 
 /** An Iranian national ID in the text: ten digits whose last is their check digit. */
 function nationalIdIn(text: string): boolean {
-  for (const match of asciiDigits(text).matchAll(/(?<!\d)\d{10}(?!\d)/g)) {
-    const id = match[0];
+  // Ten digits, or the three, six and one of the card ("001-234567-8").
+  for (const match of scanned(text).matchAll(/(?<!\d)(?:\d{10}|\d{3}-\d{6}-\d)(?![\d-])/g)) {
+    const id = match[0].replace(/-/g, "");
     if (/^(\d)\1{9}$/.test(id)) continue;
     const sum = [...id.slice(0, 9)].reduce((total, digit, i) => total + Number(digit) * (10 - i), 0) % 11;
     const check = Number(id[9]);

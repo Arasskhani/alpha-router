@@ -677,17 +677,11 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     if (signal.aborted) throw abortError();
   };
 
-  /** Stop takes effect at once, even while the page is busy (a wait, a slow page): what it does then no longer matters. */
-  const stopped = new Promise<never>((_, reject) => {
-    const fail = () => reject(abortError());
-    if (signal.aborted) fail();
-    else signal.addEventListener("abort", fail, { once: true });
-  });
-  stopped.catch(() => undefined);
+  // Stop takes effect at once, even while the page is busy (a wait, a slow page): see raced().
 
   async function page(method: PageMethod, a: Record<string, unknown>, judged: WorkTab): Promise<PageResult> {
     check();
-    const result = await Promise.race([deps.browser.page(method, a, judged, signal), stopped]);
+    const result = await raced(deps.browser.page(method, a, judged, signal));
     check();
     return result;
   }
@@ -709,7 +703,34 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
 
   /** `work`, unless Stop comes first: then the run ends at once, whatever the page or the browser is doing. */
   function raced<T>(work: Promise<T>): Promise<T> {
-    return Promise.race([work, stopped]);
+    // Not a Promise.race with one promise of the Stop: each race would leave a reaction on it, holding its answer (a
+    // screenshot, an outline) for the rest of the run. The listener here goes with the answer.
+    return new Promise<T>((resolve, reject) => {
+      if (signal.aborted) {
+        reject(abortError());
+        return;
+      }
+      const onAbort = () => reject(abortError());
+      signal.addEventListener("abort", onAbort, { once: true });
+      work.then(
+        (value) => {
+          signal.removeEventListener("abort", onAbort);
+          resolve(value);
+        },
+        (err: unknown) => {
+          signal.removeEventListener("abort", onAbort);
+          reject(err);
+        },
+      );
+    });
+  }
+
+  /** `work`, or `value` once Stop comes first: for what is best-effort, and must not end the run itself. */
+  function orOnStop<T, U>(work: Promise<T>, value: U): Promise<T | U> {
+    return raced<T | U>(work).catch((err: unknown) => {
+      if (isAbort(err) || signal.aborted) return value;
+      throw err;
+    });
   }
 
   /**
@@ -724,7 +745,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     if (hit) lines.push(`It hit: ${hitLine(hit)}.`);
     if (!after || !after.host || after.host !== before.host) return lines;
     if (after.url !== before.url) lines.push(`The page is now "${clip(after.title, 100) || "(untitled)"}" at ${whereTo(after.url)}.`);
-    const seen = await Promise.race([deps.browser.page("observe", scrolledAt ? { at: scrolledAt } : {}, after, signal, OBSERVE_MS).catch(() => null), stopped.catch(() => null)]);
+    const seen = await orOnStop(deps.browser.page("observe", scrolledAt ? { at: scrolledAt } : {}, after, signal, OBSERVE_MS).catch(() => null), null);
     if (!seen?.ok) return lines;
     const focus = seen.focus as ElementInfo | undefined;
     if (focus) remember(after.id, [focus]);
@@ -744,7 +765,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
   async function startingPoint(tab: WorkTab): Promise<string | null> {
     if (!tab.host) return null;
     if (classifyAction({ tool: "read_page", args: {}, page: { url: tab.url, host: tab.host } }, options.rules).class === "blocked") return null;
-    const seen = await Promise.race([deps.browser.page("observe", {}, tab, signal, OBSERVE_MS).catch(() => null), stopped]);
+    const seen = await raced(deps.browser.page("observe", {}, tab, signal, OBSERVE_MS).catch(() => null));
     check();
     const view = seen?.ok ? (seen.view as View | undefined) : undefined;
     const lines = [`"${clip(tab.title, 100) || "(untitled)"}" at ${whereTo(tab.url)}.`];
@@ -757,7 +778,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
   /** Best-effort: the visuals never fail a run, nor hold it up for long, nor outlast a Stop. */
   async function visual(method: PageMethod, a: Record<string, unknown>, tab: WorkTab | null): Promise<void> {
     if (!tab || !deps.driver) return;
-    await Promise.race([deps.browser.page(method, a, tab, signal, VISUAL_MS).catch(() => undefined), stopped.catch(() => undefined)]);
+    await orOnStop(deps.browser.page(method, a, tab, signal, VISUAL_MS).catch(() => undefined), undefined);
   }
 
   /** What the run is doing: the page's border (under full control) and the badge. */
@@ -774,7 +795,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
   async function gate(tab: WorkTab | null): Promise<void> {
     if (!deps.pause?.paused()) return;
     await state("paused", tab);
-    await Promise.race([deps.pause.wait(), stopped]);
+    await raced(deps.pause.wait());
     check();
     await state("working", tab);
   }
@@ -783,7 +804,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
   async function visualCapture(work: () => Promise<{ dataUrl: string }>, tab: WorkTab): Promise<string | undefined> {
     await visual("visuals_veil", { veiled: true }, tab);
     try {
-      const shot = await Promise.race([work(), stopped]);
+      const shot = await raced(work());
       return shot.dataUrl;
     } catch {
       return undefined;
@@ -1012,7 +1033,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     const driver = deps.driver;
     if (!driver) return { content: "Full control is not on for this run: use read_page and the reference tools.", status: "error", outcome: "error", extra: { error: "no_control" } };
     const site = tab.host ?? "";
-    const race = <T>(work: Promise<T>) => Promise.race([work, stopped]);
+    const race = <T>(work: Promise<T>) => raced(work);
     const dispatch = <T>(work: () => Promise<T>) => inputWindow(tab, work);
     // The layer is veiled for a capture: the model must never see the cursor or the border.
     const capture = async <T>(work: () => Promise<T>): Promise<T> => {
@@ -1142,7 +1163,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
         const message = err instanceof Error && err.message ? clip(err.message, 200) : "The browser could not open it.";
         return { content: message, status: "error", detail: message, outcome: "error", extra: { error: "browser_refused" } };
       }
-      await Promise.race([deps.browser.settle(), stopped]);
+      await raced(deps.browser.settle());
       check();
       // Where the tab is once it settled - the browser answers the update with the page it was leaving -
       // and inside the page tags: a page's address, down to its path, is the page's own words.
@@ -1188,7 +1209,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     let moved = "";
     let after: WorkTab | null = tab;
     if (MAY_LOAD.has(tool)) {
-      await Promise.race([deps.browser.settle(), stopped]);
+      await raced(deps.browser.settle());
       check();
       after = await deps.browser.current();
       check();

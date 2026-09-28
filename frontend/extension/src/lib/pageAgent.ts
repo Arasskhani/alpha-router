@@ -50,12 +50,21 @@ const PAGE_CALL_MS = 15_000;
 class PageTimeout extends Error {}
 
 /** `work`, or a PageTimeout after `ms`, or nothing more once `signal` aborts (it then rejects with an AbortError). */
-function bounded<T>(work: Promise<T>, ms: number, signal?: AbortSignal): Promise<T> {
+function bounded<T>(work: Promise<T>, ms: number, signal?: AbortSignal, hold?: () => boolean): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      signal?.removeEventListener("abort", onAbort);
-      reject(new PageTimeout());
-    }, ms);
+    let timer: ReturnType<typeof setTimeout>;
+    // While `hold` says so - a dialog of the page's is waiting on the user - the page is not stuck: the wait goes on.
+    const arm = (wait: number) => {
+      timer = setTimeout(() => {
+        if (hold?.()) {
+          arm(250);
+          return;
+        }
+        signal?.removeEventListener("abort", onAbort);
+        reject(new PageTimeout());
+      }, wait);
+    };
+    arm(ms);
     const onAbort = () => {
       clearTimeout(timer);
       reject(new DOMException("The run was stopped.", "AbortError"));
@@ -245,12 +254,13 @@ export async function callPage(
   overlay: OverlayRequest | null = null,
   signal?: AbortSignal,
   timeoutMs: number = PAGE_CALL_MS,
+  hold?: () => boolean,
 ): Promise<PageResult> {
   const { tabId, host, origin } = target;
   let results: Array<{ result?: unknown }>;
   const started = Date.now();
   try {
-    await bounded(chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] }), timeoutMs, signal);
+    await bounded(chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] }), timeoutMs, signal, hold);
     // A busy page can hold the injection back for a while: a Stop pressed meanwhile keeps the action from going.
     if (signal?.aborted) return failure("stopped", "The run was stopped.");
     results = await bounded(chrome.scripting.executeScript({
@@ -265,7 +275,7 @@ export async function callPage(
         return agent(name, input, banner?.run);
       },
       args: [origin, method, args, overlay],
-    }), Math.max(1, timeoutMs - (Date.now() - started)), signal);
+    }), Math.max(1, timeoutMs - (Date.now() - started)), signal, hold);
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") return failure("stopped", "The run was stopped.");
     if (err instanceof PageTimeout) {

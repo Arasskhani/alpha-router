@@ -46,6 +46,8 @@ export type AgentBrowser = {
    * another site since answers "moved".
    */
   page(method: PageMethod, args?: Record<string, unknown>, judged?: WorkTab, signal?: AbortSignal, timeoutMs?: number): Promise<PageResult>;
+  /** While `hold` says so (a dialog of the page's waits on the user), a slow page is not given up on. */
+  holdWhile?(hold: () => boolean): void;
   /** Whether the browser lets the extension work on the pages of this address's site. */
   hasAccess(url: string): Promise<boolean>;
   /** After an action that may load a page: wait until the tab has settled. */
@@ -645,6 +647,11 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
    * cleared once it has. The page may be steering the model.
    */
   let injected: string | null = null;
+  /** The page's dialogs being answered now: while one is, the page waits on the user, not stuck. */
+  let dialogsOpen = 0;
+  // A form sent through the page that opens a confirm waits on the user's card: not a page that stopped answering,
+  // whose action would then go through after the model was told it did not - and be tried again.
+  deps.browser.holdWhile?.(() => dialogsOpen > 0);
   /** Ask mode: the sites where the person allowed plain actions for the rest of this run, from a card. */
   const siteWide = new Set<string>();
   /** Plan mode: true once the user has approved a plan, after which the plan's sites are worked without asking each action. */
@@ -865,6 +872,15 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
    * stays as it is; the badge shows the wait.
    */
   async function answerDialog(dialog: { type?: string; message?: string }, answer?: (accept: boolean, promptText?: string) => Promise<void>): Promise<void> {
+    dialogsOpen += 1;
+    try {
+      await answerOneDialog(dialog, answer);
+    } finally {
+      dialogsOpen -= 1;
+    }
+  }
+
+  async function answerOneDialog(dialog: { type?: string; message?: string }, answer?: (accept: boolean, promptText?: string) => Promise<void>): Promise<void> {
     const driver = deps.driver;
     if (!driver) return;
     // To the tab that asked: the agent may be on another by the time the user answers.

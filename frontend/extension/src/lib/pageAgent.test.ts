@@ -45,6 +45,23 @@ describe("a call to the page", () => {
     expect(chromeFake.scripting.executeScript).toHaveBeenCalledTimes(1);
   });
 
+  it("waits on a page held by a dialog the user is answering, and gets its answer", async () => {
+    let answer: (value: Array<{ result?: unknown }>) => void = () => undefined;
+    chromeFake.scripting.executeScript.mockImplementation(async (injection: unknown) => {
+      if ((injection as { files?: string[] }).files) return [];
+      return await new Promise<Array<{ result?: unknown }>>((resolve) => {
+        answer = resolve;
+      });
+    });
+    let dialogUp = true;
+    const pending = callPage(SHOP, "submit_form", { ref: "e2" }, null, undefined, 30, () => dialogUp);
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    // Long past the limit: still waiting, since the dialog holds the page. Then the user answers it.
+    dialogUp = false;
+    answer([{ result: { ok: true } }]);
+    await expect(pending).resolves.toMatchObject({ ok: true });
+  });
+
   it("gives up on a page that does not answer, and says so", async () => {
     // A page whose own script is stuck, or held by a dialog: the injection never comes back.
     chromeFake.scripting.executeScript.mockImplementation(() => new Promise(() => undefined));

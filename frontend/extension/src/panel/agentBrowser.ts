@@ -73,6 +73,8 @@ export function createAgentBrowser(options: { startTabId: number | null; runId: 
    * so e3 of the page before never names an element of this one.
    */
   let refsFrom = 1;
+  /** While this says so, a page call is not given up on (see holdWhile). */
+  let hold: (() => boolean) | undefined;
 
   async function current(): Promise<WorkTab | null> {
     if (working === null) return null;
@@ -145,6 +147,10 @@ export function createAgentBrowser(options: { startTabId: number | null; runId: 
       return workTab(tab) ?? { id: working, url, host: readablePage(url)?.host ?? null, title: "" };
     },
 
+    holdWhile(when: () => boolean) {
+      hold = when;
+    },
+
     async page(method: PageMethod, args: Record<string, unknown> = {}, judged?: WorkTab, signal?: AbortSignal, timeoutMs?: number): Promise<PageResult> {
       const tab = await current();
       const target = tab ? targetOf(tab) : null;
@@ -156,7 +162,7 @@ export function createAgentBrowser(options: { startTabId: number | null; runId: 
       }
       // The banner goes up with every action: a page that took it down gets it back.
       overlays.set(tab.id, expected);
-      const result = await callPage(expected, method, args, { ...banner, refsFrom }, signal, timeoutMs);
+      const result = await callPage(expected, method, args, { ...banner, refsFrom }, signal, timeoutMs, hold);
       refsFrom = Math.max(refsFrom, highestRef(result) + 1);
       return result;
     },

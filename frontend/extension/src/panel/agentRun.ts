@@ -14,7 +14,8 @@
  * with the run's own random suffix; older page content is cut short so a long
  * run stays within the model's reach, and a tool call is never separated from
  * its answer. The run ends when the model calls done, at the step limit,
- * after three failed tool calls in a row, or when the user presses Stop. An
+ * after three failed tool calls in a row (or five refused ones: a refusal is
+ * the rules at work, not a failure), or when the user presses Stop. An
  * answer in words alone is not the end: the model is reminded to act, and a
  * second such answer in a row ends the run as "no_action" - not as done.
  */
@@ -148,6 +149,12 @@ export type RunOutcome = "done" | "stopped" | "max_steps" | "max_minutes" | "err
 export type RunResult = { outcome: RunOutcome; summary: string; steps: number };
 
 const MAX_ERRORS_IN_A_ROW = 3;
+/**
+ * Refusals are the rules at work, not the agent failing: they do not count
+ * toward the errors above, but a model that keeps asking for what is refused
+ * is stopped after this many in a row.
+ */
+const MAX_REFUSALS_IN_A_ROW = 5;
 /** What the model is told after an answer in words alone: the task is not over until it says so with done. */
 const NUDGE =
   "You answered without calling a tool, and the task goes on until you call done. Call the next tool now; use ask_user if you need the user, or done with a short summary if the task is complete or cannot be done.";
@@ -589,6 +596,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
   ];
   const history: string[] = [];
   let errorsInARow = 0;
+  let refusalsInARow = 0;
   /** Deletion keys pressed one after another, with no other action between: past DELETION_RUN the next one asks. */
   let deletionsInARow = 0;
   /**
@@ -1173,6 +1181,17 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
         } else if (spec.element === "focus") {
           const focus = await page("describe_focus", {}, tab);
           if (focus.ok && focus.element) element = focus.element as ElementInfo;
+          // Text typed with nothing focused goes nowhere - or wherever the page puts it: the field comes first.
+          if (focus.ok && !focus.element && spec.as === "type_text") {
+            return {
+              content: "Not typed: nothing on the page has the keyboard focus. Click the field first, check that the result says the keyboard is in it, then type.",
+              status: "error",
+              detail: "Nothing focused",
+              outcome: "error",
+              site: pageNow.host,
+              extra: { error: "no_focus" },
+            };
+          }
         }
       }
     }
@@ -1413,7 +1432,8 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       nudged = false;
       let skip: string | null = null;
       let finish: string | null = null;
-      let tooManyErrors = false;
+      /** Why the run stops after this step, when too many actions in a row failed or were refused. */
+      let tooManyErrors: string | null = null;
       const images: NonNullable<Answer["image"]>[] = [];
       /** Whether the step changed the page since its last screenshot: then it ends with one. */
       let unseen = false;
@@ -1447,14 +1467,21 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
         if (answer.status === "done" && name === "screenshot") unseen = false;
         else if (answer.status === "done" && (CHANGES.has(name) || (name === "computer" && args(call.function.arguments)?.action !== "wait"))) unseen = true;
         if (answer.denied) skip = "Skipped: an earlier action in this step was denied.";
-        if (answer.status === "error" || answer.status === "blocked") {
+        if (answer.status === "error") {
           errorsInARow += 1;
           if (errorsInARow >= MAX_ERRORS_IN_A_ROW && !skip) {
-            tooManyErrors = true;
+            tooManyErrors = "The agent stopped after three failed actions in a row.";
             skip = "Skipped: the run stopped after three failed actions in a row.";
+          }
+        } else if (answer.status === "blocked") {
+          refusalsInARow += 1;
+          if (refusalsInARow >= MAX_REFUSALS_IN_A_ROW && !skip) {
+            tooManyErrors = "The agent stopped after five refused actions in a row.";
+            skip = "Skipped: the run stopped after five refused actions in a row.";
           }
         } else if (answer.status === "done") {
           errorsInARow = 0;
+          refusalsInARow = 0;
         }
         // The rest of the step was planned on a page this action did not leave as expected - it failed, was refused,
         // the page changed under it, the user took over: nothing more is done, and nothing finished, until the model looks.
@@ -1479,7 +1506,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       }
       if (tooManyErrors) {
         report("errors");
-        return { outcome: "errors", summary: "The agent stopped after three failed actions in a row.", steps };
+        return { outcome: "errors", summary: tooManyErrors, steps };
       }
     }
     steps = options.maxSteps;

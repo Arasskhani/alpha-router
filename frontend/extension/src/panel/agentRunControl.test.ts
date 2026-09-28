@@ -356,6 +356,17 @@ describe("what an action reports", () => {
   });
 });
 
+describe("typing under full control", () => {
+  it("asks for a click on the field first when nothing has the keyboard", async () => {
+    const h = harness([{ text: "", toolCalls: [call("computer", { action: "type", text: "hello" })] }]);
+    await h.run();
+    expect(h.driver!.type).not.toHaveBeenCalled();
+    expect(h.approvals).toHaveLength(0);
+    const answer = String(h.sent[1].find((m) => m.role === "tool")!.content);
+    expect(answer).toMatch(/^Not typed: nothing on the page has the keyboard focus\. Click the field first/);
+  });
+});
+
 describe("a screenshot after every change", () => {
   const images = (messages: ApiMessage[]) =>
     messages.filter((m) => m.role === "user" && Array.isArray(m.content)).map((m) => (m.content as Array<{ type: string; text?: string }>).find((p) => p.type === "text")?.text ?? "");

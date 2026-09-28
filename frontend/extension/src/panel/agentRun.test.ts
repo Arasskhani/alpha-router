@@ -275,6 +275,25 @@ describe("a run", () => {
     expect(h.reports.at(-1)).toMatchObject({ kind: "agent_task", outcome: "errors" });
   });
 
+  it("does not count refusals as failures, but stops a model that keeps asking for what is refused", async () => {
+    // Three refusals and a failure: not three failures in a row.
+    const browser = fakeBrowser({ describe: (a) => (a.ref === "e9" ? { ok: false, error: "stale_ref", message: "Element e9 is gone." } : { ok: true, element: ELEMENTS[String(a.ref)] }) });
+    const mixed = harness(
+      [
+        { text: "", toolCalls: [call("click", { ref: "e9" })] },
+        { text: "", toolCalls: [call("click", { ref: "e2" })] },
+        { text: "", toolCalls: [call("click", { ref: "e2" })] },
+        { text: "", toolCalls: [call("click", { ref: "e9" })] },
+        { text: "", toolCalls: [call("done", { summary: "Gave up on buying." })] },
+      ],
+      { browser },
+    );
+    expect(await run(mixed)).toMatchObject({ outcome: "done" });
+    // Five refusals in a row end the run, saying why.
+    const stubborn = harness(Array.from({ length: 6 }, () => ({ text: "", toolCalls: [call("click", { ref: "e2" })] })));
+    expect(await run(stubborn)).toMatchObject({ outcome: "errors", summary: "The agent stopped after five refused actions in a row.", steps: 5 });
+  });
+
   it("does nothing more in a step once an action in it did not go through - not even finish", async () => {
     const browser = fakeBrowser({ describe: (a) => (a.ref === "e9" ? { ok: false, error: "stale_ref", message: "Element e9 is gone." } : { ok: true, element: { ref: "e1", role: "button", name: "Next", tag: "button" } }) });
     const h = harness(

@@ -155,6 +155,26 @@ describe("the agent's models", () => {
 });
 
 describe("a run", () => {
+  it("lets the person allow plain actions on the site for the rest of the run, with Allow focused", async () => {
+    replies = [
+      toolFrame([{ id: "c1", name: "read_page" }]),
+      toolFrame([{ id: "c2", name: "click", args: { ref: "e1" } }]),
+      toolFrame([{ id: "c3", name: "click", args: { ref: "e1" } }]),
+      toolFrame([{ id: "c4", name: "done", args: { summary: "Clicked it twice." } }]),
+    ];
+    await render();
+    await start("Click next twice.");
+    await until(() => Boolean(host.querySelector('[role="alertdialog"]')), "the approval card");
+    // Enter answers the card: Allow has the focus.
+    expect(document.activeElement?.textContent).toBe("Allow");
+    const forSite = [...host.querySelectorAll("button")].find((b) => b.textContent?.startsWith("Allow on "));
+    expect(forSite?.textContent).toMatch(/^Allow on [\w.-]+ for this run$/);
+    await act(async () => forSite!.click());
+    await until(() => host.textContent!.includes("Clicked it twice."), "the summary");
+    // The second click on the same site asked nobody.
+    expect(pageCalls.filter((c) => c.method === "click")).toHaveLength(2);
+  });
+
   it("reads, asks before clicking, and finishes", async () => {
     replies = [toolFrame([{ id: "c1", name: "read_page" }]), toolFrame([{ id: "c2", name: "click", args: { ref: "e1" } }]), toolFrame([{ id: "c3", name: "done", args: { summary: "Moved to the next step." } }])];
     await render();

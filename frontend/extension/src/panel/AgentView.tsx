@@ -27,6 +27,7 @@ import {
   SCREENSHOTS_KEPT,
   type AgentDeps,
   type AgentEventReport,
+  type ApprovalAnswer,
   type ApprovalRequest,
   type ControlDriver,
   type RunOutcome,
@@ -174,7 +175,7 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
   const busy = useRef(false);
   const [log, setLog] = useState<LogItem[]>([]);
   /** The card waiting for the user; `asking` while Chrome's own prompt for its site is open. */
-  const [approval, setApproval] = useState<{ request: ApprovalRequest; resolve: (ok: boolean) => void; asking?: boolean } | null>(null);
+  const [approval, setApproval] = useState<{ request: ApprovalRequest; resolve: (answer: ApprovalAnswer) => void; asking?: boolean } | null>(null);
   const [question, setQuestion] = useState<{ text: string; resolve: (answer: string) => void } | null>(null);
   const [answer, setAnswer] = useState("");
   const [banner, setBanner] = useState("");
@@ -405,14 +406,14 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
       browser: browser.current!,
       driver,
       approve: (request, stepSignal) =>
-        new Promise<boolean>((resolve) => {
+        new Promise<ApprovalAnswer>((resolve) => {
           // Stopped just before the card would show: no card, and no waiting on one.
           if (stepSignal.aborted) {
             resolve(false);
             return;
           }
           let settled = false;
-          const settle = (ok: boolean) => {
+          const settle = (ok: ApprovalAnswer) => {
             if (settled) return;
             settled = true;
             stepSignal.removeEventListener("abort", onAbort);
@@ -633,9 +634,11 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
     controller.current?.abort();
   }
 
-  function allow() {
+  /** Allow this action - or, with `site`, plain actions on this site for the rest of the run. */
+  function allow(site = false) {
     const pending = approval;
     if (!pending || pending.asking) return;
+    const yes: ApprovalAnswer = site && pending.request.offerSite ? "site" : true;
     const access = pending.request.access;
     if (access) {
       // The site's permission, asked for in this click: Chrome shows its prompt only now. The
@@ -643,11 +646,11 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
       setApproval((current) => (current?.request === pending.request ? { ...current, asking: true } : current));
       chrome.permissions
         .request({ origins: [access.pattern] })
-        .then((granted) => pending.resolve(granted))
+        .then((granted) => pending.resolve(granted ? yes : false))
         .catch(() => pending.resolve(false));
       return;
     }
-    pending.resolve(true);
+    pending.resolve(yes);
   }
 
   if (!me.features.agent) return null;
@@ -775,9 +778,16 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
               <p className="agent__card-why">Chrome will ask you to let Alpharouter work on {approval.request.access.host}.</p>
             )}
             <div className="panel__actions">
-              <button type="button" className="btn btn--primary" onClick={allow} disabled={approval.asking}>
+              {/* Focused, so Enter answers it. */}
+              {/* eslint-disable-next-line jsx-a11y/no-autofocus */}
+              <button type="button" className="btn btn--primary" onClick={() => allow()} disabled={approval.asking} autoFocus>
                 Allow
               </button>
+              {approval.request.offerSite && (
+                <button type="button" className="btn" onClick={() => allow(true)} disabled={approval.asking} title="Plain actions only: whatever always asks still asks.">
+                  Allow on {approval.request.offerSite} for this run
+                </button>
+              )}
               <button type="button" className="btn" onClick={() => approval.resolve(false)} disabled={approval.asking}>
                 Deny
               </button>

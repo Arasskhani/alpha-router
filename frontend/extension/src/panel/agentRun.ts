@@ -74,7 +74,15 @@ export type ApprovalRequest = {
   review?: string;
   /** The site the browser must allow first; the panel asks for it in the Allow click. */
   access?: { pattern: string; host: string };
+  /**
+   * A plain action in Ask mode: the card may offer to allow such actions on
+   * this site for the rest of the run - never an action that always asks.
+   */
+  offerSite?: string;
 };
+
+/** The person's answer to a card: no, yes, or yes and the same for plain actions on this site for the rest of the run. */
+export type ApprovalAnswer = boolean | "site";
 
 type ReviewInput = {
   task: string;
@@ -118,7 +126,7 @@ export type AgentDeps = {
   pause?: PauseGate;
   /** Each change of what the run is doing, for the toolbar badge. */
   onState?(state: RunState): void;
-  approve(request: ApprovalRequest, signal: AbortSignal): Promise<boolean>;
+  approve(request: ApprovalRequest, signal: AbortSignal): Promise<ApprovalAnswer>;
   askUser(question: string, signal: AbortSignal): Promise<string>;
   review(input: ReviewInput, signal: AbortSignal): Promise<{ decision: "allow" | "ask"; reason: string }>;
   report(event: AgentEventReport): void;
@@ -628,6 +636,8 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
    * cleared once it has. The page may be steering the model.
    */
   let injected: string | null = null;
+  /** Ask mode: the sites where the person allowed plain actions for the rest of this run, from a card. */
+  const siteWide = new Set<string>();
   /** Plan mode: true once the user has approved a plan, after which the plan's sites are worked without asking each action. */
   let planApproved = false;
   /** The model answered in words alone and was reminded to act; a second time in a row ends the run. */
@@ -810,7 +820,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
 
   /** One card at a time: a page's dialog that opens while another card waits for the user waits its turn. */
   let cards: Promise<unknown> = Promise.resolve();
-  function approve(request: ApprovalRequest): Promise<boolean> {
+  function approve(request: ApprovalRequest): Promise<ApprovalAnswer> {
     const answer = cards.then(() => (signal.aborted ? false : deps.approve(request, signal)));
     cards = answer.catch(() => undefined);
     return answer;
@@ -863,11 +873,11 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       accept = false;
     } else if (asks) {
       deps.onState?.("waiting");
-      accept = await approve({
+      accept = Boolean(await approve({
         tool: "dialog",
         summary: `The page ${kind}:${shown || " (no message)"} - Allow accepts it, Deny dismisses it`,
         verdict: { class: "sensitive", reason: "dialog", message: `The page ${kind}.` },
-      }).catch(() => false);
+      }).catch(() => false));
       deps.onState?.("working");
     } else {
       accept = dialog.type !== "prompt";
@@ -1221,7 +1231,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       }
       const shown = `Plan: ${summary}\nSites: ${sites.join(", ")}${refused.length ? `\n(Not allowed, left out: ${refused.join(", ")})` : ""}`;
       deps.onStep({ id: call.id, tool: name, summary: shown, status: "waiting" });
-      const ok = await approve({ tool: "update_plan", summary: shown, verdict: { class: "sensitive", reason: "plan", message: "Approve this plan; the agent then works these sites without asking each action." } });
+      const ok = Boolean(await approve({ tool: "update_plan", summary: shown, verdict: { class: "sensitive", reason: "plan", message: "Approve this plan; the agent then works these sites without asking each action." } }));
       check();
       if (!ok) {
         return { content: "The user did not approve the plan. Revise the approach or the sites and propose it again, or ask them what they want.", status: "denied", detail: "Plan not approved", outcome: "denied" };
@@ -1476,14 +1486,21 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       }
       base.extra.review = verdictFromReview.decision;
     }
+    // A plain action, asked about only because this is Ask mode: the person may allow such actions on this site for
+    // the rest of the run. Never an action that always asks, nor one asked about for another reason (a site the
+    // page went to, text that reads like instructions, a run of deletion keys, the browser's own permission).
+    const plain = options.mode === "ask" && verdict.class === "act" && approval === "user" && !arrived && !suspect && !access && judged.message === verdict.message;
+    const plainSite = plain && pageNow ? pageNow.host : undefined;
     let approvedBy = approval === "none" ? (base.extra.review === "allow" ? "review" : "not_needed") : "user";
+    if (plainSite && siteWide.has(plainSite)) approval = "none";
     if (approval === "user") {
       deps.onStep({ id: call.id, tool: name, summary, status: "waiting" });
       if (targetRect) await visual("visuals_target", { rect: targetRect }, tab);
       await state("waiting", tab);
-      const allowed = await approve({ tool: name, summary, verdict: judged, review: reviewNote, access });
+      const allowed = await approve({ tool: name, summary, verdict: judged, review: reviewNote, access, ...(plainSite ? { offerSite: plainSite } : {}) });
       await state("working", tab);
       check();
+      if (allowed === "site" && plainSite) siteWide.add(plainSite);
       if (!allowed) {
         await visual("visuals_target", { rect: null }, tab);
         return {

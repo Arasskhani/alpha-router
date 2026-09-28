@@ -76,7 +76,7 @@ type Harness = {
 function harness(
   replies: Array<ModelReply | ((signal: AbortSignal) => Promise<ModelReply>)>,
   options: {
-    approve?: (request: ApprovalRequest) => boolean;
+    approve?: (request: ApprovalRequest) => boolean | "site";
     review?: { decision: "allow" | "ask"; reason: string };
     answer?: string;
     browser?: ReturnType<typeof fakeBrowser>;
@@ -364,6 +364,34 @@ describe("a run", () => {
     expectEveryCallAnswered(h.sent[1]);
     const assistant = h.sent[1].find((m) => m.role === "assistant") as { tool_calls: Array<{ id: string }> };
     expect(assistant.tool_calls[0].id).toBe("call_1_0");
+  });
+});
+
+describe("allowing on a site for the rest of the run", () => {
+  it("offers it for a plain action in Ask mode, and then asks no more there - but still for what always asks", async () => {
+    const h = harness(
+      [
+        { text: "", toolCalls: [call("click", { ref: "e1" }, "c1")] },
+        { text: "", toolCalls: [call("type_text", { ref: "e3", text: "SAVE10" }, "c2")] },
+        { text: "", toolCalls: [call("click", { ref: "e4" }, "c3")] },
+        { text: "", toolCalls: [call("done", { summary: "ok" })] },
+      ],
+      { approve: (request) => (request.offerSite ? "site" : true) },
+    );
+    await run(h);
+    // The first plain action offered it; the next plain one on the site asked nobody; "Send message" still asked, without the offer.
+    expect(h.approvals.map((a) => [a.summary, a.offerSite])).toEqual([
+      ['Click "Next"', "shop.example.com"],
+      ['Click "Send message"', undefined],
+    ]);
+    expect(h.browser.page).toHaveBeenCalledWith("type_text", { ref: "e3", text: "SAVE10" }, TAB, expect.anything());
+    expect(h.reports.find((r) => r.action === "type_text")).toMatchObject({ detail: expect.objectContaining({ approval: "user" }) });
+  });
+
+  it("is never offered outside Ask mode", async () => {
+    const h = harness([{ text: "", toolCalls: [call("click", { ref: "e1" })] }], { review: { decision: "ask", reason: "Unsure." } });
+    await run(h, { mode: "auto" });
+    expect(h.approvals[0].offerSite).toBeUndefined();
   });
 });
 

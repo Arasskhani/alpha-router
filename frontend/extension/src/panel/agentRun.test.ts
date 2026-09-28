@@ -262,7 +262,8 @@ describe("a run", () => {
     const browser = fakeBrowser({ describe: (a) => ({ ok: false, error: "stale_ref", message: `Element ${String(a.ref)} is gone.` }) });
     const h = harness(
       [
-        { text: "", toolCalls: [call("click", { ref: "e9" }, "c1"), call("click", { ref: "e9" }, "c2")] },
+        { text: "", toolCalls: [call("click", { ref: "e9" }, "c1")] },
+        { text: "", toolCalls: [call("click", { ref: "e9" }, "c2")] },
         { text: "", toolCalls: [call("click", { ref: "e9" }, "c3"), call("read_page", {}, "c4")] },
         { text: "", toolCalls: [call("done", { summary: "never" })] },
       ],
@@ -270,8 +271,26 @@ describe("a run", () => {
     );
     const result = await run(h);
     expect(result.outcome).toBe("errors");
-    expect(h.deps.model).toHaveBeenCalledTimes(2);
+    expect(h.deps.model).toHaveBeenCalledTimes(3);
     expect(h.reports.at(-1)).toMatchObject({ kind: "agent_task", outcome: "errors" });
+  });
+
+  it("does nothing more in a step once an action in it did not go through - not even finish", async () => {
+    const browser = fakeBrowser({ describe: (a) => (a.ref === "e9" ? { ok: false, error: "stale_ref", message: "Element e9 is gone." } : { ok: true, element: { ref: "e1", role: "button", name: "Next", tag: "button" } }) });
+    const h = harness(
+      [
+        { text: "", toolCalls: [call("click", { ref: "e9" }, "c1"), call("click", { ref: "e1" }, "c2"), call("done", { summary: "Clicked both." }, "c3")] },
+        { text: "", toolCalls: [call("done", { summary: "Looked again." }, "c4")] },
+      ],
+      { browser },
+    );
+    const result = await run(h);
+    // The run goes on: the model sees the failure, and finishes only in the next step.
+    expect(result).toMatchObject({ outcome: "done", summary: "Looked again." });
+    const answers = h.sent[1].filter((m) => m.role === "tool") as Array<{ tool_call_id: string; content: string }>;
+    expect(answers.map((a) => a.content.slice(0, 40))).toEqual([expect.stringMatching(/^Not done \(stale_ref\)/), expect.stringMatching(/^Skipped: an earlier action/), expect.stringMatching(/^Skipped: an earlier action/)]);
+    expect(h.approvals).toHaveLength(0);
+    expect(h.browser.page).not.toHaveBeenCalledWith("click", expect.anything(), expect.anything(), expect.anything());
   });
 
   it("stops when the user presses Stop during a step", async () => {
@@ -304,11 +323,12 @@ describe("a run", () => {
 
   it("answers invalid arguments and unknown tools instead of failing", async () => {
     const h = harness([
-      { text: "", toolCalls: [{ id: "c1", name: "click", arguments: "{not json" }, call("run_shell", { cmd: "ls" }, "c2")] },
+      { text: "", toolCalls: [{ id: "c1", name: "click", arguments: "{not json" }] },
+      { text: "", toolCalls: [call("run_shell", { cmd: "ls" }, "c2")] },
       { text: "", toolCalls: [call("done", { summary: "ok" })] },
     ]);
     await run(h);
-    const answers = h.sent[1].filter((m) => m.role === "tool") as Array<{ content: string }>;
+    const answers = h.sent[2].filter((m) => m.role === "tool") as Array<{ content: string }>;
     expect(answers[0].content).toContain("not valid JSON");
     expect(answers[1].content).toContain("no tool called run_shell");
   });
@@ -386,9 +406,10 @@ describe("going somewhere", () => {
   it("asks nothing of a page it may not work on, not even to describe an element", async () => {
     const browser = fakeBrowser();
     browser.current.mockResolvedValue({ id: 2, url: "https://bank.example.com/", host: "bank.example.com", title: "Bank" });
-    const h = harness([{ text: "", toolCalls: [call("click", { ref: "e1" }), call("press_key", { key: "Enter" })] }, { text: "", toolCalls: [call("done", { summary: "ok" })] }], {
-      browser,
-    });
+    const h = harness(
+      [{ text: "", toolCalls: [call("click", { ref: "e1" })] }, { text: "", toolCalls: [call("press_key", { key: "Enter" })] }, { text: "", toolCalls: [call("done", { summary: "ok" })] }],
+      { browser },
+    );
     await run(h);
     expect(browser.page).not.toHaveBeenCalled();
     expect(h.reports.filter((r) => r.kind === "agent_step" && r.action !== "done").map((r) => r.outcome)).toEqual(["blocked", "blocked"]);

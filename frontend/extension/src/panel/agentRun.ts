@@ -151,6 +151,9 @@ const MAX_ERRORS_IN_A_ROW = 3;
 /** What the model is told after an answer in words alone: the task is not over until it says so with done. */
 const NUDGE =
   "You answered without calling a tool, and the task goes on until you call done. Call the next tool now; use ask_user if you need the user, or done with a short summary if the task is complete or cannot be done.";
+/** Said for each call of a step after one that did not go through, done included: the model looks at what happened first. */
+const SKIP_AFTER_FAILURE =
+  "Skipped: an earlier action in this step did not go through. Look at its result, and at the page, before you go on - or before you finish.";
 /** The page's border, cursor and take-over window are best-effort: a page that does not answer this fast is not waited for. */
 const VISUAL_MS = 2000;
 /** The look at the page after an action is best-effort too, and a little longer: it reads the focused element. */
@@ -1453,6 +1456,10 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
         } else if (answer.status === "done") {
           errorsInARow = 0;
         }
+        // The rest of the step was planned on a page this action did not leave as expected - it failed, was refused,
+        // the page changed under it, the user took over: nothing more is done, and nothing finished, until the model looks.
+        const fell = answer.status === "error" || answer.status === "blocked" || answer.extra?.error === "took_over";
+        if (fell && !skip) skip = SKIP_AFTER_FAILURE;
         if (finish !== null && !skip) skip = "Skipped: the task was already finished.";
       }
       if (unseen && finish === null && !tooManyErrors && options.screenshotAfterAction) {

@@ -852,11 +852,15 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     dialogNotes.push(`The page ${kind}:${shown} - it was ${accept ? "accepted" : "dismissed"}${asks && !signal.aborted ? " by the user" : ""}.`);
   }
 
-  /** An action's result with the page's dialogs it opened, which are the page's words: inside the page tags. */
+  /**
+   * An action's result with the page's dialogs it opened, which are the
+   * page's words: inside the page tags, first - they came up during the
+   * action, before what the page was like after it.
+   */
   function withDialogs(answer: Answer, site: string): Answer {
     const notes = dialogNotes.splice(0);
     if (!notes.length) return answer;
-    if (answer.page) return { ...answer, page: { ...answer.page, body: `${answer.page.body}\n${notes.join("\n")}` } };
+    if (answer.page) return { ...answer, page: { ...answer.page, body: [...notes, answer.page.body].filter(Boolean).join("\n") } };
     return { ...answer, page: wrapPage(options.nonce, site, notes.join("\n")) };
   }
 

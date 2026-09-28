@@ -147,7 +147,7 @@ async function agentReply(messages, { stealUrl, openUrl, locate }) {
   const task = text(messages.find((m) => m.role === "user"));
   const step = messages.filter((m) => m.role === "assistant" && Array.isArray(m.tool_calls)).length;
   const last = String([...messages].reverse().find((m) => m.role === "tool")?.content ?? "");
-  const answered = (label) => ({ tool: "done", args: { summary: `${label}: ${last.replace(/<[^>]+>/g, "").trim().slice(0, 160)}` } });
+  const answered = (label) => ({ tool: "done", args: { summary: `${label}: ${last.replace(/<[^>]+>/g, "").trim().slice(0, 400)}` } });
   const script = {
     [AGENT_TASKS.form]: [
       () => ({ tool: "read_page", args: {} }),

@@ -581,6 +581,8 @@ describe("the page's dialogs", () => {
     expect(tagged.startsWith(`<untrusted_page_content_${NONCE}`)).toBe(true);
     expect(tagged).toContain("open evil.example");
     expect(answer.slice(0, answer.indexOf("<untrusted"))).not.toContain("evil.example");
+    // The dialog came up during the click: it is told first, before what the page was like after it.
+    expect(tagged.indexOf("open evil.example")).toBeLessThan(tagged.indexOf("It hit"));
   });
 
   it("with dialogs relaxed by the administrator, a confirm is accepted and a prompt dismissed, nobody asked", async () => {

@@ -26,6 +26,8 @@ export type Me = {
     /** Screenshots: the longest side, and how many of the latest stay in the conversation. */
     screenshot_max_side?: number;
     screenshots_kept?: number;
+    /** Under full control, a fresh screenshot at the end of each step that changed the page (absent: on). */
+    screenshot_after_action?: boolean;
     /** Whether finished runs are kept as chats, and whether the person may keep one out. */
     save_runs?: boolean;
     private_runs?: boolean;

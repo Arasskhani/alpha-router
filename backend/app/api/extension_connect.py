@@ -281,6 +281,8 @@ async def extension_me(
             "agent_default_mode": settings.agent_default_mode,
             "screenshot_max_side": settings.screenshot_max_side,
             "screenshots_kept": settings.screenshots_kept,
+            # Under full control, a screenshot after each step that changed the page.
+            "screenshot_after_action": settings.screenshot_after_action,
             # Whether finished runs are kept as chats, and whether the person may keep one out.
             "save_runs": settings.save_runs,
             "private_runs": settings.private_runs,

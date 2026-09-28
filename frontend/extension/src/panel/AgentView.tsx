@@ -216,6 +216,8 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
   /** At most four: the server takes no more images in a step (a server of an older version may say five). */
   const screenshotsKept = Math.min(MAX_SCREENSHOTS_KEPT, Math.max(1, me.policy?.screenshots_kept ?? SCREENSHOTS_KEPT));
   const maxSide = clampMaxSide(me.policy?.screenshot_max_side);
+  /** Under full control, each step that changed the page ends with a screenshot, unless the administrator turned that off. */
+  const screenshotAfterAction = me.policy?.screenshot_after_action !== false;
   /** Finished runs become chats unless the administrator turned that off. */
   const savesRuns = me.policy?.save_runs !== false;
   /** A run may be kept out of the history when the person has Private Mode and the administrator allows private runs. */
@@ -560,7 +562,7 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
         }
       }
       const result = await runAgent(
-        { task, mode, maxSteps, maxMinutes, screenshotsKept, rules, runId: run, nonce: randomHex(6), modelRef: modelId },
+        { task, mode, maxSteps, maxMinutes, screenshotsKept, screenshotAfterAction, rules, runId: run, nonce: randomHex(6), modelRef: modelId },
         deps(modelId, driver, startedAt),
         abort.signal,
       );

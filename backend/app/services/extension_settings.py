@@ -158,6 +158,8 @@ class ExtensionSettings:
     #: Screenshots: the longest side, and how many of the latest stay in the conversation.
     screenshot_max_side: int = DEFAULT_SCREENSHOT_SIDE
     screenshots_kept: int = DEFAULT_SCREENSHOTS_KEPT
+    #: Under full control, a fresh screenshot at the end of each step that changed the page.
+    screenshot_after_action: bool = True
     #: Finished runs saved to the person's chat history; and whether a run may be private (not saved).
     save_runs: bool = True
     private_runs: bool = True
@@ -476,6 +478,7 @@ def parse_settings(raw: str | None) -> ExtensionSettings:
         screenshots_kept=_at_most(
             data.get("screenshots_kept"), MIN_SCREENSHOTS_KEPT, MAX_SCREENSHOTS_KEPT, defaults.screenshots_kept
         ),
+        screenshot_after_action=bool(data.get("screenshot_after_action", True)),
         save_runs=bool(data.get("save_runs", True)),
         private_runs=bool(data.get("private_runs", True)),
     )
@@ -750,6 +753,7 @@ async def validated_update(
     agent_runs_per_day: int | None = None,
     screenshot_max_side: int = DEFAULT_SCREENSHOT_SIDE,
     screenshots_kept: int = DEFAULT_SCREENSHOTS_KEPT,
+    screenshot_after_action: bool = True,
     save_runs: bool = True,
     private_runs: bool = True,
 ) -> ExtensionSettings:
@@ -819,6 +823,7 @@ async def validated_update(
         agent_runs_per_day=int(agent_runs_per_day) if agent_runs_per_day is not None else None,
         screenshot_max_side=int(screenshot_max_side),
         screenshots_kept=int(screenshots_kept),
+        screenshot_after_action=bool(screenshot_after_action),
         save_runs=bool(save_runs),
         private_runs=bool(private_runs),
     )

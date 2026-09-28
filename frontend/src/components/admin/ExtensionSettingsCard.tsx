@@ -59,6 +59,7 @@ type ExtensionSettings = {
   agent_runs_per_day: number | null;
   screenshot_max_side: number;
   screenshots_kept: number;
+  screenshot_after_action: boolean;
   save_runs: boolean;
   private_runs: boolean;
 };
@@ -879,6 +880,21 @@ export default function ExtensionSettingsCard() {
               />
             </label>
           </div>
+          <label className="extension-admin__choice">
+            <input
+              type="checkbox"
+              checked={form.screenshot_after_action}
+              disabled={locked}
+              onChange={(e) => patch({ screenshot_after_action: e.target.checked })}
+            />
+            <span>
+              <strong>A screenshot after every change</strong>
+              <span className="muted-text">
+                Each step that clicked, typed, pressed a key, dragged or scrolled ends with a fresh screenshot, so the model
+                sees what its action did. Turn off to send fewer images.
+              </span>
+            </span>
+          </label>
           <p className="settings-row__hint">
             The cursor, the coloured border and Chrome&apos;s debugging bar while the agent works, the toolbar badge,
             and the pause when a person takes over the page are always on: nothing here can hide a run.

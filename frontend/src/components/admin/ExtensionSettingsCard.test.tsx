@@ -43,6 +43,7 @@ const SETTINGS = {
   agent_runs_per_day: null,
   screenshot_max_side: 1280,
   screenshots_kept: 3,
+  screenshot_after_action: true,
   save_runs: true,
   private_runs: true,
 };
@@ -449,8 +450,11 @@ describe("the sections added for R1", () => {
     await type(field("Runs per person per day"), "");
     await act(async () => checkbox("Require the newest package").click());
     await act(async () => checkbox("Screenshots of other sites may go").click());
+    expect(checkbox("A screenshot after every change").checked).toBe(true);
+    await act(async () => checkbox("A screenshot after every change").click());
     await save();
     expect(lastPut).toMatchObject({
+      screenshot_after_action: false,
       agent_max_minutes: 45,
       agent_max_tabs: 4,
       agent_runs_per_day: null,

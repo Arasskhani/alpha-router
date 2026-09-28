@@ -70,7 +70,15 @@ function fakeBrowser(focus?: Record<string, unknown>, looks?: Looks) {
 
 function harness(
   replies: ModelReply[],
-  opts: { driver?: ControlDriver | null; browser?: ReturnType<typeof fakeBrowser>; approve?: boolean; mode?: "ask" | "plan" | "auto"; rules?: PolicyContext; review?: "allow" | "ask" } = {},
+  opts: {
+    driver?: ControlDriver | null;
+    browser?: ReturnType<typeof fakeBrowser>;
+    approve?: boolean;
+    mode?: "ask" | "plan" | "auto";
+    rules?: PolicyContext;
+    review?: "allow" | "ask";
+    screenshotAfterAction?: boolean;
+  } = {},
 ) {
   const sent: ApiMessage[][] = [];
   const approvals: ApprovalRequest[] = [];
@@ -98,7 +106,11 @@ function harness(
     onText: vi.fn(),
   };
   const run = () =>
-    runAgent({ task: "Go to the next step.", mode: opts.mode ?? "ask", maxSteps: 20, rules: opts.rules ?? RULES, runId: "run-1", nonce: NONCE }, deps, new AbortController().signal);
+    runAgent(
+      { task: "Go to the next step.", mode: opts.mode ?? "ask", maxSteps: 20, rules: opts.rules ?? RULES, runId: "run-1", nonce: NONCE, screenshotAfterAction: opts.screenshotAfterAction },
+      deps,
+      new AbortController().signal,
+    );
   return { deps, browser, driver, sent, approvals, reviewInputs, run };
 }
 
@@ -341,6 +353,53 @@ describe("what an action reports", () => {
     expect(browser.page.mock.calls.some(([method]) => method === "observe")).toBe(false);
     const answer = String(h.sent[1].find((m) => m.role === "tool")!.content);
     expect(answer).toContain("The tab is now on another site, elsewhere.example: the user will be asked before you act there.");
+  });
+});
+
+describe("a screenshot after every change", () => {
+  const images = (messages: ApiMessage[]) =>
+    messages.filter((m) => m.role === "user" && Array.isArray(m.content)).map((m) => (m.content as Array<{ type: string; text?: string }>).find((p) => p.type === "text")?.text ?? "");
+
+  it("ends a step that changed the page with a fresh screenshot, once, after its answers", async () => {
+    const h = harness(
+      [
+        { text: "", toolCalls: [call("computer", { action: "left_click", coordinate: [200, 100] }), call("computer", { action: "type", text: "hello" })] },
+        { text: "", toolCalls: [call("done", { summary: "ok" })] },
+      ],
+      { screenshotAfterAction: true },
+    );
+    await h.run();
+    expect(h.driver!.screenshot).toHaveBeenCalledTimes(1);
+    const next = h.sent[1];
+    expect(images(next)).toEqual(["The page after this step (640×360). Coordinates for computer are in this image's pixels."]);
+    // After the step's answers, never between a call and its answer.
+    expect(next.at(-1)).toMatchObject({ role: "user" });
+    // Veiled for the capture, as any screenshot.
+    expect(visualCalls(h.browser)).toEqual(expect.arrayContaining([["visuals_veil", { veiled: true }], ["visuals_veil", { veiled: false }]]));
+  });
+
+  it("takes none when the step ended with one, changed nothing, or the administrator turned it off", async () => {
+    const shotLast = harness([{ text: "", toolCalls: [call("computer", { action: "left_click", coordinate: [200, 100] }), call("screenshot")] }], { screenshotAfterAction: true });
+    await shotLast.run();
+    expect(shotLast.driver!.screenshot).toHaveBeenCalledTimes(1);
+    const reading = harness([{ text: "", toolCalls: [call("read_page")] }], { screenshotAfterAction: true });
+    await reading.run();
+    expect(reading.driver!.screenshot).not.toHaveBeenCalled();
+    const off = harness([{ text: "", toolCalls: [call("computer", { action: "left_click", coordinate: [200, 100] })] }], { screenshotAfterAction: false });
+    await off.run();
+    expect(off.driver!.screenshot).not.toHaveBeenCalled();
+  });
+
+  it("does not look at a site the page went to by itself", async () => {
+    const browser = fakeBrowser();
+    let where = TAB;
+    browser.current.mockImplementation(async () => where);
+    browser.settle.mockImplementation(async () => {
+      where = { id: 1, url: "https://elsewhere.example/", host: "elsewhere.example", title: "Elsewhere" };
+    });
+    const h = harness([{ text: "", toolCalls: [call("computer", { action: "left_click", coordinate: [200, 100] })] }], { browser, screenshotAfterAction: true });
+    await h.run();
+    expect(h.driver!.screenshot).not.toHaveBeenCalled();
   });
 });
 

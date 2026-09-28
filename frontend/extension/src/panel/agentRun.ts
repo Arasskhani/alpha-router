@@ -133,6 +133,8 @@ export type AgentOptions = {
   maxMinutes?: number;
   /** How many of the latest screenshots stay in the conversation (SCREENSHOTS_KEPT when absent). */
   screenshotsKept?: number;
+  /** Under full control, end each step that changed the page with a fresh screenshot. */
+  screenshotAfterAction?: boolean;
   rules: PolicyContext;
   runId: string;
   /** The page-content tag suffix for this run: random, fixed for the run. */
@@ -484,6 +486,8 @@ const PAGE_TOOLS = new Set([
 ]);
 /** Ref actions whose result tells what the page is like after them. */
 const AFTERMATH = new Set(["click", "type_text", "select_option", "submit_form", "press_key"]);
+/** What changes the page, so that a step with one ends with a fresh screenshot (when the administrator wants one). */
+const CHANGES = new Set(["click", "type_text", "select_option", "submit_form", "press_key", "scroll", "navigate", "tab_open", "tab_switch"]);
 /** Actions after which a page may be loading. */
 const MAY_LOAD = new Set(["click", "submit_form", "press_key", "navigate", "tab_open", "tab_switch", "computer"]);
 /** Tools (as the rules know them) that change nothing: they do not break a run of deletion keys. */
@@ -697,6 +701,34 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       const shot = await Promise.race([work(), stopped]);
       return shot.dataUrl;
     } catch {
+      return undefined;
+    } finally {
+      await visual("visuals_veil", { veiled: false }, tab);
+    }
+  }
+
+  /**
+   * The step changed the page: a fresh look at it, as an image after the
+   * step's answers, so the model sees what its actions did without asking.
+   * Only under full control, on a site the user let the agent work on, and
+   * where the rules let a screenshot of it go; nothing on any failure.
+   */
+  async function lookAfter(): Promise<Answer["image"] | undefined> {
+    const driver = deps.driver;
+    if (!driver) return undefined;
+    const tab = await deps.browser.current();
+    check();
+    if (!tab?.host || !allowedSites.has(tab.host)) return undefined;
+    if (classifyAction({ tool: "screenshot", args: {}, page: { url: tab.url, host: tab.host } }, options.rules).class === "blocked") return undefined;
+    if (driver.use && !(await raced(driver.use(tab.id)))) return undefined;
+    check();
+    await visual("visuals_veil", { veiled: true }, tab);
+    try {
+      const shot = await raced(driver.screenshot());
+      const size = `${shot.frame.width}×${shot.frame.height}`;
+      return { url: shot.dataUrl, caption: `The page after this step (${size}). Coordinates for computer are in this image's pixels.` };
+    } catch (err) {
+      if (isAbort(err) || signal.aborted) throw err;
       return undefined;
     } finally {
       await visual("visuals_veil", { veiled: false }, tab);
@@ -1380,6 +1412,8 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       let finish: string | null = null;
       let tooManyErrors = false;
       const images: NonNullable<Answer["image"]>[] = [];
+      /** Whether the step changed the page since its last screenshot: then it ends with one. */
+      let unseen = false;
       for (const call of calls) {
         let answer: Answer & { denied?: boolean };
         try {
@@ -1407,6 +1441,8 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
           history.push(`${said}${answer.site ? ` on ${answer.site}` : ""}: ${answer.status}`);
         }
         if (answer.finish !== undefined) finish = answer.finish;
+        if (answer.status === "done" && name === "screenshot") unseen = false;
+        else if (answer.status === "done" && (CHANGES.has(name) || (name === "computer" && args(call.function.arguments)?.action !== "wait"))) unseen = true;
         if (answer.denied) skip = "Skipped: an earlier action in this step was denied.";
         if (answer.status === "error" || answer.status === "blocked") {
           errorsInARow += 1;
@@ -1418,6 +1454,10 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
           errorsInARow = 0;
         }
         if (finish !== null && !skip) skip = "Skipped: the task was already finished.";
+      }
+      if (unseen && finish === null && !tooManyErrors && options.screenshotAfterAction) {
+        const look = await lookAfter();
+        if (look) images.push(look);
       }
       // Screenshots go after the step's answers, as images the model reads (tool answers carry text only).
       for (const image of images) {

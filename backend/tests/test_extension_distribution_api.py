@@ -729,6 +729,7 @@ class TestTheAdminCard:
             "agent_runs_per_day": 20,
             "screenshot_max_side": 1600,
             "screenshots_kept": 4,
+            "screenshot_after_action": False,
             "save_runs": False,
             "private_runs": False,
         }

@@ -437,6 +437,7 @@ class TestTheRunLimits:
         assert (s.require_newest_package, s.min_browser_version) == (False, 116)
         assert (s.internal_connections, s.external_screenshots) == ((), True)
         assert (s.save_runs, s.private_runs) == (True, True)
+        assert s.screenshot_after_action is True
 
     def test_a_stored_value_out_of_range_falls_back_to_the_default(self):
         stored = {
@@ -503,6 +504,7 @@ class TestTheRunLimits:
                 agent_runs_per_day=12,
                 screenshot_max_side=800,
                 screenshots_kept=1,
+                screenshot_after_action=False,
                 min_browser_version=142,
                 require_newest_package=True,
                 plan_mode=False,

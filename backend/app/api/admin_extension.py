@@ -80,6 +80,7 @@ class ExtensionSettingsIn(BaseModel):
     agent_runs_per_day: int | None = None
     screenshot_max_side: int = DEFAULT_SCREENSHOT_SIDE
     screenshots_kept: int = DEFAULT_SCREENSHOTS_KEPT
+    screenshot_after_action: bool = True
     save_runs: bool = True
     private_runs: bool = True
 

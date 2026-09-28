@@ -115,6 +115,8 @@ type Props = {
   hidden?: boolean;
   /** The server ended the session. */
   onDisconnected: () => void;
+  /** Whether a card waits for the person - an approval or a question - for a mark on the Agent tab. */
+  onWaiting?: (waiting: boolean) => void;
 };
 
 function randomHex(bytes: number): string {
@@ -161,7 +163,7 @@ function describeError(err: unknown): string {
   return "Something went wrong.";
 }
 
-export default function AgentView({ me, server, hidden = false, onDisconnected }: Props) {
+export default function AgentView({ me, server, hidden = false, onDisconnected, onWaiting }: Props) {
   const [models, setModels] = useState<ChatModel[] | null>(null);
   const [modelsFailed, setModelsFailed] = useState(false);
   const [modelLoads, setModelLoads] = useState(0);
@@ -248,6 +250,11 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
   useEffect(() => {
     disconnected.current = onDisconnected;
   }, [onDisconnected]);
+
+  const waiting = Boolean(approval || question);
+  useEffect(() => {
+    onWaiting?.(waiting);
+  }, [waiting, onWaiting]);
 
   useEffect(() => {
     let active = true;

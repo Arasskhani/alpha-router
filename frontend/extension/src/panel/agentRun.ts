@@ -1207,7 +1207,11 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       const question = typeof a.question === "string" && a.question.trim() ? clip(a.question.trim(), 1000) : "";
       if (!question) return { content: "Say what to ask the user.", status: "error", outcome: "error", extra: { error: "invalid_arguments" } };
       deps.onStep({ id: call.id, tool: name, summary: `Question: ${question}`, status: "waiting" });
+      // Waiting on the person, as the page's border and the badge say - the question's card comes first.
+      const shown = state("waiting", lastTab);
       const answer = (await deps.askUser(question, signal)).trim();
+      await shown;
+      await state("working", lastTab);
       check();
       return {
         content: answer ? `The user answered: ${clip(answer, 4000)}` : "The user did not answer.",
@@ -1237,7 +1241,10 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       }
       const shown = `Plan: ${summary}\nSites: ${sites.join(", ")}${refused.length ? `\n(Not allowed, left out: ${refused.join(", ")})` : ""}`;
       deps.onStep({ id: call.id, tool: name, summary: shown, status: "waiting" });
+      const waiting = state("waiting", lastTab);
       const ok = Boolean(await approve({ tool: "update_plan", summary: shown, verdict: { class: "sensitive", reason: "plan", message: "Approve this plan; the agent then works these sites without asking each action." } }));
+      await waiting;
+      await state("working", lastTab);
       check();
       if (!ok) {
         return { content: "The user did not approve the plan. Revise the approach or the sites and propose it again, or ask them what they want.", status: "denied", detail: "Plan not approved", outcome: "denied" };
@@ -1501,9 +1508,10 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     if (plainSite && siteWide.has(plainSite)) approval = "none";
     if (approval === "user") {
       deps.onStep({ id: call.id, tool: name, summary, status: "waiting" });
-      if (targetRect) await visual("visuals_target", { rect: targetRect }, tab);
-      await state("waiting", tab);
+      // The card first: the target box and the amber border go up beside it, never before it.
+      const shown = Promise.all([targetRect ? visual("visuals_target", { rect: targetRect }, tab) : undefined, state("waiting", tab)]);
       const allowed = await approve({ tool: name, summary, verdict: judged, review: reviewNote, access, ...(plainSite ? { offerSite: plainSite } : {}) });
+      await shown;
       await state("working", tab);
       check();
       if (allowed === "site" && plainSite) siteWide.add(plainSite);

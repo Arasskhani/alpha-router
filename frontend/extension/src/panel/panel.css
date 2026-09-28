@@ -698,6 +698,17 @@ button {
   font-weight: 600;
 }
 
+/* The agent waits for an answer while the chat is shown: the amber of a waiting run. */
+.shell__tab-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-left: 0.35rem;
+  border-radius: 50%;
+  background: #f5a524;
+  vertical-align: middle;
+}
+
 .shell__view {
   display: flex;
   flex: 1;

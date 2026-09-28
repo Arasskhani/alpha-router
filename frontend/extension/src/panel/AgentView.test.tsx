@@ -85,9 +85,9 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-async function render(me: Me = ME) {
+async function render(me: Me = ME, onWaiting?: (waiting: boolean) => void) {
   await act(async () => {
-    root.render(<AgentView me={me} server={SERVER} onDisconnected={onDisconnected} />);
+    root.render(<AgentView me={me} server={SERVER} onDisconnected={onDisconnected} onWaiting={onWaiting} />);
   });
   await act(async () => undefined);
 }
@@ -173,6 +173,18 @@ describe("a run", () => {
     await until(() => host.textContent!.includes("Clicked it twice."), "the summary");
     // The second click on the same site asked nobody.
     expect(pageCalls.filter((c) => c.method === "click")).toHaveLength(2);
+  });
+
+  it("says a card waits, for the mark on the Agent tab, and that it no longer does", async () => {
+    replies = [toolFrame([{ id: "c1", name: "click", args: { ref: "e1" } }]), toolFrame([{ id: "c2", name: "done", args: { summary: "Clicked." } }])];
+    const waits: boolean[] = [];
+    await render(ME, (waiting) => waits.push(waiting));
+    await start("Click next.");
+    await until(() => Boolean(host.querySelector('[role="alertdialog"]')), "the approval card");
+    expect(waits.at(-1)).toBe(true);
+    await act(async () => button("Allow").click());
+    await until(() => host.textContent!.includes("Clicked."), "the summary");
+    expect(waits.at(-1)).toBe(false);
   });
 
   it("reads, asks before clicking, and finishes", async () => {

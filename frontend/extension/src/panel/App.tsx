@@ -48,6 +48,8 @@ export default function App() {
   const [checks, setChecks] = useState(0);
   /** Chat, or the browser agent when the account may use it. */
   const [tab, setTab] = useState<"chat" | "agent">("chat");
+  /** A card waits for the person in the Agent tab. */
+  const [agentWaits, setAgentWaits] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -160,13 +162,15 @@ export default function App() {
             onClick={() => setTab(name)}
           >
             {name === "chat" ? "Chat" : "Agent"}
+            {/* A card waits in the Agent tab while the chat is shown. */}
+            {name === "agent" && agentWaits && tab !== "agent" && <span className="shell__tab-dot" role="status" aria-label="The agent is waiting for you" />}
           </button>
         ))}
       </div>
       <div className="shell__view" hidden={tab !== "chat"}>
         {chat}
       </div>
-      <AgentView me={view.me} server={view.server} hidden={tab !== "agent"} onDisconnected={() => setChecks((n) => n + 1)} />
+      <AgentView me={view.me} server={view.server} hidden={tab !== "agent"} onDisconnected={() => setChecks((n) => n + 1)} onWaiting={setAgentWaits} />
     </div>
   );
 }

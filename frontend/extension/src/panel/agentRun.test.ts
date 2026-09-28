@@ -367,6 +367,40 @@ describe("a run", () => {
   });
 });
 
+describe("the card comes first", () => {
+  it("is shown while the page's border and target box are still going up, not after them", async () => {
+    let pendingVisuals = 0;
+    const browser = fakeBrowser();
+    const plain = browser.page.getMockImplementation()!;
+    browser.page.mockImplementation(async (method: string, args: Record<string, unknown> = {}, ...rest: unknown[]) => {
+      if (!method.startsWith("visuals_")) return (plain as (...a: unknown[]) => Promise<PageResult>)(method, args, ...rest);
+      pendingVisuals += 1;
+      // A slow page: its visuals take their time.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      pendingVisuals -= 1;
+      return { ok: true };
+    });
+    const seen: number[] = [];
+    const h = harness([{ text: "", toolCalls: [call("click", { ref: "e1" })] }, { text: "", toolCalls: [call("done", { summary: "ok" })] }], { browser });
+    h.deps.driver = { onDialog: vi.fn() } as unknown as AgentDeps["driver"];
+    h.deps.approve = vi.fn(async () => {
+      seen.push(pendingVisuals);
+      return true;
+    });
+    await run(h).catch(() => undefined);
+    expect(seen.length).toBe(1);
+    expect(seen[0]).toBeGreaterThan(0);
+  });
+
+  it("goes amber while a question or a plan waits for the person", async () => {
+    const states: string[] = [];
+    const h = harness([{ text: "", toolCalls: [call("ask_user", { question: "Which size?" })] }, { text: "", toolCalls: [call("done", { summary: "ok" })] }], { answer: "42" });
+    h.deps.onState = (state) => states.push(state);
+    await run(h);
+    expect(states).toEqual(["working", "waiting", "working"]);
+  });
+});
+
 describe("allowing on a site for the rest of the run", () => {
   it("offers it for a plain action in Ask mode, and then asks no more there - but still for what always asks", async () => {
     const h = harness(

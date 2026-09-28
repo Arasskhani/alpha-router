@@ -93,6 +93,8 @@ export type ElementInfo = {
    * which a bare "Accept" or "OK" is judged.
    */
   context?: string;
+  /** For the rules only: the notice it sits in is about cookies or consent, by its name, its marks or its words. */
+  cookieNotice?: boolean;
 };
 
 type AgentError =
@@ -652,17 +654,25 @@ function defaultButton(form: HTMLFormElement): Element | null {
 
 /** What holds a control that answers something: a dialog, or a notice that says it is about cookies. */
 const NOTICES = '[role="dialog"], [role="alertdialog"], dialog, [aria-modal="true"]';
-const COOKIE_NOTICE = /cookie|consent|gdpr/i;
+const COOKIE_HINT = /cookie|consent|gdpr|\bcmp\b|onetrust|usercentrics|didomi|cookiebot/i;
+const COOKIE_WORDS = /cookie|consent|tracking technolog|trackers|your privacy|privacy (choices|settings|preferences)|کوکی/i;
 const CONTEXT_CHARS = 200;
+const NOTICE_SCAN_CHARS = 1500;
 
-/** The words of the dialog or cookie notice `el` sits in, for the rules; none when it sits in neither. */
-function contextOf(el: Element, isVisible: Visibility): string | undefined {
+/**
+ * The dialog or cookie notice `el` sits in, for the rules: its first words,
+ * and whether it is about cookies - by its marks (an id "privacy-consent",
+ * a consent platform's class) or anywhere in its words, not only the first
+ * ones ("We value your privacy… cookies"). None when it sits in neither.
+ */
+function noticeOf(el: Element, isVisible: Visibility): { words?: string; cookies: boolean } | undefined {
   let node = parentAcrossShadow(el);
   for (let depth = 0; node && depth < 25; node = parentAcrossShadow(node), depth += 1) {
     const hint = `${node.id} ${node.getAttribute("class") ?? ""} ${node.getAttribute("aria-label") ?? ""}`;
-    if (!node.matches(NOTICES) && !COOKIE_NOTICE.test(hint)) continue;
-    const words = squash(`${node.getAttribute("aria-label") ?? ""} ${visibleText(node, isVisible, CONTEXT_CHARS)}`);
-    return words ? clip(words, CONTEXT_CHARS) : undefined;
+    const marked = COOKIE_HINT.test(hint);
+    if (!node.matches(NOTICES) && !marked) continue;
+    const all = squash(`${node.getAttribute("aria-label") ?? ""} ${visibleText(node, isVisible, NOTICE_SCAN_CHARS)}`);
+    return { ...(all ? { words: clip(all, CONTEXT_CHARS) } : {}), cookies: marked || COOKIE_WORDS.test(all) };
   }
   return undefined;
 }
@@ -711,8 +721,9 @@ function describeElement(el: Element, role: string, isVisible: Visibility, forRu
     if (said.length) info.formButton = [...new Set(said)];
   }
   if (forRules) {
-    const context = contextOf(el, isVisible);
-    if (context) info.context = context;
+    const notice = noticeOf(el, isVisible);
+    if (notice?.words) info.context = notice.words;
+    if (notice?.cookies) info.cookieNotice = true;
   }
   if (el.tagName.toUpperCase() === "SELECT") {
     info.options = Array.from((el as HTMLSelectElement).options)

@@ -1047,5 +1047,19 @@ describe("the notice a control sits in", () => {
     expect(describeRef(ok.ref, visible)).toMatchObject({ ok: true, element: { context: expect.stringMatching(/^Transfer money Send 500 to Bob\?/) } });
     const plain = describeRef(main.ref, visible);
     expect(plain.ok && plain.element.context).toBeFalsy();
+    expect(describeRef(banner.ref, visible)).toMatchObject({ ok: true, element: { cookieNotice: true } });
+    expect(describeRef(ok.ref, visible)).toMatchObject({ ok: true, element: { context: expect.any(String) } });
+    expect((describeRef(ok.ref, visible) as { element: { cookieNotice?: boolean } }).element.cookieNotice).toBeUndefined();
+  });
+
+  it("knows a consent notice by its marks, and by words past its first ones", () => {
+    document.body.innerHTML = `
+      <div id="privacy-consent"><p>We use trackers to improve our site.</p><button>Accept all</button></div>
+      <div role="dialog" aria-label="Your privacy"><p>${"We and our partners process data. ".repeat(10)}We use cookies.</p><button>Agree</button></div>`;
+    const shot = snapshot(document, { isVisible: visible });
+    for (const name of ["Accept all", "Agree"]) {
+      const entry = shot.elements.find((e) => e.name === name)!;
+      expect(describeRef(entry.ref, visible)).toMatchObject({ ok: true, element: { cookieNotice: true } });
+    }
   });
 });

@@ -228,9 +228,13 @@ const ACCEPT_ON_NOTICE = /^(accept|accept all|accept (&|and) (close|continue)|al
 const COOKIE_NOTICE = /cookie|consent|gdpr|کوکی/;
 /** A dialog's bare yes: judged by what the dialog asks. */
 const BARE_YES = /^(ok|okay|yes|continue|done|تایید|تأیید|بله|باشه|ادامه)$/;
-/** What a dialog may ask to be confirmed that is not the agent's to take lightly. */
-const WEIGHTY = /\b(transfer|delete|remove|erase|send|pay|payment|purchase|order|sell|withdraw)\b/;
-const WEIGHTY_FA = /انتقال|حذف|پاک|ارسال|پرداخت|خرید|سفارش|فروش|برداشت|واریز/;
+/**
+ * What a dialog may ask to be confirmed that is not the agent's to take
+ * lightly: paying, moving money, deleting, sending - as a question, not a
+ * word in passing ("we'll send you a code", an order's summary).
+ */
+const WEIGHTY = /\b(transfer|delete|remove|erase|pay|payment|purchase|sell|withdraw)\b|\bsend (?!you\b)/;
+const WEIGHTY_FA = /انتقال|حذف|پاک ?کردن|ارسال (پیام|ایمیل|وجه|پول)|پرداخت|خرید|فروش|برداشت|واریز/;
 /** Words that give a program access to an account, or change what keeps it safe: always ask. */
 const AUTHORIZE =
   /\b(allow access|grant access|authorize|authorise|allow|continue as|connect (to|with|your)|link (account|your)|give access|api key|access token|generate (a )?(token|key)|two-?factor|2fa|change (my |your |the )?(password|email|phone)|recovery (email|phone|codes)|trusted devices?|sign out (of )?(all|everywhere)|security (settings|key))\b/;
@@ -419,7 +423,7 @@ function named(element: ElementInfo): string {
 /** Whether a confirm-like label does nothing to keep: named cookies or a reset of filters, or a cookie notice's accept. */
 function harmless(label: string, element: ElementInfo): boolean {
   if (matches(label, HARMLESS_CONFIRM)) return true;
-  return matches(label, ACCEPT_ON_NOTICE) && Boolean(element.context && matches(element.context, COOKIE_NOTICE));
+  return matches(label, ACCEPT_ON_NOTICE) && Boolean(element.cookieNotice || (element.context && matches(element.context, COOKIE_NOTICE)));
 }
 
 /** What a control says of itself: its name, and the words it shows when they differ (a label can hide them). */
@@ -491,7 +495,7 @@ function labelVerdict(element: ElementInfo, said: string[], linkish: boolean, pa
     return asks(!relax.send, "sensitive_label", `Clicking ${named(element)} may send or publish something.`);
   }
   // "OK" in a dialog that asks to transfer, pay or delete does what the dialog asks.
-  if (said.length && said.every((label) => matches(label, BARE_YES)) && element.context && matches(element.context, WEIGHTY, WEIGHTY_FA)) {
+  if (said.length && said.every((label) => matches(label, BARE_YES)) && !element.cookieNotice && element.context && matches(element.context, WEIGHTY, WEIGHTY_FA)) {
     return verdict("sensitive", "dialog_confirm", `Clicking ${named(element)} answers a dialog that asks to pay, move money, delete or send something.`);
   }
   return null;

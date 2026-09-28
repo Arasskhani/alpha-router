@@ -64,9 +64,11 @@ _CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _MODEL_REF_RE = re.compile(r"^model::\d{1,10}$")
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]+")
 
-#: The keys the page runtime presses: ``KEYS`` in ``pressKey``
-#: (frontend/extension/src/content/agent.ts), plus "Space", which it reads as
-#: " ". A test fails when the two lists drift apart.
+#: The named keys the agent presses: ``NAMED_KEYS`` in the extension's one key
+#: table (frontend/extension/src/lib/keys.ts) - the step names a key by that
+#: name, however the model spelled it - plus "Space" for " ". The function keys
+#: are refused by the agent's rules, and so never pressed. A test fails when
+#: the two lists drift apart.
 AGENT_KEYS = frozenset(
     {
         "Enter",
@@ -74,6 +76,7 @@ AGENT_KEYS = frozenset(
         "Escape",
         "Backspace",
         "Delete",
+        "Insert",
         "ArrowUp",
         "ArrowDown",
         "ArrowLeft",

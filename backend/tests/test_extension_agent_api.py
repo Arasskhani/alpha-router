@@ -326,15 +326,16 @@ class TestTheDetail:
     def test_any_other_key_is_left_out(self, key):
         assert clean_detail({"key": key}) == {}
 
-    def test_the_keys_are_the_page_runtime_s(self):
-        """``pressKey`` in the extension's page runtime decides which keys exist; the two lists must not drift."""
-        source = (
-            Path(__file__).resolve().parents[2] / "frontend" / "extension" / "src" / "content" / "agent.ts"
-        ).read_text(encoding="utf-8")
-        block = re.search(r"const KEYS: Record<string, \{[^}]*\}> = \{\n(.*?)\n\};", source, re.DOTALL)
-        assert block is not None, "pressKey's KEYS moved: update this test and AGENT_KEYS together"
+    def test_the_keys_are_the_extension_s(self):
+        """The extension's one key table decides which named keys exist; the two lists must not drift."""
+        source = (Path(__file__).resolve().parents[2] / "frontend" / "extension" / "src" / "lib" / "keys.ts").read_text(
+            encoding="utf-8"
+        )
+        block = re.search(r"const NAMED_KEYS: Record<string, KeyDef> = \{\n(.*?)\n\};", source, re.DOTALL)
+        assert block is not None, "NAMED_KEYS moved: update this test and AGENT_KEYS together"
+        # The function keys come in one spread line, and are refused by the agent's rules.
         names = {quoted or bare for quoted, bare in re.findall(r'^[ \t]*(?:"([^"]+)"|(\w+)):', block.group(1), re.M)}
-        assert 'key === "Space" ? " " : key' in source, "pressKey no longer reads Space as the space bar"
+        assert re.search(r'^\s*space: " ",', source, re.M), "the key table no longer reads space as the space bar"
         assert names | {"Space"} == AGENT_KEYS
 
 

@@ -235,6 +235,7 @@ const ADVICE: Record<string, string> = {
   no_form: "It is not in a form.",
   invalid_form: "The form is not complete: fill in what is missing first.",
   bad_key: "That is not a key the agent can press.",
+  not_kept: "The page did not keep what was typed: look at the field again, and if it still refuses the text, ask the user.",
   bad_request: "The arguments were not right for this tool.",
   not_found: "Nothing there matches.",
   moved: "The tab is no longer on the page the action was judged on: look at it again.",
@@ -568,6 +569,13 @@ function point(value: unknown): { x: number; y: number } | null {
   const [x, y] = value;
   if (typeof x !== "number" || typeof y !== "number" || !Number.isFinite(x) || !Number.isFinite(y)) return null;
   return { x, y };
+}
+
+/** A pressed key as Admin Logs names it: a named key alone, by the key table's name ("Space" for the space bar). */
+function loggedKey(raw: unknown): { key?: string } {
+  const combo = parseKeyCombo(raw);
+  if (!combo || combo.ctrl || combo.alt || combo.meta || ([...combo.key].length === 1 && combo.key !== " ")) return {};
+  return { key: combo.key === " " ? "Space" : combo.key };
 }
 
 /** The agent's note when the tab went to a site the user has not allowed: a host name, never the page's words. */
@@ -1251,7 +1259,8 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
         reason: verdict.reason,
         ...(element ? { role: element.role, label: element.name } : {}),
         ...(name === "type_text" && typeof a.text === "string" ? { chars: a.text.length } : {}),
-        ...(name === "press_key" && typeof a.key === "string" ? { key: a.key.slice(0, 32) } : {}),
+        // The key by its one name, however the model spelled it; a shortcut is not logged as a key.
+        ...(judgedAs === "press_key" ? loggedKey(judgedArgs.key) : {}),
         ...(verdict.site ? { to_site: verdict.site } : {}),
       } as Record<string, unknown>,
     };

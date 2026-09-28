@@ -523,6 +523,8 @@ describe("Auto mode", () => {
     expect(browser.page.mock.calls.filter(([method]) => method === "press_key").map(([, a]) => a)).toEqual([{ key: "Return" }]);
     // Return is Enter: in a message box it may send, so the user is asked.
     expect(h.approvals).toEqual([expect.objectContaining({ verdict: expect.objectContaining({ reason: "enter_sends" }) })]);
+    // Admin Logs names the key by its one name, however it was spelled.
+    expect(h.reports.find((r) => r.action === "press_key" && r.outcome === "ok")).toMatchObject({ detail: expect.objectContaining({ key: "Enter" }) });
   });
 
   it("asks the user before acting on a site the page went to by itself, then lets the reviewer decide there", async () => {

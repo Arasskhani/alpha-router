@@ -32,6 +32,7 @@ const ERRORS = new Set([
   "no_form",
   "invalid_form",
   "bad_key",
+  "not_kept",
   "bad_request",
   "not_found",
   "stopped",

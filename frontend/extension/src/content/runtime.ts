@@ -101,13 +101,13 @@ export async function runAgentCall(
       case "click":
         return click(args.ref, isVisible);
       case "type_text":
-        return typeText(args.ref, args.text, args.clear, isVisible);
+        return await typeText(args.ref, args.text, args.clear, isVisible);
       case "select_option":
         return selectOption(args.ref, args.value, isVisible);
       case "submit_form":
         return submitForm(args.ref, isVisible);
       case "press_key":
-        return pressKey(doc, args.key);
+        return pressKey(doc, args.key, isVisible);
       case "scroll":
         return scroll(doc, args.direction, args.ref, isVisible);
       case "wait_for":

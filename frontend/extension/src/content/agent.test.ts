@@ -332,7 +332,7 @@ describe("acting", () => {
     expect(clicked).not.toHaveBeenCalled();
   });
 
-  it("types through the field's own setter, so React-style pages see the change", () => {
+  it("types through the field's own setter, so React-style pages see the change", async () => {
     page(`<label for="q">Search</label><input id="q">`);
     const input = document.querySelector("input")!;
     // React tracks the value on the element itself; a plain assignment would update its tracker and hide the change.
@@ -351,18 +351,55 @@ describe("acting", () => {
     input.addEventListener("input", (e) => events.push(`input:${(e as InputEvent).data}`));
     input.addEventListener("change", () => events.push("change"));
     const shot = snapshot(document, { isVisible: visible });
-    const typed = typeText(shot.elements[0].ref, "blue shoes", false, visible);
+    const typed = await typeText(shot.elements[0].ref, "blue shoes", false, visible);
     expect(typed).toMatchObject({ ok: true });
     expect(input.value).toBe("blue shoes");
     expect(tracked).toBe("");
     expect(events).toEqual(["input:blue shoes", "change"]);
-    expect(typeText(shot.elements[0].ref, " size 42", false, visible)).toMatchObject({ ok: true });
+    expect(await typeText(shot.elements[0].ref, " size 42", false, visible)).toMatchObject({ ok: true });
     expect(input.value).toBe("blue shoes size 42");
-    expect(typeText(shot.elements[0].ref, "red", true, visible)).toMatchObject({ ok: true });
+    expect(await typeText(shot.elements[0].ref, "red", true, visible)).toMatchObject({ ok: true });
     expect(input.value).toBe("red");
   });
 
-  it("never types into a password, card or one-time-code field", () => {
+  it("types where the caret is, replaces a date, and says when the page did not keep the text", async () => {
+    page(`<input aria-label="Name" value="Mad"><input type="date" aria-label="Day" value="2026-01-01"><input aria-label="Locked" value="x">`);
+    const [name, day, locked] = Array.from(document.querySelectorAll("input"));
+    const shot = snapshot(document, { isVisible: visible });
+    name.focus();
+    name.setSelectionRange(2, 2);
+    expect(await typeText(byName(shot.elements, "Name").ref, "ji", false, visible)).toMatchObject({ ok: true });
+    expect(name.value).toBe("Majid");
+    await typeText(byName(shot.elements, "Day").ref, "2026-09-28", false, visible);
+    expect(day.value).toBe("2026-09-28");
+    // A page that keeps its own copy of the value puts the old one back.
+    locked.addEventListener("input", () => {
+      const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(locked), "value")!.set!;
+      setter.call(locked, "x");
+    });
+    expect(await typeText(byName(shot.elements, "Locked").ref, "y", false, visible)).toMatchObject({ ok: false, error: "not_kept" });
+  });
+
+  it("types into an editor above its signature, and lets a page that takes the input do it", async () => {
+    page(`<div contenteditable="true" aria-label="Message body"><div><br></div><div class="signature">-- Majid</div></div>`);
+    const body = document.querySelector<HTMLElement>("[contenteditable]")!;
+    const shot = snapshot(document, { isVisible: visible });
+    const ref = byName(shot.elements, "Message body").ref;
+    expect(await typeText(ref, "Hello there", false, visible)).toMatchObject({ ok: true });
+    expect(body.textContent!.indexOf("Hello there")).toBeLessThan(body.textContent!.indexOf("-- Majid"));
+    // An editor that handles beforeinput itself: the agent does not insert a second copy.
+    page(`<div contenteditable="true" aria-label="Editor"></div>`);
+    const editor = document.querySelector<HTMLElement>("[contenteditable]")!;
+    editor.addEventListener("beforeinput", (e) => {
+      e.preventDefault();
+      editor.textContent = `${editor.textContent ?? ""}${(e as InputEvent).data ?? ""}`;
+    });
+    const again = snapshot(document, { isVisible: visible });
+    expect(await typeText(byName(again.elements, "Editor").ref, "once", false, visible)).toMatchObject({ ok: true });
+    expect(editor.textContent).toBe("once");
+  });
+
+  it("never types into a password, card or one-time-code field", async () => {
     page(`
       <input type="password" aria-label="Password">
       <input autocomplete="cc-number" aria-label="Card">
@@ -371,19 +408,19 @@ describe("acting", () => {
     `);
     const shot = snapshot(document, { isVisible: visible });
     for (const element of shot.elements) {
-      expect(typeText(element.ref, "1234", false, visible)).toMatchObject({ ok: false, error: "sensitive_field" });
+      expect(await typeText(element.ref, "1234", false, visible)).toMatchObject({ ok: false, error: "sensitive_field" });
     }
     for (const input of Array.from(document.querySelectorAll("input"))) expect(input.value).toBe("");
   });
 
-  it("types a single line into a one-line field, and keeps to its length limit", () => {
+  it("types a single line into a one-line field, and keeps to its length limit", async () => {
     page(`<input aria-label="Title" maxlength="8"><textarea aria-label="Body"></textarea><button>Go</button>`);
     const shot = snapshot(document, { isVisible: visible });
-    typeText(byName(shot.elements, "Title").ref, "one\ntwo three", false, visible);
+    await typeText(byName(shot.elements, "Title").ref, "one\ntwo three", false, visible);
     expect(document.querySelector("input")!.value).toBe("one two ");
-    typeText(byName(shot.elements, "Body").ref, "one\ntwo", false, visible);
+    await typeText(byName(shot.elements, "Body").ref, "one\ntwo", false, visible);
     expect(document.querySelector("textarea")!.value).toBe("one\ntwo");
-    expect(typeText(byName(shot.elements, "Go").ref, "x", false, visible)).toMatchObject({ ok: false, error: "not_typable" });
+    expect(await typeText(byName(shot.elements, "Go").ref, "x", false, visible)).toMatchObject({ ok: false, error: "not_typable" });
   });
 
   it("chooses a menu option by value or by label, and fires change", () => {
@@ -410,7 +447,7 @@ describe("acting", () => {
     expect((document.querySelector("select") as HTMLSelectElement).value).toBe("xl");
   });
 
-  it("sends a form only when it is complete, through its own submit", () => {
+  it("sends a form only when it is complete, through its own submit", async () => {
     page(`<form><input aria-label="Email" required><button type="submit">Send</button></form><button>Outside</button>`);
     const form = document.querySelector("form")!;
     const submitted = vi.fn((event: Event) => event.preventDefault());
@@ -419,7 +456,7 @@ describe("acting", () => {
     const send = byName(shot.elements, "Send").ref;
     expect(submitForm(send, visible)).toMatchObject({ ok: false, error: "invalid_form", message: expect.stringContaining('"Email"') });
     expect(submitted).not.toHaveBeenCalled();
-    typeText(byName(shot.elements, "Email").ref, "a@b.c", false, visible);
+    await typeText(byName(shot.elements, "Email").ref, "a@b.c", false, visible);
     expect(submitForm(send, visible)).toMatchObject({ ok: true });
     expect(submitted).toHaveBeenCalledTimes(1);
     expect(submitForm(byName(shot.elements, "Outside").ref, visible)).toMatchObject({ ok: false, error: "no_form" });
@@ -459,6 +496,59 @@ describe("acting", () => {
     expect(pressKey(document, "ctrl+a")).toMatchObject({ ok: true });
     expect(seen.filter((s) => !s.startsWith("up:"))).toEqual(["Enter:13", "PageDown:34", "ctrl+a:65"]);
     expect(pressKey(document, "Frobnicate")).toMatchObject({ ok: false, error: "bad_key" });
+  });
+
+  it("fires keypress for the keys that type, and not for the others", () => {
+    page(`<input aria-label="Chat">`);
+    const input = document.querySelector("input")!;
+    input.focus();
+    const seen: string[] = [];
+    input.addEventListener("keypress", (e) => seen.push(`${(e as KeyboardEvent).key}:${(e as KeyboardEvent).keyCode}`));
+    for (const key of ["Enter", "a", "Tab", "ArrowDown", "Escape"]) pressKey(document, key, visible);
+    expect(seen).toEqual(["Enter:13", "a:97"]);
+  });
+
+  it("does what the browser would with a key the page left alone", () => {
+    page(`<form><input aria-label="First"><input aria-label="Second"><button id="go">Go</button></form><button id="b">Plain</button><input type="checkbox" aria-label="Agree">`);
+    const [first, second] = Array.from(document.querySelectorAll("input"));
+    // Tab and shift+Tab move the focus through the page's order.
+    first.focus();
+    expect(pressKey(document, "Tab", visible)).toMatchObject({ ok: true, note: expect.stringContaining('The focus moved to textbox "Second"') });
+    expect(document.activeElement).toBe(second);
+    pressKey(document, "shift+Tab", visible);
+    expect(document.activeElement).toBe(first);
+    // Enter in a form's field presses its send button, whose handlers run.
+    const clicked = vi.fn();
+    document.getElementById("go")!.addEventListener("click", clicked);
+    document.querySelector("form")!.addEventListener("submit", (e) => e.preventDefault());
+    expect(pressKey(document, "Enter", visible)).toMatchObject({ note: expect.stringContaining("The form was sent (Enter).") });
+    expect(clicked).toHaveBeenCalledTimes(1);
+    // Enter on a button presses it; Space on a checkbox ticks it.
+    const plain = vi.fn();
+    const button = document.getElementById("b")!;
+    button.addEventListener("click", plain);
+    button.focus();
+    pressKey(document, "Enter", visible);
+    expect(plain).toHaveBeenCalledTimes(1);
+    const box = document.querySelector<HTMLInputElement>("input[type=checkbox]")!;
+    box.focus();
+    pressKey(document, "Space", visible);
+    expect(box.checked).toBe(true);
+  });
+
+  it("leaves a key to the page when it takes it, and deletes in a field when it does not", () => {
+    page(`<input aria-label="Name" value="Majid">`);
+    const input = document.querySelector("input")!;
+    input.focus();
+    input.setSelectionRange(5, 5);
+    const inputs: string[] = [];
+    input.addEventListener("input", (e) => inputs.push((e as InputEvent).inputType));
+    expect(pressKey(document, "Backspace", visible)).toMatchObject({ note: "Pressed Backspace. Deleted." });
+    expect(input.value).toBe("Maji");
+    expect(inputs).toEqual(["deleteContentBackward"]);
+    input.addEventListener("keydown", (e) => e.preventDefault());
+    expect(pressKey(document, "Backspace", visible)).toMatchObject({ note: "Pressed Backspace. The page handled it itself." });
+    expect(input.value).toBe("Maji");
   });
 
   it("tells which element has the keyboard, and presses keys there, inside a web component too", () => {

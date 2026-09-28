@@ -24,7 +24,7 @@
  * is a limit of acting without the debugger.
  */
 
-import { keyDefFor, KEY_NAMES_SHOWN, parseKeyCombo } from "../lib/keys";
+import { keyDefFor, KEY_NAMES_SHOWN, parseKeyCombo, type KeyCombo } from "../lib/keys";
 import { isSensitiveField } from "../lib/sensitive";
 import { extractPage, isBlockDisplayed, isTextRendered } from "./extract";
 import { OVERLAY_ID } from "./overlay";
@@ -93,6 +93,7 @@ type AgentError =
   | "no_form"
   | "invalid_form"
   | "bad_key"
+  | "not_kept"
   | "bad_request"
   | "not_found"
   | "stopped"
@@ -850,8 +851,54 @@ function fire(el: Element, type: "input" | "change", data?: string): void {
 }
 
 const TYPABLE_INPUTS = new Set([...TEXT_INPUTS, "date", "time", "datetime-local", "month", "week", "color"]);
+/** Fields whose value is one whole thing (a date, a number, a colour): typing replaces it, as adding to it would make it invalid. */
+const WHOLE_VALUE_INPUTS = new Set(["date", "time", "datetime-local", "month", "week", "number", "color"]);
+/** How long the page gets to put a value back before the agent reads it again. */
+const READ_BACK_MS = 60;
 
-export function typeText(ref: unknown, text: unknown, clear: unknown, isVisible: Visibility): Result<{ note: string }> {
+/** A text field's caret or selection, when the field has one (an email or number field has none). */
+function selectionOf(field: HTMLInputElement | HTMLTextAreaElement): { start: number; end: number } | null {
+  try {
+    const start = field.selectionStart;
+    const end = field.selectionEnd;
+    return typeof start === "number" && typeof end === "number" ? { start, end } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Tell the page text is about to go in, as a browser does; false when the page took it over (it cancelled the event). */
+function beforeInput(el: Element, inputType: string, data: string | null): boolean {
+  const view = el.ownerDocument.defaultView;
+  if (!view || !("InputEvent" in view)) return true;
+  return el.dispatchEvent(new view.InputEvent("beforeinput", { bubbles: true, cancelable: true, composed: true, inputType, data }));
+}
+
+/**
+ * Where typed text goes in an editor: at the caret when it is in the editor;
+ * otherwise at the start of it - above a signature or a quoted message, where
+ * a person clicking into a new message starts - or over all of it with `clear`.
+ */
+function placeCaret(el: Element, clear: boolean): void {
+  const doc = el.ownerDocument;
+  const selection = doc.getSelection();
+  if (!selection) return;
+  const inside = selection.rangeCount > 0 && el.contains(selection.getRangeAt(0).startContainer);
+  if (inside && !clear) return;
+  const range = doc.createRange();
+  range.selectNodeContents(el);
+  if (!clear) {
+    // The first block's start: down through the first children to text, so the caret is inside the first line.
+    let node: Node = el;
+    while (node.firstChild && node.firstChild.nodeType === Node.ELEMENT_NODE && !["BR", "IMG"].includes((node.firstChild as Element).tagName)) node = node.firstChild;
+    range.setStart(node, 0);
+    range.collapse(true);
+  }
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
+export async function typeText(ref: unknown, text: unknown, clear: unknown, isVisible: Visibility): Promise<Result<{ note: string }>> {
   if (typeof text !== "string" || text.length > 10_000) {
     return { ok: false, error: "bad_request", message: "Give the text to type, up to 10,000 characters." };
   }
@@ -867,34 +914,68 @@ export function typeText(ref: unknown, text: unknown, clear: unknown, isVisible:
   const html = el as HTMLElement;
   el.scrollIntoView?.({ block: "center" });
   html.focus?.({ preventScroll: true });
+  const view = el.ownerDocument.defaultView;
+  const tick = () => new Promise((done) => (view ?? globalThis).setTimeout(done, READ_BACK_MS));
   if (tag === "INPUT" || tag === "TEXTAREA") {
     const field = el as HTMLInputElement | HTMLTextAreaElement;
     if (field.readOnly) return { ok: false, error: "read_only", message: `Element ${ref as string} cannot be changed.` };
     const insert = tag === "INPUT" ? text.replace(/\s*\n\s*/g, " ") : text;
-    let next = clear === true ? insert : `${field.value}${insert}`;
+    const whole = tag === "INPUT" && WHOLE_VALUE_INPUTS.has(inputType(el));
+    const at = whole || clear === true ? null : selectionOf(field);
+    const before = field.value;
+    let next: string;
+    let caret: number | null = null;
+    if (whole || clear === true) next = insert;
+    else if (at && field.ownerDocument.activeElement === field && (at.start !== before.length || at.end !== before.length)) {
+      // Where the caret is: a person's typing goes there, not always at the end.
+      next = `${before.slice(0, at.start)}${insert}${before.slice(at.end)}`;
+      caret = at.start + insert.length;
+    } else next = `${before}${insert}`;
     if (field.maxLength > 0) next = next.slice(0, field.maxLength);
-    const setter = nativeSetter(el);
-    if (setter) setter(next);
-    else field.value = next;
-    fire(el, "input", insert);
-    fire(el, "change");
+    if (beforeInput(el, whole || clear === true ? "insertReplacementText" : "insertText", insert)) {
+      const setter = nativeSetter(el);
+      if (setter) setter(next);
+      else field.value = next;
+      if (caret !== null && selectionOf(field)) {
+        try {
+          field.setSelectionRange(Math.min(caret, field.value.length), Math.min(caret, field.value.length));
+        } catch {
+          // A field without a caret.
+        }
+      }
+      fire(el, "input", insert);
+      fire(el, "change");
+    }
+    await tick();
+    // Read back: a page that keeps its own copy of the value can put the old one back.
+    if (field.value === before && next !== before) {
+      return { ok: false, error: "not_kept", message: `The page did not keep the text: element ${ref as string} still holds what it held before.` };
+    }
     return { ok: true, note: `Typed ${insert.length} characters; the field now holds ${field.value.length}.` };
   }
   // An editor: the page's own editing command keeps its undo and its model in step.
   const doc = el.ownerDocument;
-  const selection = doc.getSelection();
-  if (selection) {
-    const range = doc.createRange();
-    range.selectNodeContents(el);
-    if (clear !== true) range.collapse(false);
-    selection.removeAllRanges();
-    selection.addRange(range);
+  placeCaret(el, clear === true);
+  const beforeText = squash(el.textContent ?? "");
+  if (beforeInput(el, clear === true ? "insertReplacementText" : "insertText", text)) {
+    const typed = typeof doc.execCommand === "function" && doc.execCommand("insertText", false, text);
+    if (!typed) {
+      if (clear === true) el.textContent = text;
+      else {
+        const selection = doc.getSelection();
+        const range = selection && selection.rangeCount ? selection.getRangeAt(0) : null;
+        if (range && el.contains(range.startContainer)) {
+          range.deleteContents();
+          range.insertNode(doc.createTextNode(text));
+        } else el.prepend(doc.createTextNode(text));
+      }
+      fire(el, "input", text);
+    }
   }
-  const typed = typeof doc.execCommand === "function" && doc.execCommand("insertText", false, text);
-  if (!typed) {
-    if (clear === true) el.textContent = text;
-    else el.append(doc.createTextNode(text));
-    fire(el, "input", text);
+  await tick();
+  const nowText = squash(el.textContent ?? "");
+  if (squash(text) && nowText === beforeText && (clear !== true || beforeText !== squash(text))) {
+    return { ok: false, error: "not_kept", message: `The editor did not take the text: element ${ref as string} holds what it held before.` };
   }
   return { ok: true, note: `Typed ${text.length} characters.` };
 }
@@ -1010,7 +1091,151 @@ export function describeFocus(doc: Document, isVisible: Visibility): Result<{ el
   return { ok: true, element: describeElement(el, role, isVisible, true) };
 }
 
-export function pressKey(doc: Document, key: unknown): Result<{ note: string }> {
+/** What can take the keyboard with Tab, as a browser has it (roughly): in the page's order, positive tabindex first. */
+function tabOrder(doc: Document, isVisible: Visibility): HTMLElement[] {
+  const candidates = Array.from(
+    doc.querySelectorAll<HTMLElement>('a[href], area[href], button, input, select, textarea, summary, iframe, [tabindex], [contenteditable=""], [contenteditable="true"]'),
+  ).filter((el) => {
+    if (el.tabIndex < 0 || isDisabled(el) || el.id === OVERLAY_ID || el.closest(`#${OVERLAY_ID}`)) return false;
+    if (el.tagName.toUpperCase() === "INPUT" && inputType(el) === "hidden") return false;
+    for (let node: Element | null = el; node; node = node.parentElement) if (!isVisible(node) || node.hasAttribute("inert")) return false;
+    return true;
+  });
+  const positive = candidates.filter((el) => el.tabIndex > 0).sort((a, b) => a.tabIndex - b.tabIndex);
+  return [...positive, ...candidates.filter((el) => el.tabIndex === 0)];
+}
+
+/** Whether the element takes typed text: a text field or an editor. */
+function takesText(el: Element): boolean {
+  const tag = el.tagName.toUpperCase();
+  return tag === "TEXTAREA" || (tag === "INPUT" && TEXT_INPUTS.has(inputType(el))) || Boolean((el as HTMLElement).isContentEditable);
+}
+
+/** Change a text field's value as an edit would, with its input event; false when the page cancelled the edit. */
+function editField(field: HTMLInputElement | HTMLTextAreaElement, inputType: string, edit: (value: string, at: { start: number; end: number }) => { value: string; caret: number }): boolean {
+  const at = selectionOf(field) ?? { start: field.value.length, end: field.value.length };
+  if (!beforeInput(field, inputType, null)) return false;
+  const next = edit(field.value, at);
+  const setter = nativeSetter(field);
+  if (setter) setter(next.value);
+  else field.value = next.value;
+  try {
+    field.setSelectionRange(next.caret, next.caret);
+  } catch {
+    // A field without a caret.
+  }
+  const view = field.ownerDocument.defaultView;
+  field.dispatchEvent(view && "InputEvent" in view ? new view.InputEvent("input", { bubbles: true, composed: true, inputType }) : new Event("input", { bubbles: true }));
+  return true;
+}
+
+/**
+ * What the browser does with a key the page left alone (its keydown was not
+ * cancelled) - which an event from a script does not do by itself: Tab moves
+ * the focus, Enter sends a form from its field and presses a button, Space
+ * presses a control, Backspace and Delete delete, and the paging keys
+ * scroll. Said in words for the result; "" when nothing happened.
+ */
+function keyDefault(doc: Document, target: Element, combo: KeyCombo, isVisible: Visibility): string {
+  const key = combo.key;
+  const tag = target.tagName.toUpperCase();
+  const field = tag === "INPUT" || tag === "TEXTAREA" ? (target as HTMLInputElement | HTMLTextAreaElement) : null;
+  const inText = takesText(target);
+  if (key === "Tab" && !combo.ctrl && !combo.meta && !combo.alt) {
+    const order = tabOrder(doc, isVisible);
+    if (!order.length) return "";
+    const here = order.indexOf(target as HTMLElement);
+    const next = order[(here < 0 ? (combo.shift ? order.length : -1) : here) + (combo.shift ? -1 : 1)] ?? order[combo.shift ? order.length - 1 : 0];
+    next.focus({ preventScroll: false });
+    const role = roleOf(next) ?? "element";
+    const name = accessibleName(next, role);
+    return `The focus moved to ${role}${name ? ` ${quoted(clip(name, 60))}` : ""}.`;
+  }
+  if (combo.ctrl || combo.meta || combo.alt) {
+    if (key.toLowerCase() === "a" && (combo.ctrl || combo.meta)) {
+      if (field) field.select();
+      else if (inText) doc.getSelection()?.selectAllChildren(target);
+      else return "";
+      return "Selected all of it.";
+    }
+    return "";
+  }
+  if (key === "Enter") {
+    if (field && tag === "INPUT") {
+      const form = formOf(field);
+      if (!form) return "";
+      // Implicit submission: the form's default button is pressed, or - with no button - a form of one field is sent.
+      const button = defaultButton(form);
+      if (button) {
+        if (isDisabled(button)) return "";
+        (button as HTMLElement).click();
+        return "The form was sent (Enter).";
+      }
+      const fields = Array.from(form.elements).filter((f) => f.tagName.toUpperCase() === "INPUT" && TEXT_INPUTS.has(inputType(f)));
+      if (fields.length !== 1) return "";
+      if (typeof form.requestSubmit === "function") form.requestSubmit();
+      return "The form was sent (Enter).";
+    }
+    if (field) {
+      editField(field, "insertLineBreak", (value, at) => ({ value: `${value.slice(0, at.start)}\n${value.slice(at.end)}`, caret: at.start + 1 }));
+      return "A new line went in.";
+    }
+    if (inText) {
+      if (typeof doc.execCommand === "function") doc.execCommand("insertParagraph");
+      return "A new line went in.";
+    }
+    const role = roleOf(target);
+    if (role === "button" || role === "link" || tag === "SUMMARY") {
+      (target as HTMLElement).click();
+      return "Enter pressed it.";
+    }
+    return "";
+  }
+  if (key === " " && !inText) {
+    const role = roleOf(target);
+    if (role && ["button", "checkbox", "radio", "switch", "menuitemcheckbox", "menuitemradio", "option", "tab"].includes(role)) {
+      (target as HTMLElement).click();
+      return "Space pressed it.";
+    }
+  }
+  if ((key === "Backspace" || key === "Delete") && inText) {
+    const back = key === "Backspace";
+    if (field) {
+      const done = editField(field, back ? "deleteContentBackward" : "deleteContentForward", (value, at) => {
+        if (at.start !== at.end) return { value: `${value.slice(0, at.start)}${value.slice(at.end)}`, caret: at.start };
+        const from = back ? Math.max(0, at.start - 1) : at.start;
+        const to = back ? at.start : Math.min(value.length, at.start + 1);
+        return { value: `${value.slice(0, from)}${value.slice(to)}`, caret: from };
+      });
+      return done ? "Deleted." : "";
+    }
+    if (typeof doc.execCommand === "function") doc.execCommand(back ? "delete" : "forwardDelete");
+    return "Deleted.";
+  }
+  if (field && (key === "Home" || key === "End" || key === "ArrowLeft" || key === "ArrowRight")) {
+    const at = selectionOf(field);
+    if (!at) return "";
+    const caret = key === "Home" ? 0 : key === "End" ? field.value.length : key === "ArrowLeft" ? Math.max(0, at.start - 1) : Math.min(field.value.length, at.end + 1);
+    field.setSelectionRange(caret, caret);
+    return "";
+  }
+  if (!inText && ["PageDown", "PageUp", "Home", "End", " "].includes(key)) {
+    const scroller = doc.scrollingElement ?? doc.documentElement;
+    const page = (doc.defaultView?.innerHeight || 800) * 0.9;
+    if (key === "Home") scroller.scrollTo?.({ top: 0 });
+    else if (key === "End") scroller.scrollTo?.({ top: scroller.scrollHeight });
+    else scroller.scrollBy?.({ top: key === "PageUp" || (key === " " && combo.shift) ? -page : page });
+    return `The page scrolled: ${Math.round(scroller.scrollTop)} of ${Math.round(scroller.scrollHeight)} pixels from the top.`;
+  }
+  return "";
+}
+
+/** Characters a key types, as keypress reports them: Enter and printable keys only. */
+function typesCharacter(combo: KeyCombo): boolean {
+  return !combo.ctrl && !combo.meta && !combo.alt && (combo.key === "Enter" || [...combo.key].length === 1);
+}
+
+export function pressKey(doc: Document, key: unknown, isVisible: Visibility = () => true): Result<{ note: string }> {
   // The same table the rules read the key through: what they judged is what is pressed.
   const combo = parseKeyCombo(key);
   if (!combo) {
@@ -1020,15 +1245,27 @@ export function pressKey(doc: Document, key: unknown): Result<{ note: string }> 
   // Where describeFocus looked: the element with the keyboard, inside a web component too.
   const target = focusedElement(doc) ?? doc.body ?? doc.documentElement;
   const view = doc.defaultView;
+  const Ctor = view?.KeyboardEvent ?? KeyboardEvent;
   const held = { ctrlKey: combo.ctrl, altKey: combo.alt, shiftKey: combo.shift, metaKey: combo.meta };
-  for (const type of ["keydown", "keyup"] as const) {
-    const event = new (view?.KeyboardEvent ?? KeyboardEvent)(type, { key: def.key, code: def.code, ...held, bubbles: true, cancelable: true, composed: true });
-    Object.defineProperty(event, "keyCode", { get: () => def.vk });
-    Object.defineProperty(event, "which", { get: () => def.vk });
-    target.dispatchEvent(event);
-  }
-  const shown = def.key === " " ? "Space" : def.key;
-  return { ok: true, note: `Pressed ${String(key).trim() || shown}. A key from the agent reaches the page's own handlers only; it does not submit forms or move the focus by itself.` };
+  // The legacy codes go in the event itself, where the page's own scripts read them (a property set here would stay in this world).
+  const event = (type: "keydown" | "keypress" | "keyup") =>
+    new Ctor(type, {
+      key: def.key,
+      code: def.code,
+      keyCode: type === "keypress" ? (def.text ?? def.key).charCodeAt(0) : def.vk,
+      charCode: type === "keypress" ? (def.text ?? def.key).charCodeAt(0) : 0,
+      ...held,
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+    });
+  const shown = String(key).trim() || (def.key === " " ? "Space" : def.key);
+  const allowed = target.dispatchEvent(event("keydown"));
+  if (allowed && typesCharacter(combo)) target.dispatchEvent(event("keypress"));
+  // What the browser would do, unless the page took the key for itself.
+  const did = allowed ? keyDefault(doc, target, combo, isVisible) : "The page handled it itself.";
+  target.dispatchEvent(event("keyup"));
+  return { ok: true, note: `Pressed ${shown}.${did ? ` ${did}` : ""}` };
 }
 
 export function scroll(doc: Document, direction: unknown, ref: unknown, isVisible: Visibility): Result<{ note: string }> {

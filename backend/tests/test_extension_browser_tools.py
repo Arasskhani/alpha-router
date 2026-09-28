@@ -397,6 +397,27 @@ class TestASlowStep:
         assert first_beat == 1
         assert got[-1] is not KEEP_ALIVE
 
+    async def test_a_client_gone_while_the_model_thought_is_a_cancelled_step(
+        self, client, browser, models, provider, monkeypatch, session_factory
+    ):
+        from starlette.requests import Request
+
+        monkeypatch.setattr(provider_stream, "KEEP_ALIVE_SECONDS", 0.02)
+        provider.replies.append(_SlowStream(list(CLICK_REPLY), think=5))
+
+        async def gone(self) -> bool:
+            return True
+
+        monkeypatch.setattr(Request, "is_disconnected", gone)
+        await client.post("/api/chat/completions", json=_body(models.a), headers=browser.headers)
+        from app.models.cost_accounting import UsageEvent
+
+        async with session_factory() as db:
+            events = (await db.execute(select(UsageEvent))).scalars().all()
+        # Booked as the stop it was, not as a model that answered nothing.
+        assert [e.status for e in events] == ["cancelled"]
+        assert all("empty completion" not in (e.error_message or "") for e in events)
+
     async def test_a_quick_step_has_none(self, client, browser, models, provider, monkeypatch):
         monkeypatch.setattr(provider_stream, "KEEP_ALIVE_SECONDS", 0.5)
         provider.reply(*CLICK_REPLY)

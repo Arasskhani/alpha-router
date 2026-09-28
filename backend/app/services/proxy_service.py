@@ -4,12 +4,13 @@ Costs are taken from provider usage objects — never adjusted by Alpharouter.
 """
 
 import asyncio
+import contextlib
 import datetime
 import json
 import logging
 import time
 import uuid
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -908,6 +909,8 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
         generation_start = time.perf_counter()
         stream_end_at: float | None = None
         attempt: ProviderAttempt | None = None
+        #: The attempt's chunks, kept alive while the model thinks: closed in the finalizer, whatever ended the turn.
+        live_chunks: AsyncGenerator[Any, None] | None = None
 
         def _absorb(
             done: ProviderAttempt,
@@ -1109,7 +1112,7 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
                 await _end_request_transaction(db)
                 # A browser agent step (the only turn with function tools) may think a minute before its first token:
                 # the connection is kept alive meanwhile, so no proxy on the way closes it for being silent.
-                chunks = chunks_kept_alive(attempt, keep_alive=bool(completion_kwargs.get("tools")))
+                chunks = live_chunks = chunks_kept_alive(attempt, keep_alive=bool(completion_kwargs.get("tools")))
                 async for chunk in chunks:
                     if chunk is KEEP_ALIVE:
                         if await _client_stopped():
@@ -1167,12 +1170,14 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
                 # words and is not empty.
                 empty_completion = not iteration_content.strip() and not attempt.has_tool_calls
                 attempt_error = "Upstream model returned an empty completion." if empty_completion else None
+                # Stopped before a word came (while the model thought, kept alive): cancelled, not the model's failure.
+                stopped_first = empty_completion and client_disconnected
                 _absorb(
                     attempt,
-                    status="failed" if empty_completion else "succeeded",
-                    error_message=attempt_error,
+                    status="cancelled" if stopped_first else "failed" if empty_completion else "succeeded",
+                    error_message="Request cancelled" if stopped_first else attempt_error,
                     completion=attempt.billable_text,
-                    track_model=True,
+                    track_model=not stopped_first,
                 )
                 active_event = usage_events[-1]
                 attempt = None
@@ -1387,6 +1392,10 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
             # tokens are never charged. asyncio.shield() alone protects the inner
             # coroutine but not this frame, so shield the whole finalizer.
             with anyio.CancelScope(shield=True):
+                if live_chunks is not None:
+                    # A client that went while the model thought leaves the wait for its chunk: called off here.
+                    with contextlib.suppress(Exception):
+                        await live_chunks.aclose()
                 elapsed_ms = (
                     (stream_end_at if stream_end_at is not None else time.perf_counter()) - generation_start
                 ) * 1000

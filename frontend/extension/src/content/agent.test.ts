@@ -1,7 +1,7 @@
 /**
  * @vitest-environment happy-dom
  */
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { click, describe as describeRef, describeFocus, find, findRef, locate, pageText, pressKey, readPage, scroll, selectOption, snapshot, submitForm, typeText, waitFor, type ElementInfo } from "./agent";
 import { hideOverlay, OVERLAY_ID, showOverlay } from "./overlay";
@@ -510,6 +510,30 @@ describe("acting", () => {
       setter.call(locked, "x");
     });
     expect(await typeText(byName(shot.elements, "Locked").ref, "y", false, visible)).toMatchObject({ ok: false, error: "not_kept" });
+  });
+
+  it("says a date or number field's format when the browser drops what was typed, and keeps the old value", async () => {
+    page(`<input type="date" aria-label="Day" value="2026-01-01"><input type="number" aria-label="Amount" value="5">`);
+    const [day, amount] = Array.from(document.querySelectorAll("input"));
+    // The browser's sanitising of the value, as Chromium does it, which happy-dom leaves out.
+    const proto = window.HTMLInputElement.prototype;
+    const own = Object.getOwnPropertyDescriptor(proto, "value")!;
+    const formats: Record<string, RegExp> = { date: /^\d{4}-\d{2}-\d{2}$/, number: /^-?\d+(\.\d+)?$/ };
+    Object.defineProperty(proto, "value", {
+      configurable: true,
+      get: own.get,
+      set(this: HTMLInputElement, v: string) {
+        const format = formats[this.type];
+        own.set!.call(this, !format || v === "" || format.test(v) ? v : "");
+      },
+    });
+    onTestFinished(() => Object.defineProperty(proto, "value", own));
+    const shot = snapshot(document, { isVisible: visible });
+    expect(await typeText(byName(shot.elements, "Day").ref, "09/28/2026", false, visible)).toMatchObject({ ok: false, error: "bad_format", message: expect.stringContaining("2026-09-28 (year-month-day)") });
+    expect(day.value).toBe("2026-01-01");
+    expect(await typeText(byName(shot.elements, "Amount").ref, "1,500", false, visible)).toMatchObject({ ok: false, error: "bad_format", message: expect.stringContaining("a dot for decimals") });
+    expect(amount.value).toBe("5");
+    expect(await typeText(byName(shot.elements, "Amount").ref, "1500", false, visible)).toMatchObject({ ok: true });
   });
 
   it("types into an editor above its signature, and lets a page that takes the input do it", async () => {

@@ -109,6 +109,7 @@ type AgentError =
   | "invalid_form"
   | "bad_key"
   | "not_kept"
+  | "bad_format"
   | "bad_request"
   | "not_found"
   | "stopped"
@@ -1159,6 +1160,16 @@ function fire(el: Element, type: "input" | "change", data?: string): void {
 const TYPABLE_INPUTS = new Set([...TEXT_INPUTS, "date", "time", "datetime-local", "month", "week", "color"]);
 /** Fields whose value is one whole thing (a date, a number, a colour): typing replaces it, as adding to it would make it invalid. */
 const WHOLE_VALUE_INPUTS = new Set(["date", "time", "datetime-local", "month", "week", "number", "color"]);
+/** How each of those fields takes its value: the browser drops anything else, and the field is left empty. */
+const VALUE_FORMATS: Record<string, string> = {
+  date: "a date written 2026-09-28 (year-month-day)",
+  time: "a time written 14:30 (24-hour)",
+  "datetime-local": "a date and time written 2026-09-28T14:30",
+  month: "a month written 2026-09",
+  week: "a week written 2026-W39",
+  number: "a number in digits, with a dot for decimals and nothing between thousands (1234.5)",
+  color: "a colour written #1a2b3c",
+};
 /** How long the page gets to put a value back before the agent reads it again. */
 const READ_BACK_MS = 60;
 
@@ -1251,6 +1262,15 @@ export async function typeText(ref: unknown, text: unknown, clear: unknown, isVi
       }
       fire(el, "input", insert);
       fire(el, "change");
+      // A date, number or colour field drops a value not in its format: the old one goes back, and the model is told the format.
+      if (whole && field.value !== next && next !== "") {
+        if (setter) setter(before);
+        else field.value = before;
+        fire(el, "input", before);
+        fire(el, "change");
+        const type = inputType(el);
+        return { ok: false, error: "bad_format", message: `Element ${ref as string} is a ${type} field and did not take the text: it takes ${VALUE_FORMATS[type] ?? "a value in its own format"}.` };
+      }
     }
     await tick();
     // Read back: a page that keeps its own copy of the value can put the old one back.

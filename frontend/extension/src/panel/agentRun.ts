@@ -247,6 +247,7 @@ const ADVICE: Record<string, string> = {
   changed: "The element changed since this action was judged: look at the page again.",
   no_focus: "The keyboard is not in that field: look at the page, then click the field again.",
   not_kept: "The page did not keep what was typed: look at the field again, and if it still refuses the text, ask the user.",
+  bad_format: "The field takes its value in a set format, which the page's message says: type it again that way.",
   bad_request: "The arguments were not right for this tool.",
   not_found: "Nothing there matches.",
   moved: "The tab is no longer on the page the action was judged on: look at it again.",

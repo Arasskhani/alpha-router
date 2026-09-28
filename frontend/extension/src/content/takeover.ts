@@ -13,6 +13,12 @@
  * Without full control the agent's events are synthetic (never trusted), so no
  * window is needed and every trusted event is the person's.
  *
+ * A wheel event can reach the page after its window has closed: Chrome
+ * answers the agent's scroll once the compositor has it, and the page's
+ * (passive) listeners run later, on the page's own thread. So a wheel event
+ * shortly after the agent's own input is still counted as the agent's; a
+ * press or a key is not, as those reach the page before Chrome answers.
+ *
  * The state lives on the isolated world's global, like the stopped runs: the
  * panel injects content.js before every call, and a new copy must find the
  * watch the last one set up rather than add a second one.
@@ -28,6 +34,8 @@ type Watch = {
   run: string;
   /** The panel's own input is going out: trusted events now are the agent's. */
   dispatching: boolean;
+  /** Until when a wheel event is still the agent's own, once its input is out (a time from Date.now). */
+  wheelsUntil: number;
   /** The person took over; nothing is done on the page until Resume. */
   paused: boolean;
   /** What the border showed before the pause, to show again after it. */
@@ -40,6 +48,9 @@ const WATCH_KEY = "__alpharouterTakeover";
 
 /** What a person does that counts as taking over: a press, a key, a wheel. Moving the mouse does not. */
 const EVENTS = ["pointerdown", "keydown", "wheel"] as const;
+
+/** How long after the agent's own input a wheel event is still counted as the agent's. */
+const WHEEL_GRACE_MS = 1000;
 
 function scope(): { [WATCH_KEY]?: Watch } {
   return globalThis as typeof globalThis & { [WATCH_KEY]?: Watch };
@@ -99,9 +110,10 @@ export function watchTakeover(doc: Document, run: string, send: TakeoverSender):
   existing?.stop();
   const view = doc.defaultView;
   if (!view) return;
-  const watch: Watch = { run, dispatching: false, paused: false, before: null, send, stop: () => undefined };
+  const watch: Watch = { run, dispatching: false, wheelsUntil: 0, paused: false, before: null, send, stop: () => undefined };
   const onInput = (event: Event) => {
     if (!event.isTrusted || watch.dispatching || watch.paused || onOwnUi(event)) return;
+    if (event.type === "wheel" && Date.now() < watch.wheelsUntil) return;
     pause(doc, watch);
   };
   // Capture, so a page that stops propagation still shows the take-over; passive, so scrolling is not held up.
@@ -127,6 +139,8 @@ export function stopWatching(run?: unknown): void {
 export function setDispatching(on: boolean): { paused: boolean } {
   const watch = current();
   if (!watch) return { paused: false };
+  // Closing the window: a wheel event of the agent's own may still be on its way.
+  if (watch.dispatching && !on) watch.wheelsUntil = Date.now() + WHEEL_GRACE_MS;
   watch.dispatching = on && !watch.paused;
   return { paused: watch.paused };
 }

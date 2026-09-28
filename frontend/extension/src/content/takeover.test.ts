@@ -90,6 +90,27 @@ describe("a take-over", () => {
     expect(send).toHaveBeenCalledTimes(1);
   });
 
+  it("is not a wheel event of the agent's own scroll that reaches the page just after its window closed", () => {
+    page("<p>Page</p>");
+    const send = vi.fn();
+    watchTakeover(document, RUN, send);
+    const now = vi.spyOn(Date, "now").mockReturnValue(10_000);
+    try {
+      setDispatching(true);
+      setDispatching(false);
+      // The page's passive wheel listener runs after Chrome answered the scroll.
+      now.mockReturnValue(10_400);
+      trusted("wheel");
+      expect(runPaused(RUN)).toBe(false);
+      // A press is the person's at once; a wheel after the grace is too.
+      now.mockReturnValue(11_200);
+      trusted("wheel");
+      expect(runPaused(RUN)).toBe(true);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
   it("is not a press on the agent's own banner or layer", () => {
     page("<p>Page</p>");
     const send = vi.fn();

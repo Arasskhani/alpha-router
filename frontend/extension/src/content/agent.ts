@@ -182,13 +182,34 @@ function isFailure(value: unknown): value is Failure {
 /** Never content, and never worth a visibility check. */
 const SKIPPED = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE", "HEAD", "META", "LINK", "TITLE"]);
 
+type DomApi = { dom?: { openOrClosedShadowRoot?: (el: Element) => ShadowRoot | null } };
+
+/**
+ * An element's shadow root, open or closed: a closed one the page keeps
+ * from its own scripts, but an extension may read (chrome.dom), and a
+ * person sees what is in it all the same.
+ */
+function shadowOf(el: Element): ShadowRoot | null {
+  if (el.shadowRoot) return el.shadowRoot;
+  try {
+    return (globalThis as typeof globalThis & { chrome?: DomApi }).chrome?.dom?.openOrClosedShadowRoot?.(el) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** At most this many frames of the page's own site are read into, however deep. */
+const MAX_FRAMES = 20;
+
 /**
  * Every element a person could see, in page order: hidden ones and their
- * subtrees are skipped, open shadow roots are entered through their slots,
- * and the agent's own overlay is not part of the page.
+ * subtrees are skipped, shadow roots (open or closed) are entered through
+ * their slots, frames of the page's own site are read into, and the agent's
+ * own overlay is not part of the page.
  */
 function* visibleElements(root: Element, isVisible: Visibility): Generator<Element> {
   const stack: Node[] = [root];
+  let frames = 0;
   while (stack.length) {
     const node = stack.pop() as Node;
     if (node.nodeType === Node.DOCUMENT_FRAGMENT_NODE) {
@@ -199,11 +220,19 @@ function* visibleElements(root: Element, isVisible: Visibility): Generator<Eleme
     const el = node as Element;
     if (SKIPPED.has(el.tagName.toUpperCase()) || el.id === OVERLAY_ID || el.hasAttribute("inert") || !isVisible(el)) continue;
     yield el;
-    if (el.tagName.toUpperCase() === "SLOT") {
+    const tag = el.tagName.toUpperCase();
+    if (tag === "SLOT") {
       const assigned = (el as HTMLSlotElement).assignedNodes?.({ flatten: true }) ?? [];
       pushChildren(stack, assigned.length ? assigned : Array.from(el.childNodes));
+    } else if (tag === "IFRAME" || tag === "FRAME") {
+      // A frame of this site is part of the page as a person sees it; one of another site stays closed.
+      const inner = frames < MAX_FRAMES ? frameDocument(el) : null;
+      if (inner?.body) {
+        frames += 1;
+        stack.push(inner.body);
+      }
     } else {
-      pushChildren(stack, Array.from((el.shadowRoot ?? el).childNodes));
+      pushChildren(stack, Array.from((shadowOf(el) ?? el).childNodes));
     }
   }
 }
@@ -268,7 +297,7 @@ function visibleText(el: Element, isVisible: Visibility, limit = 200): string {
       continue;
     }
     if (isBlockDisplayed(child)) parts.push(" ");
-    pushChildren(stack, Array.from((child.shadowRoot ?? child).childNodes));
+    pushChildren(stack, Array.from((shadowOf(child) ?? child).childNodes));
     if (isBlockDisplayed(child)) parts.push(" ");
   }
   return clip(parts.join(""), limit);
@@ -384,6 +413,12 @@ function labelText(label: Element): string {
   return visibleText(label, isExposed, NAME_CHARS);
 }
 
+/** An element by its id, looked for where `el` is - its shadow root first, then its document - as aria-labelledby is resolved. */
+function byId(el: Element, id: string): Element | null {
+  const root = el.getRootNode() as Document | ShadowRoot;
+  return (typeof root.getElementById === "function" ? root.getElementById(id) : null) ?? el.ownerDocument.getElementById(id);
+}
+
 /** The words of an element's labels; a label removed from the page (display: none) names nothing. */
 function labelsOf(el: Element): string {
   const doc = el.ownerDocument;
@@ -391,7 +426,9 @@ function labelsOf(el: Element): string {
   const labels = (el as HTMLInputElement).labels;
   if (labels) for (const label of Array.from(labels)) found.add(label);
   if (el.id) {
-    for (const label of Array.from(doc.querySelectorAll("label"))) {
+    // Its labels are where it is: in its shadow root, when it is in one.
+    const scope = el.getRootNode() as Document | ShadowRoot;
+    for (const label of Array.from((typeof scope.querySelectorAll === "function" ? scope : doc).querySelectorAll("label"))) {
       if (label.getAttribute("for") === el.id) found.add(label);
     }
   }
@@ -417,7 +454,7 @@ function accessibleName(el: Element, role: string): string {
     const text = squash(
       labelledBy
         .map((id) => {
-          const target = doc.getElementById(id);
+          const target = byId(el, id);
           // Named on purpose, a hidden element still names: then all of it does, as a screen reader has it.
           if (!target) return "";
           return visibleText(target, isExposed(target) ? isExposed : () => true, NAME_CHARS);
@@ -743,7 +780,14 @@ function inView(el: Element): boolean {
     const c = node.getBoundingClientRect();
     if (r.bottom <= c.top || r.top >= c.bottom || r.right <= c.left || r.left >= c.right) return false;
   }
-  return true;
+  // In a frame, the frame itself has to be in view as well.
+  let frame: Element | null = null;
+  try {
+    frame = view?.frameElement ?? null;
+  } catch {
+    frame = null;
+  }
+  return frame ? inView(frame) : true;
 }
 
 /** The dialogs open on the page now: shown, and not the agent's own. */
@@ -1270,8 +1314,9 @@ export function submitForm(ref: unknown, isVisible: Visibility): Result<{ note: 
 function focusedElement(doc: Document): Element | null {
   let el: Element | null = doc.activeElement;
   for (let depth = 0; el && depth < MAX_FRAME_DEPTH; depth += 1) {
-    if (el.shadowRoot?.activeElement) {
-      el = el.shadowRoot.activeElement;
+    const shadow = shadowOf(el);
+    if (shadow?.activeElement) {
+      el = shadow.activeElement;
       continue;
     }
     const tag = el.tagName?.toUpperCase();
@@ -1656,6 +1701,35 @@ function frameHost(frame: Element): string | null {
   }
 }
 
+/** Where a frame's page starts inside the frame's box: past its border and its padding. */
+function contentOffset(frame: Element, box: DOMRect): { dx: number; dy: number } {
+  const html = frame as HTMLElement;
+  const style = frame.ownerDocument.defaultView?.getComputedStyle(frame);
+  const pad = (value: string | undefined) => Number.parseFloat(value ?? "") || 0;
+  return { dx: box.left + (html.clientLeft || 0) + pad(style?.paddingLeft), dy: box.top + (html.clientTop || 0) + pad(style?.paddingTop) };
+}
+
+/** Where an element's document sits in the top page's window: nothing for the top page, the frames' offsets for a frame's. */
+function frameOffset(doc: Document): { x: number; y: number } {
+  let x = 0;
+  let y = 0;
+  let view: Window | null = doc.defaultView;
+  for (let depth = 0; view && depth < MAX_FRAME_DEPTH; depth += 1) {
+    let frame: Element | null = null;
+    try {
+      frame = view.frameElement;
+    } catch {
+      frame = null;
+    }
+    if (!frame) break;
+    const { dx, dy } = contentOffset(frame, frame.getBoundingClientRect());
+    x += dx;
+    y += dy;
+    view = frame.ownerDocument.defaultView;
+  }
+  return { x, y };
+}
+
 /** Whether the target, or anything it sits in, is drawn too faint to see. */
 function drawnFaint(el: Element): boolean {
   const view = el.ownerDocument.defaultView;
@@ -1670,8 +1744,8 @@ function drawnFaint(el: Element): boolean {
 function describeAtIn(doc: Document, x: number, y: number, isVisible: Visibility, activates: boolean, offset: { x: number; y: number }, depth: number): Result<{ element: ElementInfo; rect: PointRect }> {
   if (typeof doc.elementFromPoint !== "function") return { ok: false, error: "failed", message: "The page cannot find what is at a point." };
   let el: Element | null = doc.elementFromPoint(x, y);
-  while (el?.shadowRoot && typeof el.shadowRoot.elementFromPoint === "function") {
-    const inner = el.shadowRoot.elementFromPoint(x, y);
+  for (let shadow = el ? shadowOf(el) : null; el && shadow && typeof shadow.elementFromPoint === "function"; shadow = shadowOf(el)) {
+    const inner: Element | null = shadow.elementFromPoint(x, y);
     if (!inner || inner === el) break;
     el = inner;
   }
@@ -1689,9 +1763,7 @@ function describeAtIn(doc: Document, x: number, y: number, isVisible: Visibility
     const inner = depth < MAX_FRAME_DEPTH ? frameDocument(el) : null;
     if (inner) {
       // A frame of this site: the point, in the frame's own pixels, past its border.
-      const html = el as HTMLElement;
-      const dx = box.left + (html.clientLeft || 0);
-      const dy = box.top + (html.clientTop || 0);
+      const { dx, dy } = contentOffset(el, box);
       return describeAtIn(inner, x - dx, y - dy, isVisible, activates, { x: offset.x + dx, y: offset.y + dy }, depth + 1);
     }
     // Another site's frame: what is under the point in there, this page cannot see.
@@ -1736,8 +1808,8 @@ export function locate(ref: unknown, isVisible: Visibility, activates = false): 
   const x = r.left + r.width / 2;
   const y = r.top + r.height / 2;
   let top: Element | null = typeof doc.elementFromPoint === "function" ? doc.elementFromPoint(x, y) : null;
-  while (top?.shadowRoot && typeof top.shadowRoot.elementFromPoint === "function") {
-    const inner = top.shadowRoot.elementFromPoint(x, y);
+  for (let shadow = top ? shadowOf(top) : null; top && shadow && typeof shadow.elementFromPoint === "function"; shadow = shadowOf(top)) {
+    const inner: Element | null = shadow.elementFromPoint(x, y);
     if (!inner || inner === top) break;
     top = inner;
   }
@@ -1750,7 +1822,9 @@ export function locate(ref: unknown, isVisible: Visibility, activates = false): 
     return { ok: false, error: "covered", message: `Something covers element ${ref as string}${name ? `: "${name}"` : ""}. Close it first.` };
   }
   const role = roleOf(target) ?? (headingLevel(target) !== null ? "heading" : "text");
-  return { ok: true, element: describeElement(target, role, isVisible, true), rect: { x: r.left, y: r.top, width: r.width, height: r.height } };
+  // In a frame of this page's site, the box is in the frame's pixels: the mouse presses in the top window's.
+  const offset = frameOffset(doc);
+  return { ok: true, element: describeElement(target, role, isVisible, true), rect: { x: r.left + offset.x, y: r.top + offset.y, width: r.width, height: r.height } };
 }
 
 export function describe(ref: unknown, isVisible: Visibility, activates = false, choose?: unknown): Result<{ element: ElementInfo }> {

@@ -1419,9 +1419,14 @@ function takesText(el: Element): boolean {
 }
 
 /** Change a text field's value as an edit would, with its input event; false when the page cancelled the edit. */
-function editField(field: HTMLInputElement | HTMLTextAreaElement, inputType: string, edit: (value: string, at: { start: number; end: number }) => { value: string; caret: number }): boolean {
+function editField(
+  field: HTMLInputElement | HTMLTextAreaElement,
+  inputType: string,
+  edit: (value: string, at: { start: number; end: number }) => { value: string; caret: number },
+  data: string | null = null,
+): boolean {
   const at = selectionOf(field) ?? { start: field.value.length, end: field.value.length };
-  if (!beforeInput(field, inputType, null)) return false;
+  if (!beforeInput(field, inputType, data)) return false;
   const next = edit(field.value, at);
   const setter = nativeSetter(field);
   if (setter) setter(next.value);
@@ -1432,7 +1437,7 @@ function editField(field: HTMLInputElement | HTMLTextAreaElement, inputType: str
     // A field without a caret.
   }
   const view = field.ownerDocument.defaultView;
-  field.dispatchEvent(view && "InputEvent" in view ? new view.InputEvent("input", { bubbles: true, composed: true, inputType }) : new Event("input", { bubbles: true }));
+  field.dispatchEvent(view && "InputEvent" in view ? new view.InputEvent("input", { bubbles: true, composed: true, inputType, data }) : new Event("input", { bubbles: true }));
   return true;
 }
 
@@ -1457,6 +1462,16 @@ function keyDefault(doc: Document, target: Element, combo: KeyCombo, isVisible: 
     const role = roleOf(next) ?? "element";
     const name = accessibleName(next, role);
     return `The focus moved to ${role}${name ? ` ${quoted(clip(name, 60))}` : ""}.`;
+  }
+  // A character key in a text field types its character (a space too), where the caret is.
+  if (!combo.ctrl && !combo.meta && !combo.alt && [...key].length === 1 && inText) {
+    const char = keyDefFor(combo).text ?? key;
+    if (field) {
+      const typed = editField(field, "insertText", (value, at) => ({ value: `${value.slice(0, at.start)}${char}${value.slice(at.end)}`, caret: at.start + char.length }), char);
+      return typed ? `Typed ${quoted(char)}.` : "";
+    }
+    if (typeof doc.execCommand === "function") doc.execCommand("insertText", false, char);
+    return `Typed ${quoted(char)}.`;
   }
   if (combo.ctrl || combo.meta || combo.alt) {
     if (key.toLowerCase() === "a" && (combo.ctrl || combo.meta)) {

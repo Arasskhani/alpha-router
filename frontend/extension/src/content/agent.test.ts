@@ -696,6 +696,23 @@ describe("acting", () => {
     expect(liked).not.toHaveBeenCalled();
   });
 
+  it("types a character key's character where the caret is", () => {
+    page(`<input aria-label="City" value="Tehan">`);
+    const input = document.querySelector("input")!;
+    input.focus();
+    input.setSelectionRange(3, 3);
+    const inputs: string[] = [];
+    input.addEventListener("input", (e) => inputs.push(`${(e as InputEvent).inputType}:${(e as InputEvent).data ?? ""}`));
+    expect(pressKey(document, "r", visible)).toMatchObject({ note: 'Pressed r. Typed "r".' });
+    expect(input.value).toBe("Tehran");
+    expect(pressKey(document, "shift+x", visible)).toMatchObject({ note: expect.stringContaining('Typed "X".') });
+    expect(inputs[0]).toBe("insertText:r");
+    // A page that takes the keypress keeps the character out.
+    input.addEventListener("keypress", (e) => e.preventDefault());
+    pressKey(document, "z", visible);
+    expect(input.value).toBe("TehrXan");
+  });
+
   it("does nothing more when the page cancels the keypress", () => {
     page(`<form><input aria-label="Search"><button id="go">Go</button></form>`);
     const input = document.querySelector("input")!;

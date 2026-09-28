@@ -58,6 +58,15 @@ describe("what the page announced", () => {
   });
 });
 
+describe("the window's view of the page", () => {
+  it("says how much of the page the window shows, in CSS pixels", () => {
+    const view = observe(document, visible).view;
+    expect(view).toEqual({ width: expect.any(Number), height: expect.any(Number), scrollX: 0, scrollY: 0, pageWidth: expect.any(Number), pageHeight: expect.any(Number) });
+    expect(view!.width).toBeGreaterThan(0);
+    expect(view!.pageHeight).toBeGreaterThanOrEqual(view!.height);
+  });
+});
+
 describe("where the keyboard is", () => {
   it("is the focused field with what it holds, and never what a password field holds", () => {
     document.body.innerHTML = `<input aria-label="To" value="bob@example.com"><input type="password" aria-label="Password" value="hunter2">`;
@@ -77,9 +86,9 @@ describe("where the keyboard is", () => {
     const send = () => undefined;
     await runAgentCall(document, "show_overlay", { run: "run-1", label: "Working" }, visible, send);
     document.getElementById("a")!.textContent = "Saved";
-    expect(await runAgentCall(document, "observe", {}, visible, send)).toEqual({ ok: true, said: [{ kind: "alert", text: "Saved" }] });
+    expect(await runAgentCall(document, "observe", {}, visible, send)).toMatchObject({ ok: true, said: [{ kind: "alert", text: "Saved" }] });
     await runAgentCall(document, "hide_overlay", { run: "run-1" }, visible, send);
     // A new watch starts from what is there: nothing new yet.
-    expect(await runAgentCall(document, "observe", {}, visible, send)).toEqual({ ok: true, said: [] });
+    expect(await runAgentCall(document, "observe", {}, visible, send)).toMatchObject({ ok: true, said: [] });
   });
 });

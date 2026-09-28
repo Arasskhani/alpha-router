@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { PolicyContext } from "../lib/agentPolicy";
 import type { PageResult } from "../lib/pageAgent";
-import { agentToolsFor } from "./agentTools";
+import { agentInstructions, agentToolsFor } from "./agentTools";
 import {
   conversation,
   runAgent,
@@ -156,7 +156,10 @@ describe("a run", () => {
     await run(h);
     const [system, task, , answer] = h.sent[1];
     expect(system.role === "system" && system.content).toContain("<untrusted_page_content_0123456789ab>");
-    expect(task).toEqual({ role: "user", content: options().task });
+    // The task, then where the run starts - the tab's title and address are the page's words, so inside the tags.
+    expect(task.role).toBe("user");
+    expect(String(task.content).startsWith(`${options().task}\n\nWhere you start`)).toBe(true);
+    expect(String(task.content)).toContain('<untrusted_page_content_0123456789ab site="shop.example.com">\n"Cart" at shop.example.com/cart.');
     expect(answer.role).toBe("tool");
     const content = (answer as { content: string }).content;
     expect(content.startsWith('<untrusted_page_content_0123456789ab site="shop.example.com">')).toBe(true);
@@ -734,6 +737,31 @@ describe("the conversation the model reads", () => {
     expectEveryCallAnswered(messages);
     expect(messages.at(-1)).toMatchObject({ role: "tool", tool_call_id: "c6" });
     expect(messages.reduce((sum, m) => sum + (typeof m.content === "string" ? m.content.length : 0), 0)).toBeLessThan(130_000);
+  });
+});
+
+describe("the standing instructions", () => {
+  it("start the way the run can see: a screenshot under full control, the outline otherwise", () => {
+    const control = agentInstructions(NONCE, { fullControl: true, mode: "ask", screenshotAfterAction: true });
+    expect(control).toMatch(/Start with a screenshot/);
+    expect(control).toMatch(/\(0, 0\) at its top-left corner/);
+    expect(control).toMatch(/click it first, check that the result says the keyboard is in that field, then type/);
+    expect(control).toMatch(/ends with a fresh screenshot/);
+    const plain = agentInstructions(NONCE, { mode: "ask" });
+    expect(plain).toMatch(/Start with read_page/);
+    expect(plain).not.toMatch(/screenshot/);
+    // Without the screenshot after each change, it is not promised.
+    expect(agentInstructions(NONCE, { fullControl: true, mode: "ask" })).not.toMatch(/ends with a fresh screenshot/);
+  });
+
+  it("say how to finish, and what each mode means for batches", () => {
+    const ask = agentInstructions(NONCE, { mode: "ask" });
+    expect(ask).toMatch(/Send one action at a time when the next depends on what the last one did/);
+    expect(ask).toMatch(/check on the page that the task is done/);
+    expect(ask).toMatch(/Always end with done/);
+    expect(ask).toMatch(/commit what you typed with Enter or Tab/);
+    expect(agentInstructions(NONCE, { mode: "plan" })).toMatch(/call update_plan/);
+    expect(agentInstructions(NONCE, { mode: "auto" })).toMatch(/a reviewer checks each action/);
   });
 });
 

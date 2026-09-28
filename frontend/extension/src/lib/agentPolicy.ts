@@ -39,6 +39,7 @@
 
 import type { ElementInfo } from "../content/agent";
 import { sensitiveText } from "./sensitive";
+import { KEY_NAMES_SHOWN, parseKeyCombo } from "./keys";
 import { hostMatches, readablePage, siteRefusal, type SitePolicy } from "./sites";
 
 type ActionClass = "read" | "act" | "sensitive" | "blocked";
@@ -508,56 +509,6 @@ function submitVerdict(element: ElementInfo, page: { url: string; host: string }
 /** Roles of fields that hold text a person types. */
 const TEXT_ROLES = new Set(["textbox", "searchbox", "combobox", "spinbutton"]);
 
-/** A key as the model names it ("ctrl+shift+a", "Enter", "Space"): the key, and what is held. */
-export type KeyCombo = { key: string; ctrl: boolean; alt: boolean; shift: boolean; meta: boolean };
-
-/** Key names as the model may write them, lower-cased, to the key as the rules read it. */
-const KEY_NAMES: Record<string, string> = {
-  enter: "Enter",
-  return: "Enter",
-  tab: "Tab",
-  escape: "Escape",
-  esc: "Escape",
-  backspace: "Backspace",
-  delete: "Delete",
-  del: "Delete",
-  space: " ",
-  spacebar: " ",
-  " ": " ",
-  arrowup: "ArrowUp",
-  up: "ArrowUp",
-  arrowdown: "ArrowDown",
-  down: "ArrowDown",
-  arrowleft: "ArrowLeft",
-  left: "ArrowLeft",
-  arrowright: "ArrowRight",
-  right: "ArrowRight",
-  home: "Home",
-  end: "End",
-  pageup: "PageUp",
-  pagedown: "PageDown",
-  insert: "Insert",
-};
-
-export function parseKeyCombo(raw: unknown): KeyCombo | null {
-  if (typeof raw !== "string" || !raw.trim()) return null;
-  const tokens = raw.split("+").map((t) => t.trim()).filter(Boolean);
-  if (!tokens.length) return null;
-  const combo: KeyCombo = { key: "", ctrl: false, alt: false, shift: false, meta: false };
-  for (const token of tokens.slice(0, -1)) {
-    const mod = token.toLowerCase();
-    if (mod === "ctrl" || mod === "control") combo.ctrl = true;
-    else if (mod === "alt" || mod === "option") combo.alt = true;
-    else if (mod === "shift") combo.shift = true;
-    else if (mod === "meta" || mod === "cmd" || mod === "command" || mod === "win" || mod === "super") combo.meta = true;
-    else return null;
-  }
-  const last = tokens[tokens.length - 1];
-  const lower = last.toLowerCase();
-  combo.key = KEY_NAMES[lower] ?? ([...last].length === 1 ? last : lower.replace(/^./, (c) => c.toUpperCase()));
-  return combo;
-}
-
 /** Keys that stay within the page when Ctrl or Cmd is held: editing, selecting, moving. */
 const EDITING_SHORTCUTS = new Set(["a", "c", "x", "z", "y", "b", "i", "u", "Enter", "Backspace", "Delete", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End"]);
 
@@ -570,7 +521,8 @@ const EDITING_SHORTCUTS = new Set(["a", "c", "x", "z", "y", "b", "i", "u", "Ente
  * browser's own shortcuts are not.
  */
 function keyVerdict(rawKey: unknown, element: ElementInfo | undefined, page: { url: string; host: string }, ctx: PolicyContext): Verdict {
-  const combo = parseKeyCombo(rawKey) ?? { key: "", ctrl: false, alt: false, shift: false, meta: false };
+  const combo = parseKeyCombo(rawKey);
+  if (!combo) return blocked("bad_key", `"${String(rawKey).slice(0, 40)}" is not a key the agent can press. It can press ${KEY_NAMES_SHOWN}.`);
   const key = combo.key;
   const shown = key === " " ? "Space" : key || "a key";
   if (element) {

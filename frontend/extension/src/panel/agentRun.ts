@@ -19,7 +19,8 @@
  * second such answer in a row ends the run as "no_action" - not as done.
  */
 
-import { approvalFor, classifyAction, DEFAULT_APPROVALS, parseKeyCombo, type AgentMode, type PolicyContext, type Verdict } from "../lib/agentPolicy";
+import { approvalFor, classifyAction, DEFAULT_APPROVALS, type AgentMode, type PolicyContext, type Verdict } from "../lib/agentPolicy";
+import { KEY_NAMES_SHOWN, parseKeyCombo } from "../lib/keys";
 import type { CdpDriver } from "../lib/cdpDriver";
 import { probeInjection } from "../lib/injection";
 import type { ElementInfo, PageMethod, PageResult } from "../lib/pageAgent";
@@ -1041,6 +1042,10 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
           if (focus.ok && focus.element) element = focus.element as ElementInfo;
         }
       }
+    }
+    // A key read through the same table as the keyboard's: one it does not know is a mistake to correct, not an action to judge.
+    if (judgedAs === "press_key" && !parseKeyCombo(judgedArgs.key)) {
+      return invalid(`"${clip(String(judgedArgs.key ?? ""), 40)}" is not a key the agent can press. It can press ${KEY_NAMES_SHOWN}.`);
     }
     // Deletion keys, one after another: past a run of them the next asks, whatever the mode.
     const deletionKey = judgedAs === "press_key" && ["Backspace", "Delete"].includes(parseKeyCombo(judgedArgs.key)?.key ?? "");

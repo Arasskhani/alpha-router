@@ -237,7 +237,7 @@ describe("computer actions", () => {
     expect(h.driver!.key).not.toHaveBeenCalled();
   });
 
-  it("an unknown key is reported, and scroll and hover are reads that need no approval", async () => {
+  it("an unknown key is sent back without asking anyone, and scroll and hover are reads that need no approval", async () => {
     const h = harness([
       {
         text: "",
@@ -249,11 +249,13 @@ describe("computer actions", () => {
       },
     ]);
     await h.run();
-    expect(h.approvals).toHaveLength(1); // only the key press asked
+    // No key to judge: nobody is asked, and the model is told which keys there are.
+    expect(h.approvals).toHaveLength(0);
+    expect(h.driver!.key).not.toHaveBeenCalled();
     expect(h.driver!.scroll).toHaveBeenCalledWith({ x: 200, y: 100 }, { y: 200 });
     expect(h.driver!.hover).toHaveBeenCalledWith({ x: 200, y: 100 }, []);
     const tools = h.sent[1].filter((m) => m.role === "tool");
-    expect(String(tools[2].content)).toContain("cannot press");
+    expect(String(tools[2].content)).toMatch(/not a key the agent can press/);
   });
 
   it("a drag is judged on what it picks up and where it drops", async () => {

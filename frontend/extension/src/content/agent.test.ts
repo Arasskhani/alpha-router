@@ -430,11 +430,17 @@ describe("acting", () => {
     const input = document.querySelector("input")!;
     input.focus();
     const seen: string[] = [];
-    input.addEventListener("keydown", (e) => seen.push(`${e.key}:${(e as KeyboardEvent).keyCode}`));
+    input.addEventListener("keydown", (e) => seen.push(`${(e as KeyboardEvent).ctrlKey ? "ctrl+" : ""}${e.key}:${(e as KeyboardEvent).keyCode}`));
     input.addEventListener("keyup", (e) => seen.push(`up:${e.key}`));
     expect(pressKey(document, "Enter")).toMatchObject({ ok: true });
     expect(seen).toEqual(["Enter:13", "up:Enter"]);
-    expect(pressKey(document, "Control+W")).toMatchObject({ ok: false, error: "bad_key" });
+    // Spelled as the rules read it: the same table.
+    seen.length = 0;
+    expect(pressKey(document, "Return")).toMatchObject({ ok: true });
+    expect(pressKey(document, "Page_Down")).toMatchObject({ ok: true });
+    expect(pressKey(document, "ctrl+a")).toMatchObject({ ok: true });
+    expect(seen.filter((s) => !s.startsWith("up:"))).toEqual(["Enter:13", "PageDown:34", "ctrl+a:65"]);
+    expect(pressKey(document, "Frobnicate")).toMatchObject({ ok: false, error: "bad_key" });
   });
 
   it("tells which element has the keyboard, and presses keys there, inside a web component too", () => {

@@ -14,20 +14,37 @@ import type { Point } from "./coords";
 export type Send = (method: string, params?: Record<string, unknown>) => Promise<unknown>;
 export type MouseButton = "left" | "right" | "middle";
 
-/** CDP's modifier bitmask: Alt 1, Ctrl 2, Meta 4, Shift 8. cmd/command are meta. */
-const MODIFIER_BITS: Record<string, number> = {
-  alt: 1,
-  ctrl: 2,
-  control: 2,
-  meta: 4,
-  cmd: 4,
-  command: 4,
-  shift: 8,
+/** Every name of a held key, as models write them, to the modifier it is. */
+const MODIFIER_NAMES: Record<string, "alt" | "ctrl" | "meta" | "shift"> = {
+  alt: "alt",
+  option: "alt",
+  opt: "alt",
+  ctrl: "ctrl",
+  control: "ctrl",
+  ctl: "ctrl",
+  meta: "meta",
+  cmd: "meta",
+  command: "meta",
+  super: "meta",
+  win: "meta",
+  windows: "meta",
+  shift: "shift",
 };
+
+/** The modifier a held key's name stands for ("cmd" is meta, "option" is alt), or null for no modifier. */
+export function modifierName(raw: string): "alt" | "ctrl" | "meta" | "shift" | null {
+  return MODIFIER_NAMES[raw.trim().toLowerCase()] ?? null;
+}
+
+/** CDP's modifier bitmask: Alt 1, Ctrl 2, Meta 4, Shift 8. */
+const MODIFIER_BITS = { alt: 1, ctrl: 2, meta: 4, shift: 8 } as const;
 
 export function modifiersMask(modifiers: readonly string[] = []): number {
   let mask = 0;
-  for (const raw of modifiers) mask |= MODIFIER_BITS[raw.trim().toLowerCase()] ?? 0;
+  for (const raw of modifiers) {
+    const held = modifierName(raw);
+    if (held) mask |= MODIFIER_BITS[held];
+  }
   return mask;
 }
 

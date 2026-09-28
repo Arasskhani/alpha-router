@@ -443,6 +443,24 @@ describe("Auto mode", () => {
     expect(h.approvals).toEqual([expect.objectContaining({ summary: 'Press Enter in "Message"', verdict: expect.objectContaining({ reason: "enter_sends" }) })]);
   });
 
+  it("judges a key however the model spells it, and sends back one that is no key to correct", async () => {
+    const browser = fakeBrowser({ describe_focus: () => ({ ok: true, element: { ref: "e7", role: "textbox", name: "Message", tag: "textarea" } }) });
+    const h = harness(
+      [
+        { text: "", toolCalls: [call("press_key", { key: "Frobnicate" }, "k1")] },
+        { text: "", toolCalls: [call("press_key", { key: "Return" }, "k2")] },
+        { text: "", toolCalls: [call("done", { summary: "ok" })] },
+      ],
+      { browser, review: { decision: "allow", reason: "ok" } },
+    );
+    await run(h, { mode: "auto" });
+    const answer = h.sent[1].find((m) => m.role === "tool" && m.tool_call_id === "k1");
+    expect(answer?.role === "tool" && answer.content).toMatch(/not a key the agent can press.*PageDown/);
+    expect(browser.page.mock.calls.filter(([method]) => method === "press_key").map(([, a]) => a)).toEqual([{ key: "Return" }]);
+    // Return is Enter: in a message box it may send, so the user is asked.
+    expect(h.approvals).toEqual([expect.objectContaining({ verdict: expect.objectContaining({ reason: "enter_sends" }) })]);
+  });
+
   it("asks the user before acting on a site the page went to by itself, then lets the reviewer decide there", async () => {
     const WEBMAIL = { id: 1, url: "https://webmail.example.org/inbox", host: "webmail.example.org", title: "Inbox" };
     let where = TAB;

@@ -24,6 +24,7 @@
  * is a limit of acting without the debugger.
  */
 
+import { keyDefFor, KEY_NAMES_SHOWN, parseKeyCombo } from "../lib/keys";
 import { isSensitiveField } from "../lib/sensitive";
 import { extractPage, isBlockDisplayed, isTextRendered } from "./extract";
 import { OVERLAY_ID } from "./overlay";
@@ -956,24 +957,6 @@ export function submitForm(ref: unknown, isVisible: Visibility): Result<{ note: 
   return { ok: true, note: "The form was sent." };
 }
 
-/** Keys the agent may press, with the legacy codes some pages still read. */
-const KEYS: Record<string, { code: string; keyCode: number }> = {
-  Enter: { code: "Enter", keyCode: 13 },
-  Tab: { code: "Tab", keyCode: 9 },
-  Escape: { code: "Escape", keyCode: 27 },
-  Backspace: { code: "Backspace", keyCode: 8 },
-  Delete: { code: "Delete", keyCode: 46 },
-  ArrowUp: { code: "ArrowUp", keyCode: 38 },
-  ArrowDown: { code: "ArrowDown", keyCode: 40 },
-  ArrowLeft: { code: "ArrowLeft", keyCode: 37 },
-  ArrowRight: { code: "ArrowRight", keyCode: 39 },
-  Home: { code: "Home", keyCode: 36 },
-  End: { code: "End", keyCode: 35 },
-  PageUp: { code: "PageUp", keyCode: 33 },
-  PageDown: { code: "PageDown", keyCode: 34 },
-  " ": { code: "Space", keyCode: 32 },
-};
-
 /**
  * The element that has the keyboard: the focused element, followed into open
  * shadow roots and into same-site frames. When the focus is in a frame from
@@ -1019,21 +1002,24 @@ export function describeFocus(doc: Document, isVisible: Visibility): Result<{ el
 }
 
 export function pressKey(doc: Document, key: unknown): Result<{ note: string }> {
-  const name = key === "Space" ? " " : key;
-  const known = typeof name === "string" ? KEYS[name] : undefined;
-  if (typeof name !== "string" || !known) {
-    return { ok: false, error: "bad_key", message: `The agent can press: ${Object.keys(KEYS).map((k) => (k === " " ? "Space" : k)).join(", ")}.` };
+  // The same table the rules read the key through: what they judged is what is pressed.
+  const combo = parseKeyCombo(key);
+  if (!combo) {
+    return { ok: false, error: "bad_key", message: `"${clip(String(key ?? ""), 40)}" is not a key the agent can press. It can press ${KEY_NAMES_SHOWN}.` };
   }
+  const def = keyDefFor(combo);
   // Where describeFocus looked: the element with the keyboard, inside a web component too.
   const target = focusedElement(doc) ?? doc.body ?? doc.documentElement;
   const view = doc.defaultView;
+  const held = { ctrlKey: combo.ctrl, altKey: combo.alt, shiftKey: combo.shift, metaKey: combo.meta };
   for (const type of ["keydown", "keyup"] as const) {
-    const event = new (view?.KeyboardEvent ?? KeyboardEvent)(type, { key: name, code: known.code, bubbles: true, cancelable: true, composed: true });
-    Object.defineProperty(event, "keyCode", { get: () => known.keyCode });
-    Object.defineProperty(event, "which", { get: () => known.keyCode });
+    const event = new (view?.KeyboardEvent ?? KeyboardEvent)(type, { key: def.key, code: def.code, ...held, bubbles: true, cancelable: true, composed: true });
+    Object.defineProperty(event, "keyCode", { get: () => def.vk });
+    Object.defineProperty(event, "which", { get: () => def.vk });
     target.dispatchEvent(event);
   }
-  return { ok: true, note: `Pressed ${name === " " ? "Space" : name}. A key from the agent reaches the page's own handlers only; it does not submit forms or move the focus by itself.` };
+  const shown = def.key === " " ? "Space" : def.key;
+  return { ok: true, note: `Pressed ${String(key).trim() || shown}. A key from the agent reaches the page's own handlers only; it does not submit forms or move the focus by itself.` };
 }
 
 export function scroll(doc: Document, direction: unknown, ref: unknown, isVisible: Visibility): Result<{ note: string }> {

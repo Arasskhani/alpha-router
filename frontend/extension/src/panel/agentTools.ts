@@ -5,6 +5,8 @@
  * content.js, or with the browser's tabs - after the agent's rules allow it.
  */
 
+import { KEY_NAMES_SHOWN } from "../lib/keys";
+
 type Schema = { type: "object"; properties: Record<string, unknown>; required?: string[]; additionalProperties?: false };
 
 export type ToolSchema = { type: "function"; function: { name: string; description: string; parameters: Schema } };
@@ -41,7 +43,7 @@ const AGENT_TOOLS: ToolSchema[] = [
   tool("select_option", "Choose an option in a menu (a select element), by its label or value.", { ref, value: { type: "string" } }, ["ref", "value"]),
   tool(
     "press_key",
-    "Press a key in the element that has the focus: Enter, Tab, Escape, Backspace, Delete, the arrows, Home, End, PageUp, PageDown or Space.",
+    `Press a key or a shortcut in the element that has the focus: ${KEY_NAMES_SHOWN}.`,
     { key: { type: "string" } },
     ["key"],
   ),
@@ -107,10 +109,10 @@ export const CONTROL_TOOLS: ToolSchema[] = [
       },
       coordinate,
       start_coordinate: coordinate,
-      text: { type: "string", description: "What to type, or the key to press." },
+      text: { type: "string", description: `What to type, or the key to press: ${KEY_NAMES_SHOWN}.` },
       scroll_direction: { type: "string", enum: ["up", "down", "left", "right"] },
       scroll_amount: { type: "integer", minimum: 1, maximum: 10 },
-      modifiers: { type: "string", description: "Held keys for a click: ctrl, shift, alt, cmd, joined with +." },
+      modifiers: { type: "string", description: "Held keys for a click: ctrl, shift, alt, meta (cmd, win), joined with +." },
       duration: { type: "number", minimum: 0, maximum: 10 },
     },
     ["action"],

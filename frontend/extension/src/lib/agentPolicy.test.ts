@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ElementInfo } from "../content/agent";
-import { approvalFor, classifyAction, consentPage, DEFAULT_APPROVALS, parseKeyCombo, type PolicyContext, type ProposedAction } from "./agentPolicy";
+import { approvalFor, classifyAction, consentPage, DEFAULT_APPROVALS, type PolicyContext, type ProposedAction } from "./agentPolicy";
 
 const OPEN: PolicyContext = { policy: { allowed_sites: [], blocked_sites: [] }, serverHost: "ai.example.com", ownHosts: ["ai.example.com"] };
 const RULES: PolicyContext = {
@@ -509,16 +509,19 @@ describe("full control's targets", () => {
 describe("keys under full control", () => {
   const field = el({ role: "textbox", name: "Message", tag: "textarea" });
 
-  it("parses what the model names", () => {
-    expect(parseKeyCombo("ctrl+shift+a")).toEqual({ key: "a", ctrl: true, alt: false, shift: true, meta: false });
-    expect(parseKeyCombo("cmd+Enter")).toEqual({ key: "Enter", ctrl: false, alt: false, shift: false, meta: true });
-    expect(parseKeyCombo("Return")).toMatchObject({ key: "Enter" });
-    expect(parseKeyCombo("space")).toMatchObject({ key: " " });
-    expect(parseKeyCombo("down")).toMatchObject({ key: "ArrowDown" });
-    expect(parseKeyCombo("f5")).toMatchObject({ key: "F5" });
-    expect(parseKeyCombo("bogus+a")).toBeNull();
-    expect(parseKeyCombo("")).toBeNull();
-    expect(parseKeyCombo(7)).toBeNull();
+  it("reads a key however the model spells it", () => {
+    expect(classify("press_key", { args: { key: "Return" }, element: field })).toMatchObject({ class: "sensitive", reason: "enter_sends" });
+    expect(classify("press_key", { args: { key: "KP_Enter" }, element: field })).toMatchObject({ class: "sensitive", reason: "enter_sends" });
+    expect(classify("press_key", { args: { key: "BackSpace" } })).toMatchObject({ reason: "delete_key" });
+    expect(classify("press_key", { args: { key: "super+t" }, element: field })).toMatchObject({ class: "blocked", reason: "browser_shortcut" });
+    expect(classify("press_key", { args: { key: "option+ArrowLeft" }, element: field })).toMatchObject({ class: "blocked", reason: "browser_shortcut" });
+    expect(classify("press_key", { args: { key: "Page_Down" }, element: field })).toMatchObject({ class: "act" });
+  });
+
+  it("refuses what is not a key", () => {
+    for (const key of ["Frobnicate", "bogus+a", ""]) {
+      expect(classify("press_key", { args: { key }, element: field })).toMatchObject({ class: "blocked", reason: "bad_key" });
+    }
   });
 
   it("never pastes the clipboard", () => {

@@ -104,6 +104,7 @@ export const AGENT_TASKS = {
   tabs: "E2E-AGENT-TABS",
   busy: "E2E-AGENT-BUSY",
   slow: "E2E-AGENT-SLOW",
+  words: "E2E-AGENT-WORDS",
 };
 /** Where agent-control.html puts its trusted-only button, in CSS pixels (its centre). */
 export const CONTROL_CLICK = [100, 140];
@@ -197,6 +198,13 @@ async function agentReply(messages, { stealUrl, openUrl, locate }) {
       () => ({ tool: "screenshot", args: {} }),
       (m) => pointAt(m, "Dialog step"),
       () => answered("Dialog step"),
+    ],
+    // A model that says what it will do instead of doing it: once reminded, it acts.
+    [AGENT_TASKS.words]: [
+      (m) =>
+        m.some((x) => x.role === "user" && text(x).includes("without calling a tool"))
+          ? { tool: "done", args: { summary: "Words step: acted after the reminder" } }
+          : { text: "I will look at the page first." },
     ],
     // A model that takes its time: half a minute before it answers at all.
     [AGENT_TASKS.slow]: [() => ({ delay: 30_000, tool: "done", args: { summary: "Slow step: answered" } })],

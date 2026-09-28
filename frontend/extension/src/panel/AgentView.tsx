@@ -150,6 +150,7 @@ const OUTCOME_LABEL: Record<RunOutcome, string> = {
   max_minutes: "Time limit reached",
   errors: "Stopped after errors",
   failed: "Could not go on",
+  no_action: "Stopped: the model did not act",
 };
 
 function describeError(err: unknown): string {

@@ -1161,6 +1161,19 @@ async function main() {
     await start.close();
   });
 
+  await step("a model that answers in words alone is reminded to act, and the run goes on", async () => {
+    expect(panel, "no side panel");
+    const task = `${AGENT_TASKS.words}: look at this page (${NONCE})`;
+    agentTasks.push(task);
+    const page = await context.newPage();
+    await page.goto(site.agentUrl("agent-shop.html"));
+    await agentStart(page, task);
+    await panel.until(agentSays("Words step: acted after the reminder"), "the agent's summary", 30_000);
+    await panel.until(agentIdle, "the run to end");
+    expect(await panel.run(agentPanel("root.querySelector('.agent__result--done') !== null")), "the run did not end as finished");
+    await page.close();
+  });
+
   await step("while the model thinks the panel says so, and Stop ends the run at once", async () => {
     expect(panel, "no side panel");
     const task = `${AGENT_TASKS.slow}: think about this page (${NONCE})`;

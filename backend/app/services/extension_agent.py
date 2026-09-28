@@ -57,7 +57,7 @@ MAX_DETAIL_BYTES = 4096
 
 #: How a step or a run can end, as Admin Logs shows it.
 STEP_OUTCOMES = frozenset({"ok", "error", "denied", "blocked", "skipped", "stopped"})
-TASK_OUTCOMES = frozenset({"done", "stopped", "max_steps", "max_minutes", "errors", "failed"})
+TASK_OUTCOMES = frozenset({"done", "stopped", "max_steps", "max_minutes", "errors", "failed", "no_action"})
 
 _ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")

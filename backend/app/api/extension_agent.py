@@ -206,7 +206,7 @@ class FinishedRunIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     task: str = Field(..., min_length=1, max_length=MAX_TASK_CHARS)
-    outcome: Literal["done", "stopped", "max_steps", "max_minutes", "errors", "failed"]
+    outcome: Literal["done", "stopped", "max_steps", "max_minutes", "errors", "failed", "no_action"]
     summary: str = Field("", max_length=MAX_SUMMARY_CHARS)
     steps: list[RunStepIn] = Field(default_factory=list, max_length=MAX_STEPS)
     model: str | None = Field(None, max_length=64)

@@ -2392,7 +2392,7 @@ export const docSections: DocSection[] = [
           <li>
             <code>agent_task</code> — each run: how it ended (<code>done</code>, <code>stopped</code>,{" "}
             <code>max_steps</code>, <code>max_minutes</code>, <code>errors</code> for three failed actions in a row,{" "}
-            <code>failed</code>), how
+            <code>no_action</code> when the model answered twice in a row without acting, <code>failed</code>), how
             many steps, the model and how long it took.
           </li>
         </ul>

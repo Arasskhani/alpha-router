@@ -38,6 +38,7 @@ OUTCOME_LABEL = {
     "max_minutes": "Stopped at the time limit",
     "errors": "Stopped after three failed steps in a row",
     "failed": "Could not go on",
+    "no_action": "Stopped: the model answered without acting",
 }
 
 STATUS_MARK = {

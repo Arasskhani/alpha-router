@@ -129,6 +129,14 @@ class TestEvents:
         assert (task.kind, task.outcome) == ("agent_task", "done")
         assert json.loads(task.detail_json)["steps"] == 7
 
+    async def test_a_run_that_ended_without_the_model_acting_is_recorded_so(self, client, browser, session_factory):
+        resp = await client.post(
+            "/api/extension/events", json={"events": [{**TASK, "outcome": "no_action"}]}, headers=browser.headers
+        )
+        assert resp.json() == {"recorded": 1, "refused": 0}
+        (task,) = await _events(session_factory)
+        assert (task.kind, task.outcome) == ("agent_task", "no_action")
+
     async def test_they_appear_in_admin_logs(self, client, browser, db_session):
         await client.post("/api/extension/events", json={"events": [STEP]}, headers=browser.headers)
         logs = await list_admin_logs(
@@ -781,6 +789,24 @@ class TestSavedRuns:
         assert '3. Click "Buy now" - refused by the rules - Purchases are never made by the agent.' in answer
         assert '4. Click "Next" - done' in answer
         assert "1 min 35 s, plan mode" in answer
+
+    async def test_a_run_that_ended_without_the_model_acting_says_so(self, client, browser, session_factory):
+        from sqlalchemy import select as sql_select
+
+        from app.models.chat import ChatMessage
+
+        run = {**RUN, "outcome": "no_action", "summary": "The model answered without acting: I will look next."}
+        resp = await client.post("/api/extension/runs", json=run, headers=browser.headers)
+        assert resp.status_code == 200, resp.text
+        async with session_factory() as fresh:
+            answer = (
+                await fresh.execute(
+                    sql_select(ChatMessage.content).where(
+                        ChatMessage.session_id == resp.json()["chat_id"], ChatMessage.role == "assistant"
+                    )
+                )
+            ).scalar_one()
+        assert answer.startswith("**Stopped: the model answered without acting**")
 
     async def test_saving_is_refused_when_the_administrator_keeps_no_runs(self, client, browser, db_session):
         from app.services.extension_settings import ExtensionSettings, save_extension_settings

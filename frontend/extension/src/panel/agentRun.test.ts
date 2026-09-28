@@ -209,9 +209,24 @@ describe("a run", () => {
     expect(h.sent[1].find((m) => m.role === "tool")).toMatchObject({ content: "The user answered: SAVE10" });
   });
 
-  it("ends when the model answers in words alone", async () => {
-    const h = harness([{ text: "There is nothing to apply the coupon to.", toolCalls: [] }]);
-    await expect(run(h)).resolves.toEqual({ outcome: "done", summary: "There is nothing to apply the coupon to.", steps: 1 });
+  it("reminds a model that answers in words alone to act, and goes on when it does", async () => {
+    const h = harness([
+      { text: "I will look at the cart next.", toolCalls: [] },
+      { text: "", toolCalls: [call("done", { summary: "There is nothing to apply the coupon to." })] },
+    ]);
+    await expect(run(h)).resolves.toMatchObject({ outcome: "done", summary: "There is nothing to apply the coupon to." });
+    const reminder = h.sent[1].at(-1)!;
+    expect(reminder.role).toBe("user");
+    expect(String(reminder.content)).toMatch(/without calling a tool/);
+  });
+
+  it("ends as no action, not as done, when the model answers in words alone twice in a row", async () => {
+    const h = harness([
+      { text: "I will look at the cart next.", toolCalls: [] },
+      { text: "Looking at the cart now.", toolCalls: [] },
+    ]);
+    await expect(run(h)).resolves.toMatchObject({ outcome: "no_action", summary: "The model answered without acting: Looking at the cart now." });
+    expect(h.reports.at(-1)).toMatchObject({ kind: "agent_task", outcome: "no_action" });
   });
 
   it("stops at its step limit", async () => {

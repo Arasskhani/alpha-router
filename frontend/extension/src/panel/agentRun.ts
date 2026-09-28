@@ -13,9 +13,10 @@
  * What comes from a page goes back inside <untrusted_page_content_…> tags,
  * with the run's own random suffix; older page content is cut short so a long
  * run stays within the model's reach, and a tool call is never separated from
- * its answer. The run ends when the model calls done (or answers in words
- * alone), at the step limit, after three failed tool calls in a row, or when
- * the user presses Stop.
+ * its answer. The run ends when the model calls done, at the step limit,
+ * after three failed tool calls in a row, or when the user presses Stop. An
+ * answer in words alone is not the end: the model is reminded to act, and a
+ * second such answer in a row ends the run as "no_action" - not as done.
  */
 
 import { approvalFor, classifyAction, DEFAULT_APPROVALS, parseKeyCombo, type AgentMode, type PolicyContext, type Verdict } from "../lib/agentPolicy";
@@ -139,11 +140,14 @@ export type AgentOptions = {
   modelRef?: string;
 };
 
-export type RunOutcome = "done" | "stopped" | "max_steps" | "max_minutes" | "errors" | "failed";
+export type RunOutcome = "done" | "stopped" | "max_steps" | "max_minutes" | "errors" | "failed" | "no_action";
 
 export type RunResult = { outcome: RunOutcome; summary: string; steps: number };
 
 const MAX_ERRORS_IN_A_ROW = 3;
+/** What the model is told after an answer in words alone: the task is not over until it says so with done. */
+const NUDGE =
+  "You answered without calling a tool, and the task goes on until you call done. Call the next tool now; use ask_user if you need the user, or done with a short summary if the task is complete or cannot be done.";
 /** The page's border, cursor and take-over window are best-effort: a page that does not answer this fast is not waited for. */
 const VISUAL_MS = 2000;
 /** How far the target may have moved between the judgment and the press, in CSS pixels. */
@@ -507,6 +511,8 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
   let injected: string | null = null;
   /** Plan mode: true once the user has approved a plan, after which the plan's sites are worked without asking each action. */
   let planApproved = false;
+  /** The model answered in words alone and was reminded to act; a second time in a row ends the run. */
+  let nudged = false;
   let steps = 0;
   let startSite: string | undefined;
   /**
@@ -1244,10 +1250,16 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       }));
       entries.push({ message: { role: "assistant", content: reply.text || null, ...(calls.length ? { tool_calls: calls } : {}) } });
       if (!calls.length) {
-        // Words alone: the model has finished.
-        report("done");
-        return { outcome: "done", summary: reply.text.trim() || "Done.", steps };
+        // Words alone are not the end: a model that says what it will do, and does not, is reminded once.
+        if (!nudged) {
+          nudged = true;
+          entries.push({ message: { role: "user", content: NUDGE } });
+          continue;
+        }
+        report("no_action");
+        return { outcome: "no_action", summary: `The model answered without acting: ${clip(reply.text.trim() || "(no words)", 1000)}`, steps };
       }
+      nudged = false;
       let skip: string | null = null;
       let finish: string | null = null;
       let tooManyErrors = false;

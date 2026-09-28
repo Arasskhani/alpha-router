@@ -189,7 +189,7 @@ async def check_agent_model(db: AsyncSession, *, model_ref: str, settings: Exten
     ref = f"model::{model.id}" if model is not None else None
     # Auto Router picks another model for every step - one that may read no images, or call no tools - so a run
     # would change hands at each step. Whatever the lists say, it is not the agent's.
-    if model is not None and is_auto_router_model_id(model.external_id):
+    if model is not None and is_auto_router_model_id(str(model.external_id or "")):
         raise PageContextRefused(
             403,
             "agent_model_not_allowed",

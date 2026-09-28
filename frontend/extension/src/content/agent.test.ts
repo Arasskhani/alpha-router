@@ -3,7 +3,7 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { click, describe as describeRef, describeFocus, find, findRef, locate, pressKey, readPage, scroll, selectOption, snapshot, submitForm, typeText, waitFor, type ElementInfo } from "./agent";
+import { click, describe as describeRef, describeFocus, find, findRef, locate, pageText, pressKey, readPage, scroll, selectOption, snapshot, submitForm, typeText, waitFor, type ElementInfo } from "./agent";
 import { hideOverlay, OVERLAY_ID, showOverlay } from "./overlay";
 import { runAgentCall } from "./runtime";
 
@@ -380,6 +380,17 @@ describe("acting", () => {
     vi.spyOn(button, "getBoundingClientRect").mockReturnValue({ left: 10, top: 20, width: 80, height: 30, right: 90, bottom: 50, x: 10, y: 20, toJSON: () => ({}) } as DOMRect);
     Object.defineProperty(inner, "elementFromPoint", { value: () => button, configurable: true });
     expect(locate(reply.ref, visible, true)).toMatchObject({ ok: true, rect: { x: 110, y: 70, width: 80, height: 30 } });
+  });
+
+  it("reads an open dialog and what the page announces with the page's text, first", () => {
+    page(`<main><h1>Inbox</h1><p>Welcome back.</p></main>
+      <div role="dialog" aria-label="Discard draft?"><p>Your message will be lost.</p><button>Discard</button></div>
+      <div role="status">Message sent</div>`);
+    const read = pageText(document, { isVisible: visible });
+    expect(read.text.indexOf('Open dialog "Discard draft?": Your message will be lost.')).toBe(0);
+    // Said once: from the page's text, or on its own line when the text left it out.
+    expect(read.text.split("Message sent").length - 1).toBe(1);
+    expect(read.text).toContain("Welcome back.");
   });
 
   it("finds the best match first: a control before text, the whole name before part of one", () => {

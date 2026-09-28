@@ -918,7 +918,29 @@ export function pageText(doc: Document, options: { maxChars?: number; isVisible:
     isTextVisible: isTextRendered,
     isBlock: isBlockDisplayed,
   });
-  return { url: extract.url, title: extract.title, text: extract.text, truncated: extract.truncated };
+  // An open dialog and what the page announces sit outside its main text, often at the end of the page: they come first.
+  const first: string[] = [];
+  const said = (words: string) => !words || extract.text.includes(words.slice(0, 120));
+  for (const dialog of openDialogs(doc, options.isVisible)) {
+    const name = accessibleName(dialog, "dialog");
+    const words = visibleText(dialog, options.isVisible, 2000);
+    if (!said(words)) first.push(`Open dialog${name ? ` ${quoted(clip(name, 80))}` : ""}: ${words}`);
+  }
+  for (const el of Array.from(doc.querySelectorAll(LIVE)).slice(0, 20)) {
+    if (el.id === OVERLAY_ID || el.closest(`#${OVERLAY_ID}`) || !shownAll(el, options.isVisible)) continue;
+    const line = liveLine(el, options.isVisible);
+    const words = visibleText(el, options.isVisible, 200);
+    if (line && !said(words)) first.push(line);
+  }
+  if (!first.length) return { url: extract.url, title: extract.title, text: extract.text, truncated: extract.truncated };
+  const text = [...first, extract.text].filter(Boolean).join("\n\n");
+  return { url: extract.url, title: extract.title, text: text.length > maxChars ? text.slice(0, maxChars) : text, truncated: extract.truncated || text.length > maxChars };
+}
+
+/** Shown to a person: the element and everything it sits in. */
+function shownAll(el: Element, isVisible: Visibility): boolean {
+  for (let node: Element | null = el, depth = 0; node && depth < 60; node = parentAcrossShadow(node), depth += 1) if (!isVisible(node)) return false;
+  return true;
 }
 
 export type Match = { ref: string; role: string; name: string; snippet?: string };

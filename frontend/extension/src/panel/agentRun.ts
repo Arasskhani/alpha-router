@@ -1060,7 +1060,8 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       if ((await dispatch(() => driver.type(text))) === null) return tookOver();
       note = `Typed ${text.length} characters.`;
     } else if (action === "key") {
-      const key = typeof a.text === "string" ? a.text.trim() : "";
+      // As the rules read it: one character alone (a space) is that key, anything longer is trimmed.
+      const key = typeof a.text === "string" ? ([...a.text].length === 1 ? a.text : a.text.trim()) : "";
       if (!key) return invalid("key needs the key to press in text, such as Enter or ctrl+a.");
       const pressed = await dispatch(() => driver.key(key));
       if (pressed === null) return tookOver();

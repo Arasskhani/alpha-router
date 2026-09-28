@@ -250,6 +250,12 @@ describe("computer actions", () => {
     expect(h.driver!.key).not.toHaveBeenCalled();
   });
 
+  it("presses a lone space as the space bar, as the rules read it", async () => {
+    const h = harness([{ text: "", toolCalls: [call("computer", { action: "key", text: " " })] }]);
+    await h.run();
+    expect(h.driver!.key).toHaveBeenCalledWith(" ");
+  });
+
   it("an unknown key is sent back without asking anyone, and scroll and hover are reads that need no approval", async () => {
     const h = harness([
       {

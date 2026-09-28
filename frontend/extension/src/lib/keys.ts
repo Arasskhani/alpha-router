@@ -115,9 +115,15 @@ function spelling(token: string): string {
   return token.trim().toLowerCase().replace(/[\s_-]+/g, "");
 }
 
+/** Control characters a model may write for a key: a new line is Enter, a tab Tab; the rest are no key. */
+const CONTROL_KEYS: Record<string, string> = { "\r": "Enter", "\n": "Enter", "\t": "Tab", "\b": "Backspace", "\u007f": "Delete", "\u001b": "Escape" };
+
 /** The KeyboardEvent.key a key's name stands for, or null for no key this table knows. */
 function keyOf(token: string): string | null {
-  if ([...token].length === 1) return token;
+  if ([...token].length === 1) {
+    if (/\p{Cc}/u.test(token)) return CONTROL_KEYS[token] ?? null;
+    return token;
+  }
   return ALIASES[spelling(token)] ?? null;
 }
 
@@ -128,10 +134,11 @@ function keyOf(token: string): string | null {
  */
 export function parseKeyCombo(raw: unknown): KeyCombo | null {
   if (typeof raw !== "string") return null;
-  // A lone space is the space bar, and "+" alone the plus key.
-  const trimmed = raw === " " ? raw : raw.trim();
+  // One character alone is that key: a space is the space bar, "+" the plus key, a new line Enter.
+  const single = [...raw].length === 1;
+  const trimmed = single ? raw : raw.trim();
   if (!trimmed) return null;
-  const tokens = trimmed === "+" || trimmed === " " ? [trimmed] : trimmed.split("+").map((t) => t.trim()).filter(Boolean);
+  const tokens = single || trimmed === "+" ? [trimmed] : trimmed.split("+").map((t) => t.trim()).filter(Boolean);
   if (!tokens.length) return null;
   const combo: KeyCombo = { key: "", ctrl: false, alt: false, shift: false, meta: false };
   for (const token of tokens.slice(0, -1)) {
@@ -150,15 +157,48 @@ export function keyDefFor(combo: KeyCombo): KeyDef {
   return keyDef(combo.key, combo.shift);
 }
 
+/**
+ * Punctuation on a US keyboard: the key it is on (KeyboardEvent.code) and
+ * that key's Windows virtual-key code. A character's own code would be
+ * another key's: "." is 46, Delete's, "(" is 40, ArrowDown's.
+ */
+const PUNCTUATION: Record<string, { code: string; vk: number }> = {
+  ";": { code: "Semicolon", vk: 186 },
+  ":": { code: "Semicolon", vk: 186 },
+  "=": { code: "Equal", vk: 187 },
+  "+": { code: "Equal", vk: 187 },
+  ",": { code: "Comma", vk: 188 },
+  "<": { code: "Comma", vk: 188 },
+  "-": { code: "Minus", vk: 189 },
+  _: { code: "Minus", vk: 189 },
+  ".": { code: "Period", vk: 190 },
+  ">": { code: "Period", vk: 190 },
+  "/": { code: "Slash", vk: 191 },
+  "?": { code: "Slash", vk: 191 },
+  "`": { code: "Backquote", vk: 192 },
+  "~": { code: "Backquote", vk: 192 },
+  "[": { code: "BracketLeft", vk: 219 },
+  "{": { code: "BracketLeft", vk: 219 },
+  "\\": { code: "Backslash", vk: 220 },
+  "|": { code: "Backslash", vk: 220 },
+  "]": { code: "BracketRight", vk: 221 },
+  "}": { code: "BracketRight", vk: 221 },
+  "'": { code: "Quote", vk: 222 },
+  '"': { code: "Quote", vk: 222 },
+  ...Object.fromEntries([..."!@#$%^&*()"].map((c, i) => [c, { code: `Digit${(i + 1) % 10}`, vk: 48 + ((i + 1) % 10) }])),
+};
+
 function keyDef(key: string, shift: boolean): KeyDef {
   const named = NAMED_KEYS[key];
   if (named) return named;
   const upper = key.toUpperCase();
-  let code = `Key${upper}`;
-  if (key >= "0" && key <= "9") code = `Digit${key}`;
-  else if (!(upper >= "A" && upper <= "Z")) code = "";
   const text = shift && upper !== key.toLowerCase() ? upper : key;
-  return { key: text, code, vk: upper.charCodeAt(0), text };
+  if (key >= "0" && key <= "9") return { key: text, code: `Digit${key}`, vk: key.charCodeAt(0), text };
+  if (upper >= "A" && upper <= "Z" && upper.length === 1) return { key: text, code: `Key${upper}`, vk: upper.charCodeAt(0), text };
+  const mark = PUNCTUATION[key];
+  if (mark) return { key: text, ...mark, text };
+  // A letter of another script (Persian, Cyrillic): no key of a US keyboard, so no key code; the text is what goes in.
+  return { key: text, code: "", vk: 0, text };
 }
 
 /** Whether the keyboard of the computer the browser runs on is a Mac's, where editing shortcuts are the OS's to carry out. */

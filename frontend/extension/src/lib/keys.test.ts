@@ -90,6 +90,25 @@ describe("pressKey", () => {
     }
   });
 
+  it("presses punctuation on its own key, never on another key's code", async () => {
+    for (const [char, code, vk] of [[".", "Period", 190], ["-", "Minus", 189], ["'", "Quote", 222], ["(", "Digit9", 57], ["#", "Digit3", 51], ["/", "Slash", 191]] as const) {
+      const { send, calls } = recorder();
+      expect(await pressKey(send, char)).toBe(true);
+      expect(calls[0].params, char).toMatchObject({ key: char, code, windowsVirtualKeyCode: vk, text: char });
+    }
+    // A letter of another script is typed as text, with no key of a US keyboard.
+    const { send, calls } = recorder();
+    expect(await pressKey(send, "ب")).toBe(true);
+    expect(calls[0].params).toMatchObject({ key: "ب", code: "", windowsVirtualKeyCode: 0, text: "ب" });
+  });
+
+  it("reads a control character as the key it stands for, or as none", () => {
+    expect(parseKeyCombo("\n")).toMatchObject({ key: "Enter" });
+    expect(parseKeyCombo("\t")).toMatchObject({ key: "Tab" });
+    expect(parseKeyCombo("\b")).toMatchObject({ key: "Backspace" });
+    expect(parseKeyCombo("\u0007")).toBeNull();
+  });
+
   it("treats ctrl+letter as a shortcut: rawKeyDown, no text", async () => {
     const { send, calls } = recorder();
     expect(await pressKey(send, "ctrl+a")).toBe(true);

@@ -527,7 +527,9 @@ describe("acting", () => {
         own.set!.call(this, !format || v === "" || format.test(v) ? v : "");
       },
     });
-    onTestFinished(() => Object.defineProperty(proto, "value", own));
+    onTestFinished(() => {
+      Object.defineProperty(proto, "value", own);
+    });
     const shot = snapshot(document, { isVisible: visible });
     expect(await typeText(byName(shot.elements, "Day").ref, "09/28/2026", false, visible)).toMatchObject({ ok: false, error: "bad_format", message: expect.stringContaining("2026-09-28 (year-month-day)") });
     expect(day.value).toBe("2026-01-01");

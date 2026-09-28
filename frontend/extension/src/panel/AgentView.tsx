@@ -64,6 +64,8 @@ const RATE_LIMIT_RETRIES = 3;
 
 /** How long the end of a run may take to put things back: the debugger, the banners, the badge; and to save the run. */
 const CLEANUP_MS = 3000;
+/** How long the review model may take over one action before the user is asked instead. */
+const REVIEW_MS = 45_000;
 const SAVE_MS = 8000;
 
 /** `work`, but no longer than `ms`: what has not finished by then is left to finish on its own. */
@@ -470,21 +472,32 @@ export default function AgentView({ me, server, hidden = false, onDisconnected, 
         }
         // A crop too large for the server's limit is left out; the reviewer then judges without it.
         const crop = input.crop && input.crop.length <= MAX_CROP_CHARS ? input.crop : undefined;
+        // A review that takes too long is not waited for: the user decides, as when the reviewer is unsure.
+        const limit = new AbortController();
+        const onStop = () => limit.abort();
+        stepSignal.addEventListener("abort", onStop, { once: true });
+        const timer = setTimeout(() => limit.abort(), REVIEW_MS);
         try {
           const verdict = await api.json<{ decision?: string; reason?: string }>("/api/extension/review-action", {
             method: "POST",
             // A tab that shows no web page still names a place for the reviewer.
             body: JSON.stringify({ ...input, crop, site: input.site || "no web page" }),
-            signal: stepSignal,
+            signal: limit.signal,
           });
           return verdict.decision === "allow"
             ? { decision: "allow", reason: verdict.reason ?? "" }
             : { decision: "ask", reason: verdict.reason || "The reviewer wants you to decide." };
         } catch (err) {
-          if (err instanceof DOMException && err.name === "AbortError") throw err;
+          if (err instanceof DOMException && err.name === "AbortError") {
+            if (stepSignal.aborted) throw err;
+            return { decision: "ask", reason: `The reviewer did not answer within ${Math.round(REVIEW_MS / 1000)} s.` };
+          }
           if (err instanceof DisconnectedError) disconnected.current();
           const refused = err instanceof ApiError && err.status >= 400 && err.status < 500 && err.status !== 429;
           return { decision: "ask", reason: refused ? `The reviewer did not take the request: ${err.message}` : "The reviewer could not be reached." };
+        } finally {
+          clearTimeout(timer);
+          stepSignal.removeEventListener("abort", onStop);
         }
       },
       report(event) {

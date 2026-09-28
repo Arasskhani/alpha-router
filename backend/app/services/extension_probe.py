@@ -24,20 +24,23 @@ import io
 import json
 import logging
 import random
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from typing import Any, cast
 
 from litellm import acompletion
 from PIL import Image, ImageDraw, ImageFont
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.branding import EXTENSION_CLIENT_APP
+from app.models.model_catalog import AIModel
 from app.models.system import SystemSetting
 from app.models.user import User
 from app.services.failure_details import failure_message
 from app.services.llm_providers import litellm_model_for_provider
 from app.services.model_capabilities import supports_vision
+from app.services.model_tool_compatibility_service import is_auto_router_model_id
 from app.services.model_resolution_service import resolve_model_and_key
 from app.services.provider_utils import apply_litellm_provider_kwargs
 from app.services.usage_logging_service import reserve_auxiliary_llm_usage, settle_auxiliary_usage
@@ -372,6 +375,21 @@ def _probe_ref(ref: str) -> bool:
     return ref.startswith("model::") and ref[len("model::") :].isdigit()
 
 
+async def _usable_models(db: AsyncSession, refs: Iterable[str]) -> set[str]:
+    """Of `refs` (model::<id>), those whose model exists, is on, and is not Auto Router."""
+    ids = [int(ref.split("::")[1]) for ref in refs]
+    if not ids:
+        return set()
+    rows = (
+        await db.execute(select(AIModel.id, AIModel.external_id, AIModel.is_enabled).where(AIModel.id.in_(ids)))
+    ).all()
+    return {
+        f"model::{row.id}"
+        for row in rows
+        if row.is_enabled is not False and not is_auto_router_model_id(str(row.external_id or ""))
+    }
+
+
 async def effective_agent_models(
     db: AsyncSession, agent_models: tuple[str, ...], recommended: str | None
 ) -> tuple[tuple[str, ...], str | None]:
@@ -385,6 +403,10 @@ async def effective_agent_models(
     """
     probes = await load_results(db)
     passed = {ref: r for ref, r in probes.items() if r.get("passed") is True and _probe_ref(ref)}
+    # Only the models still there to be used: a pass kept for a model since deleted or turned off - or for Auto
+    # Router - would otherwise be the whole list, and the agent could run on no model at all.
+    usable = await _usable_models(db, passed)
+    passed = {ref: r for ref, r in passed.items() if ref in usable}
     listed = agent_models or tuple(sorted(passed, key=lambda ref: int(ref.split("::")[1])))
     if recommended and (not listed or recommended in listed):
         return listed, recommended

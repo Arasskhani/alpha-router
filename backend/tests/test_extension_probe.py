@@ -303,18 +303,47 @@ class TestTheAgentsModels:
     async def test_else_the_models_that_passed_the_probe_the_best_first(self, db_session):
         from app.services.extension_probe import effective_agent_models
 
+        a = await _model(db_session, "gpt-a")
+        b = await _model(db_session, "gpt-b")
+        c = await _model(db_session, "gpt-c")
         await self._probes(
             db_session,
             {
-                "model::3": {"passed": True, "hits": 2},
-                "model::9": {"passed": True, "hits": 3},
-                "model::4": {"passed": False, "hits": 1},
+                f"model::{a.id}": {"passed": True, "hits": 2},
+                f"model::{b.id}": {"passed": True, "hits": 3},
+                f"model::{c.id}": {"passed": False, "hits": 1},
                 "junk": {"passed": True},
             },
         )
-        assert await effective_agent_models(db_session, (), None) == (("model::3", "model::9"), "model::9")
+        both = tuple(sorted((f"model::{a.id}", f"model::{b.id}"), key=lambda ref: int(ref.split("::")[1])))
+        assert await effective_agent_models(db_session, (), None) == (both, f"model::{b.id}")
         # A recommendation that is not among them is not followed.
-        assert await effective_agent_models(db_session, (), "model::4") == (("model::3", "model::9"), "model::9")
+        assert await effective_agent_models(db_session, (), f"model::{c.id}") == (both, f"model::{b.id}")
+
+    async def test_a_pass_of_a_model_gone_off_or_auto_router_does_not_count(self, db_session):
+        from app.services.extension_probe import effective_agent_models
+
+        kept = await _model(db_session, "gpt-a")
+        off = await _model(db_session, "gpt-b")
+        off.is_enabled = False
+        router = await _model(db_session, "openrouter/auto")
+        await db_session.commit()
+        await self._probes(
+            db_session,
+            {
+                "model::999999": {"passed": True, "hits": 3},
+                f"model::{off.id}": {"passed": True, "hits": 3},
+                f"model::{router.id}": {"passed": True, "hits": 3},
+                f"model::{kept.id}": {"passed": True, "hits": 2},
+            },
+        )
+        assert await effective_agent_models(db_session, (), None) == ((f"model::{kept.id}",), f"model::{kept.id}")
+
+    async def test_only_stale_passes_leave_any_model(self, db_session):
+        from app.services.extension_probe import effective_agent_models
+
+        await self._probes(db_session, {"model::999999": {"passed": True, "hits": 3}})
+        assert await effective_agent_models(db_session, (), None) == ((), None)
 
     async def test_while_none_has_passed_any_model(self, db_session):
         from app.services.extension_probe import effective_agent_models

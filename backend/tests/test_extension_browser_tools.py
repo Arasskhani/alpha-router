@@ -149,7 +149,7 @@ class Provider:
     """Answers each call with the next scripted reply, and keeps what each call asked for."""
 
     def __init__(self) -> None:
-        self.replies: list[_Stream] = []
+        self.replies: list = []
         self.calls: list[dict] = []
 
     def reply(self, *chunks, fail: Exception | None = None) -> Provider:
@@ -158,7 +158,11 @@ class Provider:
 
     async def __call__(self, **kwargs):
         self.calls.append(kwargs)
-        return self.replies.pop(0)
+        reply = self.replies.pop(0)
+        # A whole reply (a call without streaming) may fail as the provider refuses it.
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
 
 
 @pytest.fixture
@@ -276,6 +280,80 @@ def _sign_in(client, user) -> dict[str, str]:
 
 
 # --- a step ---------------------------------------------------------------------
+
+
+#: What httpx says when a provider refused a stream and its error body was never read.
+UNREAD_STREAM = Exception("Attempted to access streaming response content, without having called read()")
+
+
+def _whole_click() -> object:
+    from litellm.types.utils import ChatCompletionMessageToolCall, Choices, Message, ModelResponse, Usage
+
+    call = ChatCompletionMessageToolCall(
+        id="call_9", type="function", function=Function(name="click", arguments='{"ref":"e3"}')
+    )
+    return ModelResponse(
+        choices=[Choices(index=0, finish_reason="tool_calls", message=Message(content=None, tool_calls=[call]))],
+        usage=Usage(prompt_tokens=10, completion_tokens=5, total_tokens=15),
+    )
+
+
+@pytest.mark.usefixtures("agent_on")
+class TestAStreamTheProviderRefused:
+    async def test_is_asked_again_whole_and_its_tool_calls_go_out_in_one_frame(self, client, browser, models, provider):
+        provider.reply(fail=UNREAD_STREAM)
+        provider.replies.append(_whole_click())
+        resp = await client.post("/api/chat/completions", json=_body(models.a), headers=browser.headers)
+        assert resp.status_code == 200, resp.text
+        frames = _frames(resp.text)
+        whole = [f for f in frames if isinstance(f, dict) and "choices" in f and "message" in f["choices"][0]]
+        assert whole == [
+            {
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": "call_9",
+                                    "type": "function",
+                                    "function": {"name": "click", "arguments": '{"ref":"e3"}'},
+                                }
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ]
+            }
+        ]
+        assert not [f for f in frames if isinstance(f, dict) and "error" in f]
+        assert frames[-1] == "[DONE]"
+        # The same step, the same tools, without streaming.
+        assert [call.get("stream") for call in provider.calls] == [True, False]
+        assert provider.calls[1]["tools"] == TOOLS
+
+    async def test_says_the_provider_s_own_reason_when_it_refuses_again(self, client, browser, models, provider):
+        provider.reply(fail=UNREAD_STREAM)
+        provider.replies.append(Exception("No endpoints found that support tool use."))
+        resp = await client.post("/api/chat/completions", json=_body(models.a), headers=browser.headers)
+        errors = [f["error"]["message"] for f in _frames(resp.text) if isinstance(f, dict) and "error" in f]
+        assert errors == ["No endpoints found that support tool use."]
+
+    async def test_is_not_asked_again_once_part_of_it_reached_the_browser(self, client, browser, models, provider):
+        # A stream that fails after its first chunk went out: asking again could send a second, different reply.
+        class _Breaks(_Stream):
+            async def __anext__(self):
+                if self._chunks:
+                    return self._chunks.pop(0)
+                raise UNREAD_STREAM
+
+        provider.replies.append(_Breaks([_call(0, call_id="call_1", name="click")]))
+        resp = await client.post("/api/chat/completions", json=_body(models.a), headers=browser.headers)
+        assert [call.get("stream") for call in provider.calls] == [True]
+        assert [f for f in _frames(resp.text) if isinstance(f, dict) and "error" in f]
 
 
 @pytest.mark.usefixtures("agent_on")

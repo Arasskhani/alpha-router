@@ -304,6 +304,27 @@ class NonStreamRetry:
         self.prompt_tokens, self.completion_tokens, self.cached_tokens = pt, ct, cache
         self._response = response
 
+    def tool_calls(self) -> list[dict[str, Any]]:
+        """The whole reply's tool calls, in the OpenAI wire shape; none when it made none."""
+        choices = getattr(self._response, "choices", None) or []
+        message = getattr(choices[0], "message", None) if choices else None
+        calls = getattr(message, "tool_calls", None) or []
+        out: list[dict[str, Any]] = []
+        for index, call in enumerate(calls):
+            function = getattr(call, "function", None)
+            name = getattr(function, "name", None)
+            if not name:
+                continue
+            out.append(
+                {
+                    "index": index,
+                    "id": getattr(call, "id", None) or f"call_{index}",
+                    "type": "function",
+                    "function": {"name": name, "arguments": getattr(function, "arguments", None) or "{}"},
+                }
+            )
+        return out
+
     def usage_event(self, *, attempt_index: int, status: str, error_message: str | None = None) -> PendingUsageEvent:
         return capture_usage_event(
             self._response,

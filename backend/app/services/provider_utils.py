@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from typing import Any
 
 from app.models.model_catalog import AIModel
 from app.services.failure_details import failure_message
@@ -178,6 +179,20 @@ def sse_delta_chunk(content: str) -> bytes:
     return f"data: {json.dumps(payload)}\n\n".encode()
 
 
+def sse_message_frame(content: str, tool_calls: list[dict[str, Any]]) -> bytes:
+    """A whole answer as one SSE frame - its words and its tool calls - with its finish reason.
+
+    For a reply that came back whole (the non-streaming retry) to a client
+    that reads streams: the OpenAI wire shape of a final ``message``, which the
+    browser extension reads as it reads deltas.
+    """
+    message: dict[str, Any] = {"role": "assistant", "content": content or None}
+    if tool_calls:
+        message["tool_calls"] = tool_calls
+    payload = {"choices": [{"index": 0, "message": message, "finish_reason": "tool_calls" if tool_calls else "stop"}]}
+    return f"data: {json.dumps(payload, separators=(',', ':'))}\n\n".encode()
+
+
 def sse_error_frame(message: str, *, error_type: str = "provider_error") -> bytes:
     """One SSE ``data:`` frame carrying an error in the OpenAI wire shape.
 
@@ -305,6 +320,7 @@ _usage_from_stream_wrapper = usage_from_stream_wrapper
 _usage_from_response = usage_from_response
 _sse_delta_chunk = sse_delta_chunk
 _sse_error_frame = sse_error_frame
+_sse_message_frame = sse_message_frame
 _serialize_stream_chunk = serialize_stream_chunk
 _usage_event_model_id = usage_event_model_id
 _extract_non_stream_content = extract_non_stream_content

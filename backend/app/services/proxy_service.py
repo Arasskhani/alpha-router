@@ -139,6 +139,7 @@ from app.services.provider_utils import (  # noqa: F401 -- re-exported under the
     _should_retry_non_stream,
     _sse_delta_chunk,
     _sse_error_frame,
+    _sse_message_frame,
     _usable_cost_per_1k,
     _usage_event_model_id,
     _usage_from_chunk,
@@ -895,6 +896,8 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
         prompt_tokens = completion_tokens = cached_tokens = 0
         total_cost = 0.0
         collected_content = ""
+        #: Chunks of the provider's stream passed on to the client: a turn with tools is tried again only before any.
+        sent_chunks = 0
         usage_events: list[PendingUsageEvent] = []
         generation_start = time.perf_counter()
         stream_end_at: float | None = None
@@ -1134,6 +1137,7 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
                             yield _sse_error_frame(BUDGET_EXCEEDED_MESSAGE)
                             break
                     if not client_disconnected and agent_turn is None:
+                        sent_chunks += 1
                         yield f"data: {_serialize_stream_chunk(chunk)}\n\n".encode()
                     # Persist after yield and without awaiting DB: token printing
                     # must not wait on commit. A partial flush after Stop would
@@ -1310,9 +1314,11 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
                 attempt = None
                 if tools.code_interpreter:
                     await _record_ci_failure(failed_event, failure_message(exc))
-            # Not with function tools: the retry reads only the reply's words, so
-            # the tool calls would be lost, and some may already be with the client.
-            if _should_retry_non_stream(provider, exc) and not completion_kwargs.get("tools"):
+            # With function tools, only while nothing reached the client yet: then the whole reply - its
+            # tool calls with its words - goes out as one frame. Without it, a stream the provider refused
+            # (no endpoint for tools or images, a context too long) says only that the request failed.
+            tools_turn = bool(completion_kwargs.get("tools"))
+            if _should_retry_non_stream(provider, exc) and (not tools_turn or sent_chunks == 0):
                 retry = NonStreamRetry(
                     ai_model=ai_model,
                     provider_type=provider_type,
@@ -1340,7 +1346,9 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
                     prompt_tokens += retry.prompt_tokens
                     completion_tokens += retry.completion_tokens
                     cached_tokens += retry.cached_tokens
-                    if retry.content and agent_turn is None:
+                    if tools_turn and agent_turn is None:
+                        yield _sse_message_frame(retry.content, retry.tool_calls())
+                    elif retry.content and agent_turn is None:
                         yield _sse_delta_chunk(retry.content)
                         await _persist_content(collected_content)
                     _compute_cost()

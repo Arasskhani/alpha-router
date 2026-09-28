@@ -52,7 +52,8 @@ export function createAgentBrowser(options: { startTabId: number | null; runId: 
   let opened = 0;
   /** Where the banner went up: tab id → the page it was put on. */
   const overlays = new Map<number, PageTarget>();
-  const banner: OverlayRequest = { run: options.runId, label: OVERLAY_LABEL };
+  // `since`: a page loaded after the run began says nothing old - what it shows first is news (an order placed).
+  const banner: OverlayRequest = { run: options.runId, label: OVERLAY_LABEL, since: Date.now() };
 
   async function current(): Promise<WorkTab | null> {
     if (working === null) return null;

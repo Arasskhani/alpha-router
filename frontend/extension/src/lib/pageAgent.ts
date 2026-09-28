@@ -222,7 +222,8 @@ type AgentScope = { __alpharouter?: { agent?: (method: unknown, args: unknown, r
 export type PageTarget = { tabId: number; host: string; origin: string };
 
 /** The agent's banner, put up (again) on the page before the action: which run, and what it says. */
-export type OverlayRequest = { run: string; label: string };
+/** The run's banner, put up with each call: its run, what it says, and when the run began (ms since the epoch). */
+export type OverlayRequest = { run: string; label: string; since?: number };
 
 /**
  * Run one agent action in the tab `target.tabId`, only while it shows a page

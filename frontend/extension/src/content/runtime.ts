@@ -129,7 +129,7 @@ export async function runAgentCall(
         if (!runStopped(run)) {
           watchTakeover(doc, run, send);
           // From the run's first call to the page, what it announces is kept for the agent's next look.
-          watchAnnouncements(doc, isVisible);
+          watchAnnouncements(doc, isVisible, typeof args.since === "number" ? args.since : undefined);
         }
         return { ok: true };
       }

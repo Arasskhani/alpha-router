@@ -32,9 +32,11 @@ describe("the browser the agent uses", () => {
     await browser.page("read_page");
     await browser.page("click", { ref: "e1" });
     // Each action puts the banner up again: a page that removed it gets it back.
+    // With when the run began: a page loaded after that says nothing old.
+    const banner = { run: "run-1", label: "Alpharouter is working on this page", since: expect.any(Number) };
     expect(pageCalls.map((c) => [c.method, c.banner])).toEqual([
-      ["read_page", { run: "run-1", label: "Alpharouter is working on this page" }],
-      ["click", { run: "run-1", label: "Alpharouter is working on this page" }],
+      ["read_page", banner],
+      ["click", banner],
     ]);
     expect(browser.bannerTabs()).toEqual([tab.id]);
     await browser.cleanup();

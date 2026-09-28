@@ -39,6 +39,27 @@ describe("what the page announced", () => {
     expect(observe(document, visible).said).toEqual([{ kind: "alert", text: "Message sent" }]);
   });
 
+  it("hears a toast added at the end of a page full of live regions", async () => {
+    document.body.innerHTML = Array.from({ length: 80 }, (_, i) => `<div role="status" id="s${i}">Row ${i}</div>`).join("");
+    watchAnnouncements(document, visible);
+    const toast = document.createElement("div");
+    toast.setAttribute("role", "alert");
+    document.body.append(toast);
+    toast.textContent = "Message sent";
+    expect(observe(document, visible).said).toEqual([{ kind: "alert", text: "Message sent" }]);
+  });
+
+  it("takes what a page loaded after the run began says first as news", () => {
+    document.body.innerHTML = `<div role="alert">Your order was placed</div>`;
+    const loaded = window.performance.timeOrigin;
+    watchAnnouncements(document, visible, loaded - 1000);
+    expect(observe(document, visible).said).toEqual([{ kind: "alert", text: "Your order was placed" }]);
+    stopAnnouncements(document);
+    // A page that was there before the run: what it said is old.
+    watchAnnouncements(document, visible, loaded + 1000);
+    expect(observe(document, visible).said).toEqual([]);
+  });
+
   it("names a dialog that opened by its label", () => {
     document.body.innerHTML = `<h2 id="t">New message</h2>`;
     watchAnnouncements(document, visible);

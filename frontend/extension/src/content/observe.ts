@@ -16,16 +16,28 @@ import { inOwnUi } from "./own";
 
 /** Where a page announces things, and the dialogs it opens. */
 const ANNOUNCERS = '[role="alert"], [role="status"], [aria-live="assertive"], [aria-live="polite"], output, [role="alertdialog"], [role="dialog"], dialog[open]';
-/** At most this many announcers are looked at, and this many announcements kept, each this long. */
-const MAX_ANNOUNCERS = 60;
+/** At most this many announcers are noted when the watch starts, or looked at after one burst of changes. */
+const MAX_NOTED = 200;
+const MAX_TOUCHED = 60;
+/** At most this many announcements are kept, each this long. */
 const MAX_KEPT = 8;
 const ANNOUNCEMENT_CHARS = 200;
-/** A burst of changes to the page is looked at once, this long after it starts. */
-const SETTLE_MS = 60;
+/** Changes to the page are looked at as they come, but no more often than this: an animation changes it every frame. */
+const SETTLE_MS = 250;
 
 type Announcement = { kind: "alert" | "dialog"; text: string };
 
-type Watch = { last: WeakMap<Element, string>; kept: Announcement[]; timer: number | null; isVisible: Visibility; observer?: MutationObserver };
+type Watch = {
+  last: WeakMap<Element, string>;
+  kept: Announcement[];
+  /** The announcers the page changed since they were last looked at. */
+  touched: Set<Element>;
+  timer: number | null;
+  /** When the changes were last looked at (Date.now()). */
+  looked: number;
+  isVisible: Visibility;
+  observer?: MutationObserver;
+};
 
 const WATCH_KEY = "__alpharouterAnnouncements";
 
@@ -73,12 +85,11 @@ function wordsOf(el: Element): string {
   return squash((el as HTMLElement).innerText ?? el.textContent ?? "");
 }
 
-/** Look at the page's announcers; what one says that it did not say last time is kept (unless this is the first look, which only notes). */
-function scan(doc: Document, watch: Watch, keep: boolean): void {
-  const found = Array.from(doc.querySelectorAll(ANNOUNCERS)).slice(0, MAX_ANNOUNCERS);
-  for (const el of found) {
+/** Look at these announcers; what one says that it did not say last time is kept (unless `keep` is off, which only notes). */
+function scan(watch: Watch, announcers: Iterable<Element>, keep: boolean): void {
+  for (const el of announcers) {
     if (inOwnUi(el)) continue;
-    const words = shown(el, watch.isVisible) ? wordsOf(el).slice(0, ANNOUNCEMENT_CHARS) : "";
+    const words = el.isConnected && shown(el, watch.isVisible) ? wordsOf(el).slice(0, ANNOUNCEMENT_CHARS) : "";
     if (watch.last.get(el) === words) continue;
     watch.last.set(el, words);
     if (!keep || !words) continue;
@@ -87,25 +98,59 @@ function scan(doc: Document, watch: Watch, keep: boolean): void {
   }
 }
 
+/** The announcers one change of the page may have changed: the one it is in, and the ones it added or showed. */
+function touchedBy(record: MutationRecord, into: Set<Element>): void {
+  const node = record.target;
+  const el = node instanceof Element ? node : node.parentElement;
+  if (!el) return;
+  const around = el.closest(ANNOUNCERS);
+  if (around) into.add(around);
+  const roots = record.type === "childList" ? Array.from(record.addedNodes) : record.type === "attributes" ? [el] : [];
+  for (const root of roots) {
+    if (!(root instanceof Element)) continue;
+    if (root.matches(ANNOUNCERS)) into.add(root);
+    for (const inner of Array.from(root.querySelectorAll(ANNOUNCERS)).slice(0, 20)) into.add(inner);
+  }
+}
+
+/** Look at what the page changed since the last look, and forget it. */
+function flush(watch: Watch): void {
+  watch.looked = Date.now();
+  const touched = Array.from(watch.touched).slice(0, MAX_TOUCHED);
+  watch.touched.clear();
+  scan(watch, touched, true);
+}
+
 /**
  * Start watching what `doc` announces, once: from now on each new
  * announcement is kept for the next look. What the page says already is
- * noted as it is, not kept.
+ * noted as it is, not kept - unless the page was loaded after `since`, the
+ * moment the run began: then it came as the agent's doing (a page that says
+ * "Your order was placed" after a form was sent), and what it shows is news.
  */
-export function watchAnnouncements(doc: Document, isVisible: Visibility): void {
+export function watchAnnouncements(doc: Document, isVisible: Visibility, since?: number): void {
   const all = watches();
   if (all.has(doc)) return;
-  const watch: Watch = { last: new WeakMap(), kept: [], timer: null, isVisible };
+  const watch: Watch = { last: new WeakMap(), kept: [], touched: new Set(), timer: null, looked: -Infinity, isVisible };
   all.set(doc, watch);
-  scan(doc, watch, false);
   const view = doc.defaultView;
+  const loaded = view?.performance?.timeOrigin;
+  const fresh = since !== undefined && typeof loaded === "number" && loaded > since;
+  scan(watch, Array.from(doc.querySelectorAll(ANNOUNCERS)).slice(0, MAX_NOTED), fresh);
   if (!view || typeof view.MutationObserver !== "function") return;
-  const observer = new view.MutationObserver(() => {
-    if (watch.timer !== null) return;
+  const observer = new view.MutationObserver((records) => {
+    for (const record of records) touchedBy(record, watch.touched);
+    if (watch.timer !== null || !watch.touched.size) return;
+    // A toast that shows for a moment is read as it comes; a page changing all the time, at most every SETTLE_MS.
+    const wait = watch.looked + SETTLE_MS - Date.now();
+    if (wait <= 0) {
+      flush(watch);
+      return;
+    }
     watch.timer = view.setTimeout(() => {
       watch.timer = null;
-      scan(doc, watch, true);
-    }, SETTLE_MS);
+      flush(watch);
+    }, wait);
   });
   observer.observe(doc.documentElement, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ["open", "hidden", "style", "class", "aria-hidden"] });
   watch.observer = observer;
@@ -156,7 +201,9 @@ function scrolledAt(doc: Document, at: unknown): string | undefined {
 export function observe(doc: Document, isVisible: Visibility, at?: unknown): Observation {
   watchAnnouncements(doc, isVisible);
   const watch = watches().get(doc)!;
-  scan(doc, watch, true);
+  // The changes the page made since its last burst was looked at: records not yet delivered, then those noted.
+  for (const record of watch.observer?.takeRecords() ?? []) touchedBy(record, watch.touched);
+  flush(watch);
   const said = watch.kept.splice(0);
   const focus = describeFocus(doc, isVisible);
   const view = viewOf(doc);

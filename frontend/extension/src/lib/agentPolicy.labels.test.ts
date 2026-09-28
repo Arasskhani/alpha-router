@@ -217,3 +217,71 @@ describe("Enter in a field", () => {
     expect(enter({ role: "combobox", name: "To recipients" })).toMatchObject({ class: "sensitive", reason: "enter_sends" });
   });
 });
+
+describe("what is typed", () => {
+  function typing(text: string, name = "Notes") {
+    return classifyAction({ tool: "type_text", args: { text }, page: PAGE, element: { ref: "e2", role: "textbox", name, tag: "input" } }, OPEN);
+  }
+
+  it.each([
+    ["a card number", "4111 1111 1111 1111"],
+    ["a card number with dashes", "5500-0000-0000-0004"],
+    ["a card number in Persian digits", "۴۱۱۱۱۱۱۱۱۱۱۱۱۱۱۱"],
+    ["an IBAN", "DE89 3704 0044 0532 0130 00"],
+    ["a Sheba number", "IR270170000000100324200001"],
+    ["a national ID", "0012345679"],
+    ["a card number inside a sentence", "my card is 4111111111111111 thanks"],
+  ])("never types %s, whatever the field is called", (_what, text) => {
+    expect(typing(text)).toMatchObject({ class: "blocked", reason: "secret_text" });
+  });
+
+  it.each([
+    ["digits that fail the card check", "1234 5678 9012 3456"],
+    ["an order number", "Order 20260928"],
+    ["ten digits that are no national ID", "0012345678"],
+    ["plain words", "See you at noon."],
+  ])("types %s", (_what, text) => {
+    expect(typing(text).class).toBe("act");
+  });
+
+  it("asks before a short number typed where a code is asked for, and not elsewhere", () => {
+    expect(typing("482913", "Enter the code we sent you")).toMatchObject({ class: "sensitive", reason: "code_like" });
+    expect(typing("۴۸۲۹۱۳", "کد ارسال شده")).toMatchObject({ class: "sensitive", reason: "code_like" });
+    expect(typing("12", "Quantity").class).toBe("act");
+    expect(typing("2026", "Year").class).toBe("act");
+  });
+});
+
+describe("a menu's option", () => {
+  function choosing(choice: string) {
+    return classifyAction({ tool: "select_option", args: { value: choice }, page: PAGE, element: { ref: "e4", role: "combobox", name: "Action", tag: "select", choice } }, OPEN);
+  }
+
+  it("is judged by the option chosen, as a button with its words would be", () => {
+    expect(choosing("Delete account")).toMatchObject({ class: "blocked", reason: "permanent_deletion", message: expect.stringContaining('Choosing "Delete account"') });
+    expect(choosing("Pay now")).toMatchObject({ class: "blocked", reason: "purchase_label" });
+    expect(choosing("Pay by card")).toMatchObject({ class: "sensitive", reason: "purchase_like" });
+    expect(choosing("Move to trash")).toMatchObject({ class: "sensitive", reason: "delete_label" });
+    expect(choosing("Germany")).toMatchObject({ class: "act", reason: "select" });
+  });
+});
+
+describe("a single key outside a text field", () => {
+  function pressing(key: string, element?: Partial<ElementInfo>) {
+    return classifyAction(
+      { tool: "press_key", args: { key }, page: PAGE, ...(element ? { element: { ref: "e5", role: "button", name: "Row", tag: "div", ...element } } : {}) },
+      OPEN,
+    );
+  }
+
+  it("asks: in many apps it is a shortcut that archives, deletes or sends", () => {
+    expect(pressing("#")).toMatchObject({ class: "sensitive", reason: "app_shortcut" });
+    expect(pressing("e", { role: "text", name: "Message from Bob" })).toMatchObject({ class: "sensitive", reason: "app_shortcut" });
+  });
+
+  it("types it in a text field, and moves by the arrows anywhere", () => {
+    expect(pressing("e", { role: "textbox", name: "Search", tag: "input" }).class).toBe("act");
+    expect(pressing("ArrowDown").class).toBe("act");
+    expect(pressing("Escape").class).toBe("act");
+  });
+});

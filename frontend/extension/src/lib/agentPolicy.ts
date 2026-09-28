@@ -491,9 +491,77 @@ function clickVerdict(element: ElementInfo, page: { url: string; host: string },
   return verdict("act", "click", `Clicking ${named(element)}.`);
 }
 
-function typeVerdict(element: ElementInfo, page: { url: string; host: string }): Verdict {
+/** Digits as a number is checked: Persian and Arabic-Indic digits read as ASCII ones. */
+function asciiDigits(text: string): string {
+  return text.replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06f0)).replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660));
+}
+
+/** A card number in the text: 13 to 19 digits, spaces or dashes between, that pass the Luhn check. */
+function cardNumberIn(text: string): boolean {
+  for (const match of asciiDigits(text).matchAll(/(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)/g)) {
+    const digits = match[0].replace(/\D/g, "");
+    let sum = 0;
+    for (let i = 0; i < digits.length; i += 1) {
+      let d = Number(digits[digits.length - 1 - i]);
+      if (i % 2 === 1) {
+        d *= 2;
+        if (d > 9) d -= 9;
+      }
+      sum += d;
+    }
+    if (sum % 10 === 0 && !/^(\d)\1+$/.test(digits)) return true;
+  }
+  return false;
+}
+
+/** An IBAN - Sheba in Iran - in the text: two letters, two check digits and the rest, whose mod 97 is 1. */
+function ibanIn(text: string): boolean {
+  for (const match of asciiDigits(text).toUpperCase().matchAll(/\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]){11,30}\b/g)) {
+    const iban = match[0].replace(/ /g, "");
+    const moved = `${iban.slice(4)}${iban.slice(0, 4)}`.replace(/[A-Z]/g, (c) => String(c.charCodeAt(0) - 55));
+    let rest = 0;
+    for (const digit of moved) rest = (rest * 10 + Number(digit)) % 97;
+    if (rest === 1) return true;
+  }
+  return false;
+}
+
+/** An Iranian national ID in the text: ten digits whose last is their check digit. */
+function nationalIdIn(text: string): boolean {
+  for (const match of asciiDigits(text).matchAll(/(?<!\d)\d{10}(?!\d)/g)) {
+    const id = match[0];
+    if (/^(\d)\1{9}$/.test(id)) continue;
+    const sum = [...id.slice(0, 9)].reduce((total, digit, i) => total + Number(digit) * (10 - i), 0) % 11;
+    const check = Number(id[9]);
+    if ((sum < 2 && check === sum) || (sum >= 2 && check === 11 - sum)) return true;
+  }
+  return false;
+}
+
+/** A field's name that asks for a code. */
+const CODE_FIELD = /\bcode\b|(^|\s)کد/i;
+
+/**
+ * What is typed, read too: a field's name can say nothing while the text
+ * is a card number, an IBAN or Sheba, or a national ID - never typed by the
+ * agent - or a short code where a code is asked for, which the user sees first.
+ */
+function textVerdict(text: unknown, element: ElementInfo): Verdict | null {
+  if (typeof text !== "string" || !text) return null;
+  if (cardNumberIn(text)) return blocked("secret_text", "The agent never types a card number: that is for the user to enter.");
+  if (ibanIn(text)) return blocked("secret_text", "The agent never types a bank account number (an IBAN or Sheba): that is for the user to enter.");
+  if (nationalIdIn(text)) return blocked("secret_text", "The agent never types a national ID number: that is for the user to enter.");
+  if (/^\s*\d{4,8}\s*$/.test(asciiDigits(text)) && matches(`${element.name} ${element.text ?? ""}`, CODE_FIELD)) {
+    return verdict("sensitive", "code_like", `The text is a short number typed where ${named(element)} asks for a code: a one-time code is the user's to give.`);
+  }
+  return null;
+}
+
+function typeVerdict(element: ElementInfo, page: { url: string; host: string }, text?: unknown): Verdict {
   const cannot = unjudgeable(element, "The field");
   if (cannot) return cannot;
+  const typed = textVerdict(text, element);
+  if (typed?.class === "blocked") return typed;
   const secret = () =>
     blocked("sensitive_field", `The agent never types into ${named(element)}: passwords, card numbers and codes are for the user to enter. Sign in yourself, then tell the agent to go on.`);
   if (element.sensitive) return secret();
@@ -507,6 +575,7 @@ function typeVerdict(element: ElementInfo, page: { url: string; host: string }):
   if (matches(field, PERSONAL_FIELD, PERSONAL_FIELD_FA) || element.type === "tel") {
     return verdict("sensitive", "personal_data", `Typing into ${named(element)} gives a page personal details.`);
   }
+  if (typed) return typed;
   return verdict("act", "type", `Typing into ${named(element)}.`);
 }
 
@@ -676,8 +745,13 @@ export function classifyAction(action: ProposedAction, ctx: PolicyContext): Verd
     case "submit_form": {
       if (!element) return blocked("no_element", "The element is not on the page any more. Read the page again.");
       if (tool === "click") return clickVerdict(element, page!, ctx);
-      if (tool === "type_text") return typeVerdict(element, page!);
+      if (tool === "type_text") return typeVerdict(element, page!, args.text);
       if (tool === "submit_form") return submitVerdict(element, page!, ctx);
+      // A menu's option can do what a button does ("Delete account", "Pay by card"): judged by the one chosen.
+      if (element.choice) {
+        const byOption = labelVerdict({ ...element, name: element.choice, text: undefined }, [element.choice], false, page!, ctx);
+        if (byOption) return { ...byOption, message: `Choosing "${element.choice}" in ${named(element)}: ${byOption.message}` };
+      }
       return verdict("act", "select", `Choosing an option in ${named(element)}.`);
     }
     default:

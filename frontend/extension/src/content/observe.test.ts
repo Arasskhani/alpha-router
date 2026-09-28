@@ -4,6 +4,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { observe, stopAnnouncements, watchAnnouncements } from "./observe";
+import { markOwn } from "./own";
 import { runAgentCall } from "./runtime";
 
 /** What happy-dom cannot lay out: hidden is what carries `hidden` or sits in something that does. */
@@ -51,6 +52,7 @@ describe("what the page announced", () => {
 
   it("leaves out what a person cannot see, and the agent's own banner", () => {
     document.body.innerHTML = `<div hidden><div role="alert" id="h"></div></div><div id="alpharouter-agent-overlay"><div role="status" id="o"></div></div>`;
+    markOwn(document.getElementById("alpharouter-agent-overlay")!);
     watchAnnouncements(document, visible);
     document.getElementById("h")!.textContent = "Hidden words for a model";
     document.getElementById("o")!.textContent = "Stop";

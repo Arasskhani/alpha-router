@@ -11,6 +11,8 @@
  * messaging, which the page cannot reach.
  */
 
+import { markOwn, ownHost } from "./own";
+
 export const OVERLAY_ID = "alpharouter-agent-overlay";
 
 type Styles = Record<string, string>;
@@ -105,7 +107,7 @@ type Host = HTMLElement & { __label?: HTMLElement; __resume?: HTMLButtonElement;
 export function showOverlay(doc: Document, run: string, label: string, send: PanelSender, onResume?: () => void): void {
   // A run stopped here does not come back on this page.
   if (runStopped(run)) return;
-  let host = doc.getElementById(OVERLAY_ID) as Host | null;
+  let host = ownHost<Host>(doc, OVERLAY_ID);
   if (host && host.dataset.run !== run) {
     host.remove();
     host = null;
@@ -119,6 +121,7 @@ export function showOverlay(doc: Document, run: string, label: string, send: Pan
   const root = doc.body ?? doc.documentElement;
   host = styled(doc, "div", HOST_STYLES) as Host;
   host.id = OVERLAY_ID;
+  markOwn(host);
   host.dataset.run = run;
   host.__working = label;
   const shadow = host.attachShadow({ mode: "closed" });
@@ -191,7 +194,7 @@ export function showOverlay(doc: Document, run: string, label: string, send: Pan
  * Resume, or goes back to what the panel last had it say.
  */
 export function setOverlayPaused(doc: Document, run: string, paused: boolean): void {
-  const host = doc.getElementById(OVERLAY_ID) as Host | null;
+  const host = ownHost<Host>(doc, OVERLAY_ID);
   if (!host || host.dataset.run !== run) return;
   if (paused) host.dataset.paused = "1";
   else delete host.dataset.paused;
@@ -201,11 +204,11 @@ export function setOverlayPaused(doc: Document, run: string, paused: boolean): v
 
 /** Veil the banner for a screenshot, as the visual layer is: the model sees the page, not Alpharouter's own controls. */
 export function veilOverlay(doc: Document, veiled: boolean): void {
-  const host = doc.getElementById(OVERLAY_ID);
+  const host = ownHost(doc, OVERLAY_ID);
   if (host) setStyles(host, { visibility: veiled ? "hidden" : "visible" });
 }
 
 export function hideOverlay(doc: Document, run?: string): void {
-  const host = doc.getElementById(OVERLAY_ID);
+  const host = ownHost(doc, OVERLAY_ID);
   if (host && (run === undefined || host.dataset.run === run)) host.remove();
 }

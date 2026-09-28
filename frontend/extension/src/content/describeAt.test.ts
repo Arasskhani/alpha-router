@@ -4,7 +4,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { describeAt, locate, snapshot } from "./agent";
-import { OVERLAY_ID } from "./overlay";
+import { OVERLAY_ID, showOverlay } from "./overlay";
+import { markOwn } from "./own";
 import { runAgentCall } from "./runtime";
 import { VISUALS_ID } from "./visuals";
 
@@ -48,10 +49,36 @@ describe("describeAt", () => {
 
   it("never reports the agent's own banner as the target, and says the banner is in the way", () => {
     const doc = page(`<div id="${OVERLAY_ID}"><button>Stop</button></div>`);
+    markOwn(doc.getElementById(OVERLAY_ID)!);
     at(doc.querySelector(`#${OVERLAY_ID} button`));
     const result = describeAt(doc, 1, 1, visible);
     expect(result).toMatchObject({ ok: false, error: "covered" });
     expect(String((result as { message: string }).message)).toMatch(/Alpharouter's banner/);
+  });
+
+  it("knows the real banner inside its closed shadow root, which the extension can open", () => {
+    const roots = new Map<Element, ShadowRoot>();
+    const attach = Element.prototype.attachShadow;
+    vi.spyOn(Element.prototype, "attachShadow").mockImplementation(function (this: Element, init: ShadowRootInit) {
+      const root = attach.call(this, init);
+      roots.set(this, root);
+      return root;
+    });
+    vi.stubGlobal("chrome", { dom: { openOrClosedShadowRoot: (el: Element) => roots.get(el) ?? null } });
+    const doc = page(`<main>Page</main>`);
+    showOverlay(doc, "run-1", "Working", () => undefined);
+    const [host, root] = [...roots][0];
+    const stop = root.querySelector("button")!;
+    Object.assign(root, { elementFromPoint: () => stop });
+    at(host);
+    expect(describeAt(doc, 1, 1, visible)).toMatchObject({ ok: false, error: "covered" });
+    vi.unstubAllGlobals();
+  });
+
+  it("takes a page's element that copies the banner's id for the page's own", () => {
+    const doc = page(`<div id="${OVERLAY_ID}"><button>Stop</button></div>`);
+    at(doc.querySelector(`#${OVERLAY_ID} button`));
+    expect(describeAt(doc, 1, 1, visible)).toMatchObject({ ok: true, element: { role: "button", name: "Stop" } });
   });
 
   it("refuses a hidden element", () => {
@@ -183,6 +210,7 @@ describe("locate", () => {
 
   it("refuses when something else would take the press, the agent's banner included", () => {
     const doc = page(`<button id="b">Send</button><div id="cookie">We use cookies</div><div id="${OVERLAY_ID}"><button>Stop</button></div>`);
+    markOwn(doc.getElementById(OVERLAY_ID)!);
     vi.spyOn(doc.getElementById("b")!, "getBoundingClientRect").mockReturnValue(box(100, 200));
     at(doc.getElementById("cookie"));
     expect(locate(refOf("Send"), visible, true)).toMatchObject({ ok: false, error: "covered", message: expect.stringContaining("We use cookies") });

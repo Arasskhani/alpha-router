@@ -28,7 +28,7 @@ import { keyDefFor, KEY_NAMES_SHOWN, parseKeyCombo, type KeyCombo } from "../lib
 import { looseName } from "../lib/refs";
 import { isSensitiveField } from "../lib/sensitive";
 import { extractPage, isBlockDisplayed, isTextRendered } from "./extract";
-import { OVERLAY_ID } from "./overlay";
+import { inOwnUi, isOwnHost } from "./own";
 
 export type Visibility = (el: Element) => boolean;
 
@@ -224,7 +224,7 @@ function* visibleElements(root: Element, isVisible: Visibility): Generator<Eleme
     }
     if (node.nodeType !== Node.ELEMENT_NODE) continue;
     const el = node as Element;
-    if (SKIPPED.has(el.tagName.toUpperCase()) || el.id === OVERLAY_ID || el.hasAttribute("inert") || !isVisible(el)) continue;
+    if (SKIPPED.has(el.tagName.toUpperCase()) || isOwnHost(el) || el.hasAttribute("inert") || !isVisible(el)) continue;
     yield el;
     const tag = el.tagName.toUpperCase();
     if (tag === "SLOT") {
@@ -819,7 +819,7 @@ function inView(el: Element): boolean {
 /** The dialogs open on the page now: shown, and not the agent's own. */
 function openDialogs(doc: Document, isVisible: Visibility): Element[] {
   return Array.from(doc.querySelectorAll(DIALOGS)).filter((el) => {
-    if (el.id === OVERLAY_ID || el.closest(`#${OVERLAY_ID}`)) return false;
+    if (inOwnUi(el)) return false;
     for (let node: Element | null = el; node; node = parentAcrossShadow(node)) if (!isVisible(node)) return false;
     return true;
   });
@@ -941,7 +941,7 @@ export function pageText(doc: Document, options: { maxChars?: number; isVisible:
   const extract = extractPage(doc, {
     maxChars,
     maxSelectionChars: 0,
-    isVisible: (el) => el.id !== OVERLAY_ID && options.isVisible(el),
+    isVisible: (el) => !isOwnHost(el) && options.isVisible(el),
     isTextVisible: isTextRendered,
     isBlock: isBlockDisplayed,
   });
@@ -954,7 +954,7 @@ export function pageText(doc: Document, options: { maxChars?: number; isVisible:
     if (!said(words)) first.push(`Open dialog${name ? ` ${quoted(clip(name, 80))}` : ""}: ${words}`);
   }
   for (const el of Array.from(doc.querySelectorAll(LIVE)).slice(0, 20)) {
-    if (el.id === OVERLAY_ID || el.closest(`#${OVERLAY_ID}`) || !shownAll(el, options.isVisible)) continue;
+    if (inOwnUi(el) || !shownAll(el, options.isVisible)) continue;
     const line = liveLine(el, options.isVisible);
     const words = visibleText(el, options.isVisible, 200);
     if (line && !said(words)) first.push(line);
@@ -1078,7 +1078,7 @@ function coveredBy(el: Element): Element | null {
   const top = doc.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
   if (!top || el.contains(top) || holds(top, el)) return null;
   // Our own overlay is never in the way.
-  if (top.id === OVERLAY_ID || top.closest(`#${OVERLAY_ID}`)) return null;
+  if (inOwnUi(top)) return null;
   return top;
 }
 
@@ -1403,7 +1403,7 @@ function tabOrder(doc: Document, isVisible: Visibility): HTMLElement[] {
   const candidates = Array.from(
     doc.querySelectorAll<HTMLElement>('a[href], area[href], button, input, select, textarea, summary, iframe, [tabindex], [contenteditable=""], [contenteditable="true"]'),
   ).filter((el) => {
-    if (el.tabIndex < 0 || isDisabled(el) || el.id === OVERLAY_ID || el.closest(`#${OVERLAY_ID}`)) return false;
+    if (el.tabIndex < 0 || isDisabled(el) || inOwnUi(el)) return false;
     if (el.tagName.toUpperCase() === "INPUT" && inputType(el) === "hidden") return false;
     for (let node: Element | null = el; node; node = node.parentElement) if (!isVisible(node) || node.hasAttribute("inert")) return false;
     return true;
@@ -1632,7 +1632,7 @@ function scrollsItself(el: Element, axis: Axis): boolean {
  */
 export function scrollerFor(doc: Document, start: Element | null, axis: Axis): Element | null {
   for (let node: Element | null = start, depth = 0; node && depth < 100; node = parentAcrossShadow(node), depth += 1) {
-    if (node.id === OVERLAY_ID) break;
+    if (isOwnHost(node)) break;
     if (scrollsItself(node, axis)) return node;
   }
   return documentScroller(doc, axis);
@@ -1684,7 +1684,7 @@ export function scroll(doc: Document, direction: unknown, ref: unknown, isVisibl
     // What a wheel in the middle of the window would scroll: the list under it, or the page.
     const view = doc.defaultView;
     const found = typeof doc.elementFromPoint === "function" ? doc.elementFromPoint((view?.innerWidth || 1200) / 2, (view?.innerHeight || 800) / 2) : null;
-    from = found && !(found.id === OVERLAY_ID || found.closest(`#${OVERLAY_ID}`)) ? found : null;
+    from = found && !(inOwnUi(found)) ? found : null;
   }
   const axis: Axis = move === "top" || move === "bottom" ? "y" : move!.axis;
   const scroller = scrollerFor(doc, from, axis);
@@ -1832,7 +1832,7 @@ function describeAtIn(doc: Document, x: number, y: number, isVisible: Visibility
     if (!inner || inner === el) break;
     el = inner;
   }
-  if (el && (el.id === OVERLAY_ID || el.closest(`#${OVERLAY_ID}`))) {
+  if (el && (inOwnUi(el))) {
     // Only the banner's own buttons take the pointer: the point is on Alpharouter's Stop or Resume.
     return { ok: false, error: "covered", message: "Alpharouter's banner is over that point (its Stop and Resume buttons). Act elsewhere, or scroll the page." };
   }
@@ -1896,7 +1896,7 @@ export function locate(ref: unknown, isVisible: Visibility, activates = false): 
     if (!inner || inner === top) break;
     top = inner;
   }
-  if (top && (top.id === OVERLAY_ID || top.closest(`#${OVERLAY_ID}`))) {
+  if (top && (inOwnUi(top))) {
     return { ok: false, error: "covered", message: "Alpharouter's banner is over that element. Scroll the page a little, then act." };
   }
   if (top && !holds(press, top) && !holds(target, top) && !holds(top, press)) {

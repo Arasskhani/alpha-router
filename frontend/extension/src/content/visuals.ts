@@ -13,6 +13,8 @@
  * the run is doing (working, waiting for an approval, paused, an error).
  */
 
+import { markOwn, ownHost } from "./own";
+
 export const VISUALS_ID = "alpharouter-agent-visuals";
 
 export type HighlightState = "working" | "waiting" | "paused" | "error";
@@ -116,13 +118,14 @@ type Host = HTMLElement & { __parts?: Parts; __pulse?: { cancel: () => void } };
 
 /** Show the layer for a fresh run, or return the one already up. */
 export function showVisuals(doc: Document): Host {
-  const existing = doc.getElementById(VISUALS_ID) as Host | null;
+  const existing = ownHost<Host>(doc, VISUALS_ID);
   if (existing) {
     setStyles(existing, HOST_STYLES);
     return existing;
   }
   const host = doc.createElement("div") as Host;
   host.id = VISUALS_ID;
+  markOwn(host);
   setStyles(host, HOST_STYLES);
   const shadow = host.attachShadow({ mode: "closed" });
   host.__parts = buildParts(doc, shadow);
@@ -133,24 +136,24 @@ export function showVisuals(doc: Document): Host {
 
 /** Veil the layer for a capture, so the model never sees the cursor or the border; unveil after. */
 export function veilVisuals(doc: Document, veiled: boolean): void {
-  const host = doc.getElementById(VISUALS_ID) as Host | null;
+  const host = ownHost<Host>(doc, VISUALS_ID);
   if (host) setStyles(host, { visibility: veiled ? "hidden" : "visible" });
 }
 
 export function hideVisuals(doc: Document): void {
-  const host = doc.getElementById(VISUALS_ID) as Host | null;
+  const host = ownHost<Host>(doc, VISUALS_ID);
   host?.__pulse?.cancel();
   host?.remove();
 }
 
 /** The highlight's state now, or null when the layer is not up. */
 export function highlightState(doc: Document): HighlightState | null {
-  const state = (doc.getElementById(VISUALS_ID) as Host | null)?.__parts?.frame.dataset.state;
+  const state = (ownHost<Host>(doc, VISUALS_ID))?.__parts?.frame.dataset.state;
   return state && state in STATE_COLOR ? (state as HighlightState) : null;
 }
 
 export function setHighlightState(doc: Document, state: HighlightState): void {
-  const host = doc.getElementById(VISUALS_ID) as Host | null;
+  const host = ownHost<Host>(doc, VISUALS_ID);
   const frame = host?.__parts?.frame;
   if (!host || !frame) return;
   const color = STATE_COLOR[state];
@@ -174,7 +177,7 @@ export function setHighlightState(doc: Document, state: HighlightState): void {
 
 /** Move the cursor to a viewport point; instant when the person prefers reduced motion. */
 export function moveCursor(doc: Document, point: Point): void {
-  const cursor = (doc.getElementById(VISUALS_ID) as Host | null)?.__parts?.cursor;
+  const cursor = (ownHost<Host>(doc, VISUALS_ID))?.__parts?.cursor;
   if (!cursor) return;
   setStyles(cursor, { transition: reducedMotion(doc) ? "none" : "transform 220ms cubic-bezier(0.22, 0.61, 0.36, 1)" });
   setStyles(cursor, { transform: `translate(${point.x}px, ${point.y}px)` });
@@ -182,7 +185,7 @@ export function moveCursor(doc: Document, point: Point): void {
 
 /** A brief ripple where a click lands (double and triple clicks ripple twice/thrice). */
 export function pulseClick(doc: Document, point: Point, kind: ClickKind = "left"): void {
-  const host = doc.getElementById(VISUALS_ID) as Host | null;
+  const host = ownHost<Host>(doc, VISUALS_ID);
   const shadow = (host as unknown as { shadowRoot?: ShadowRoot })?.shadowRoot;
   const parent = host?.__parts?.cursor.parentNode ?? shadow ?? null;
   if (!host || !parent) return;
@@ -213,7 +216,7 @@ export function pulseClick(doc: Document, point: Point, kind: ClickKind = "left"
 }
 
 export function showTarget(doc: Document, rect: Rect): void {
-  const target = (doc.getElementById(VISUALS_ID) as Host | null)?.__parts?.target;
+  const target = (ownHost<Host>(doc, VISUALS_ID))?.__parts?.target;
   if (!target) return;
   setStyles(target, {
     display: "block",
@@ -225,6 +228,6 @@ export function showTarget(doc: Document, rect: Rect): void {
 }
 
 export function hideTarget(doc: Document): void {
-  const target = (doc.getElementById(VISUALS_ID) as Host | null)?.__parts?.target;
+  const target = (ownHost<Host>(doc, VISUALS_ID))?.__parts?.target;
   if (target) setStyles(target, { display: "none" });
 }

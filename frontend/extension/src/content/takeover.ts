@@ -24,8 +24,9 @@
  * watch the last one set up rather than add a second one.
  */
 
-import { OVERLAY_ID, runStopped, setOverlayPaused } from "./overlay";
-import { highlightState, setHighlightState, VISUALS_ID, type HighlightState } from "./visuals";
+import { runStopped, setOverlayPaused } from "./overlay";
+import { isOwnHost } from "./own";
+import { highlightState, setHighlightState, type HighlightState } from "./visuals";
 
 type TakeoverMessage = { type: "agent-takeover"; run: string } | { type: "agent-resume"; run: string };
 export type TakeoverSender = (message: TakeoverMessage) => unknown;
@@ -64,7 +65,7 @@ function current(): Watch | undefined {
 /** An event on the agent's own banner or layer - Stop, Resume - is not a take-over. */
 function onOwnUi(event: Event): boolean {
   const path = typeof event.composedPath === "function" ? event.composedPath() : [];
-  return path.some((node) => node instanceof Element && (node.id === OVERLAY_ID || node.id === VISUALS_ID));
+  return path.some((node) => node instanceof Element && isOwnHost(node));
 }
 
 /** Whether run `run` is paused on this page because the person took over. */

@@ -12,7 +12,7 @@
  */
 
 import { describeFocus, scrolledTo, scrollerFor, scrollerName, type ElementInfo, type Visibility } from "./agent";
-import { OVERLAY_ID } from "./overlay";
+import { inOwnUi } from "./own";
 
 /** Where a page announces things, and the dialogs it opens. */
 const ANNOUNCERS = '[role="alert"], [role="status"], [aria-live="assertive"], [aria-live="polite"], output, [role="alertdialog"], [role="dialog"], dialog[open]';
@@ -77,7 +77,7 @@ function wordsOf(el: Element): string {
 function scan(doc: Document, watch: Watch, keep: boolean): void {
   const found = Array.from(doc.querySelectorAll(ANNOUNCERS)).slice(0, MAX_ANNOUNCERS);
   for (const el of found) {
-    if (el.id === OVERLAY_ID || el.closest(`#${OVERLAY_ID}`)) continue;
+    if (inOwnUi(el)) continue;
     const words = shown(el, watch.isVisible) ? wordsOf(el).slice(0, ANNOUNCEMENT_CHARS) : "";
     if (watch.last.get(el) === words) continue;
     watch.last.set(el, words);

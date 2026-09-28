@@ -16,7 +16,12 @@
  *   so each chat the check makes has a title of its own;
  * - a step of the browser agent (a request with tools) is answered with the
  *   next tool call of the script its task names (AGENT_TASKS), read from the
- *   page outline the agent sent back - see agentReply;
+ *   page outline the agent sent back - see agentReply. Under full control it
+ *   points the way a model does: at what it sees in the last screenshot (the
+ *   check's pages paint their targets TARGET_COLOR, and the check gives the
+ *   mock a way to find that colour in an image - setLocator), in that image's
+ *   pixels, so a screenshot of the wrong part of the page, or at the wrong
+ *   scale, makes the click miss;
  * - anything else with a fixed line.
  */
 import http from "node:http";
@@ -94,8 +99,21 @@ export const AGENT_TASKS = {
   stop: "E2E-AGENT-STOP",
   control: "E2E-AGENT-CONTROL",
 };
-/** Where the control script clicks: the centre of the trusted-only button on agent-control.html. */
+/** Where agent-control.html puts its trusted-only button, in CSS pixels (its centre). */
 export const CONTROL_CLICK = [100, 140];
+/** The colour the check's pages paint what the agent should click, for the mock to find in a screenshot. */
+export const TARGET_COLOR = "#ff00ff";
+
+/** The last screenshot the agent sent, as a data URL, or null. */
+function lastScreenshot(messages) {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const m = messages[i];
+    if (m.role !== "user" || !Array.isArray(m.content)) continue;
+    const image = m.content.find((part) => part?.type === "image_url");
+    if (image) return String(image.image_url?.url ?? "");
+  }
+  return null;
+}
 /** What the form script types into the name field. */
 export const AGENT_NAME = "Majid E2E";
 /** Where the injection script, hijacked by the page, tries to take the agent. */
@@ -118,7 +136,7 @@ function refIn(messages, role, name) {
  * holds; each script reads the page first and ends with done, saying what
  * the last answer it got was.
  */
-function agentReply(messages, { stealUrl }) {
+async function agentReply(messages, { stealUrl, locate }) {
   const task = text(messages.find((m) => m.role === "user"));
   const step = messages.filter((m) => m.role === "assistant" && Array.isArray(m.tool_calls)).length;
   const last = String([...messages].reverse().find((m) => m.role === "tool")?.content ?? "");
@@ -156,16 +174,25 @@ function agentReply(messages, { stealUrl }) {
       () => ({ tool: "wait_for", args: { seconds: 10 } }),
       () => answered("Waited"),
     ],
-    // Full control: look at the page, then click at a point in it with the real mouse.
+    // Full control: look at the page, then click with the real mouse where the target is in the screenshot.
     [AGENT_TASKS.control]: [
       () => ({ tool: "screenshot", args: {} }),
-      () => ({ tool: "computer", args: { action: "left_click", coordinate: CONTROL_CLICK } }),
+      (m) => pointAt(m, "Control step"),
       () => answered("Control step"),
     ],
   };
+  /** A click at the target as the last screenshot shows it; done, saying so, when it shows none. */
+  async function pointAt(m, label) {
+    const shot = lastScreenshot(m);
+    const found = shot && locate ? await locate(shot, TARGET_COLOR) : null;
+    if (!found?.point) {
+      return { tool: "done", args: { summary: `${label}: no target in the screenshot (${found ? `${found.width}x${found.height}` : "none"})` } };
+    }
+    return { tool: "computer", args: { action: "left_click", coordinate: found.point } };
+  }
   const name = Object.keys(script).find((key) => task.startsWith(key));
   const next = name ? script[name][step] : null;
-  return next ? next(messages) : { text: "The script has no more steps." };
+  return next ? await next(messages) : { text: "The script has no more steps." };
 }
 
 function toolCallFrames({ id, created, callId, tool, args }) {
@@ -186,6 +213,8 @@ function toolCallFrames({ id, created, callId, tool, args }) {
  */
 export async function startMockLlm({ port = 0, plantBase = "https://planted.invalid", stealUrl = "http://localhost:9/steal" } = {}) {
   const requests = [];
+  /** Finds TARGET_COLOR in a screenshot: set by the check once it has a browser (setLocator). */
+  let locate = null;
   const server = http.createServer(async (req, res) => {
     try {
       if (req.method === "GET" && req.url?.endsWith("/models")) {
@@ -202,7 +231,7 @@ export async function startMockLlm({ port = 0, plantBase = "https://planted.inva
         const id = `chatcmpl-e2e-${requests.length}`;
         const created = Math.floor(Date.now() / 1000);
         if (Array.isArray(body.tools) && body.tools.length && body.stream) {
-          const next = agentReply(messages, { stealUrl });
+          const next = await agentReply(messages, { stealUrl, locate });
           res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
           const frames = next.tool
             ? toolCallFrames({ id, created, callId: `call_e2e_${requests.length}`, tool: next.tool, args: next.args })
@@ -256,6 +285,10 @@ export async function startMockLlm({ port = 0, plantBase = "https://planted.inva
   return {
     url: `http://127.0.0.1:${bound}/v1`,
     requests,
+    /** How the mock finds a colour in a screenshot: (dataUrl, color) => { point: [x, y] | null, width, height }. */
+    setLocator: (fn) => {
+      locate = fn;
+    },
     close: () => new Promise((resolve) => server.close(() => resolve())),
   };
 }

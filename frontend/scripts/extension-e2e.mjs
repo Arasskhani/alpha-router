@@ -213,9 +213,13 @@ async function step(name, fn) {
     if (err instanceof SetupError) throw err;
     results.push({ name, ok: false });
     console.log(`  FAIL  ${name}\n        ${String(err?.message || err).split("\n")[0]}`);
+    if (afterFailure) await afterFailure().catch(() => undefined);
     return false;
   }
 }
+
+/** What to do after a step fails, so the next one is not failed by it as well (the agent's steps set it). */
+let afterFailure = null;
 
 // ---------------------------------------------------------------- putting the stack back
 
@@ -1003,6 +1007,19 @@ async function main() {
   const agentClick = (label) =>
     agentPanel(`(() => { const b = [...root.querySelectorAll('button')].find((b) => b.textContent === ${JSON.stringify(label)}); if (!b) throw new Error('no ${label} button'); b.click(); return true; })()`);
 
+  /** Answer the approval card once it is up: a step's line says it waits a moment before the card shows. */
+  async function agentAnswer(label) {
+    await panel.until(agentCard, `the approval card, to press ${label}`, 20_000);
+    await panel.run(agentClick(label));
+  }
+
+  // A step that fails mid-run leaves the run waiting: it is stopped, so the next step starts from a panel that is ready.
+  afterFailure = async () => {
+    if (!panel || (await panel.run(agentIdle).catch(() => true))) return;
+    await panel.run(agentClick("Stop")).catch(() => undefined);
+    await panel.until(agentIdle, "the failed step's run to stop", 15_000).catch(() => undefined);
+  };
+
   /** Start `task` in the Agent tab, with `page` the tab next to the panel. */
   async function agentStart(page, task) {
     await page.bringToFront();
@@ -1028,10 +1045,10 @@ async function main() {
     await panel.until(agentCard, "the approval to type");
     expect(await panel.run(agentSays(`Type "${AGENT_NAME}" into "Full name"`)), "the card does not say what will be typed");
     expect((await form.inputValue("#name")) === "", "the agent typed before the user allowed it");
-    await panel.run(agentClick("Allow"));
+    await agentAnswer("Allow");
     await panel.until(agentPanel("root.innerText.includes('Send the form')"), "the approval to send the form");
     expect(!form.url().includes("agent-thanks"), "the form was sent before the user allowed it");
-    await panel.run(agentClick("Allow"));
+    await agentAnswer("Allow");
     await panel.until(agentSays(`Form sent: Thanks, ${AGENT_NAME}`), "the agent's summary", 40_000);
     await panel.until(agentIdle, "the run to end");
     expect(form.url().includes("/agent-thanks.html?name=Majid+E2E"), `the tab shows ${form.url()}`);
@@ -1085,7 +1102,7 @@ async function main() {
     await panel.until(agentCard, "the approval to click", 30_000);
     expect(await panel.run(agentSays('Click button "Trusted?"')), "the card does not name the button under the point");
     expect((await control.evaluate(() => window.__clicks.length)) === 0, "the button was clicked before the user allowed it");
-    await panel.run(agentClick("Allow"));
+    await agentAnswer("Allow");
     await panel.until(agentSays("Control step: Clicked at"), "the agent's summary", 40_000);
     await panel.until(agentIdle, "the run to end");
     const clicks = await control.evaluate(() => window.__clicks);
@@ -1109,7 +1126,7 @@ async function main() {
     await agentStart(page, task);
     await panel.until(agentCard, "the approval to click the button at the bottom", 40_000);
     expect(await panel.run(agentSays('Click button "Bottom button"')), "the card does not name the button under the point");
-    await panel.run(agentClick("Allow"));
+    await agentAnswer("Allow");
     await panel.until(agentSays("Low step: Clicked at"), "the agent's summary", 40_000);
     await panel.until(agentIdle, "the run to end");
     const clicks = await page.evaluate(() => window.__clicks);
@@ -1129,10 +1146,10 @@ async function main() {
     await page.goto(site.agentUrl("agent-dialog.html"));
     await agentStart(page, task);
     await panel.until(agentCard, "the approval to click", 40_000);
-    await panel.run(agentClick("Allow"));
+    await agentAnswer("Allow");
     await panel.until(agentSays('The page asks to confirm: "Go on with the check?"'), "the dialog's card", 20_000);
     // The page is held by its dialog now (nothing runs in it until the dialog is answered): it is asked nothing.
-    await panel.run(agentClick("Allow"));
+    await agentAnswer("Allow");
     await panel.until(agentSays("Dialog step: Clicked at"), "the agent's summary", 40_000);
     await panel.until(agentIdle, "the run to end");
     expect((await page.title()) === "CONFIRMED", `the page's title is ${await page.title()}`);
@@ -1147,12 +1164,14 @@ async function main() {
     const start = await context.newPage();
     await start.goto(site.agentUrl("agent-shop.html"));
     const opened = context.waitForEvent("page", { predicate: (p) => p.url().includes("agent-control.html"), timeout: 60_000 });
+    // Awaited below; should the step fail before, the wait must not end the whole script when it times out.
+    opened.catch(() => undefined);
     await agentStart(start, task);
     await panel.until(agentSays("in a new tab"), "the approval to open the tab", 40_000);
-    await panel.run(agentClick("Allow"));
+    await agentAnswer("Allow");
     const tab = await opened;
     await panel.until(agentSays('Click button "Trusted?"'), "the approval to click in the new tab", 40_000);
-    await panel.run(agentClick("Allow"));
+    await agentAnswer("Allow");
     await panel.until(agentSays("Tabs step: Clicked at"), "the agent's summary", 40_000);
     await panel.until(agentIdle, "the run to end");
     const clicks = await tab.evaluate(() => window.__clicks);
@@ -1221,7 +1240,7 @@ async function main() {
     // The wheel scroll and the screenshot go without asking; the click asks.
     await panel.until(agentCard, "the approval to click the button further down", 40_000);
     expect(await panel.run(agentSays('Click button "Down here"')), "the card does not name the button under the point");
-    await panel.run(agentClick("Allow"));
+    await agentAnswer("Allow");
     await panel.until(agentSays("Scroll step: Clicked at"), "the agent's summary", 40_000);
     await panel.until(agentIdle, "the run to end");
     const clicks = await page.evaluate(() => window.__clicks);
@@ -1238,7 +1257,7 @@ async function main() {
     await agentStart(article2, task);
     await panel.until(agentCard, "the approval to go to another site", 30_000);
     expect(await panel.run(agentSays(`another site: ${STEAL_SITE}`)), "the card does not name the other site");
-    await panel.run(agentClick("Deny"));
+    await agentAnswer("Deny");
     await panel.until(agentSays("Navigation step: Denied"), "the agent's summary", 30_000);
     await panel.until(agentIdle, "the run to end");
     expect(article2.url().endsWith("/agent-injection.html"), `the tab went to ${article2.url()}`);

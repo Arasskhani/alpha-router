@@ -297,7 +297,8 @@ async function callJson(pathname, init = {}) {
 async function findChat(question) {
   const listing = await callJson("/api/user/chats");
   const sessions = listing.sessions ?? listing.items ?? listing;
-  for (const session of sessions.slice(0, 15)) {
+  // The newest first: every chat this check made is among them (a run is one, and there are many).
+  for (const session of sessions.slice(0, 60)) {
     const page = await callJson(`/api/user/chat-sessions/${encodeURIComponent(session.id)}/messages`);
     const messages = page.messages ?? page.items ?? page;
     if (messages.some((m) => m.role === "user" && m.content === question)) return { id: session.id, messages };

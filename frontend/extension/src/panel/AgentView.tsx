@@ -180,8 +180,8 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
   const [banner, setBanner] = useState("");
   /** The model is answering the step: since when, and its words so far. */
   const [thinking, setThinking] = useState<{ since: number; text: string } | null>(null);
-  /** Ticks once a second while the model thinks, so the wait shows how long it has been. */
-  const [, setTick] = useState(0);
+  /** How long the model has been thinking, counted once a second, so the wait shows it. */
+  const [thoughtFor, setThoughtFor] = useState<{ since: number; seconds: number }>({ since: 0, seconds: 0 });
   /** The person took over the page (or paused from here): the run waits for Resume. */
   const [paused, setPaused] = useState(false);
   /** A private run: not saved to the person's chat history (its steps still go to Admin Logs). */
@@ -288,11 +288,12 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
     logEnd.current?.scrollIntoView?.({ block: "end" });
   }, [log, approval, question, paused, thinking]);
 
+  const thinkingSince = thinking?.since;
   useEffect(() => {
-    if (!thinking) return;
-    const timer = setInterval(() => setTick((n) => n + 1), 1000);
+    if (thinkingSince === undefined) return;
+    const timer = setInterval(() => setThoughtFor({ since: thinkingSince, seconds: Math.max(0, Math.round((Date.now() - thinkingSince) / 1000)) }), 1000);
     return () => clearInterval(timer);
-  }, [thinking]);
+  }, [thinkingSince]);
 
   // A run does not outlive the panel: closing it stops the run (and its fetch).
   useEffect(() => () => controller.current?.abort(), []);
@@ -756,7 +757,7 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
         {thinking && (
           <p className="agent__text agent__thinking" role="status">
             <span className="agent__thinking-label">
-              Thinking… ({models?.find((m) => m.id === modelId)?.name ?? "the model"}, {Math.max(0, Math.round((Date.now() - thinking.since) / 1000))} s)
+              Thinking… ({models?.find((m) => m.id === modelId)?.name ?? "the model"}, {thoughtFor.since === thinking.since ? thoughtFor.seconds : 0} s)
             </span>
             {thinking.text && <span className="agent__thinking-text">{thinking.text}</span>}
           </p>

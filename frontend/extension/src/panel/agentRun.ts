@@ -185,6 +185,9 @@ const HISTORY_LINES = 10;
  */
 type Entry = { message: ApiMessage; page?: { open: string; body: string; close: string }; read?: "outline" | "text" };
 
+/** The window's view of the page, in CSS pixels, as the page reports it after an action. */
+type View = { width: number; height: number; scrollX: number; scrollY: number; pageWidth: number; pageHeight: number };
+
 function abortError(): DOMException {
   return new DOMException("The run was stopped.", "AbortError");
 }
@@ -591,7 +594,12 @@ function originPattern(url: string): { pattern: string; host: string } | null {
 
 export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: AbortSignal): Promise<RunResult> {
   const entries: Entry[] = [
-    { message: { role: "system", content: agentInstructions(options.nonce, { fullControl: Boolean(deps.driver), plan: options.mode === "plan" }) } },
+    {
+      message: {
+        role: "system",
+        content: agentInstructions(options.nonce, { fullControl: Boolean(deps.driver), mode: options.mode, screenshotAfterAction: Boolean(options.screenshotAfterAction) }),
+      },
+    },
     { message: { role: "user", content: options.task } },
   ];
   const history: string[] = [];
@@ -666,7 +674,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
    * announced. Best-effort, and only while the tab is on the site the action
    * was judged on: another site is read only once the user has allowed it.
    */
-  async function aftermath(before: WorkTab, after: WorkTab | null, hit?: ElementInfo): Promise<string[]> {
+  async function aftermath(before: WorkTab, after: WorkTab | null, hit?: ElementInfo, scrolled = false): Promise<string[]> {
     const lines: string[] = [];
     if (hit) lines.push(`It hit: ${hitLine(hit)}.`);
     if (!after || !after.host || after.host !== before.host) return lines;
@@ -677,7 +685,27 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     lines.push(focus ? `The keyboard is in: ${focusLine(focus)}.` : "Nothing has the keyboard focus.");
     const said = Array.isArray(seen.said) ? (seen.said as Array<{ kind: string; text: string }>) : [];
     for (const item of said) lines.push(item.kind === "dialog" ? `A dialog shows: "${item.text}"` : `The page announced: "${item.text}"`);
+    const view = seen.view as View | undefined;
+    if (scrolled && view) lines.push(`The window is ${view.scrollY} of ${view.pageHeight} CSS pixels down the page, and shows ${view.height} of them.`);
     return lines;
+  }
+
+  /**
+   * Where the run starts, for the first message: the tab's title and address
+   * and how much of the page the window shows - the page's words, inside the
+   * tags. Nothing for a page the agent may not work on.
+   */
+  async function startingPoint(tab: WorkTab): Promise<string | null> {
+    if (!tab.host) return null;
+    if (classifyAction({ tool: "read_page", args: {}, page: { url: tab.url, host: tab.host } }, options.rules).class === "blocked") return null;
+    const seen = await Promise.race([deps.browser.page("observe", {}, tab, signal, OBSERVE_MS).catch(() => null), stopped]);
+    check();
+    const view = seen?.ok ? (seen.view as View | undefined) : undefined;
+    const lines = [`"${clip(tab.title, 100) || "(untitled)"}" at ${whereTo(tab.url)}.`];
+    if (view) {
+      lines.push(`The window shows ${view.width}×${view.height} CSS pixels of a page ${view.pageWidth}×${view.pageHeight}, ${view.scrollY ? `${view.scrollY} pixels down from the top` : "at its top"}.`);
+    }
+    return `Where you start - the tab next to the side panel:\n${pageText(wrapPage(options.nonce, tab.host, lines.join("\n"))!, true)}`;
   }
 
   /** Best-effort: the visuals never fail a run, nor hold it up for long, nor outlast a Stop. */
@@ -939,7 +967,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     check();
     const moved = after?.host && after.host !== site && !allowedSites.has(after.host) ? `\n${elsewhere(after.host)}` : "";
     // What was pressed, and where the keyboard went: the model checks this before it types.
-    const saw = await aftermath(tab, after, spec.element === "point" || spec.element === "start" ? hit : undefined);
+    const saw = await aftermath(tab, after, spec.element === "point" || spec.element === "start" ? hit : undefined, action === "scroll");
     check();
     return { content: `${note}${moved}`, ...(saw.length ? { page: wrapPage(options.nonce, site, saw.join("\n")) } : {}), status: "done", detail: note, outcome: "ok" };
   }
@@ -1393,6 +1421,9 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     // The user started the run on this page.
     if (startSite) allowedSites.add(startSite);
     lastTab = first;
+    // The model starts knowing where it is.
+    const start = first ? await startingPoint(first) : null;
+    if (start) entries[1] = { message: { role: "user", content: `${options.task}\n\n${start}` } };
     if (first?.host) await visual("visuals_show", {}, first);
     await state("working", first);
     for (steps = 1; steps <= options.maxSteps; steps += 1) {

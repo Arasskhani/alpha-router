@@ -548,6 +548,21 @@ const READ_ONLY = new Set(["tabs_list", "read_page", "find", "get_page_text", "s
 
 type PointRect = { x: number; y: number; width: number; height: number };
 
+/**
+ * Where a form sends, for telling whether it changed: without its query or
+ * fragment - a search form with no action sends to the page's own address,
+ * which a single-page app rewrites as the person types (?q=…).
+ */
+function formDestination(action: string | undefined): string {
+  if (!action) return "";
+  try {
+    const url = new URL(action);
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return action;
+  }
+}
+
 /** The same target for the rules' purposes: what they judged it by has not changed, whichever DOM node it is now. */
 function sameTarget(judged: ElementInfo, now: ElementInfo): boolean {
   return (
@@ -557,7 +572,7 @@ function sameTarget(judged: ElementInfo, now: ElementInfo): boolean {
     (judged.href ?? "") === (now.href ?? "") &&
     (judged.type ?? "") === (now.type ?? "") &&
     Boolean(judged.submits) === Boolean(now.submits) &&
-    (judged.formAction ?? "") === (now.formAction ?? "") &&
+    formDestination(judged.formAction) === formDestination(now.formAction) &&
     Boolean(judged.sensitive) === Boolean(now.sensitive) &&
     (judged.frame?.host ?? null) === (now.frame?.host ?? null) &&
     Boolean(judged.frame) === Boolean(now.frame) &&

@@ -280,6 +280,21 @@ describe("computer actions", () => {
     expect(String(blocked.sent[1].find((m) => m.role === "tool")!.content)).toContain("tab_open");
   });
 
+  it("sends the key when only the page's address in the field's form moved, as a search app rewrites ?q=", async () => {
+    const search = { ref: "e5", role: "textbox", name: "Search", tag: "input", formAction: "https://shop.example.com/?q=a" };
+    const browser = fakeBrowser(search);
+    const plain = browser.page.getMockImplementation()!;
+    let focus: Record<string, unknown> = search;
+    browser.page.mockImplementation(async (method: string, args: Record<string, unknown> = {}) => (method === "describe_focus" ? { ok: true, element: focus } : plain(method, args)));
+    const h = harness([{ text: "", toolCalls: [call("computer", { action: "key", text: "a" })] }], { browser, mode: "ask" });
+    h.deps.approve = vi.fn(async () => {
+      focus = { ...search, formAction: "https://shop.example.com/?q=ab" };
+      return true;
+    });
+    await h.run();
+    expect(h.driver!.key).toHaveBeenCalledWith("a");
+  });
+
   it("presses a lone space as the space bar, as the rules read it", async () => {
     const h = harness([{ text: "", toolCalls: [call("computer", { action: "key", text: " " })] }]);
     await h.run();

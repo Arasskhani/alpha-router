@@ -1287,11 +1287,14 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     // Nothing is asked of a page the agent may not work on, not even a description: the rules refuse the action below.
     const workable = Boolean(tab && pageNow && classifyAction({ tool: "read_page", args: {}, page: pageNow }, options.rules).class !== "blocked");
     let element: ElementInfo | undefined;
+    /** The action goes where the keyboard is, and was judged by what had it: it is judged again just before. */
+    let byFocus = false;
     /** When the reference named something else by now and the element meant was found again: said with the result. */
     let refNote: string | undefined;
     if (name === "press_key" && workable && tab) {
       // A key goes to the focused element, which decides what it does: Enter in a message box sends it.
       const focus = await page("describe_focus", {}, tab);
+      byFocus = focus.ok;
       if (focus.ok && focus.element) element = focus.element as ElementInfo;
     } else if (ELEMENT_TOOLS.has(name) || (name === "scroll" && typeof a.ref === "string")) {
       if (!workable || !tab || !pageNow) {
@@ -1367,6 +1370,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
           }
         } else if (spec.element === "focus") {
           const focus = await page("describe_focus", {}, tab);
+          byFocus = focus.ok;
           if (focus.ok && focus.element) element = focus.element as ElementInfo;
           // Text typed with nothing focused goes nowhere - or wherever the page puts it: the field comes first.
           if (focus.ok && !focus.element && spec.as === "type_text") {
@@ -1570,6 +1574,24 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
         };
       }
       targetRect = rect;
+    }
+    // A key or text goes wherever the keyboard is when it is sent: after an approval, or a person's take-over, that may
+    // be another field (a compose box, not the search box Enter was judged in) - then nothing is sent.
+    if (byFocus && tab) {
+      const focus = await page("describe_focus", {}, tab);
+      const now = focus.ok ? (focus.element as ElementInfo | undefined) : undefined;
+      const same = element ? Boolean(now && sameTarget(element, now)) : focus.ok && !now;
+      if (!same) {
+        return {
+          ...base,
+          summary,
+          content: "Not done: the keyboard is somewhere else now than when this action was judged. Look at the page, click the field you mean, then try again.",
+          status: "error",
+          detail: "The focus moved",
+          outcome: "error",
+          extra: { ...base.extra, error: "target_changed" },
+        };
+      }
     }
     deps.onStep({ id: call.id, tool: name, summary, status: "running" });
     if (targetRect) await visual("visuals_target", { rect: targetRect }, tab);

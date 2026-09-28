@@ -250,6 +250,24 @@ describe("computer actions", () => {
     expect(h.driver!.key).not.toHaveBeenCalled();
   });
 
+  it("sends no key when the keyboard moved to another field while the user was asked", async () => {
+    const search = { ref: "e5", role: "combobox", name: "Search mail", tag: "input" };
+    const compose = { ref: "e6", role: "textbox", name: "Message Body", tag: "div" };
+    const browser = fakeBrowser(search);
+    const plain = browser.page.getMockImplementation()!;
+    let focus: Record<string, unknown> = search;
+    browser.page.mockImplementation(async (method: string, args: Record<string, unknown> = {}) => (method === "describe_focus" ? { ok: true, element: focus } : plain(method, args)));
+    const h = harness([{ text: "", toolCalls: [call("computer", { action: "key", text: "Enter" })] }], { browser, mode: "ask" });
+    h.deps.approve = vi.fn(async () => {
+      // The user clicked into the compose box before answering.
+      focus = compose;
+      return true;
+    });
+    await h.run();
+    expect(h.driver!.key).not.toHaveBeenCalled();
+    expect(String(h.sent[1].find((m) => m.role === "tool")!.content)).toMatch(/^Not done: the keyboard is somewhere else now/);
+  });
+
   it("presses a lone space as the space bar, as the rules read it", async () => {
     const h = harness([{ text: "", toolCalls: [call("computer", { action: "key", text: " " })] }]);
     await h.run();

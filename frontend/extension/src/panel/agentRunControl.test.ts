@@ -657,6 +657,21 @@ describe("reference actions under full control", () => {
     expect(h.driver!.clickAt).toHaveBeenCalledTimes(1);
   });
 
+  it("says the field was cleared when the user took over before the text went in", async () => {
+    const browser = page({ focus: TO });
+    const plain = browser.page.getMockImplementation()!;
+    let windows = 0;
+    browser.page.mockImplementation(async (method: string, args: Record<string, unknown> = {}) => {
+      // The click, ctrl+a and Delete go; the person takes over before the typing.
+      if (method === "takeover_dispatch" && args.on === true && ++windows === 4) return { ok: true, paused: true };
+      return plain(method, args);
+    });
+    const h = harness([{ text: "", toolCalls: [call("type_text", { ref: "e7", text: "bob@example.com", clear: true })] }], { browser });
+    await h.run();
+    expect(h.driver!.type).not.toHaveBeenCalled();
+    expect(String(h.sent[1].find((m) => m.role === "tool")!.content)).toContain("after the field was cleared");
+  });
+
   it("types nothing when the click left the keyboard elsewhere", async () => {
     const browser = page({ focus: { ref: "e9", role: "textbox", name: "Search mail", tag: "input" } });
     const h = harness([{ text: "", toolCalls: [call("type_text", { ref: "e7", text: "secret plans" })] }], { browser });

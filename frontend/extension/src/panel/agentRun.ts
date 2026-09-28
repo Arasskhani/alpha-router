@@ -539,6 +539,8 @@ const AFTERMATH = new Set(["click", "type_text", "select_option", "submit_form",
 const CHANGES = new Set(["click", "type_text", "select_option", "submit_form", "press_key", "scroll", "navigate", "tab_open", "tab_switch"]);
 /** Actions after which a page may be loading. */
 const MAY_LOAD = new Set(["click", "submit_form", "press_key", "navigate", "tab_open", "tab_switch", "computer"]);
+/** A hand-typed field the person took over after it was cleared: what the model is told was done. */
+const TOOK_OVER_AFTER_CLEARING = "The user took over this page after the field was cleared, before the text was typed.";
 /** The rules' plain actions on the page - no case an administrator relaxed - which "Allow on this site" may cover. */
 const PLAIN_REASONS = new Set(["click", "type", "select", "press_key", "same_site", "drag", "tab_switch"]);
 /** Tools (as the rules know them) that change nothing: they do not break a run of deletion keys. */
@@ -859,8 +861,8 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
   const invalid = (message: string): Answer => ({ content: message, status: "error", outcome: "error", extra: { error: "invalid_arguments" } });
 
   /** The person took over the page before this action landed: not a failure of the agent's, and not counted as one. */
-  const tookOver = (): Answer => ({
-    content: "Not done: the user took over the page. Once they resume, look at the page again before acting.",
+  const tookOver = (done?: string): Answer => ({
+    content: `Not done: the user took over the page${done ? ` (${done})` : ""}. Once they resume, look at the page again before acting.`,
     status: "skipped",
     detail: "The user took over",
     outcome: "skipped",
@@ -1039,7 +1041,10 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       }
     }
     const typing = now.tag === "input" ? text.replace(/\s*\n\s*/g, " ") : text;
-    if ((await inputWindow(tab, () => driver.type(typing))) === null) return { ok: false, error: "paused", message: "The user took over this page." };
+    if ((await inputWindow(tab, () => driver.type(typing))) === null) {
+      // What was done before the take-over is said: a field cleared and left empty is not one untouched.
+      return { ok: false, error: "paused", message: a.clear === true ? TOOK_OVER_AFTER_CLEARING : "The user took over this page." };
+    }
     return { ok: true, note: `Typed ${typing.length} characters${a.clear === true ? ", in place of what was there" : ""}.` };
   }
 
@@ -1210,7 +1215,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     if (CONTROL_TOOL_NAMES.has(tool)) return control(tool, a, tab, element);
     // Under full control, clicks, typing and keys by reference go through the real mouse and keyboard, as a person's do.
     const result = controlled && BY_HAND.has(tool) ? await byHand(tool, a, tab, element) : await page(tool as PageMethod, a, tab);
-    if (!result.ok && result.error === "paused") return tookOver();
+    if (!result.ok && result.error === "paused") return tookOver(result.message === TOOK_OVER_AFTER_CLEARING ? "after the field was cleared, before the text went in" : undefined);
     if (!result.ok) {
       return {
         content: notDone(result.error),

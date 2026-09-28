@@ -72,7 +72,7 @@ export type ElementInfo = {
    * A frame from another site, which this page cannot see into: the rules
    * cannot judge what a click there touches. Its site, when the frame says.
    */
-  frame?: { host: string | null };
+  frame?: { host: string | null; path?: string };
   /**
    * The target is there but not to be seen: drawn (almost) transparent, or a
    * couple of pixels in size - the shape of a click hidden under something
@@ -1365,7 +1365,7 @@ export function describeFocus(doc: Document, isVisible: Visibility): Result<{ el
   // Focus inside a frame from another site: report it as a frame the rules cannot judge, with the site it names.
   if (tag === "IFRAME" || tag === "FRAME") {
     const name = clip(squash(el.getAttribute("title") ?? el.getAttribute("name") ?? ""), NAME_CHARS);
-    return { ok: true, element: { ref: refFor(el), role: "frame", name, tag: tag.toLowerCase(), frame: { host: frameHost(el) } } };
+    return { ok: true, element: { ref: refFor(el), role: "frame", name, tag: tag.toLowerCase(), frame: frameSite(el) } };
   }
   const role = roleOf(el) ?? (headingLevel(el) !== null ? "heading" : "text");
   return { ok: true, element: describeElement(el, role, isVisible, true) };
@@ -1712,6 +1712,17 @@ function frameDocument(frame: Element): Document | null {
 }
 
 /** The site a frame shows, from its address; null when it says nothing (about:blank, srcdoc). */
+/** A frame's site, and the path it shows: a CAPTCHA is told by where it is served from. */
+function frameSite(frame: Element): { host: string | null; path?: string } {
+  const host = frameHost(frame);
+  if (!host) return { host };
+  try {
+    return { host, path: new URL(frame.getAttribute("src") ?? "", frame.ownerDocument.baseURI).pathname.slice(0, 200) };
+  } catch {
+    return { host };
+  }
+}
+
 function frameHost(frame: Element): string | null {
   const src = frame.getAttribute("src") ?? "";
   try {
@@ -1788,7 +1799,7 @@ function describeAtIn(doc: Document, x: number, y: number, isVisible: Visibility
       return describeAtIn(inner, x - dx, y - dy, isVisible, activates, { x: offset.x + dx, y: offset.y + dy }, depth + 1);
     }
     // Another site's frame: what is under the point in there, this page cannot see.
-    const element: ElementInfo = { ref: refFor(el), role: "frame", name: clip(squash(el.getAttribute("title") ?? el.getAttribute("name") ?? ""), NAME_CHARS), tag: tag.toLowerCase(), frame: { host: frameHost(el) } };
+    const element: ElementInfo = { ref: refFor(el), role: "frame", name: clip(squash(el.getAttribute("title") ?? el.getAttribute("name") ?? ""), NAME_CHARS), tag: tag.toLowerCase(), frame: frameSite(el) };
     return { ok: true, element, rect: { x: box.left + offset.x, y: box.top + offset.y, width: box.width, height: box.height } };
   }
   const target = activates ? activationTarget(el) : el;

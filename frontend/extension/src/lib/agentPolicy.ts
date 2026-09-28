@@ -147,26 +147,46 @@ const PAGE_TOOLS = new Set([
 ]);
 
 /**
- * Words on a button (or a link, in English) that buy, pay, bid or give
- * money. Order alone is checked as the whole label or with a verb, so
- * "Order history" is not one. Matched on the `labelForms` of the label.
+ * Buying, judged by the whole label or by the phrases that buy: "Buy",
+ * "Buy now", "Pay €12", "Place order", "Proceed to checkout". Refused on
+ * anything the agent would click.
  */
 const PURCHASE =
-  /\b(buy|pay|purchase|checkout|check out|donate|pre-?order)\b|\b(place|submit|complete|confirm)( your| the| my| an| a)? order\b|^order( now)?$|\bplace (a |an )?bid\b|\bbid now\b|\b(continue|proceed|go) to (payment|checkout)\b|\b(complete|make|confirm|submit) (the |a |your )?payment\b|\badd funds\b/;
-const PURCHASE_FA = /خرید|پرداخت|سفارش|تسویه|اهدا|کمک مالی/;
-/** Persian words that buy even on a link; "سفارش" there is usually "my orders". */
-const PURCHASE_FA_LINK = /خرید|پرداخت|اهدا/;
-/** Words that trade or move money: never the agent's to press. */
-const MONEY =
-  /\b(sell|trade|swap|withdraw|deposit (funds|money|now)|make a deposit|transfer funds|transfer money|send money|wire transfer|place (a |the )?trade|execute (a |the )?trade|exchange now|convert funds|top up|redeem)\b|^(deposit|withdrawal)$/;
-const MONEY_FA = /معامله|فروش(?!گاه|نده)|برداشت|واریز|انتقال وجه|حواله|کارت به کارت|شارژ حساب/;
+  /^(buy|buy (it |this )?now|pay|pay now|purchase|purchase now|checkout|check out|order|order now|donate|donate now|pre-?order|pre-?order now)$|\b(buy now|buy it now|pay now|place (your |the |my )?order|complete (your |the |my )?(order|purchase|payment)|(proceed|continue|go) to (checkout|payment)|confirm (and )?pay|confirm (the |your )?payment|make (a )?payment|submit (your |the )?(order|payment)|add funds|bid now|place (a |an )?bid)\b|\bpay [$€£¥\d]/;
+const PURCHASE_FA =
+  /^(خرید|پیش ?خرید|پرداخت|سفارش|تسویه|اهدا)$|خرید (کن|کنید|نهایی|آنلاین)|پرداخت (آنلاین|نهایی|کنید|کن|و تکمیل)|ثبت (و پرداخت )?سفارش|تکمیل (سفارش|خرید|پرداخت)|نهایی کردن (سفارش|خرید)|(تایید|تأیید) (و )?پرداخت|تسویه حساب|کمک مالی|پرداخت [\d۰-۹]/;
 /**
- * Words that make a new account. The verb and "account" may have a few words
- * between them (an adjective, a service name): "create a new account",
- * "create your free account", "open a business account".
+ * Buying words inside a longer label ("Best laptops to buy", "Pay bills"):
+ * a click there may buy - it asks, and a form it sends is refused.
  */
-const SIGN_UP = /\b(sign ?up|join now|get started free)\b|\b(create|open|register)( [\p{L}]+){0,3} account\b|\bcreate account\b|\bregister( now| here| for free)?\b/u;
-const SIGN_UP_FA = /ثبت ?نام|ایجاد حساب|ساخت حساب|افتتاح حساب|عضویت|عضو شوید/;
+const PURCHASE_WORDS = /\b(buy|pay|purchase|checkout|check out|donate|pre-?order)\b/;
+const PURCHASE_WORDS_FA = /(^|\s)(خرید|پرداخت|اهدا)/;
+/** What starts paying later: an upgrade, a trial, a subscription - never relaxed, always asked. */
+const PURCHASE_LIKE = /\b(upgrade( now| (your |the )?plan| to [\p{L}]+)?|start (your |a |the )?(free )?trial|free trial|subscribe( now| today)?|go premium|get premium|renew( now| (your |the )?(plan|subscription))?)\b/u;
+const PURCHASE_LIKE_FA = /ارتقا(ی)? (حساب|اشتراک|به)|خرید اشتراک|تمدید (اشتراک|حساب)|اشتراک (ویژه|طلایی|پریمیوم)|نسخه آزمایشی رایگان/;
+/**
+ * Trading and moving money, judged by the whole label or by the phrases
+ * that do it: "Sell", "Swap", "Withdraw funds", "Send money". Refused.
+ */
+const MONEY =
+  /^(sell|sell now|trade|trade now|swap|swap now|withdraw|withdraw now|withdrawal|deposit|deposit now|exchange now|convert now|top up|top up now|redeem|redeem now)$|\b(sell (all|everything|now|shares|stocks?|crypto|coins?|tokens?|bitcoin|(my |the )?positions?)|place (a |the )?trade|execute (a |the )?trade|transfer (funds|money)|send money|wire transfer|make a deposit|deposit (funds|money)|withdraw (funds|money)|swap (tokens?|coins?|crypto)|convert (funds|currency|crypto))\b/;
+const MONEY_FA =
+  /^(فروش|بفروش|معامله|برداشت|واریز|تبدیل)$|فروش (سهام|ارز|رمزارز|سکه|دارایی)|انتقال وجه|حواله|کارت به کارت|شارژ حساب|برداشت (وجه|از حساب)|واریز (وجه|به حساب)/;
+/** Money words inside a longer label ("Sell on Amazon", "Swap languages"): ask, never refused on sight. */
+const MONEY_WORDS = /\b(sell|trade|swap|withdraw)\b/;
+const MONEY_WORDS_FA = /(^|\s)(فروش|معامله|برداشت|واریز)(\s|$)/;
+/**
+ * Words that make a new account, as a whole label or a phrase: "Sign up",
+ * "Register", "Create your free account". "Register for the webinar" signs
+ * up for something else: it asks.
+ */
+const SIGN_UP = /^(sign ?up|sign ?up (now|free|for free|here)|register|register (now|here|for free)|join|join (now|free|for free)|get started( free| for free)?)$|\b(create|open|register)( [\p{L}]+){0,3} account\b|\bcreate account\b/u;
+const SIGN_UP_FA = /^(ثبت ?نام|ثبت ?نام کنید|عضویت|عضو شوید)$|ایجاد حساب|ساخت حساب|افتتاح حساب/;
+const SIGN_UP_WORDS = /\b(sign ?up|register|join)\b/;
+const SIGN_UP_WORDS_FA = /ثبت ?نام|عضویت|عضو شوید/;
+/** Signing in: a label that offers it ("ورود | ثبت‌نام", "Log in or sign up") is a way in, not a new account. */
+const LOGIN = /\b(log ?in|sign ?in)\b/;
+const LOGIN_FA = /(^|\s)(ورود|وارد شوید)(\s|$)/;
 /**
  * Words that delete for good. "delete"/"close" and "account" may have a few
  * words between them (a service name): "delete your instagram account",
@@ -175,9 +195,10 @@ const SIGN_UP_FA = /ثبت ?نام|ایجاد حساب|ساخت حساب|افت�
 const DELETE_FOREVER =
   /\b(delete (forever|permanently|for good)|permanently (delete|remove|erase)|empty (the )?(trash|bin|recycle bin)|delete (all|everything)|erase (all|everything)|purge|wipe|shred|factory reset)\b|\b(delete|close|deactivate|deregister)( [\p{L}]+){0,3} account\b|\b(delete|close) account\b/u;
 const DELETE_FOREVER_FA = /حذف (دائم|دائمی|همیشگی|برای همیشه|کامل)|خالی کردن سطل|پاک کردن (همه|کل)|حذف (همه|همه‌ی|کل)|حذف حساب|بستن حساب|غیرفعال ?سازی حساب/;
-/** Words that send, publish or reply (the administrator can relax these). */
-const SEND = /\b(send|reply|forward|post|publish|share|subscribe|unsubscribe|tweet|comment)\b/;
-const SEND_FA = /ارسال|فرستادن|بفرست|انتشار|منتشر|پست|پاسخ|بازارسال|هدایت|اشتراک|ثبت/;
+/** Words that send, publish or reply (the administrator can relax these). Subscribing is PURCHASE_LIKE. */
+const SEND = /\b(send|reply|forward|post|publish|share|unsubscribe|tweet|comment)\b/;
+/** "ثبت" sends what a form holds ("ثبت", "ثبت نظر"); "ثبت‌نام" is joining, judged apart. */
+const SEND_FA = /ارسال|فرستادن|بفرست|انتشار|منتشر|پست|پاسخ|بازارسال|هدایت|اشتراک|ثبت(?! ?نام)/;
 /** Words that delete or discard (the administrator can relax these). */
 const DELETE = /\b(delete|remove|discard|erase|trash|clear all)\b/;
 const DELETE_FA = /حذف|پاک ?کردن|دور انداختن/;
@@ -189,7 +210,15 @@ const DOWNLOAD_FA = /دانلود|بارگیری|ذخیره (فایل|در)/;
 /** Words that confirm, approve, transfer or cancel something: always ask. */
 const CONFIRM =
   /\b(confirm|transfer|approve|accept|agree|i agree|book|reserve|activate|deactivate|enable|disable|revoke|reset)\b|\bcancel (my |the |your )?(order|subscription|booking|reservation|account|membership|plan)\b/;
-const CONFIRM_FA = /تایید|تأیید|انتقال|قبول|موافق|رزرو|لغو|فعال|غیرفعال|بازنشانی/;
+/**
+ * In Persian, the bare "OK" (تایید) and "Cancel" (لغو) of a dialog are not
+ * judged by these alone: confirming or cancelling needs its object
+ * ("تایید پرداخت", "لغو سفارش"); "فعال" is a switch only as a verb
+ * (فعال‌سازی), never inside "فعالیت‌ها".
+ */
+const CONFIRM_FA = /(تایید|تأیید) [\p{L}]|انتقال|قبول|موافق|رزرو|لغو [\p{L}]|فعال ?(سازی|کردن|کنید|شود)|غیرفعال|بازنشانی/u;
+/** Confirm-like words that do nothing to keep: the cookie banner's accept, a reset of filters or a search. */
+const HARMLESS_CONFIRM = /^(accept|accept all|accept (all )?cookies|accept (&|and) (close|continue)|allow (all )?cookies|i accept( all)?( cookies)?|agree (&|and) (close|continue))$|\breset (the |all )?(filters?|search|form|zoom|view|selection|sorting)\b/;
 /** Words that give a program access to an account, or change what keeps it safe: always ask. */
 const AUTHORIZE =
   /\b(allow access|grant access|authorize|authorise|allow|continue as|connect (to|with|your)|link (account|your)|give access|api key|access token|generate (a )?(token|key)|two-?factor|2fa|change (my |your |the )?(password|email|phone)|recovery (email|phone|codes)|trusted devices?|sign out (of )?(all|everywhere)|security (settings|key))\b/;
@@ -212,7 +241,9 @@ const CONSENT_PAGES: Array<{ host: RegExp; path: RegExp }> = [
 ];
 
 /** Where CAPTCHAs are served from: a click in one of their frames is the user's. */
-const CAPTCHA_HOSTS = ["www.google.com", "google.com", "recaptcha.net", "www.recaptcha.net", "*.hcaptcha.com", "hcaptcha.com", "challenges.cloudflare.com", "*.arkoselabs.com", "*.funcaptcha.com"];
+const CAPTCHA_HOSTS = ["recaptcha.net", "www.recaptcha.net", "*.hcaptcha.com", "hcaptcha.com", "challenges.cloudflare.com", "*.arkoselabs.com", "*.funcaptcha.com"];
+/** Google serves reCAPTCHA from its own host, beside Maps and the rest: there, by its path. */
+const CAPTCHA_ON_GOOGLE = { hosts: ["www.google.com", "google.com"], path: /^\/recaptcha\// };
 
 /**
  * A label as the word lists read it: compatibility forms folded, in lower
@@ -238,10 +269,10 @@ function labelForms(text: string): string[] {
   );
 }
 /** Fields for a person's identity documents. */
-const ID_FIELD = /\b(ssn|social security|passport|national id|national identity|tax id|id number|identity number)\b/i;
+const ID_FIELD = /\b(ssn|social security|passport (number|no|id|#)|national id|national identity|tax id|id number|identity number)\b|^passport$/i;
 const ID_FIELD_FA = /کد\s?ملی|شماره\s?ملی|شناسنامه|گذرنامه|پاسپورت/;
 /** Fields for a person's contact and bank details: typing there asks (IBAN and Sheba numbers are secrets to sensitive.ts, and refused). */
-const PERSONAL_FIELD = /\b(phone|mobile|telephone|address|street|date of birth|birth ?date|birthday|postal ?code|zip ?code|account number|bank account|routing number|sort code)\b/i;
+const PERSONAL_FIELD = /\b(phone|mobile|telephone|address|street|date of birth|birth ?date|birthday|postal ?code|zip ?code|pin ?code|account number|bank account|routing number|sort code)\b/i;
 const PERSONAL_FIELD_FA = /تلفن|موبایل|همراه|آدرس|نشانی|تاریخ تولد|کد ?پستی|شماره حساب/;
 
 function matches(text: string, ...lists: RegExp[]): boolean {
@@ -321,9 +352,27 @@ export function consentPage(url: string | undefined): boolean {
   return CONSENT_PAGES.some((entry) => entry.host.test(page.host) && entry.path.test(path));
 }
 
-function purchase(name: string, role: string): boolean {
-  const persian = role === "link" ? PURCHASE_FA_LINK : PURCHASE_FA;
-  return labelForms(name).some((form) => PURCHASE.test(form) || persian.test(form));
+/** How a label reads for a word list: as a whole or by its phrases (strong), by a word inside it (weak), or not at all. */
+type Reading = "strong" | "weak" | null;
+
+function reading(label: string, strong: RegExp[], weak: RegExp[]): Reading {
+  const forms = labelForms(label);
+  if (forms.some((form) => strong.some((list) => list.test(form)))) return "strong";
+  return forms.some((form) => weak.some((list) => list.test(form))) ? "weak" : null;
+}
+
+function purchase(label: string): Reading {
+  return reading(label, [PURCHASE, PURCHASE_FA], [PURCHASE_WORDS, PURCHASE_WORDS_FA]);
+}
+
+function money(label: string): Reading {
+  return reading(label, [MONEY, MONEY_FA], [MONEY_WORDS, MONEY_WORDS_FA]);
+}
+
+/** Making an account - unless the label is a way in as well ("ورود | ثبت‌نام"): that is signing in. */
+function signUp(label: string): Reading {
+  const found = reading(label, [SIGN_UP, SIGN_UP_FA], [SIGN_UP_WORDS, SIGN_UP_WORDS_FA]);
+  return found && matches(label, LOGIN, LOGIN_FA) ? null : found;
 }
 
 function named(element: ElementInfo): string {
@@ -339,7 +388,8 @@ function labels(element: ElementInfo): string[] {
 function unjudgeable(element: ElementInfo, what: string): Verdict | null {
   if (element.frame) {
     const host = element.frame.host;
-    if (host && inList(host, CAPTCHA_HOSTS)) {
+    const onGoogle = Boolean(host && CAPTCHA_ON_GOOGLE.hosts.includes(host) && CAPTCHA_ON_GOOGLE.path.test(element.frame.path ?? ""));
+    if (host && (inList(host, CAPTCHA_HOSTS) || onGoogle)) {
       return blocked("captcha", "That is a CAPTCHA: solve it yourself, then tell the agent to go on.");
     }
     return verdict("sensitive", "other_site_frame", `${what} is in a frame from ${host ? `another site (${host})` : "another site"}, which this page cannot see into: the rules cannot tell what it does.`);
@@ -356,20 +406,26 @@ function unjudgeable(element: ElementInfo, what: string): Verdict | null {
 /** The rules for a label's words: what pressing it does, from the never list down to the plain action. */
 function labelVerdict(element: ElementInfo, said: string[], linkish: boolean, page: { url: string; host: string }, ctx: PolicyContext): Verdict | null {
   const relax = approvals(ctx);
+  const strongest = (read: (label: string) => Reading): Reading => (said.some((label) => read(label) === "strong") ? "strong" : said.some((label) => read(label)) ? "weak" : null);
+  // A word inside a longer label may not mean it ("Best laptops to buy", "Sell on …"): on a link or a control that
+  // sends no form it asks; the whole label, a buying phrase, or a form it sends is refused.
+  const refuses = (found: Reading) => found === "strong" || (found === "weak" && Boolean(element.submits) && !linkish);
   // Whatever the element claims to be: a <div onclick> drawn as a button places an order as well as a <button> does.
-  if (said.some((label) => purchase(label, linkish ? "link" : element.role))) {
-    return blocked("purchase_label", `The agent never buys or pays: ${named(element)} is for the user to click.`);
-  }
-  if (said.some((label) => matches(label, MONEY, MONEY_FA))) {
-    return blocked("money_label", `The agent never trades or moves money: ${named(element)} is for the user to click.`);
-  }
+  const buying = strongest(purchase);
+  if (refuses(buying)) return blocked("purchase_label", `The agent never buys or pays: ${named(element)} is for the user to click.`);
+  const trading = strongest(money);
+  if (refuses(trading)) return blocked("money_label", `The agent never trades or moves money: ${named(element)} is for the user to click.`);
   if (said.some((label) => matches(label, DELETE_FOREVER, DELETE_FOREVER_FA))) {
     return blocked("permanent_deletion", `The agent never deletes for good or closes an account: ${named(element)} is for the user to click.`);
   }
-  if (said.some((label) => matches(label, SIGN_UP, SIGN_UP_FA))) {
-    return blocked("account_creation", `The agent never creates accounts: ${named(element)} is for the user to click.`);
+  const joining = strongest(signUp);
+  if (refuses(joining)) return blocked("account_creation", `The agent never creates accounts: ${named(element)} is for the user to click.`);
+  if (buying || said.some((label) => matches(label, PURCHASE_LIKE, PURCHASE_LIKE_FA))) {
+    return verdict("sensitive", "purchase_like", `Clicking ${named(element)} may buy something, or start paying for one.`);
   }
-  if (consentPage(page.url) || said.some((label) => matches(label, AUTHORIZE, AUTHORIZE_FA))) {
+  if (trading) return verdict("sensitive", "money_like", `Clicking ${named(element)} may trade or move money.`);
+  if (joining) return verdict("sensitive", "registration", `Clicking ${named(element)} may sign you up for something.`);
+  if (consentPage(page.url) || said.some((label) => matches(label, AUTHORIZE, AUTHORIZE_FA) && !matches(label, HARMLESS_CONFIRM))) {
     return verdict("sensitive", "authorization", `${named(element)} may give a program access to an account, or change what keeps one safe.`);
   }
   if (said.some((label) => matches(label, UPLOAD, UPLOAD_FA))) {
@@ -387,7 +443,7 @@ function labelVerdict(element: ElementInfo, said: string[], linkish: boolean, pa
   if (said.some((label) => matches(label, SEND, SEND_FA))) {
     return asks(!relax.send, "sensitive_label", `Clicking ${named(element)} may send or publish something.`);
   }
-  if (said.some((label) => matches(label, CONFIRM, CONFIRM_FA))) {
+  if (said.some((label) => matches(label, CONFIRM, CONFIRM_FA) && !matches(label, HARMLESS_CONFIRM))) {
     return verdict("sensitive", "sensitive_label", `Clicking ${named(element)} may confirm, transfer or cancel something.`);
   }
   return null;
@@ -471,13 +527,14 @@ function submitVerdict(element: ElementInfo, page: { url: string; host: string }
   if (cannot) return cannot;
   const said = [...labels(element), ...(element.formButton ?? [])];
   const button = element.formButton?.[0] ?? element.name;
-  if (said.some((label) => purchase(label, "button"))) {
+  // A form is sent: a buying, trading or joining word anywhere in its button is enough.
+  if (said.some((label) => purchase(label))) {
     return blocked("purchase_label", `The agent never buys or pays: sending this form (its button says "${button}") is for the user.`);
   }
-  if (said.some((label) => matches(label, MONEY, MONEY_FA))) {
+  if (said.some((label) => money(label))) {
     return blocked("money_label", `The agent never trades or moves money: sending this form (its button says "${button}") is for the user.`);
   }
-  if (said.some((label) => matches(label, SIGN_UP, SIGN_UP_FA))) {
+  if (said.some((label) => signUp(label))) {
     return blocked("account_creation", `The agent never creates accounts: sending this form (its button says "${button}") is for the user.`);
   }
   if (said.some((label) => matches(label, DELETE_FOREVER, DELETE_FOREVER_FA))) {
@@ -494,7 +551,10 @@ function submitVerdict(element: ElementInfo, page: { url: string; host: string }
   const dest = `${destination(element.formAction)}${element.name ? ` from ${named(element)}` : ""}`;
   // A form whose sending button confirms, sends or deletes is judged by that word, not by the softer "submit" case:
   // a "Confirm transfer" or "Send message" form must not slip past the send/delete/confirm gates.
-  if (said.some((label) => matches(label, CONFIRM, CONFIRM_FA))) {
+  if (said.some((label) => matches(label, PURCHASE_LIKE, PURCHASE_LIKE_FA))) {
+    return verdict("sensitive", "purchase_like", `Sending this form may start paying for something${dest}.`);
+  }
+  if (said.some((label) => matches(label, CONFIRM, CONFIRM_FA) && !matches(label, HARMLESS_CONFIRM))) {
     return verdict("sensitive", "sensitive_label", `Sending this form may confirm, transfer or cancel something${dest}.`);
   }
   if (said.some((label) => matches(label, DELETE, DELETE_FA))) {
@@ -505,6 +565,10 @@ function submitVerdict(element: ElementInfo, page: { url: string; host: string }
   }
   return asks(!approvals(ctx).submit, "submit", `Sending the form${dest}.`);
 }
+
+/** A field's name that says it searches. */
+const SEARCH = /\bsearch\b/;
+const SEARCH_FA = /جستجو|جست و جو/;
 
 /** Roles of fields that hold text a person types. */
 const TEXT_ROLES = new Set(["textbox", "searchbox", "combobox", "spinbutton"]);
@@ -539,7 +603,8 @@ function keyVerdict(rawKey: unknown, element: ElementInfo | undefined, page: { u
   const relax = approvals(ctx);
   const inText = Boolean(element && (TEXT_ROLES.has(element.role) || element.tag === "textarea"));
   if (element && inText && key === "Enter" && !combo.shift) {
-    if (element.role === "searchbox" || element.type === "search") return verdict("act", "press_key", `Pressing Enter in ${named(element)} to search.`);
+    const search = element.role === "searchbox" || element.type === "search" || (element.role === "combobox" && matches(element.name, SEARCH, SEARCH_FA));
+    if (search) return verdict("act", "press_key", `Pressing Enter in ${named(element)} to search.`);
     return asks(!relax.send, "enter_sends", `Pressing Enter in ${named(element)} may send what it holds.`);
   }
   if (element && !inText && (key === "Enter" || key === " ")) {
@@ -551,6 +616,10 @@ function keyVerdict(rawKey: unknown, element: ElementInfo | undefined, page: { u
     return asks(!relax.delete, "delete_key", `Pressing ${shown} ${element ? `on ${named(element)}` : "on the page"} may delete something.`);
   }
   if (element && consentPage(page.url)) return verdict("sensitive", "authorization", `Pressing ${shown} on a page that gives a program access to an account.`);
+  // A single character outside a text field is the site's own shortcut in many apps (# deletes in Gmail, e archives).
+  if (!inText && !combo.ctrl && !combo.meta && !combo.alt && [...key].length === 1 && key !== " ") {
+    return verdict("sensitive", "app_shortcut", `Pressing ${shown} outside a text field may be one of the site's shortcuts, which can archive, delete or send.`);
+  }
   return verdict("act", "press_key", `Pressing ${shown}${element ? ` in ${named(element)}` : ""}.`);
 }
 

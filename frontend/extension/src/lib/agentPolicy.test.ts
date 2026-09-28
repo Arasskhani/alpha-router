@@ -78,7 +78,8 @@ describe("clicking", () => {
     ["ارسال", "sensitive_label"],
     ["حذف", "delete_label"],
     ["تأیید و ادامه", "sensitive_label"],
-    ["تایید", "sensitive_label"],
+    ["تایید انتقال", "sensitive_label"],
+    ["لغو سفارش", "sensitive_label"],
     ["انتقال", "sensitive_label"],
     ["دانلود فایل", "download"],
     ["بارگذاری تصویر", "upload"],
@@ -128,7 +129,7 @@ describe("clicking", () => {
     expect(classify("click", { element: el({ name }) })).toMatchObject({ class: "blocked", reason });
   });
 
-  it.each(["فروشگاه", "Sales report", "Registration desk hours", "Deposit slip archive", "Account settings", "Your account overview", "Account activity"])(
+  it.each(["فروشگاه", "Sales report", "Registration desk hours", "Deposit slip archive", "Account settings", "Your account overview", "Account activity", "پرفروش‌ترین", "فعالیت‌ها"])(
     "a label with a money or account word about something else acts: %s",
     (name) => {
       expect(classify("click", { element: el({ name }) })).toMatchObject({ class: "act" });
@@ -150,8 +151,18 @@ describe("clicking", () => {
     "پرداخت",
     "ثبت سفارش",
     "تسویه حساب",
+    "Confirm payment",
+    "تایید پرداخت",
   ])("a button labelled %s is refused", (name) => {
     expect(classify("click", { element: el({ name }) })).toMatchObject({ class: "blocked", reason: "purchase_label" });
+  });
+
+  it("asks, and never refuses on sight, a word that may buy inside a longer label", () => {
+    for (const [role, tag, name] of [["checkbox", "input", "Pay with my saved card"], ["link", "a", "Best laptops to buy"], ["button", "button", "Swap languages"], ["link", "a", "Sell on Amazon"], ["button", "button", "Register for the webinar"]] as const) {
+      expect(classify("click", { element: el({ role, tag, name }) }).class, name).toBe("sensitive");
+    }
+    // A form sent by such a button is refused: sending it is the buying.
+    expect(classify("click", { element: el({ name: "Pay with my saved card", submits: true }) })).toMatchObject({ class: "blocked", reason: "purchase_label" });
   });
 
   it.each([
@@ -190,7 +201,7 @@ describe("clicking", () => {
     expect(classify("click", { element: el({ name: "Del\u2060ete draft" }) })).toMatchObject({ class: "sensitive", reason: "delete_label" });
   });
 
-  it.each(["Subscribe", "Reply", "Forward", "Share", "Accept all", "I agree", "Book now", "Approve", "Cancel my subscription", "تاييد", "پاسخ"])(
+  it.each(["Reply", "Forward", "Share", "I agree", "Book now", "Approve", "Cancel my subscription", "تاييد انتقال", "پاسخ"])(
     "a button labelled %s always asks",
     (name) => {
       expect(classify("click", { element: el({ name }) })).toMatchObject({ class: "sensitive", reason: "sensitive_label" });
@@ -201,7 +212,7 @@ describe("clicking", () => {
     expect(classify("click", { element: el({ name: "پاك كردن" }) })).toMatchObject({ class: "sensitive", reason: "delete_label" });
   });
 
-  it.each(["Order history", "Booking history", "Shared files", "Accepted payments", "Cancel", "Sort order", "Payroll"])("a button labelled %s acts", (name) => {
+  it.each(["Order history", "Booking history", "Shared files", "Accepted payments", "Cancel", "Sort order", "Payroll", "Accept all", "Accept all cookies", "Reset filters", "تایید", "تاييد", "لغو"])("a button labelled %s acts", (name) => {
     expect(classify("click", { element: el({ name }) })).toMatchObject({ class: "act" });
   });
 
@@ -211,7 +222,6 @@ describe("clicking", () => {
     ["heading", "h3", "Checkout"],
     ["text", "div", "ثبت سفارش"],
     ["img", "img", "Pay"],
-    ["checkbox", "input", "Pay with my saved card"],
   ])("refuses buying through an element of role %s (<%s>) labelled %s, which a page can draw as a button", (role, tag, name) => {
     expect(classify("click", { element: el({ role, tag, name }) })).toMatchObject({ class: "blocked", reason: "purchase_label" });
     // Enter or Space on it works like the click.
@@ -455,8 +465,14 @@ describe("full control's targets", () => {
     expect(classify("click", { element: el({ role: "frame", name: "", tag: "iframe", frame: { host: null } }) })).toMatchObject({ class: "sensitive", reason: "other_site_frame" });
   });
 
-  it.each(["www.google.com", "recaptcha.net", "newassets.hcaptcha.com", "challenges.cloudflare.com", "client-api.arkoselabs.com"])("leaves a CAPTCHA served from %s to the user", (host) => {
+  it.each(["recaptcha.net", "newassets.hcaptcha.com", "challenges.cloudflare.com", "client-api.arkoselabs.com"])("leaves a CAPTCHA served from %s to the user", (host) => {
     expect(classify("click", { element: el({ role: "frame", name: "", tag: "iframe", frame: { host } }) })).toMatchObject({ class: "blocked", reason: "captcha" });
+  });
+
+  it("tells reCAPTCHA on www.google.com by its path, and leaves Google's other frames (a map) to ask", () => {
+    const frame = (path: string) => el({ role: "frame", name: "", tag: "iframe", frame: { host: "www.google.com", path } });
+    expect(classify("click", { element: frame("/recaptcha/api2/anchor") })).toMatchObject({ class: "blocked", reason: "captcha" });
+    expect(classify("click", { element: frame("/maps/embed") })).toMatchObject({ class: "sensitive", reason: "other_site_frame" });
   });
 
   it("asks before a target drawn too faint to see, or a couple of pixels in size", () => {

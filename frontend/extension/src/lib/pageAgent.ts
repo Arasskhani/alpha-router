@@ -129,7 +129,8 @@ export function cleanElement(raw: unknown): ElementInfo | null {
   if (choice) info.choice = choice;
   if (v.frame && typeof v.frame === "object") {
     const host = (v.frame as Record<string, unknown>).host;
-    info.frame = { host: typeof host === "string" && host ? host.slice(0, 253) : null };
+    const path = str((v.frame as Record<string, unknown>).path, 200);
+    info.frame = { host: typeof host === "string" && host ? host.slice(0, 253) : null, ...(path ? { path } : {}) };
   }
   if (v.hidden === "transparent" || v.hidden === "tiny") info.hidden = v.hidden;
   if (typeof v.expanded === "boolean") info.expanded = v.expanded;

@@ -34,7 +34,6 @@ export const SENSITIVE_RULES: SensitiveRules = {
     "passcode",
     "passphrase",
     "pin",
-    "pincode",
     "cvv",
     "cvc",
     "csc",
@@ -59,7 +58,6 @@ export const SENSITIVE_RULES: SensitiveRules = {
     "onetimecode",
     "secret",
     "ssn",
-    "passport",
   ],
   pairs: [
     ["card", ["number", "num", "no", "nr", "code", "cvv", "cvc", "csc", "exp", "expiry", "expiration", "security", "verification"]],
@@ -81,8 +79,11 @@ export const SENSITIVE_RULES: SensitiveRules = {
     ["tax", ["id", "number"]],
     ["id", ["number"]],
     ["identity", ["number"]],
+    // A passport's number; not "passport and visa services", or a search for one.
+    ["passport", ["number", "num", "no", "nr", "id"]],
   ],
-  persian: "رمز|کلمه ?عبور|گذرواژه|شماره ?کارت|کد ?امنیتی|تاریخ ?انقضا|شبا|کد ?تایید|کد ?تأیید|یک ?بار ?مصرف|کد ?ملی|شماره ?ملی|شناسنامه|گذرنامه|cvv2",
+  // رمز is a password - not in رمزارز, a cryptocurrency.
+  persian: "رمز(?! ?ارز)|کلمه ?عبور|گذرواژه|شماره ?کارت|کد ?امنیتی|تاریخ ?انقضا|شبا|کد ?تایید|کد ?تأیید|یک ?بار ?مصرف|کد ?ملی|شماره ?ملی|شناسنامه|گذرنامه|cvv2",
 };
 
 /**

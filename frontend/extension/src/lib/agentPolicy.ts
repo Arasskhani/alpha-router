@@ -647,6 +647,14 @@ const TEXT_ROLES = new Set(["textbox", "searchbox", "combobox", "spinbutton"]);
 /** Keys that stay within the page when Ctrl or Cmd is held: editing, selecting, moving. */
 const EDITING_SHORTCUTS = new Set(["a", "c", "x", "z", "y", "b", "i", "u", "Enter", "Backspace", "Delete", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End"]);
 
+/** Inputs that are buttons: Enter presses them, not their form's own sending button. */
+const BUTTON_INPUTS = new Set(["submit", "button", "reset", "image"]);
+
+function sentByEnter(element: ElementInfo, page: { url: string; host: string }, ctx: PolicyContext): Verdict {
+  const sent = submitVerdict(element, page, ctx);
+  return { ...sent, message: `Pressing Enter in ${named(element)} sends its form. ${sent.message}` };
+}
+
 /**
  * A key press, judged by the element it goes to (`element`: the focused
  * one, if any). Enter in a message box is how most web apps send; on a
@@ -673,11 +681,16 @@ function keyVerdict(rawKey: unknown, element: ElementInfo | undefined, page: { u
   if (/^F\d{1,2}$/.test(key)) return blocked("browser_shortcut", `The agent does not press ${key}: function keys reach the browser itself.`);
   const relax = approvals(ctx);
   const inText = Boolean(element && (TEXT_ROLES.has(element.role) || element.tag === "textarea"));
+  // Enter in a form's field - a text box, a checkbox, a date - sends the form with its sending button (the browser's
+  // implicit submission): judged as sending that form, as submit_form would be. A button presses itself.
+  const sendsForm = Boolean(element && element.tag === "input" && !BUTTON_INPUTS.has(element.type ?? "") && element.formAction !== undefined);
   if (element && inText && key === "Enter" && !combo.shift) {
     const search = element.role === "searchbox" || element.type === "search" || (element.role === "combobox" && matches(element.name, SEARCH, SEARCH_FA));
     if (search) return verdict("act", "press_key", `Pressing Enter in ${named(element)} to search.`);
+    if (sendsForm) return sentByEnter(element, page, ctx);
     return asks(!relax.send, "enter_sends", `Pressing Enter in ${named(element)} may send what it holds.`);
   }
+  if (element && sendsForm && key === "Enter" && !combo.shift) return sentByEnter(element, page, ctx);
   if (element && !inText && (key === "Enter" || key === " ")) {
     const asClick = clickVerdict(element, page, ctx);
     if (asClick.class === "act") return verdict("act", "press_key", `Pressing ${shown} on ${named(element)}.`);

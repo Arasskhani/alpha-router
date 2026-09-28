@@ -361,6 +361,27 @@ describe("the rest", () => {
     expect(classify("press_key", { args: { key: "Tab" }, element: message })).toMatchObject({ class: "act" });
   });
 
+  it("Enter in a form's field is judged as sending the form, as the browser sends it", () => {
+    const checkout = { formAction: "https://shop.example.com/checkout", formButton: ["Place order"] };
+    const coupon = el({ role: "textbox", name: "Coupon", tag: "input", type: "text", ...checkout });
+    expect(classify("press_key", { args: { key: "Enter" }, element: coupon })).toMatchObject({ class: "blocked", reason: "purchase_label" });
+    const agree = el({ role: "checkbox", name: "I agree to the terms", tag: "input", type: "checkbox", ...checkout });
+    expect(classify("press_key", { args: { key: "Enter" }, element: agree })).toMatchObject({
+      class: "blocked",
+      reason: "purchase_label",
+      message: expect.stringContaining("sends its form"),
+    });
+    const note = el({ role: "textbox", name: "Note", tag: "input", type: "text", formAction: "https://shop.example.com/notes", formButton: ["Save"] });
+    expect(classify("press_key", { args: { key: "Enter" }, element: note })).toMatchObject({ class: "sensitive", reason: "submit" });
+    // A search is still a search, a text area takes a new line (or sends, as chats do), and a button presses itself.
+    const search = el({ role: "searchbox", name: "Search", tag: "input", type: "search", formAction: "https://shop.example.com/find", formButton: ["Search"] });
+    expect(classify("press_key", { args: { key: "Enter" }, element: search })).toMatchObject({ class: "act" });
+    const message = el({ role: "textbox", name: "Message", tag: "textarea", ...checkout });
+    expect(classify("press_key", { args: { key: "Enter" }, element: message })).toMatchObject({ class: "sensitive", reason: "enter_sends" });
+    const next = el({ role: "button", name: "Next", tag: "input", type: "button", ...checkout });
+    expect(classify("press_key", { args: { key: "Enter" }, element: next })).toMatchObject({ class: "act" });
+  });
+
   it("sending a form is judged by the form: its sending button, and where it goes", () => {
     const search = el({ role: "textbox", name: "Search", tag: "input" });
     expect(classify("submit_form", { element: { ...search, formButton: ["Next", "Place order"] } })).toMatchObject({ class: "blocked", reason: "purchase_label" });

@@ -1552,6 +1552,51 @@ function describeAtIn(doc: Document, x: number, y: number, isVisible: Visibility
   return { ok: true, element, rect: { x: r.left + offset.x, y: r.top + offset.y, width: r.width, height: r.height } };
 }
 
+/** Whether a box is wholly inside the window. */
+function inWindow(doc: Document, r: DOMRect): boolean {
+  const view = doc.defaultView;
+  const width = view?.innerWidth || doc.documentElement.clientWidth;
+  const height = view?.innerHeight || doc.documentElement.clientHeight;
+  return r.left >= 0 && r.top >= 0 && r.right <= width && r.bottom <= height;
+}
+
+/**
+ * Where a real mouse should press to work the element a reference names,
+ * under full control: brought into view only when it is not wholly in the
+ * window already (a scroll moves what the model saw), its box in CSS
+ * pixels, and the element as the rules judge it. Refused when something
+ * else would take the press at its centre - a dialog, a banner.
+ */
+export function locate(ref: unknown, isVisible: Visibility, activates = false): Result<{ element: ElementInfo; rect: PointRect }> {
+  const named = usable(ref, isVisible);
+  if (isFailure(named)) return named;
+  const target = activates ? activationTarget(named) : named;
+  if (target !== named && isDisabled(target)) return { ok: false, error: "disabled", message: `Element ${ref as string} is disabled.` };
+  const press = pressedFor(named, target, isVisible);
+  const doc = press.ownerDocument;
+  if (!inWindow(doc, press.getBoundingClientRect())) press.scrollIntoView?.({ block: "center", inline: "center" });
+  const r = press.getBoundingClientRect();
+  if (!r.width || !r.height) return { ok: false, error: "not_visible", message: `Element ${ref as string} takes no space on the page.` };
+  const x = r.left + r.width / 2;
+  const y = r.top + r.height / 2;
+  let top: Element | null = typeof doc.elementFromPoint === "function" ? doc.elementFromPoint(x, y) : null;
+  while (top?.shadowRoot && typeof top.shadowRoot.elementFromPoint === "function") {
+    const inner = top.shadowRoot.elementFromPoint(x, y);
+    if (!inner || inner === top) break;
+    top = inner;
+  }
+  if (top && (top.id === OVERLAY_ID || top.closest(`#${OVERLAY_ID}`))) {
+    return { ok: false, error: "covered", message: "Alpharouter's banner is over that element. Scroll the page a little, then act." };
+  }
+  if (top && !holds(press, top) && !holds(target, top) && !holds(top, press)) {
+    const role = roleOf(top);
+    const name = role ? accessibleName(top, role) : visibleText(top, isVisible, 60);
+    return { ok: false, error: "covered", message: `Something covers element ${ref as string}${name ? `: "${name}"` : ""}. Close it first.` };
+  }
+  const role = roleOf(target) ?? (headingLevel(target) !== null ? "heading" : "text");
+  return { ok: true, element: describeElement(target, role, isVisible, true), rect: { x: r.left, y: r.top, width: r.width, height: r.height } };
+}
+
 export function describe(ref: unknown, isVisible: Visibility, activates = false, choose?: unknown): Result<{ element: ElementInfo }> {
   const named = resolve(ref);
   if (isFailure(named)) return named;

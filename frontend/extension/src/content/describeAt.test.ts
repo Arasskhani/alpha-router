@@ -3,7 +3,7 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { describeAt } from "./agent";
+import { describeAt, locate, snapshot } from "./agent";
 import { OVERLAY_ID } from "./overlay";
 import { runAgentCall } from "./runtime";
 import { VISUALS_ID } from "./visuals";
@@ -152,6 +152,51 @@ describe("describeAt", () => {
     const result = describeAt(doc, 5, 5, visible, true);
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.element.name).toBe("Inside");
+  });
+});
+
+describe("locate", () => {
+  const box = (left: number, top: number, width = 80, height = 30) => ({ left, top, width, height, right: left + width, bottom: top + height, x: left, y: top, toJSON: () => ({}) }) as DOMRect;
+  const refOf = (name: string) => snapshot(document, { isVisible: visible }).elements.find((e) => e.name === name)!.ref;
+
+  it("gives the element's box as it is, without scrolling what is in the window", () => {
+    const doc = page(`<button id="b">Send</button>`);
+    const button = doc.getElementById("b")!;
+    vi.spyOn(button, "getBoundingClientRect").mockReturnValue(box(100, 200));
+    const intoView = vi.fn();
+    button.scrollIntoView = intoView;
+    at(button);
+    expect(locate(refOf("Send"), visible, true)).toMatchObject({ ok: true, element: { role: "button", name: "Send" }, rect: { x: 100, y: 200, width: 80, height: 30 } });
+    expect(intoView).not.toHaveBeenCalled();
+  });
+
+  it("brings it into view when it is out of the window", () => {
+    const doc = page(`<button id="b">Far</button>`);
+    const button = doc.getElementById("b")!;
+    vi.spyOn(button, "getBoundingClientRect").mockReturnValue(box(100, 5000));
+    const intoView = vi.fn();
+    button.scrollIntoView = intoView;
+    at(button);
+    locate(refOf("Far"), visible, true);
+    expect(intoView).toHaveBeenCalledWith({ block: "center", inline: "center" });
+  });
+
+  it("refuses when something else would take the press, the agent's banner included", () => {
+    const doc = page(`<button id="b">Send</button><div id="cookie">We use cookies</div><div id="${OVERLAY_ID}"><button>Stop</button></div>`);
+    vi.spyOn(doc.getElementById("b")!, "getBoundingClientRect").mockReturnValue(box(100, 200));
+    at(doc.getElementById("cookie"));
+    expect(locate(refOf("Send"), visible, true)).toMatchObject({ ok: false, error: "covered", message: expect.stringContaining("We use cookies") });
+    at(doc.querySelector(`#${OVERLAY_ID} button`));
+    expect(locate(refOf("Send"), visible, true)).toMatchObject({ ok: false, error: "covered", message: expect.stringContaining("Alpharouter's banner") });
+  });
+
+  it("presses a hidden checkbox where its label is", () => {
+    const doc = page(`<input type="checkbox" id="c" style="opacity:0"><label id="l" for="c">Remember me</label>`);
+    const shown = (el: Element) => el.id !== "c";
+    vi.spyOn(doc.getElementById("l")!, "getBoundingClientRect").mockReturnValue(box(20, 30, 120, 24));
+    at(doc.getElementById("l"));
+    const ref = snapshot(document, { isVisible: shown }).elements.find((e) => e.name === "Remember me")!.ref;
+    expect(locate(ref, shown, true)).toMatchObject({ ok: true, element: { role: "checkbox" }, rect: { x: 20, y: 30, width: 120, height: 24 } });
   });
 });
 

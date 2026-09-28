@@ -142,6 +142,10 @@ export class TabDrivers {
     return this.current.click(point, options);
   }
 
+  clickAt(css: Point, options?: { button?: MouseButton; clickCount?: number; modifiers?: readonly string[] }): Promise<void> {
+    return this.current.clickAt(css, options);
+  }
+
   hover(point: Point, modifiers?: readonly string[]): Promise<void> {
     return this.current.hover(point, modifiers);
   }

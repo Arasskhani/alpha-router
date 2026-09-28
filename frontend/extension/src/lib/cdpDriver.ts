@@ -122,6 +122,11 @@ export class CdpDriver {
     await click(this.session.send.bind(this.session), await this.toCss(point), options);
   }
 
+  /** A click at a point in CSS pixels - an element's centre, as the page gave it - rather than in the screenshot's. */
+  async clickAt(css: Point, options: { button?: MouseButton; clickCount?: number; modifiers?: readonly string[] } = {}): Promise<void> {
+    await click(this.session.send.bind(this.session), css, options);
+  }
+
   async hover(point: Point, modifiers: readonly string[] = []): Promise<void> {
     await hover(this.session.send.bind(this.session), await this.toCss(point), modifiers);
   }

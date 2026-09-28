@@ -151,7 +151,8 @@ export function agentInstructions(nonce: string, options: InstructionOptions = {
       ];
   const control = options.fullControl
     ? [
-        "- To type into a field, click it first, check that the result says the keyboard is in that field, then type with computer type. Type text itself, never through the clipboard.",
+        "- To type into a field, click it first, check that the result says the keyboard is in that field, then type with computer type - or use type_text with the field's reference, which clicks it with the real mouse, checks the keyboard went there, and types. Type text itself, never through the clipboard.",
+        "- click, type_text and press_key by reference use the real mouse and keyboard as well, at the element's place on the page.",
         ...(options.screenshotAfterAction ? ["- Each step that changed the page ends with a fresh screenshot of it: look at it before you act again."] : []),
         "- Just before the mouse presses, what is under the point is checked again: if the page changed meanwhile, nothing is pressed and you are told to look again. Keys that reach the browser itself (tabs, zoom, printing, the address bar) are refused.",
       ]

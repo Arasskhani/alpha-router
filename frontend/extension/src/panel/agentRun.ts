@@ -101,7 +101,7 @@ export type AgentEventReport = {
 };
 
 /** The run's driver under full control: input and screenshots (cdpDriver.ts); absent on the dom path. */
-export type ControlDriver = Pick<CdpDriver, "screenshot" | "zoom" | "crop" | "click" | "hover" | "scroll" | "drag" | "type" | "key" | "toCss" | "onDialog" | "handleDialog"> & {
+export type ControlDriver = Pick<CdpDriver, "screenshot" | "zoom" | "crop" | "click" | "clickAt" | "hover" | "scroll" | "drag" | "type" | "key" | "toCss" | "onDialog" | "handleDialog"> & {
   /** Work in this tab from now on (lib/driver.ts TabDrivers); false when Chrome will not attach to it. */
   use?(tabId: number): Promise<boolean>;
 };
@@ -236,6 +236,8 @@ const ADVICE: Record<string, string> = {
   no_form: "It is not in a form.",
   invalid_form: "The form is not complete: fill in what is missing first.",
   bad_key: "That is not a key the agent can press.",
+  changed: "The element changed since this action was judged: look at the page again.",
+  no_focus: "The keyboard is not in that field: look at the page, then click the field again.",
   not_kept: "The page did not keep what was typed: look at the field again, and if it still refuses the text, ask the user.",
   bad_request: "The arguments were not right for this tool.",
   not_found: "Nothing there matches.",
@@ -499,6 +501,8 @@ const PAGE_TOOLS = new Set([
   "zoom",
   "computer",
 ]);
+/** Reference actions that, under full control, use the real mouse and keyboard. */
+const BY_HAND = new Set(["click", "type_text", "press_key"]);
 /** Ref actions whose result tells what the page is like after them. */
 const AFTERMATH = new Set(["click", "type_text", "select_option", "submit_form", "press_key"]);
 /** What changes the page, so that a step with one ends with a fresh screenshot (when the administrator wants one). */
@@ -883,26 +887,74 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     return { ...answer, page: wrapPage(options.nonce, site, notes.join("\n")) };
   }
 
+  /**
+   * The agent's own input, inside a window the page knows about: a trusted
+   * event outside one is the person's, and pauses the run. A page already
+   * paused - the person took over an instant ago - gets nothing (null).
+   */
+  async function inputWindow<T>(tab: WorkTab, work: () => Promise<T>): Promise<T | null> {
+    const opened = await raced(deps.browser.page("takeover_dispatch", { on: true }, tab, signal, VISUAL_MS).catch(() => null));
+    if (opened?.ok && opened.paused === true) return null;
+    try {
+      return await raced(work());
+    } finally {
+      await visual("takeover_dispatch", { on: false }, tab);
+    }
+  }
+
+  /**
+   * A reference action under full control, with the real mouse and keyboard
+   * at the element: the page says where it is (bringing it into view only
+   * when needed) and what is there now, which must be what the rules judged;
+   * the mouse presses its centre, and typing goes where that click put the
+   * keyboard - checked first. Answered as the page's own actions are.
+   */
+  async function byHand(tool: string, a: Record<string, unknown>, tab: WorkTab, judged: ElementInfo | undefined): Promise<PageResult> {
+    const driver = deps.driver!;
+    if (tool === "press_key") {
+      const key = String(a.key ?? "");
+      const pressed = await inputWindow(tab, () => driver.key(key));
+      if (pressed === null) return { ok: false, error: "paused", message: "The user took over this page." };
+      return pressed ? { ok: true, note: "" } : { ok: false, error: "bad_key", message: `The agent cannot press "${clip(key, 40)}".` };
+    }
+    const located = await page("locate", { ref: a.ref, activates: tool === "click" }, tab);
+    if (!located.ok) return located;
+    const now = located.element as ElementInfo | undefined;
+    const rect = located.rect as PointRect | undefined;
+    if (!now || !rect) return { ok: false, error: "failed", message: "Where the element is could not be read." };
+    // Judged twice: what is there now is what the rules judged, or nothing is pressed.
+    if (judged && !sameTarget(judged, now)) return { ok: false, error: "changed", message: "The element is not what it was when this action was judged." };
+    const at = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+    await visual("visuals_target", { rect }, tab);
+    await visual("visuals_cursor", { x: at.x, y: at.y, click: "left" }, tab);
+    const clicked = await inputWindow(tab, () => driver.clickAt(at, { button: "left", clickCount: 1 }));
+    if (clicked === null) return { ok: false, error: "paused", message: "The user took over this page." };
+    if (tool === "click") return { ok: true, note: "" };
+    // The keyboard must be in the field the click was for: text typed anywhere else goes where it should not.
+    const focus = await page("describe_focus", {}, tab);
+    const into = focus.ok ? (focus.element as ElementInfo | undefined) : undefined;
+    if (!into || (into.ref !== now.ref && (into.role !== now.role || into.name !== now.name))) {
+      return { ok: false, error: "no_focus", message: into ? `The click left the keyboard in ${into.role} "${clip(into.name, 60)}", not in that field.` : "After the click, nothing has the keyboard." };
+    }
+    const text = String(a.text ?? "");
+    if (a.clear === true) {
+      // Select all of it, then delete: the field's own editing, as a person clears it.
+      if ((await inputWindow(tab, () => driver.key("ctrl+a"))) === null || (await inputWindow(tab, () => driver.key("Delete"))) === null) {
+        return { ok: false, error: "paused", message: "The user took over this page." };
+      }
+    }
+    const typing = now.tag === "input" ? text.replace(/\s*\n\s*/g, " ") : text;
+    if ((await inputWindow(tab, () => driver.type(typing))) === null) return { ok: false, error: "paused", message: "The user took over this page." };
+    return { ok: true, note: `Typed ${typing.length} characters${a.clear === true ? ", in place of what was there" : ""}.` };
+  }
+
   /** Full control: screenshots and the real mouse and keyboard, through the run's driver. */
   async function control(tool: string, a: Record<string, unknown>, tab: WorkTab, hit?: ElementInfo): Promise<Answer> {
     const driver = deps.driver;
     if (!driver) return { content: "Full control is not on for this run: use read_page and the reference tools.", status: "error", outcome: "error", extra: { error: "no_control" } };
     const site = tab.host ?? "";
     const race = <T>(work: Promise<T>) => Promise.race([work, stopped]);
-    /**
-     * The agent's own input, inside a window the page knows about: a trusted
-     * event outside one is the person's, and pauses the run. A page already
-     * paused - the person took over an instant ago - gets nothing.
-     */
-    const dispatch = async <T>(work: () => Promise<T>): Promise<T | null> => {
-      const opened = await raced(deps.browser.page("takeover_dispatch", { on: true }, tab, signal, VISUAL_MS).catch(() => null));
-      if (opened?.ok && opened.paused === true) return null;
-      try {
-        return await race(work());
-      } finally {
-        await visual("takeover_dispatch", { on: false }, tab);
-      }
-    };
+    const dispatch = <T>(work: () => Promise<T>) => inputWindow(tab, work);
     // The layer is veiled for a capture: the model must never see the cursor or the border.
     const capture = async <T>(work: () => Promise<T>): Promise<T> => {
       await visual("visuals_veil", { veiled: true }, tab);
@@ -1007,7 +1059,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
   }
 
   /** Carry out one allowed action; everything the page says comes back wrapped. */
-  async function execute(tool: string, a: Record<string, unknown>, tab: WorkTab | null, element?: ElementInfo): Promise<Answer> {
+  async function execute(tool: string, a: Record<string, unknown>, tab: WorkTab | null, element?: ElementInfo, controlled = false): Promise<Answer> {
     const site = tab?.host ?? "";
     if (tool === "tabs_list") {
       const tabs = await deps.browser.listTabs();
@@ -1060,7 +1112,8 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     }
     if (!tab) return { content: "The tab does not show a web page the agent can work on.", status: "error", outcome: "error", extra: { error: "no_page" } };
     if (CONTROL_TOOL_NAMES.has(tool)) return control(tool, a, tab, element);
-    const result = await page(tool as PageMethod, a, tab);
+    // Under full control, clicks, typing and keys by reference go through the real mouse and keyboard, as a person's do.
+    const result = controlled && BY_HAND.has(tool) ? await byHand(tool, a, tab, element) : await page(tool as PageMethod, a, tab);
     if (!result.ok && result.error === "paused") return tookOver();
     if (!result.ok) {
       return {
@@ -1172,8 +1225,10 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     check();
     // Full control follows the tab the agent works in: its own session, attached the first time the agent works there -
     // for its mouse and screenshots, and so that a dialog the page opens is seen, whatever the tool.
+    /** Whether this tab is under full control: then reference actions use the real mouse and keyboard too. */
+    let controlled = Boolean(deps.driver && tab);
     if (deps.driver?.use && tab && PAGE_TOOLS.has(name)) {
-      const controlled = await raced(deps.driver.use(tab.id));
+      controlled = await raced(deps.driver.use(tab.id));
       check();
       if (!controlled && CONTROL_TOOL_NAMES.has(name)) {
         return {
@@ -1466,7 +1521,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     if (targetRect) await visual("visuals_target", { rect: targetRect }, tab);
     let answer: Answer;
     try {
-      answer = await execute(name, a, tab, element);
+      answer = await execute(name, a, tab, element, controlled);
     } finally {
       if (targetRect) await visual("visuals_target", { rect: null }, tab);
     }

@@ -28,6 +28,7 @@ function driverAnd(atElement: Record<string, unknown>) {
     zoom: vi.fn(async () => ({ dataUrl: "data:image/jpeg;base64,Z", frame: { width: 400, height: 200, scale: 1 }, css: { width: 400, height: 200 } })),
     crop: vi.fn(async () => ({ dataUrl: "data:image/jpeg;base64,CROP", frame: { width: 176, height: 136, scale: 2 }, css: { width: 88, height: 68 } })),
     click: vi.fn(async () => undefined),
+    clickAt: vi.fn(async () => undefined),
     hover: vi.fn(async () => undefined),
     scroll: vi.fn(async () => undefined),
     drag: vi.fn(async () => ({ intercepted: true })),

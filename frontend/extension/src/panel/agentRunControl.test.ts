@@ -30,6 +30,7 @@ function fakeDriver() {
     zoom: vi.fn(async () => ({ dataUrl: "data:image/jpeg;base64,ZOOM", frame: { width: 800, height: 400, scale: 4 }, css: { width: 200, height: 100 } })),
     crop: vi.fn(async () => ({ dataUrl: "data:image/jpeg;base64,CROP", frame: { width: 176, height: 136, scale: 2 }, css: { width: 88, height: 68 } })),
     click: vi.fn(async () => undefined),
+    clickAt: vi.fn(async () => undefined),
     hover: vi.fn(async () => undefined),
     scroll: vi.fn(async () => undefined),
     drag: vi.fn(async () => ({ intercepted: true })),
@@ -541,6 +542,80 @@ describe("full control follows the tab", () => {
     await h.run();
     expect(h.driver!.screenshot).not.toHaveBeenCalled();
     expect(String(h.sent[1].find((m) => m.role === "tool")!.content)).toContain("Full control is not available on this tab");
+  });
+});
+
+describe("reference actions under full control", () => {
+  const SEND = { ref: "e4", role: "button", name: "Send", tag: "button" };
+  const TO = { ref: "e7", role: "textbox", name: "To", tag: "input" };
+  /** A page that describes e4 and e7, locates them where they are, and gives the focus asked for. */
+  function page(opts: { focus?: Record<string, unknown>; locateAs?: Record<string, unknown> } = {}) {
+    const browser = fakeBrowser(opts.focus);
+    const plain = browser.page.getMockImplementation()!;
+    browser.page.mockImplementation(async (method: string, args: Record<string, unknown> = {}) => {
+      const el = args.ref === "e4" ? SEND : args.ref === "e7" ? TO : undefined;
+      if (method === "describe") return el ? { ok: true, element: el } : { ok: false, error: "stale_ref", message: "gone" };
+      if (method === "locate") return el ? { ok: true, element: opts.locateAs ?? el, rect: { x: 100, y: 200, width: 80, height: 30 } } : { ok: false, error: "stale_ref", message: "gone" };
+      return plain(method, args);
+    });
+    return browser;
+  }
+  const pageCalls = (browser: ReturnType<typeof fakeBrowser>, method: string) => browser.page.mock.calls.filter(([m]) => m === method);
+
+  it("clicks with the real mouse at the element's centre, not with a page event", async () => {
+    const browser = page();
+    const h = harness([{ text: "", toolCalls: [call("click", { ref: "e4" })] }], { browser });
+    await h.run();
+    expect(h.driver!.clickAt).toHaveBeenCalledWith({ x: 140, y: 215 }, { button: "left", clickCount: 1 });
+    expect(pageCalls(browser, "click")).toHaveLength(0);
+    // Inside the input window the page knows about, with the target box and the cursor where it presses.
+    expect(pageCalls(browser, "takeover_dispatch").map(([, a]) => a)).toEqual([{ on: true }, { on: false }]);
+    expect(visualCalls(browser)).toEqual(expect.arrayContaining([["visuals_target", { rect: { x: 100, y: 200, width: 80, height: 30 } }], ["visuals_cursor", { x: 140, y: 215, click: "left" }]]));
+  });
+
+  it("types where its click put the keyboard, clearing the field first when asked", async () => {
+    const browser = page({ focus: TO });
+    const h = harness([{ text: "", toolCalls: [call("type_text", { ref: "e7", text: "bob@example.com", clear: true })] }], { browser });
+    await h.run();
+    expect(h.driver!.clickAt).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(h.driver!.key).mock.calls.map(([k]) => k)).toEqual(["ctrl+a", "Delete"]);
+    expect(h.driver!.type).toHaveBeenCalledWith("bob@example.com");
+    expect(pageCalls(browser, "type_text")).toHaveLength(0);
+  });
+
+  it("types nothing when the click left the keyboard elsewhere", async () => {
+    const browser = page({ focus: { ref: "e9", role: "textbox", name: "Search mail", tag: "input" } });
+    const h = harness([{ text: "", toolCalls: [call("type_text", { ref: "e7", text: "secret plans" })] }], { browser });
+    await h.run();
+    expect(h.driver!.type).not.toHaveBeenCalled();
+    const answer = String(h.sent[1].find((m) => m.role === "tool")!.content);
+    expect(answer).toMatch(/^Not done \(no_focus\)/);
+    expect(answer).toContain('The click left the keyboard in textbox "Search mail", not in that field.');
+  });
+
+  it("presses nothing when the element is not what was judged", async () => {
+    const browser = page({ locateAs: { ref: "e4", role: "button", name: "Delete forever", tag: "button" } });
+    const h = harness([{ text: "", toolCalls: [call("click", { ref: "e4" })] }], { browser });
+    await h.run();
+    expect(h.driver!.clickAt).not.toHaveBeenCalled();
+    expect(String(h.sent[1].find((m) => m.role === "tool")!.content)).toMatch(/^Not done \(changed\)/);
+  });
+
+  it("presses keys with the real keyboard", async () => {
+    const browser = page({ focus: TO });
+    const h = harness([{ text: "", toolCalls: [call("press_key", { key: "Tab" })] }], { browser });
+    await h.run();
+    expect(h.driver!.key).toHaveBeenCalledWith("Tab");
+    expect(pageCalls(browser, "press_key")).toHaveLength(0);
+  });
+
+  it("goes back to page events on a tab the browser will not let it control", async () => {
+    const browser = page();
+    const h = harness([{ text: "", toolCalls: [call("click", { ref: "e4" })] }], { browser });
+    (h.driver as ControlDriver).use = vi.fn(async () => false);
+    await h.run();
+    expect(h.driver!.clickAt).not.toHaveBeenCalled();
+    expect(pageCalls(browser, "click")).toHaveLength(1);
   });
 });
 

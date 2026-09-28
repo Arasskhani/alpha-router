@@ -174,6 +174,7 @@ export function cleanPageResult(method: PageMethod, raw: unknown): PageResult {
       const element = cleanElement(v.element);
       return element ? { ok: true, element } : failure("failed", "The element could not be read.");
     }
+    case "locate":
     case "describe_at": {
       const element = cleanElement(v.element);
       if (!element) return failure("failed", "What is at that point could not be read.");

@@ -41,6 +41,13 @@ describe("CdpDriver", () => {
     expect(pressed).toMatchObject({ x: 640, y: 360, button: "left" });
   });
 
+  it("clicks at a point already in CSS pixels as it is: an element's centre, as the page gave it", async () => {
+    const d = await driver();
+    await d.clickAt({ x: 140, y: 215 });
+    const pressed = mouseEvents().find((e) => e.type === "mousePressed")!;
+    expect(pressed).toMatchObject({ x: 140, y: 215, button: "left" });
+  });
+
   it("clamps a point that falls outside the viewport", async () => {
     const d = await driver();
     await d.click({ x: 99999, y: 0 }); // frame x way past the right edge

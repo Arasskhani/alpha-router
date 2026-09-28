@@ -11,6 +11,7 @@ import {
   describeFocus,
   find,
   findRef,
+  locate,
   pageText,
   pressKey,
   scroll,
@@ -36,6 +37,7 @@ export type PageMethod =
   | "describe"
   | "describe_at"
   | "describe_focus"
+  | "locate"
   | "observe"
   | "click"
   | "type_text"
@@ -100,6 +102,8 @@ export async function runAgentCall(
         return describeAt(doc, args.x, args.y, isVisible, args.activates === true);
       case "describe_focus":
         return describeFocus(doc, isVisible);
+      case "locate":
+        return locate(args.ref, isVisible, args.activates === true);
       case "observe":
         return { ok: true, ...observe(doc, isVisible, args.at) };
       case "click":

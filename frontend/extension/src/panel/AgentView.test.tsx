@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { setClient } from "../lib/client";
 import { resetConfigForTests } from "../lib/config";
+import { layoutMetrics } from "../test/cdpFixtures";
 import { installChromeFake, EXTENSION_ID, type ChromeFake } from "../test/chromeFake";
 import { SERVER, createServerFake, frame, json, sse, type ServerFake } from "../test/serverFake";
 import AgentView, { agentModels } from "./AgentView";
@@ -550,7 +551,7 @@ describe("full control", () => {
 
   it("attaches the debugger, says so, offers the control tools, and detaches after the run", async () => {
     server.routes["GET /api/chat/models"] = () => json(200, VISION);
-    chromeFake.debugger.answers.set("Page.getLayoutMetrics", { cssVisualViewport: { width: 1280, height: 720 } });
+    chromeFake.debugger.answers.set("Page.getLayoutMetrics", layoutMetrics({ width: 1280, height: 720 }));
     await render({ ...ME, features: { ...ME.features, full_control: true } });
     await start("Look at the page.");
     await until(() => host.textContent!.includes("Done."), "the run to finish");

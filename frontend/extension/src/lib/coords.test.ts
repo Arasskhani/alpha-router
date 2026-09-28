@@ -9,6 +9,7 @@ import {
   frameFor,
   frameToCss,
 } from "./coords";
+import { layoutMetrics } from "../test/cdpFixtures";
 
 describe("frameFor", () => {
   it("scales a large viewport down to the longest side", () => {
@@ -68,10 +69,21 @@ describe("clampMaxSide", () => {
 });
 
 describe("cssViewportFromMetrics", () => {
+  it("reads the size Chromium reports, at any display scale", () => {
+    expect(cssViewportFromMetrics(layoutMetrics({ width: 870, height: 968 }))).toEqual({ width: 870, height: 968 });
+    // At 150 %: the CSS viewport, not the device pixels of the deprecated fields.
+    expect(cssViewportFromMetrics(layoutMetrics({ width: 870.6666870117188, height: 968, dpr: 1.5 }))).toEqual({ width: 870.6666870117188, height: 968 });
+  });
+
   it("prefers the visual viewport, falls back to the layout viewport, else null", () => {
-    expect(cssViewportFromMetrics({ cssVisualViewport: { width: 800, height: 600 } })).toEqual({ width: 800, height: 600 });
-    expect(cssViewportFromMetrics({ cssLayoutViewport: { width: 1024, height: 768 } })).toEqual({ width: 1024, height: 768 });
+    expect(cssViewportFromMetrics({ cssVisualViewport: { clientWidth: 800, clientHeight: 600 }, cssLayoutViewport: { clientWidth: 900, clientHeight: 700 } })).toEqual({ width: 800, height: 600 });
+    expect(cssViewportFromMetrics({ cssLayoutViewport: { clientWidth: 1024, clientHeight: 768 } })).toEqual({ width: 1024, height: 768 });
+    expect(cssViewportFromMetrics({ cssVisualViewport: { clientWidth: 0, clientHeight: 0 }, cssLayoutViewport: { clientWidth: 1024, clientHeight: 768 } })).toEqual({ width: 1024, height: 768 });
     expect(cssViewportFromMetrics({})).toBeNull();
     expect(cssViewportFromMetrics(null)).toBeNull();
+  });
+
+  it("takes width and height too, if a browser sends those", () => {
+    expect(cssViewportFromMetrics({ cssVisualViewport: { width: 800, height: 600 } })).toEqual({ width: 800, height: 600 });
   });
 });

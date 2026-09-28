@@ -60,10 +60,26 @@ export function clampToViewport(point: Point, css: Size): Point {
   };
 }
 
-/** The CSS viewport size from a Page.getLayoutMetrics reply, or null if it has none. */
+/** A viewport as `Page.getLayoutMetrics` reports it: its size is `clientWidth`/`clientHeight`. */
+type ViewportMetrics = { clientWidth?: unknown; clientHeight?: unknown; width?: unknown; height?: unknown };
+
+function positive(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
+/**
+ * The CSS viewport size from a Page.getLayoutMetrics reply, or null if it has none.
+ *
+ * Chromium names the size `clientWidth`/`clientHeight` (the viewport without
+ * its scroll bars); `width`/`height` is read too, in case a browser ever sends
+ * that instead. The visual viewport comes first, the layout viewport after.
+ */
 export function cssViewportFromMetrics(metrics: unknown): Size | null {
-  const m = metrics as { cssVisualViewport?: Partial<Size>; cssLayoutViewport?: Partial<Size> } | null;
-  const vp = m?.cssVisualViewport ?? m?.cssLayoutViewport;
-  if (!vp || !Number.isFinite(vp.width) || !Number.isFinite(vp.height)) return null;
-  return { width: vp.width as number, height: vp.height as number };
+  const m = metrics as { cssVisualViewport?: ViewportMetrics; cssLayoutViewport?: ViewportMetrics } | null;
+  for (const vp of [m?.cssVisualViewport, m?.cssLayoutViewport]) {
+    const width = vp?.clientWidth ?? vp?.width;
+    const height = vp?.clientHeight ?? vp?.height;
+    if (positive(width) && positive(height)) return { width, height };
+  }
+  return null;
 }

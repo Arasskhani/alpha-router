@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
+import { layoutMetrics } from "../test/cdpFixtures";
 import { installChromeFake, type ChromeFake } from "../test/chromeFake";
 import { CdpSession } from "./cdp";
 
@@ -16,9 +17,9 @@ describe("CdpSession", () => {
     expect(session.isAttached).toBe(true);
     expect(chrome.debugger.attached.has(7)).toBe(true);
 
-    chrome.debugger.answers.set("Page.getLayoutMetrics", { cssVisualViewport: { width: 800, height: 600 } });
+    chrome.debugger.answers.set("Page.getLayoutMetrics", layoutMetrics({ width: 800, height: 600 }));
     const metrics = await session.send("Page.getLayoutMetrics");
-    expect(metrics).toEqual({ cssVisualViewport: { width: 800, height: 600 } });
+    expect(metrics).toEqual(layoutMetrics({ width: 800, height: 600 }));
     expect(chrome.debugger.sent.at(-1)).toMatchObject({ tabId: 7, method: "Page.getLayoutMetrics" });
 
     await session.detach();

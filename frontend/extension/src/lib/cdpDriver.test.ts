@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
+import { layoutMetrics } from "../test/cdpFixtures";
 import { installChromeFake, type ChromeFake } from "../test/chromeFake";
 import { CdpSession } from "./cdp";
 import { CdpDriver } from "./cdpDriver";
@@ -7,7 +8,7 @@ import { CdpDriver } from "./cdpDriver";
 let chrome: ChromeFake;
 
 function metrics(width: number, height: number) {
-  chrome.debugger.answers.set("Page.getLayoutMetrics", { cssVisualViewport: { width, height } });
+  chrome.debugger.answers.set("Page.getLayoutMetrics", layoutMetrics({ width, height }));
 }
 
 async function driver(maxSide = 1280): Promise<CdpDriver> {

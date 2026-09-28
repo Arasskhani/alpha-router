@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
+import { layoutMetrics } from "../test/cdpFixtures";
 import { installChromeFake, type ChromeFake } from "../test/chromeFake";
 import { captureRegion, captureViewport, captureVisibleFallback, viewportSize } from "./capture";
 import { CdpSession } from "./cdp";
@@ -19,7 +20,7 @@ beforeEach(() => {
 describe("viewportSize", () => {
   it("reads the CSS visual viewport, falling back when there is none", async () => {
     const s = await session();
-    chrome.debugger.answers.set("Page.getLayoutMetrics", { cssVisualViewport: { width: 1024, height: 768 } });
+    chrome.debugger.answers.set("Page.getLayoutMetrics", layoutMetrics({ width: 1024, height: 768 }));
     expect(await viewportSize(s)).toEqual({ width: 1024, height: 768 });
     chrome.debugger.answers.set("Page.getLayoutMetrics", {});
     expect(await viewportSize(s)).toEqual({ width: 1280, height: 800 });
@@ -29,7 +30,7 @@ describe("viewportSize", () => {
 describe("captureViewport", () => {
   it("captures the viewport at the frame scale and returns a data URL and frame", async () => {
     const s = await session();
-    chrome.debugger.answers.set("Page.getLayoutMetrics", { cssVisualViewport: { width: 2560, height: 1440 } });
+    chrome.debugger.answers.set("Page.getLayoutMetrics", layoutMetrics({ width: 2560, height: 1440 }));
     chrome.debugger.answers.set("Page.captureScreenshot", { data: "AAAA" });
     const shot = await captureViewport(s, 1280);
     expect(shot.dataUrl).toBe("data:image/jpeg;base64,AAAA");
@@ -40,7 +41,7 @@ describe("captureViewport", () => {
 
   it("throws when the capture returns no image", async () => {
     const s = await session();
-    chrome.debugger.answers.set("Page.getLayoutMetrics", { cssVisualViewport: { width: 800, height: 600 } });
+    chrome.debugger.answers.set("Page.getLayoutMetrics", layoutMetrics({ width: 800, height: 600 }));
     chrome.debugger.answers.set("Page.captureScreenshot", {});
     await expect(captureViewport(s, 1280)).rejects.toThrow(/no image/);
   });

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
+import { layoutMetrics } from "../test/cdpFixtures";
 import { installChromeFake, type ChromeFake } from "../test/chromeFake";
 import { chooseDriver } from "./driver";
 
@@ -7,7 +8,7 @@ let chrome: ChromeFake;
 
 beforeEach(() => {
   chrome = installChromeFake();
-  chrome.debugger.answers.set("Page.getLayoutMetrics", { cssVisualViewport: { width: 800, height: 600 } });
+  chrome.debugger.answers.set("Page.getLayoutMetrics", layoutMetrics({ width: 800, height: 600 }));
 });
 
 describe("chooseDriver", () => {

@@ -563,6 +563,8 @@ function parentAcrossShadow(el: Element): Element | null {
  * that is the element the rules judge and the one clicked.
  */
 function activationTarget(el: Element): Element {
+  const wrapped = wrappedControl(el);
+  if (wrapped) return wrapped;
   for (let node: Element | null = el; node; node = parentAcrossShadow(node)) {
     const tag = node.tagName.toUpperCase();
     if ((tag === "A" || tag === "AREA") && node.hasAttribute("href")) return node;
@@ -731,12 +733,41 @@ const LABELLED_CONTROLS = new Set(["checkbox", "radio", "file"]);
  * label's (a click on it works the control).
  */
 function labelProxy(el: Element, isVisible: Visibility): { control: Element; role: string } | null {
-  if (el.tagName.toUpperCase() !== "LABEL") return null;
+  if (el.tagName.toUpperCase() !== "LABEL") {
+    // The box a styled checkbox draws around its invisible input (MUI, a data grid's row box), when no label names it.
+    const wrapped = wrappedControl(el);
+    const role = wrapped ? roleOf(wrapped) : null;
+    return wrapped && role ? { control: wrapped, role } : null;
+  }
   const control = (el as HTMLLabelElement).control;
   if (!control || control.tagName.toUpperCase() !== "INPUT" || !LABELLED_CONTROLS.has(inputType(control))) return null;
   if (isVisible(control)) return null;
   const role = roleOf(control);
   return role ? { control, role } : null;
+}
+
+/** Controls a styled box draws itself for, over an invisible native input. */
+const STYLED_INPUTS = new Set(["checkbox", "radio"]);
+
+/**
+ * A checkbox or radio drawn invisible over its own styled box - MUI and Ant
+ * Design put an opacity-0 input on top of what they draw - in a box that is
+ * seen: a click there goes to the input, as a person's does.
+ */
+function styledInput(el: Element): boolean {
+  if (el.tagName.toUpperCase() !== "INPUT" || !STYLED_INPUTS.has(inputType(el))) return false;
+  const view = el.ownerDocument.defaultView;
+  const box = parentAcrossShadow(el);
+  if (!view || !box) return false;
+  const opacity = Number.parseFloat(view.getComputedStyle(el).opacity);
+  return Number.isFinite(opacity) && opacity < FAINT && !drawnFaint(box);
+}
+
+/** The invisible input a box without a role of its own draws, when no label names it (a label stands in for it then). */
+function wrappedControl(el: Element): Element | null {
+  if (el.tagName.toUpperCase() === "LABEL" || roleOf(el)) return null;
+  const inputs = Array.from(el.children).filter((child) => styledInput(child) && !(child as HTMLInputElement).labels?.length);
+  return inputs.length === 1 ? inputs[0] : null;
 }
 
 /** The label's entry for the hidden control it stands in for. */
@@ -1929,7 +1960,9 @@ function describeAtIn(doc: Document, x: number, y: number, isVisible: Visibility
   if (!el || el === doc.documentElement) {
     return { ok: false, error: "not_found", message: "There is nothing to act on at that point." };
   }
-  if (!isVisible(el)) return { ok: false, error: "not_visible", message: "What is at that point is not visible." };
+  // An invisible input over its own styled box is the control a person sees there.
+  const styled = styledInput(el);
+  if (!isVisible(el) && !styled) return { ok: false, error: "not_visible", message: "What is at that point is not visible." };
   const tag = el.tagName.toUpperCase();
   if (tag === "IFRAME" || tag === "FRAME") {
     const box = el.getBoundingClientRect();
@@ -1948,7 +1981,7 @@ function describeAtIn(doc: Document, x: number, y: number, isVisible: Visibility
   const element = describeElement(target, role, isVisible, true);
   // A hidden control under its label: the box is the label's, where the person sees it.
   const r = pressedFor(el, target, isVisible).getBoundingClientRect();
-  if (drawnFaint(el)) element.hidden = "transparent";
+  if (drawnFaint(el) && !styled) element.hidden = "transparent";
   else if (r.width > 0 && r.height > 0 && (r.width <= TINY_PX || r.height <= TINY_PX)) element.hidden = "tiny";
   return { ok: true, element, rect: { x: r.left + offset.x, y: r.top + offset.y, width: r.width, height: r.height } };
 }

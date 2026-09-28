@@ -218,6 +218,20 @@ describe("locate", () => {
     expect(locate(refOf("Send"), visible, true)).toMatchObject({ ok: false, error: "covered", message: expect.stringContaining("Alpharouter's banner") });
   });
 
+  it("takes a styled checkbox's invisible input on top of its box for the checkbox a person sees", async () => {
+    const doc = page(`<span class="MuiCheckbox-root"><input type="checkbox" aria-label="Select row 3" id="c" style="opacity:0"><svg></svg></span>`);
+    at(doc.getElementById("c"));
+    // Rendered as happy-dom has it, but for its opacity: what isRendered says of an opacity-0 input.
+    const rendered = (el: Element) => el.id !== "c";
+    expect(describeAt(doc, 5, 5, rendered, true)).toMatchObject({ ok: true, element: { role: "checkbox", name: "Select row 3" } });
+    expect((describeAt(doc, 5, 5, rendered, true) as { element: { hidden?: string } }).element.hidden).toBeUndefined();
+    // Listed by its box, and a click on that reference ticks it.
+    const entry = snapshot(document, { isVisible: rendered }).elements.find((e) => e.name === "Select row 3")!;
+    expect(entry).toMatchObject({ role: "checkbox" });
+    await expect(runAgentCall(document, "click", { ref: entry.ref }, rendered, () => undefined)).resolves.toMatchObject({ ok: true });
+    expect((doc.getElementById("c") as HTMLInputElement).checked).toBe(true);
+  });
+
   it("presses a hidden checkbox where its label is", () => {
     const doc = page(`<input type="checkbox" id="c" style="opacity:0"><label id="l" for="c">Remember me</label>`);
     const shown = (el: Element) => el.id !== "c";

@@ -828,6 +828,8 @@ export type Snapshot = { url: string; title: string; outline: string; elements: 
 
 /** At most this many usable elements are looked at for one outline, however long the page. */
 const MAX_SCANNED_ELEMENTS = 2000;
+/** find looks at no more than this many visible elements of a page. */
+const MAX_FIND_SCANNED = 30_000;
 /** What a page opens over the rest: while one is up, it is where the person acts. */
 const DIALOGS = 'dialog[open], [role="dialog"], [role="alertdialog"], [aria-modal="true"]';
 /** What the element with the keyboard is part of: the part of the page the person works in. */
@@ -1049,9 +1051,12 @@ export function find(doc: Document, query: unknown, isVisible: Visibility): Resu
   type Found = Match & { score: number; usable: boolean; order: number; seen: boolean };
   const found: Found[] = [];
   let order = 0;
+  let looked = 0;
   const root = doc.body ?? doc.documentElement;
   for (const el of visibleElements(root, isVisible)) {
-    if (order >= MAX_SCANNED_ELEMENTS * 2) break;
+    // Bounded by what is looked at, not by what matched: a page with no match is walked no further.
+    looked += 1;
+    if (order >= MAX_SCANNED_ELEMENTS * 2 || looked > MAX_FIND_SCANNED) break;
     const proxy = labelProxy(el, isVisible);
     const role = proxy ? proxy.role : roleOf(el);
     if (role) {

@@ -13,9 +13,10 @@ tests that patch ``proxy_service.acompletion`` — keep their seam.
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from typing import Any, cast
 
 import litellm
@@ -253,6 +254,55 @@ def _field(value: Any, name: str) -> Any:
     if isinstance(value, dict):
         return value.get(name)
     return getattr(value, name, None)
+
+
+#: How long a stream that has sent nothing yet may stay silent before a keep-alive goes out.
+KEEP_ALIVE_SECONDS = 15.0
+#: What ``chunks_kept_alive`` yields in place of a chunk: the caller sends an SSE comment.
+KEEP_ALIVE = object()
+_NO_CHUNK = object()
+
+
+async def chunks_kept_alive(attempt: ProviderAttempt, *, keep_alive: bool) -> AsyncGenerator[Any, None]:
+    """Start ``attempt`` and yield its chunks; with ``keep_alive``, ``KEEP_ALIVE`` every ``KEEP_ALIVE_SECONDS`` until the first.
+
+    A model that thinks for a minute before its first token leaves the
+    connection silent that long, and proxies on the way close a silent
+    connection; the caller turns each ``KEEP_ALIVE`` into an SSE comment,
+    which clients skip. Once a chunk came, the rest are passed on as they come.
+    """
+    if not keep_alive:
+        await attempt.start()
+        async for chunk in attempt.chunks():
+            yield chunk
+        return
+    stream = attempt.chunks()
+
+    async def first() -> Any:
+        await attempt.start()
+        try:
+            return await stream.__anext__()
+        except StopAsyncIteration:
+            return _NO_CHUNK
+
+    waiting = asyncio.ensure_future(first())
+    # Should the caller stop listening, the wait is called off; its outcome is then nobody's.
+    waiting.add_done_callback(lambda task: task.cancelled() or task.exception())
+    try:
+        while True:
+            done, _ = await asyncio.wait({waiting}, timeout=KEEP_ALIVE_SECONDS)
+            if done:
+                break
+            yield KEEP_ALIVE
+    finally:
+        if not waiting.done():
+            waiting.cancel()
+    head = waiting.result()
+    if head is _NO_CHUNK:
+        return
+    yield head
+    async for chunk in stream:
+        yield chunk
 
 
 class NonStreamRetry:

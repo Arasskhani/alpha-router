@@ -120,8 +120,10 @@ from app.services.private_mode_service import (
 from app.services.prompt_cache_service import apply_prompt_cache_breakpoints
 from app.services.provider_http import build_provider_client
 from app.services.provider_stream import (
+    KEEP_ALIVE,
     NonStreamRetry,
     ProviderAttempt,
+    chunks_kept_alive,
     count_completion_tokens,
     count_prompt_tokens,
     estimate_tokens,
@@ -249,6 +251,10 @@ BUDGET_EXCEEDED_MESSAGE = (
     "This reply was stopped because it used up the budget you had left. "
     "The part already generated has been billed. Try a shorter request, or ask an administrator to raise your budget."
 )
+
+# An SSE comment: clients ignore it, but it keeps proxies and the browser from
+# closing a stream on which the model is still thinking about its next step.
+SSE_KEEP_ALIVE = b": keep-alive\n\n"
 
 STREAM_SSE_HEADERS = {
     "Cache-Control": "no-cache",
@@ -1101,8 +1107,18 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
                 # server slot -- for the whole stream (minutes). ~32 concurrent
                 # gateway streams per worker then exhaust the pool.
                 await _end_request_transaction(db)
-                await attempt.start()
-                async for chunk in attempt.chunks():
+                # A browser agent step (the only turn with function tools) may think a minute before its first token:
+                # the connection is kept alive meanwhile, so no proxy on the way closes it for being silent.
+                chunks = chunks_kept_alive(attempt, keep_alive=bool(completion_kwargs.get("tools")))
+                async for chunk in chunks:
+                    if chunk is KEEP_ALIVE:
+                        if await _client_stopped():
+                            # Nobody waits for this step any more: the wait for its first chunk is called off.
+                            await chunks.aclose()
+                            await attempt.close()
+                            break
+                        yield SSE_KEEP_ALIVE
+                        continue
                     stream_end_at = time.perf_counter()
                     if capacity_lost.is_set():
                         client_disconnected = True

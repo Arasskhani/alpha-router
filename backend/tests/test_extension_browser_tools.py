@@ -8,6 +8,7 @@ settlement are real, on the test database.
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 import json
 from types import SimpleNamespace
@@ -25,14 +26,21 @@ from app.models.connection import Connection
 from app.models.logging import RequestLog
 from app.models.model_catalog import AIModel
 from app.models.user import User
-from app.services import budget_reservation_service, chat_turn_context, extension_tokens, proxy_service, turn_settlement
+from app.services import (
+    budget_reservation_service,
+    chat_turn_context,
+    extension_tokens,
+    provider_stream,
+    proxy_service,
+    turn_settlement,
+)
 from app.services.budget_reservation_service import reservation_hold_usd
 from app.services.chat_markers import BROWSER_TOOL_CHOICE_BODY_KEY, BROWSER_TOOLS_BODY_KEY
 from app.services.chat_tool_access_service import set_chat_tool_access
 from app.services.chat_turn_context import build_turn_context
 from app.services.extension_settings import ExtensionSettings, save_extension_settings
 from app.services.extension_tokens import create_session
-from app.services.provider_stream import ProviderAttempt
+from app.services.provider_stream import KEEP_ALIVE, ProviderAttempt, chunks_kept_alive
 from app.services.secret_crypto import encrypt_secret
 
 SERVER = "https://ai.example.com"
@@ -321,6 +329,102 @@ class TestCaching:
         await client.post("/api/chat/completions", json=_body(models.a), headers=browser.headers)
         [call] = provider.calls
         assert call["caching"] is False
+
+
+class _SlowStream(_Stream):
+    """A model that thinks a while before its first chunk."""
+
+    def __init__(self, chunks: list, *, think: float) -> None:
+        super().__init__(chunks)
+        self._think = think
+
+    async def __anext__(self):
+        if self._think:
+            await asyncio.sleep(self._think)
+            self._think = 0
+        return await super().__anext__()
+
+
+class _Attempt:
+    """What ``chunks_kept_alive`` needs of a provider attempt, and whether its wait was called off."""
+
+    def __init__(self, stream: _Stream) -> None:
+        self.stream = stream
+        self.started = False
+
+    async def start(self) -> None:
+        self.started = True
+
+    async def chunks(self):
+        async for chunk in self.stream:
+            yield chunk
+
+
+@pytest.mark.usefixtures("agent_on")
+class TestASlowStep:
+    async def test_the_connection_is_kept_alive_until_the_model_s_first_chunk(
+        self, client, browser, models, provider, monkeypatch
+    ):
+        monkeypatch.setattr(provider_stream, "KEEP_ALIVE_SECONDS", 0.02)
+        provider.replies.append(_SlowStream(list(CLICK_REPLY), think=0.2))
+        resp = await client.post("/api/chat/completions", json=_body(models.a), headers=browser.headers)
+        assert resp.status_code == 200, resp.text
+        before, _, _ = resp.text.partition("data:")
+        # SSE comments, which clients skip, and only before the model began.
+        assert before.count(": keep-alive\n\n") >= 2
+        assert ": keep-alive" not in resp.text[len(before) :]
+        assert _tool_calls(_frames(resp.text)) == [{"id": "call_1", "name": "click", "arguments": '{"ref":"e12"}'}]
+        assert _frames(resp.text)[-1] == "[DONE]"
+
+    async def test_a_quick_step_has_none(self, client, browser, models, provider, monkeypatch):
+        monkeypatch.setattr(provider_stream, "KEEP_ALIVE_SECONDS", 0.5)
+        provider.reply(*CLICK_REPLY)
+        resp = await client.post("/api/chat/completions", json=_body(models.a), headers=browser.headers)
+        assert ": keep-alive" not in resp.text
+
+    async def test_a_turn_without_tools_is_not_kept_alive(self, monkeypatch):
+        monkeypatch.setattr(provider_stream, "KEEP_ALIVE_SECONDS", 0.01)
+        attempt = _Attempt(_SlowStream([_text("Hi"), _finish("stop")], think=0.1))
+        got = [chunk async for chunk in chunks_kept_alive(attempt, keep_alive=False)]  # type: ignore[arg-type]
+        assert KEEP_ALIVE not in got
+        assert len(got) == 2
+
+    async def test_a_model_that_says_nothing_ends_the_stream(self, monkeypatch):
+        monkeypatch.setattr(provider_stream, "KEEP_ALIVE_SECONDS", 0.01)
+        attempt = _Attempt(_SlowStream([], think=0.05))
+        got = [chunk async for chunk in chunks_kept_alive(attempt, keep_alive=True)]  # type: ignore[arg-type]
+        assert got and set(map(id, got)) == {id(KEEP_ALIVE)}
+
+    async def test_the_wait_is_called_off_when_nobody_listens(self, monkeypatch):
+        monkeypatch.setattr(provider_stream, "KEEP_ALIVE_SECONDS", 0.01)
+        called_off = asyncio.Event()
+
+        class _Forever(_Stream):
+            async def __anext__(self):
+                try:
+                    await asyncio.sleep(60)
+                except asyncio.CancelledError:
+                    called_off.set()
+                    raise
+                return None
+
+        chunks = chunks_kept_alive(_Attempt(_Forever([])), keep_alive=True)  # type: ignore[arg-type]
+        assert await chunks.__anext__() is KEEP_ALIVE
+        await chunks.aclose()
+        await asyncio.wait_for(called_off.wait(), timeout=1)
+
+    async def test_a_provider_that_fails_before_its_first_chunk_fails_the_step(self, monkeypatch):
+        monkeypatch.setattr(provider_stream, "KEEP_ALIVE_SECONDS", 0.01)
+
+        class _Refuses(_Attempt):
+            async def start(self) -> None:
+                await asyncio.sleep(0.05)
+                raise RuntimeError("No endpoints found that support tool use.")
+
+        chunks = chunks_kept_alive(_Refuses(_Stream([])), keep_alive=True)  # type: ignore[arg-type]
+        with pytest.raises(RuntimeError, match="No endpoints"):
+            async for chunk in chunks:
+                assert chunk is KEEP_ALIVE
 
 
 @pytest.mark.usefixtures("agent_on")

@@ -861,7 +861,8 @@ export function snapshot(doc: Document, options: { maxChars?: number; isVisible:
     return inView(el) ? 2 : 3;
   };
   const lines: Array<{ text: string; group: number; info?: ElementInfo }> = [];
-  let scanned = 0;
+  // At most so many elements of each part are looked at: a long page's end never crowds out its open dialog.
+  const scanned = [0, 0, 0, 0];
   let skipped = 0;
   const root = options.root ?? doc.body ?? doc.documentElement;
   for (const el of visibleElements(root, isVisible)) {
@@ -876,14 +877,15 @@ export function snapshot(doc: Document, options: { maxChars?: number; isVisible:
     const proxy = labelProxy(el, isVisible);
     const role = proxy ? proxy.role : roleOf(el);
     if (!role) continue;
-    if (scanned >= MAX_SCANNED_ELEMENTS) {
+    const group = groupOf(el);
+    if (scanned[group] >= MAX_SCANNED_ELEMENTS) {
       skipped += 1;
       continue;
     }
-    scanned += 1;
+    scanned[group] += 1;
     const info = proxy ? describeProxy(el, proxy, isVisible) : describeElement(el, role, isVisible);
     if (focused && (el === focused || (proxy && proxy.control === focused))) info.focused = true;
-    lines.push({ text: outlineLine(info, pageUrl), group: groupOf(el), info });
+    lines.push({ text: outlineLine(info, pageUrl), group, info });
   }
   // What matters first, each part in the page's order.
   const ordered = [0, 1, 2, 3].flatMap((group) => lines.filter((line) => line.group === group));

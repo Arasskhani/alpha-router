@@ -175,6 +175,15 @@ describe("what the agent sees", () => {
     expect(text).toMatch(/textbox "To" \(required\)/);
   });
 
+  it("lists an open dialog at the end of a long page, whatever came before it", () => {
+    const rows = Array.from({ length: 2100 }, (_, i) => `<button>Row ${i}</button>`).join("");
+    page(`${rows}<div role="dialog" aria-label="New Message"><input aria-label="To"><button>Send</button></div>`);
+    const shot = snapshot(document, { isVisible: visible });
+    expect(shot.outline).toContain('Open dialog "New Message":');
+    expect(shot.outline).toContain('button "Send"');
+    expect(shot.outline).toMatch(/more elements are not listed/);
+  });
+
   it("says what state a control is in, and what the page announces", () => {
     page(`<button aria-expanded="false">More</button><div role="tab" aria-selected="true">Primary</div>
       <button aria-pressed="true">Bold</button><input aria-label="Email" aria-invalid="true">

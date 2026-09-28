@@ -102,6 +102,7 @@ export const AGENT_TASKS = {
   low: "E2E-AGENT-LOW",
   dialog: "E2E-AGENT-DIALOG",
   tabs: "E2E-AGENT-TABS",
+  busy: "E2E-AGENT-BUSY",
 };
 /** Where agent-control.html puts its trusted-only button, in CSS pixels (its centre). */
 export const CONTROL_CLICK = [100, 140];
@@ -195,6 +196,11 @@ async function agentReply(messages, { stealUrl, openUrl, locate }) {
       () => ({ tool: "screenshot", args: {} }),
       (m) => pointAt(m, "Dialog step"),
       () => answered("Dialog step"),
+    ],
+    // A page whose own script holds it: the read must come back, saying the page did not answer.
+    [AGENT_TASKS.busy]: [
+      () => ({ tool: "read_page", args: {} }),
+      () => answered("Busy step"),
     ],
     // Full control in a tab the agent opens: the screenshot and the click must be that tab's, not the one it left.
     [AGENT_TASKS.tabs]: [

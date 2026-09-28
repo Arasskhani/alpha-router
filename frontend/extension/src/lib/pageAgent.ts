@@ -40,7 +40,41 @@ const ERRORS = new Set([
   // Set on this side, never by the page.
   "moved",
   "no_access",
+  "page_busy",
 ]);
+
+/** How long a call to the page may take, both injections together, before the agent is told the page did not answer. */
+export const PAGE_CALL_MS = 15_000;
+
+class PageTimeout extends Error {}
+
+/** `work`, or a PageTimeout after `ms`, or nothing more once `signal` aborts (it then rejects with an AbortError). */
+function bounded<T>(work: Promise<T>, ms: number, signal?: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      reject(new PageTimeout());
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new DOMException("The run was stopped.", "AbortError"));
+    };
+    if (signal?.aborted) onAbort();
+    else signal?.addEventListener("abort", onAbort, { once: true });
+    work.then(
+      (value) => {
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (err: unknown) => {
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+        reject(err);
+      },
+    );
+  });
+}
 
 const MAX_MESSAGE = 500;
 const MAX_OUTLINE = 30_000;
@@ -171,7 +205,9 @@ export type OverlayRequest = { run: string; label: string };
  * of `target.origin`, with the run's banner shown first when `overlay` is
  * given. Stopped (`signal`) before the action itself is sent, it is never
  * sent; and the page refuses an action for a run the user stopped from its
- * banner. Never throws: every outcome is a PageResult.
+ * banner. A page that does not answer within `timeoutMs` - its own script
+ * busy, or a dialog of its holding it - gets "page_busy", and a Stop ends
+ * the wait at once. Never throws: every outcome is a PageResult.
  */
 export async function callPage(
   target: PageTarget,
@@ -179,14 +215,16 @@ export async function callPage(
   args: Record<string, unknown> = {},
   overlay: OverlayRequest | null = null,
   signal?: AbortSignal,
+  timeoutMs: number = PAGE_CALL_MS,
 ): Promise<PageResult> {
   const { tabId, host, origin } = target;
   let results: Array<{ result?: unknown }>;
+  const started = Date.now();
   try {
-    await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
+    await bounded(chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] }), timeoutMs, signal);
     // A busy page can hold the injection back for a while: a Stop pressed meanwhile keeps the action from going.
     if (signal?.aborted) return failure("stopped", "The run was stopped.");
-    results = await chrome.scripting.executeScript({
+    results = await bounded(chrome.scripting.executeScript({
       target: { tabId },
       // Serialized into the page: it may use nothing from this module. The
       // origin, not the host: another port or scheme of a host is another site.
@@ -198,8 +236,12 @@ export async function callPage(
         return agent(name, input, banner?.run);
       },
       args: [origin, method, args, overlay],
-    });
+    }), Math.max(1, timeoutMs - (Date.now() - started)), signal);
   } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") return failure("stopped", "The run was stopped.");
+    if (err instanceof PageTimeout) {
+      return failure("page_busy", `The page did not answer within ${Math.round(timeoutMs / 1000)} s: it may be busy, or waiting on a dialog of its own. Look at it again, or ask the user.`);
+    }
     const message = err instanceof Error ? err.message : "";
     if (/permission|cannot access|cannot be scripted/i.test(message)) {
       return failure("no_access", `Alpharouter does not have access to ${host}.`);

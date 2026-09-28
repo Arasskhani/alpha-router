@@ -20,6 +20,10 @@
 
 const CDP_VERSION = "1.3";
 
+/** How long a command may take before the session gives up on it; longer for a capture. Not while a dialog holds the page. */
+export const SEND_TIMEOUT_MS = 10_000;
+export const CAPTURE_TIMEOUT_MS = 15_000;
+
 export type CdpTarget = { tabId: number };
 export type DragData = Record<string, unknown>;
 export type DialogInfo = { type: string; message: string; url?: string };
@@ -90,11 +94,33 @@ export class CdpSession {
     this.detachedReason = null;
   }
 
-  async send<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
+  /**
+   * Send a command; it fails after `timeoutMs` without an answer. While a
+   * dialog holds the page, the input that opened it is waiting on the user,
+   * not stuck, so the wait goes on until the dialog is answered.
+   */
+  async send<T = unknown>(method: string, params: Record<string, unknown> = {}, timeoutMs: number = SEND_TIMEOUT_MS): Promise<T> {
     if (!this.attached) throw new Error(`${method}: not attached`);
     return await new Promise<T>((resolve, reject) => {
+      let settled = false;
+      let timer: ReturnType<typeof setTimeout>;
+      const arm = () => {
+        timer = setTimeout(() => {
+          if (settled) return;
+          if (this.dialogOpen) {
+            arm();
+            return;
+          }
+          settled = true;
+          reject(new Error(`${method}: the browser did not answer within ${Math.round(timeoutMs / 1000)} s`));
+        }, timeoutMs);
+      };
+      arm();
       this.api.sendCommand(this.target, method, params, (result) => {
         const err = lastError();
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
         if (err) reject(new Error(`${method}: ${err}`));
         else resolve(result as T);
       });

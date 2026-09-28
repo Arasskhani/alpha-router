@@ -41,7 +41,7 @@ export type AgentBrowser = {
    * the page the rules judged, when it is given: a tab that has gone to
    * another site since answers "moved".
    */
-  page(method: PageMethod, args?: Record<string, unknown>, judged?: WorkTab, signal?: AbortSignal): Promise<PageResult>;
+  page(method: PageMethod, args?: Record<string, unknown>, judged?: WorkTab, signal?: AbortSignal, timeoutMs?: number): Promise<PageResult>;
   /** Whether the browser lets the extension work on the pages of this address's site. */
   hasAccess(url: string): Promise<boolean>;
   /** After an action that may load a page: wait until the tab has settled. */
@@ -144,6 +144,8 @@ export type RunOutcome = "done" | "stopped" | "max_steps" | "max_minutes" | "err
 export type RunResult = { outcome: RunOutcome; summary: string; steps: number };
 
 const MAX_ERRORS_IN_A_ROW = 3;
+/** The page's border, cursor and take-over window are best-effort: a page that does not answer this fast is not waited for. */
+const VISUAL_MS = 2000;
 /** How far the target may have moved between the judgment and the press, in CSS pixels. */
 const TARGET_TOLERANCE_PX = 8;
 /** This many deletion keys in a row, and the next one asks the user. */
@@ -550,10 +552,15 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     });
   }
 
-  /** Best-effort: the visuals never fail a run. */
+  /** `work`, unless Stop comes first: then the run ends at once, whatever the page or the browser is doing. */
+  function raced<T>(work: Promise<T>): Promise<T> {
+    return Promise.race([work, stopped]);
+  }
+
+  /** Best-effort: the visuals never fail a run, nor hold it up for long, nor outlast a Stop. */
   async function visual(method: PageMethod, a: Record<string, unknown>, tab: WorkTab | null): Promise<void> {
     if (!tab || !deps.driver) return;
-    await deps.browser.page(method, a, tab, signal).catch(() => undefined);
+    await Promise.race([deps.browser.page(method, a, tab, signal, VISUAL_MS).catch(() => undefined), stopped.catch(() => undefined)]);
   }
 
   /** What the run is doing: the page's border (under full control) and the badge. */
@@ -678,7 +685,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
      * paused - the person took over an instant ago - gets nothing.
      */
     const dispatch = async <T>(work: () => Promise<T>): Promise<T | null> => {
-      const opened = await deps.browser.page("takeover_dispatch", { on: true }, tab, signal).catch(() => null);
+      const opened = await raced(deps.browser.page("takeover_dispatch", { on: true }, tab, signal, VISUAL_MS).catch(() => null));
       if (opened?.ok && opened.paused === true) return null;
       try {
         return await race(work());
@@ -729,7 +736,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     if (spec.element === "point" || action === "scroll") {
       const p = point(a.coordinate);
       if (!p) return invalid(`${action} needs coordinate [x, y].`);
-      const css = await driver.toCss(p);
+      const css = await raced(driver.toCss(p));
       if (action === "scroll") {
         const ticks = Math.min(10, Math.max(1, Number(a.scroll_amount) || 3));
         const px = ticks * 100;
@@ -752,7 +759,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       const from = point(a.start_coordinate);
       const to = point(a.coordinate);
       if (!from || !to) return invalid("left_click_drag needs start_coordinate and coordinate.");
-      const cssTo = await driver.toCss(to);
+      const cssTo = await raced(driver.toCss(to));
       await visual("visuals_cursor", { x: cssTo.x, y: cssTo.y }, tab);
       const result = await dispatch(() => driver.drag(from, to));
       if (result === null) return tookOver();
@@ -940,7 +947,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     // Full control follows the tab the agent works in: its own session, attached the first time the agent works there -
     // for its mouse and screenshots, and so that a dialog the page opens is seen, whatever the tool.
     if (deps.driver?.use && tab && PAGE_TOOLS.has(name)) {
-      const controlled = await deps.driver.use(tab.id);
+      const controlled = await raced(deps.driver.use(tab.id));
       check();
       if (!controlled && CONTROL_TOOL_NAMES.has(name)) {
         return {
@@ -993,7 +1000,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
         if (spec.element === "point" || spec.element === "start") {
           const p = point(spec.element === "start" ? a.start_coordinate : a.coordinate);
           if (!p) return invalid(`${String(a.action)} needs ${spec.element === "start" ? "start_coordinate" : "coordinate"} [x, y].`);
-          const css = await deps.driver.toCss(p);
+          const css = await raced(deps.driver.toCss(p));
           pressAt = { x: css.x, y: css.y, activates: spec.as === "click" };
           const described = await page("describe_at", pressAt, tab);
           if (!described.ok) {
@@ -1005,7 +1012,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
             // Where it drops: judged too, since a drop on an upload zone uploads.
             const end = point(a.coordinate);
             if (!end) return invalid("left_click_drag needs coordinate [x, y] to drop at.");
-            const endCss = await deps.driver.toCss(end);
+            const endCss = await raced(deps.driver.toCss(end));
             const dropped = await page("describe_at", { x: endCss.x, y: endCss.y, activates: false }, tab);
             if (dropped.ok) drop = dropped.element as ElementInfo;
           }
@@ -1309,7 +1316,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     // The layer goes with the run; the panel shows the outcome.
     const tab = lastTab;
     if (tab && deps.driver) {
-      await deps.browser.page("visuals_hide", {}, tab).catch(() => undefined);
+      await deps.browser.page("visuals_hide", {}, tab, undefined, VISUAL_MS).catch(() => undefined);
     }
   }
 }

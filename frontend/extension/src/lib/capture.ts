@@ -16,7 +16,7 @@
  * control, so the caller keeps the frame from the viewport size separately.
  */
 
-import type { CdpSession } from "./cdp";
+import { CAPTURE_TIMEOUT_MS, type CdpSession } from "./cdp";
 import { cssViewportFromMetrics, deviceScaleFromMetrics, type Frame, frameFor, type Point, type Size, viewportOffsetFromMetrics } from "./coords";
 
 export type Shot = { dataUrl: string; frame: Frame; css: Size };
@@ -92,7 +92,7 @@ export async function captureViewport(session: CdpSession, maxSide: number): Pro
     // The clip is in document coordinates: the part of the page on screen, wherever it is scrolled to.
     clip: { x: at.x, y: at.y, width: css.width, height: css.height, scale: frame.scale / dpr },
     captureBeyondViewport: false,
-  });
+  }, CAPTURE_TIMEOUT_MS);
   const url = dataUrl(result);
   return { dataUrl: url, frame: frameOf(url, frame, css), css };
 }
@@ -109,7 +109,7 @@ export async function captureRegion(session: CdpSession, region: Region, maxSide
     quality: JPEG_QUALITY,
     clip: { x: at.x + region.x, y: at.y + region.y, width: size.width, height: size.height, scale: frame.scale / dpr },
     captureBeyondViewport: false,
-  });
+  }, CAPTURE_TIMEOUT_MS);
   const url = dataUrl(result);
   return { dataUrl: url, frame: frameOf(url, frame, size), css: size };
 }

@@ -58,6 +58,28 @@ const MAX_CROP_CHARS = 200_000;
 const RATE_LIMIT_WAIT_MS = 15_000;
 const RATE_LIMIT_RETRIES = 3;
 
+/** How long the end of a run may take to put things back: the debugger, the banners, the badge; and to save the run. */
+const CLEANUP_MS = 3000;
+const SAVE_MS = 8000;
+
+/** `work`, but no longer than `ms`: what has not finished by then is left to finish on its own. */
+function atMost(work: Promise<unknown> | undefined, ms: number): Promise<void> {
+  if (!work) return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    void work.then(
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+    );
+  });
+}
+
 /** Wait `ms`, or less if the run is stopped (then it throws, as a stopped fetch does). */
 function pause(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -500,13 +522,14 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
       );
       append({ kind: "result", id: `${run}-end`, outcome: result.outcome, summary: result.summary });
       if (savesRuns && !(privateOffered && privateRun)) {
-        await saveRun(run, { task, outcome: result.outcome, summary: result.summary, model: modelId, mode, startedAt });
+        await atMost(saveRun(run, { task, outcome: result.outcome, summary: result.summary, model: modelId, mode, startedAt }), SAVE_MS);
       }
     } finally {
-      await stopDriver?.().catch(() => undefined);
-      await browser.current?.cleanup().catch(() => undefined);
-      await clearBadge();
-      await flush();
+      // Putting things back never holds the panel up for long: a page or a server that does not answer is left.
+      await atMost(stopDriver?.().catch(() => undefined), CLEANUP_MS);
+      await atMost(browser.current?.cleanup().catch(() => undefined), CLEANUP_MS);
+      await atMost(clearBadge(), CLEANUP_MS);
+      await atMost(flush(), SAVE_MS);
       setRunning(false);
       setPaused(false);
       setApproval(null);
@@ -527,7 +550,7 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
     if (!pending?.paused()) return;
     const run = runId.current;
     if (run && browser.current?.workingTab() != null) {
-      await browser.current.page("takeover_resume", { run }).catch(() => undefined);
+      await browser.current.page("takeover_resume", { run }, undefined, undefined, CLEANUP_MS).catch(() => undefined);
     }
     pending.resume();
   }

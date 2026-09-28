@@ -91,4 +91,21 @@ describe("CdpSession", () => {
     await session.detach();
     expect(reasons).toEqual(["canceled_by_user"]);
   });
+
+  it("gives up on a command the browser does not answer, but not while a dialog holds the page", async () => {
+    const session = new CdpSession(7);
+    await session.attach();
+    chrome.debugger.sendCommand.mockImplementation(() => undefined); // never answers
+    await expect(session.send("Page.getLayoutMetrics", {}, 20)).rejects.toThrow(/did not answer/);
+    chrome.debugger.emitEvent(7, "Page.javascriptDialogOpening", { type: "confirm", message: "sure?" });
+    let failed = false;
+    const waiting = session.send("Input.dispatchMouseEvent", { type: "mouseReleased" }, 20).catch(() => {
+      failed = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(failed).toBe(false);
+    chrome.debugger.emitEvent(7, "Page.javascriptDialogClosed", { result: true });
+    await waiting;
+    expect(failed).toBe(true);
+  });
 });

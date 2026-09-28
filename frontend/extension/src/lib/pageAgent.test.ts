@@ -45,6 +45,22 @@ describe("a call to the page", () => {
     expect(chromeFake.scripting.executeScript).toHaveBeenCalledTimes(1);
   });
 
+  it("gives up on a page that does not answer, and says so", async () => {
+    // A page whose own script is stuck, or held by a dialog: the injection never comes back.
+    chromeFake.scripting.executeScript.mockImplementation(() => new Promise(() => undefined));
+    const result = await callPage(SHOP, "read_page", {}, null, undefined, 30);
+    expect(result).toMatchObject({ ok: false, error: "page_busy" });
+    expect(String((result as { message: string }).message)).toMatch(/did not answer/);
+  });
+
+  it("stops waiting on a page at once when the run is stopped", async () => {
+    chromeFake.scripting.executeScript.mockImplementation(() => new Promise(() => undefined));
+    const abort = new AbortController();
+    const call = callPage(SHOP, "read_page", {}, null, abort.signal, 60_000);
+    abort.abort();
+    await expect(call).resolves.toMatchObject({ ok: false, error: "stopped" });
+  });
+
   it("puts the run's banner up before the action, when asked to", async () => {
     chromeFake.scripting.executeScript.mockResolvedValue([]);
     await callPage(SHOP, "click", { ref: "e1" }, { run: "run-1", label: "Working" });

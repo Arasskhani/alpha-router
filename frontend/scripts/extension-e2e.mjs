@@ -390,6 +390,10 @@ async function startTestSite() {
 <style>body{margin:0}#btn{position:absolute;left:80px;top:120px;width:160px;height:48px;background:${TARGET_COLOR};color:#fff;border:0}</style></head><body>
 <h1 style="margin:20px">A question</h1><button id="btn" onclick="document.title = confirm('Go on with the check?') ? 'CONFIRMED' : 'DISMISSED'">Check it</button>
 </body></html>`,
+    // A page whose own script holds it for 40 seconds once it has loaded: nothing injected into it runs meanwhile.
+    "/agent-busy.html": `<!doctype html><html lang="en"><head><title>Busy ${NONCE}</title></head><body>
+<h1>Busy</h1><script>setTimeout(() => { const until = Date.now() + 40000; while (Date.now() < until) {} }, 500)</script>
+</body></html>`,
     // A long page whose button is below the first screen: seen only in a screenshot taken where the page is scrolled to.
     "/agent-scroll.html": `<!doctype html><html lang="en"><head><title>Scroll ${NONCE}</title>
 <style>body{margin:0;height:3000px}#btn{position:absolute;left:80px;top:1600px;width:160px;height:48px;background:${TARGET_COLOR};color:#fff;border:0}</style></head><body>
@@ -1155,6 +1159,25 @@ async function main() {
     expect(clicks.length === 1 && clicks[0] === true, `the new tab's button got ${JSON.stringify(clicks)}`);
     await tab.close();
     await start.close();
+  });
+
+  await step("a page that does not answer is given up on, and the model is told", async () => {
+    expect(panel, "no side panel");
+    const task = `${AGENT_TASKS.busy}: read this page (${NONCE})`;
+    agentTasks.push(task);
+    const page = await context.newPage();
+    await page.goto(site.agentUrl("agent-busy.html"));
+    await sleep(800); // the page's script now holds it
+    const started = Date.now();
+    await agentStart(page, task);
+    await panel.until(agentSays("Busy step:"), "the agent's summary", 45_000);
+    await panel.until(agentIdle, "the run to end", 15_000);
+    const took = Math.round((Date.now() - started) / 1000);
+    expect(await panel.run(agentSays("did not answer")), "the model was not told the page did not answer");
+    // Well before the page lets go (40 s): the read gave up at its limit, and the rest did not wait on the page either.
+    expect(took < 35, `the run took ${took} s: it waited for the page instead of giving up`);
+    await page.close();
+    return `${took} s`;
   });
 
   await step("under full control a screenshot shows the part of the page scrolled to, and a click there lands", async () => {

@@ -1014,6 +1014,16 @@ describe("one call from the panel", () => {
   });
 });
 
+describe("references on a page the run came to later", () => {
+  it("are numbered past the ones the run was told on the pages before", async () => {
+    document.body.innerHTML = `<button>Send</button>`;
+    await runAgentCall(document, "show_overlay", { run: "run-9", label: "Working", refsFrom: 120 }, visible, () => undefined);
+    const shot = snapshot(document, { isVisible: visible });
+    expect(Number(shot.elements[0].ref.slice(1))).toBeGreaterThanOrEqual(120);
+    await runAgentCall(document, "hide_overlay", { run: "run-9" }, visible, () => undefined);
+  });
+});
+
 describe("a web component's slot", () => {
   it("names a button by what the page put in its slot", () => {
     document.body.innerHTML = `<x-button>Send</x-button>`;

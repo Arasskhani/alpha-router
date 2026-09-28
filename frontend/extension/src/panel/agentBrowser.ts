@@ -45,6 +45,19 @@ export type PanelBrowser = AgentBrowser & {
 /** Tabs one run may open when the administrator set no limit. */
 const DEFAULT_MAX_TABS = 10;
 
+/** The highest element reference a page's answer names ("e41" in an outline or an element), or 0. */
+function highestRef(result: unknown): number {
+  let highest = 0;
+  let text = "";
+  try {
+    text = JSON.stringify(result) ?? "";
+  } catch {
+    return 0;
+  }
+  for (const match of text.matchAll(/(?<![\w-])e(\d{1,9})(?![\w-])/g)) highest = Math.max(highest, Number(match[1]));
+  return highest;
+}
+
 export function createAgentBrowser(options: { startTabId: number | null; runId: string; windowId?: number; maxTabs?: number }): PanelBrowser {
   let working = options.startTabId;
   let groupId: number | null = null;
@@ -54,6 +67,12 @@ export function createAgentBrowser(options: { startTabId: number | null; runId: 
   const overlays = new Map<number, PageTarget>();
   // `since`: a page loaded after the run began says nothing old - what it shows first is news (an order placed).
   const banner: OverlayRequest = { run: options.runId, label: OVERLAY_LABEL, since: Date.now() };
+  /**
+   * The first reference a page may give next: past every one this run was
+   * told, on any page. A page reached later numbers its elements from there,
+   * so e3 of the page before never names an element of this one.
+   */
+  let refsFrom = 1;
 
   async function current(): Promise<WorkTab | null> {
     if (working === null) return null;
@@ -137,7 +156,9 @@ export function createAgentBrowser(options: { startTabId: number | null; runId: 
       }
       // The banner goes up with every action: a page that took it down gets it back.
       overlays.set(tab.id, expected);
-      return callPage(expected, method, args, banner, signal, timeoutMs);
+      const result = await callPage(expected, method, args, { ...banner, refsFrom }, signal, timeoutMs);
+      refsFrom = Math.max(refsFrom, highestRef(result) + 1);
+      return result;
     },
 
     async hasAccess(url: string) {

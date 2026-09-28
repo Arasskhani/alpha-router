@@ -160,6 +160,16 @@ function refFor(el: Element): string {
   return ref;
 }
 
+/**
+ * Number this document's new references from `from` on at least: the run
+ * was told of references up to there on its pages before, and a new page's
+ * e3 must not be taken for the e3 of the page before.
+ */
+export function raiseRefFloor(from: number): void {
+  const s = state();
+  if (Number.isFinite(from)) s.next = Math.max(s.next, Math.min(Math.floor(from) - 1, 900_000_000));
+}
+
 /** Forget references whose elements are gone, so the map does not grow with a long-lived page. */
 function prune(): void {
   const s = state();

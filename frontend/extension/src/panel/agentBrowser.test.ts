@@ -25,6 +25,21 @@ afterEach(() => {
 });
 
 describe("the browser the agent uses", () => {
+  it("has a page number its new references past every one the run was told", async () => {
+    chromeFake.scripting.executeScript.mockImplementation(async (injection: unknown) => {
+      const { files, target, args } = injection as { files?: string[]; target: { tabId: number }; args?: [string, string, unknown, unknown] };
+      if (files) return [];
+      pageCalls.push({ tabId: target.tabId, method: args![1], args: args![2], banner: args![3] });
+      return [{ result: args![1] === "read_page" ? { ok: true, outline: 'button "Send" [e41]', elements: [{ ref: "e12" }] } : { ok: true, note: "Done." } }];
+    });
+    const tab = chromeFake.tabs.add({ url: "https://mail.example.com/", title: "Mail", active: true });
+    const browser = createAgentBrowser({ startTabId: tab.id!, runId: "run-1" });
+    await browser.page("read_page");
+    await browser.page("click", { ref: "e41" });
+    await browser.page("click", { ref: "e41" });
+    expect(pageCalls.map((c) => (c.banner as { refsFrom: number }).refsFrom)).toEqual([1, 42, 42]);
+  });
+
   it("works in the tab next to the panel, with its banner up for every action", async () => {
     const tab = chromeFake.tabs.add({ url: "https://shop.example.com/cart", title: "Cart", active: true });
     const browser = createAgentBrowser({ startTabId: tab.id!, runId: "run-1" });
@@ -33,7 +48,7 @@ describe("the browser the agent uses", () => {
     await browser.page("click", { ref: "e1" });
     // Each action puts the banner up again: a page that removed it gets it back.
     // With when the run began: a page loaded after that says nothing old.
-    const banner = { run: "run-1", label: "Alpharouter is working on this page", since: expect.any(Number) };
+    const banner = { run: "run-1", label: "Alpharouter is working on this page", since: expect.any(Number), refsFrom: expect.any(Number) };
     expect(pageCalls.map((c) => [c.method, c.banner])).toEqual([
       ["read_page", banner],
       ["click", banner],

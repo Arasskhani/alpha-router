@@ -14,6 +14,7 @@ import {
   locate,
   pageText,
   pressKey,
+  raiseRefFloor,
   readPage,
   scroll,
   selectOption,
@@ -126,6 +127,7 @@ export async function runAgentCall(
         const label = typeof args.label === "string" ? args.label.slice(0, 120) : "Alpharouter is working on this page";
         // The banner and the watch for a take-over share a life: the agent is working on this page.
         showOverlay(doc, run, label, send, () => resumeTakeover(doc, run, true));
+        if (typeof args.refsFrom === "number") raiseRefFloor(args.refsFrom);
         if (!runStopped(run)) {
           watchTakeover(doc, run, send);
           // From the run's first call to the page, what it announces is kept for the agent's next look.

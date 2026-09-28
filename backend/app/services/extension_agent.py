@@ -177,7 +177,7 @@ _DETAIL_FIELDS: dict[str, Any] = {
     "task_id": _matching(_ID_RE),
     "step": lambda value: _count(value, 1000),
     "steps": lambda value: _count(value, 1000),
-    "mode": _one_of("ask", "auto"),
+    "mode": _one_of("ask", "plan", "auto"),
     "class": _one_of("read", "act", "sensitive", "blocked"),
     #: Who let the action go ahead: nobody had to, the user (on its card, or once for the site for the rest
     #: of the run), or the review model.

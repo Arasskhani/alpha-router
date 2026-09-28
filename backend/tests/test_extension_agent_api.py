@@ -260,6 +260,10 @@ class TestTheDetail:
             }
         ) == {"key": "Enter", "to_site": "other.example.org", "label": "Pay  now", "reason": "purchase"}
 
+    @pytest.mark.parametrize("mode", ["ask", "plan", "auto"])
+    def test_every_mode_is_kept(self, mode):
+        assert clean_detail({"mode": mode}) == {"mode": mode}
+
     @pytest.mark.parametrize("approval", ["not_needed", "user", "user_site", "review"])
     def test_who_approved_is_kept(self, approval):
         assert clean_detail({"approval": approval}) == {"approval": approval}

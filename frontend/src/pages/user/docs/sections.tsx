@@ -1083,7 +1083,7 @@ export const userManualSections: DocSection[] = [
           </li>
           <li>
             A run also ends when the agent says it is done, at your administrator&apos;s step or time limit, or after
-            three failed steps in a row. Closing the side panel ends it too. Your administrator may also limit how
+            three failed steps in a row (or five refused ones). Closing the side panel ends it too. Your administrator may also limit how
             many tabs a run opens and how many runs you start in a day.
           </li>
           <li>
@@ -1107,6 +1107,21 @@ export const userManualSections: DocSection[] = [
             Tabs the agent opens are grouped under <strong>Alpharouter</strong> in the tab strip, and the Alpharouter
             button in the toolbar carries a coloured dot for as long as a run is on — cyan while it works, amber while
             it waits for you, grey while you have taken over — so you can see it from any tab.
+          </li>
+        </ul>
+        <h3>How it keeps track</h3>
+        <ul>
+          <li>
+            After each action the agent is told what it hit, where the keyboard is now and what that field holds
+            (never a password or card field&apos;s), and what the page said — <em>Message sent</em>, <em>Enter a
+            valid address</em>, a dialog that opened — so it types into the field it means and checks the result
+            before it says it is done. When one action does not go through, it looks again before the next.
+          </li>
+          <li>
+            It reads the page with what matters first: an open window such as a mail&apos;s compose box, then the
+            part of the page you are typing in, then what is on screen. Lists that scroll inside the page (an
+            inbox, a chat), styled checkboxes and switches, editors that sit in a frame of the same site, and
+            recipients that turn into chips when you press Enter all work.
           </li>
         </ul>
         <Warn>
@@ -1133,6 +1148,11 @@ export const userManualSections: DocSection[] = [
           <li>
             Screenshots and clicks work at any display scaling (a laptop at 125 % or 150 %), any window size, and
             on a page scrolled down; when the agent opens or switches to another tab, full control goes with it.
+          </li>
+          <li>
+            Its clicks and typing by the page&apos;s own names use the real mouse and keyboard too: it clicks a field,
+            checks the keyboard went there, then types — starting a message above your signature — and after each
+            step it takes a fresh screenshot to see what happened (your administrator can turn that off).
           </li>
           <li>
             Chrome shows its <em>&quot;Alpharouter started debugging this browser&quot;</em> bar above the page

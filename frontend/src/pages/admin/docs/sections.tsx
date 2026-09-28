@@ -2265,7 +2265,11 @@ export const docSections: DocSection[] = [
                 the <strong>longest side</strong> (1280 px, 800–1600) and how many of the latest are{" "}
                 <strong>kept</strong> in the conversation (3, 1–4: a step carries at most four images); the rest are
                 replaced by a note, so a long run stays affordable, and the latest full screenshot is always kept,
-                however many zooms came after it.
+                however many zooms came after it. <strong>A screenshot after every change</strong> (on): under full
+                control, each step that clicked, typed, pressed a key, dragged, scrolled or went to a page ends with
+                a fresh screenshot, taken like any other (never of a site the person has not allowed, never where
+                the rules keep screenshots from a model), so the model sees what its actions did; turn it off to
+                send fewer images.
               </td>
             </tr>
             <tr>
@@ -2379,6 +2383,29 @@ export const docSections: DocSection[] = [
             minute is served.
           </li>
         </ul>
+        <h3>What the model is told</h3>
+        <ul>
+          <li>
+            Where the run starts: the tab&apos;s title and address, and how much of the page the window shows.
+          </li>
+          <li>
+            After each action: what it hit, where the keyboard is now and what that field holds (never a password,
+            card or code field&apos;s), the page it went to, what the page announced in its alerts and dialogs, and
+            how far a list scrolled. The page&apos;s words go inside the run&apos;s page tags, as data; the
+            agent&apos;s own notes (what was done, why something was refused, what to do next) stay outside them.
+          </li>
+          <li>
+            The outline (<code>read_page</code>) puts an open dialog first, then the part of the page the keyboard
+            is in, then what is in the window, then the rest, with each element&apos;s state (focused, expanded,
+            selected, invalid, required); a long page comes in parts. <code>find</code> gives the best matches first.
+          </li>
+          <li>
+            A reference that names something else by the time it is used is not acted on — unless exactly one
+            element is still what it named, and then the action goes there and says so. When one action of a step
+            does not go through, the rest of that step is skipped. Keys are read the same way by the rules and the
+            keyboard, whatever the model calls them (<em>Return</em>, <em>Page_Down</em>, <em>super</em>).
+          </li>
+        </ul>
         <h3>What is recorded</h3>
         <p>
           <a href="#admin-activity-logs">Admin Logs</a> has a <strong>Browser extension</strong> trail:
@@ -2397,7 +2424,9 @@ export const docSections: DocSection[] = [
           </li>
           <li>
             <code>agent_task</code> — each run: how it ended (<code>done</code>, <code>stopped</code>,{" "}
-            <code>max_steps</code>, <code>max_minutes</code>, <code>errors</code> for three failed actions in a row,{" "}
+            <code>max_steps</code>, <code>max_minutes</code>, <code>errors</code> for three failed actions in a row
+            or five refused ones (a refusal is the rules at work, not a failure, so it does not count toward the
+            three),{" "}
             <code>no_action</code> when the model answered twice in a row without acting, <code>failed</code>), how
             many steps, the model and how long it took.
           </li>
@@ -2410,8 +2439,14 @@ export const docSections: DocSection[] = [
         <h3>Known limits</h3>
         <ul>
           <li>
-            The agent acts through the page&apos;s own events, without the debugger: sites that accept only trusted
-            input do not react. It does not reach into frames or closed shadow roots.
+            Without full control the agent acts through the page&apos;s own events: it does the browser&apos;s part
+            (Tab moves the focus, Enter sends a form through its button, typing goes in at the caret and is read
+            back), but sites that accept only trusted input may still not react. With full control, clicks, typing
+            and keys by reference use the real mouse and keyboard too.
+          </li>
+          <li>
+            It reads frames of the page&apos;s own site and closed shadow roots; a frame from another site stays
+            closed to it, as the rules cannot judge what is inside.
           </li>
           <li>The agent runs in the side panel: closing the panel ends the run.</li>
         </ul>

@@ -776,6 +776,11 @@ function keyVerdict(rawKey: unknown, element: ElementInfo | undefined, page: { u
     return asks(!relax.send, "enter_sends", `Pressing Enter in ${named(element)} may send what it holds.`);
   }
   if (element && sendsForm && key === "Enter" && !combo.shift) return sentByEnter(element, page, ctx);
+  // A character typed one key at a time is typing: never into a password, card or identity field.
+  if (element && !combo.ctrl && !combo.meta && [...key].length === 1 && (inText || element.sensitive)) {
+    const typed = typeVerdict(element, page, key);
+    if (typed.class !== "act") return { ...typed, message: `Pressing ${shown} types it. ${typed.message}` };
+  }
   if (element && !inText && (key === "Enter" || key === " ")) {
     const asClick = clickVerdict(element, page, ctx);
     if (asClick.class === "act") return verdict("act", "press_key", `Pressing ${shown} on ${named(element)}.`);

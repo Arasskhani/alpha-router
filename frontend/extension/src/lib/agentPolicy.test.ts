@@ -361,6 +361,17 @@ describe("the rest", () => {
     expect(classify("press_key", { args: { key: "Tab" }, element: message })).toMatchObject({ class: "act" });
   });
 
+  it("never types into a password or identity field one key at a time", () => {
+    const password = el({ role: "textbox", name: "Password", tag: "input", type: "password", sensitive: true });
+    expect(classify("press_key", { args: { key: "a" }, element: password })).toMatchObject({ class: "blocked", reason: "sensitive_field", message: expect.stringContaining("types it") });
+    expect(classify("press_key", { args: { key: "Space" }, element: password })).toMatchObject({ class: "blocked" });
+    const id = el({ role: "textbox", name: "National ID", tag: "input", type: "text" });
+    expect(classify("press_key", { args: { key: "7" }, element: id })).toMatchObject({ class: "blocked", reason: "id_field" });
+    // Moving the caret or leaving the field is not typing; a character in an ordinary field is.
+    expect(classify("press_key", { args: { key: "Tab" }, element: password })).toMatchObject({ class: "act" });
+    expect(classify("press_key", { args: { key: "a" }, element: el({ role: "textbox", name: "Search", tag: "input" }) })).toMatchObject({ class: "act" });
+  });
+
   it("Enter in a form's field is judged as sending the form, as the browser sends it", () => {
     const checkout = { formAction: "https://shop.example.com/checkout", formButton: ["Place order"] };
     const coupon = el({ role: "textbox", name: "Coupon", tag: "input", type: "text", ...checkout });

@@ -501,6 +501,8 @@ const PAGE_TOOLS = new Set([
   "zoom",
   "computer",
 ]);
+/** Fields whose value is one whole thing, set as a whole rather than typed a part at a time. */
+const WHOLE_VALUE_TYPES = new Set(["date", "time", "datetime-local", "month", "week", "color", "range"]);
 /** Reference actions that, under full control, use the real mouse and keyboard. */
 const BY_HAND = new Set(["click", "type_text", "press_key"]);
 /** Ref actions whose result tells what the page is like after them. */
@@ -924,7 +926,14 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     if (!now || !rect) return { ok: false, error: "failed", message: "Where the element is could not be read." };
     // Judged twice: what is there now is what the rules judged, or nothing is pressed.
     if (judged && !sameTarget(judged, now)) return { ok: false, error: "changed", message: "The element is not what it was when this action was judged." };
-    const at = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+    // A date, a time, a colour: the keyboard fills such a field one part at a time, the page's own way sets it whole.
+    if (tool === "type_text" && now.tag === "input" && WHOLE_VALUE_TYPES.has(now.type ?? "")) return await page("type_text", a, tab);
+    // Typing into a text area or an editor starts where a person clicks to start: its first line, above a signature or a quote.
+    // Its middle may be a signature, or empty space whose click puts the caret at the end of it.
+    const multiLine = tool === "type_text" && now.tag !== "input";
+    const at = multiLine
+      ? { x: rect.x + Math.min(12, rect.width / 2), y: rect.y + Math.min(12, rect.height / 2) }
+      : { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
     await visual("visuals_target", { rect }, tab);
     await visual("visuals_cursor", { x: at.x, y: at.y, click: "left" }, tab);
     const clicked = await inputWindow(tab, () => driver.clickAt(at, { button: "left", clickCount: 1 }));

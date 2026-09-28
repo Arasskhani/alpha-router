@@ -583,6 +583,27 @@ describe("reference actions under full control", () => {
     expect(pageCalls(browser, "type_text")).toHaveLength(0);
   });
 
+  it("starts typing in an editor at its first line, and sets a date the page's way", async () => {
+    const BODY = { ref: "e8", role: "textbox", name: "Message Body", tag: "div" };
+    const DAY = { ref: "e9", role: "textbox", name: "Birthday", tag: "input", type: "date" };
+    const browser = fakeBrowser(BODY);
+    const plain = browser.page.getMockImplementation()!;
+    browser.page.mockImplementation(async (method: string, args: Record<string, unknown> = {}) => {
+      const el = args.ref === "e8" ? BODY : args.ref === "e9" ? DAY : undefined;
+      if (el && method === "describe") return { ok: true, element: el };
+      if (el && method === "locate") return { ok: true, element: el, rect: { x: 100, y: 200, width: 400, height: 300 } };
+      return plain(method, args);
+    });
+    const h = harness([{ text: "", toolCalls: [call("type_text", { ref: "e8", text: "Hello" })] }, { text: "", toolCalls: [call("type_text", { ref: "e9", text: "2000-05-17", clear: true })] }], { browser });
+    await h.run();
+    // Near its top-left corner, not its middle, where a signature may be.
+    expect(h.driver!.clickAt).toHaveBeenCalledWith({ x: 112, y: 212 }, { button: "left", clickCount: 1 });
+    expect(h.driver!.type).toHaveBeenCalledWith("Hello");
+    // The date went through the page, whole.
+    expect(browser.page).toHaveBeenCalledWith("type_text", { ref: "e9", text: "2000-05-17", clear: true }, TAB, expect.anything());
+    expect(h.driver!.clickAt).toHaveBeenCalledTimes(1);
+  });
+
   it("types nothing when the click left the keyboard elsewhere", async () => {
     const browser = page({ focus: { ref: "e9", role: "textbox", name: "Search mail", tag: "input" } });
     const h = harness([{ text: "", toolCalls: [call("type_text", { ref: "e7", text: "secret plans" })] }], { browser });

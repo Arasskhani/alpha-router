@@ -361,6 +361,12 @@ async function startTestSite() {
 <h1 style="position:absolute;left:40px;top:20px;margin:0">Control</h1><button id="btn">Trusted?</button>
 <script>window.__clicks=[];document.getElementById('btn').addEventListener('click',(e)=>{window.__clicks.push(e.isTrusted);if(e.isTrusted)document.title='TRUSTED CLICK';});</script>
 </body></html>`,
+    // A long page whose button is below the first screen: seen only in a screenshot taken where the page is scrolled to.
+    "/agent-scroll.html": `<!doctype html><html lang="en"><head><title>Scroll ${NONCE}</title>
+<style>body{margin:0;height:3000px}#btn{position:absolute;left:80px;top:1600px;width:160px;height:48px;background:${TARGET_COLOR};color:#fff;border:0}</style></head><body>
+<h1 style="margin:20px">Further down</h1><button id="btn">Down here</button>
+<script>window.__clicks=[];document.getElementById('btn').addEventListener('click',(e)=>{window.__clicks.push(e.isTrusted);});</script>
+</body></html>`,
   };
   const pdf = pdfWith(PDF_TEXT);
   const server = http.createServer((req, res) => {
@@ -1059,6 +1065,24 @@ async function main() {
     expect(shot && shot.content.some((part) => part.type === "image_url" && String(part.image_url?.url).startsWith("data:image/jpeg;base64,")), "the screenshot did not reach the model as an image");
     expect(String(requests[1].messages[0].content).includes("full control"), "the instructions do not mention full control");
     await control.close();
+  });
+
+  await step("under full control a screenshot shows the part of the page scrolled to, and a click there lands", async () => {
+    expect(panel, "no side panel");
+    const task = `${AGENT_TASKS.scroll}: press the button further down (${NONCE})`;
+    agentTasks.push(task);
+    const page = await context.newPage();
+    await page.goto(site.agentUrl("agent-scroll.html"));
+    await agentStart(page, task);
+    // The wheel scroll and the screenshot go without asking; the click asks.
+    await panel.until(agentCard, "the approval to click the button further down", 40_000);
+    expect(await panel.run(agentSays('Click button "Down here"')), "the card does not name the button under the point");
+    await panel.run(agentClick("Allow"));
+    await panel.until(agentSays("Scroll step: Clicked at"), "the agent's summary", 40_000);
+    await panel.until(agentIdle, "the run to end");
+    const clicks = await page.evaluate(() => window.__clicks);
+    expect(clicks.length === 1 && clicks[0] === true, `the button got ${JSON.stringify(clicks)}`);
+    await page.close();
   });
 
   await step("a page cannot send the agent to another site: the user's Deny keeps it there", async () => {

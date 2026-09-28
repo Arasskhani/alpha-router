@@ -17,7 +17,7 @@
  */
 
 import type { CdpSession } from "./cdp";
-import { cssViewportFromMetrics, deviceScaleFromMetrics, type Frame, frameFor, type Size } from "./coords";
+import { cssViewportFromMetrics, deviceScaleFromMetrics, type Frame, frameFor, type Point, type Size, viewportOffsetFromMetrics } from "./coords";
 
 export type Shot = { dataUrl: string; frame: Frame; css: Size };
 export type Region = { x: number; y: number; width: number; height: number };
@@ -26,12 +26,12 @@ export type Region = { x: number; y: number; width: number; height: number };
 const FALLBACK_VIEWPORT: Size = { width: 1280, height: 800 };
 const JPEG_QUALITY = 70;
 
-/** The viewport as a capture needs it: its CSS size, and device pixels per CSS pixel. */
-type Viewport = { css: Size; dpr: number };
+/** The viewport as a capture needs it: its CSS size, where it is in the document, and device pixels per CSS pixel. */
+type Viewport = { css: Size; at: Point; dpr: number };
 
 async function viewport(session: CdpSession): Promise<Viewport> {
   const metrics = await session.send("Page.getLayoutMetrics");
-  return { css: cssViewportFromMetrics(metrics) ?? FALLBACK_VIEWPORT, dpr: deviceScaleFromMetrics(metrics) };
+  return { css: cssViewportFromMetrics(metrics) ?? FALLBACK_VIEWPORT, at: viewportOffsetFromMetrics(metrics), dpr: deviceScaleFromMetrics(metrics) };
 }
 
 export async function viewportSize(session: CdpSession): Promise<Size> {
@@ -84,21 +84,22 @@ function frameOf(url: string, frame: Frame, css: Size): Frame {
 
 /** The whole viewport, scaled to the frame the model reads and answers in. */
 export async function captureViewport(session: CdpSession, maxSide: number): Promise<Shot> {
-  const { css, dpr } = await viewport(session);
+  const { css, at, dpr } = await viewport(session);
   const frame = frameFor(css, maxSide);
   const result = await session.send("Page.captureScreenshot", {
     format: "jpeg",
     quality: JPEG_QUALITY,
-    clip: { x: 0, y: 0, width: css.width, height: css.height, scale: frame.scale / dpr },
+    // The clip is in document coordinates: the part of the page on screen, wherever it is scrolled to.
+    clip: { x: at.x, y: at.y, width: css.width, height: css.height, scale: frame.scale / dpr },
     captureBeyondViewport: false,
   });
   const url = dataUrl(result);
   return { dataUrl: url, frame: frameOf(url, frame, css), css };
 }
 
-/** A region magnified: its own pixels scaled up to fill the frame, for a closer look. */
+/** A region of the viewport (CSS pixels, from its top left) magnified: its own pixels scaled up to fill the frame, for a closer look. */
 export async function captureRegion(session: CdpSession, region: Region, maxSide: number): Promise<Shot> {
-  const { dpr } = await viewport(session);
+  const { at, dpr } = await viewport(session);
   const size: Size = { width: Math.max(1, region.width), height: Math.max(1, region.height) };
   // Zoom magnifies: unlike the viewport, a small region is scaled UP to fill maxSide.
   const scale = maxSide / Math.max(size.width, size.height);
@@ -106,7 +107,7 @@ export async function captureRegion(session: CdpSession, region: Region, maxSide
   const result = await session.send("Page.captureScreenshot", {
     format: "jpeg",
     quality: JPEG_QUALITY,
-    clip: { x: region.x, y: region.y, width: size.width, height: size.height, scale: frame.scale / dpr },
+    clip: { x: at.x + region.x, y: at.y + region.y, width: size.width, height: size.height, scale: frame.scale / dpr },
     captureBeyondViewport: false,
   });
   const url = dataUrl(result);

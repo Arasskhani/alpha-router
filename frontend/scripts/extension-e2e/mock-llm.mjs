@@ -98,6 +98,7 @@ export const AGENT_TASKS = {
   blocked: "E2E-AGENT-BLOCKED",
   stop: "E2E-AGENT-STOP",
   control: "E2E-AGENT-CONTROL",
+  scroll: "E2E-AGENT-SCROLL",
 };
 /** Where agent-control.html puts its trusted-only button, in CSS pixels (its centre). */
 export const CONTROL_CLICK = [100, 140];
@@ -179,6 +180,13 @@ async function agentReply(messages, { stealUrl, locate }) {
       () => ({ tool: "screenshot", args: {} }),
       (m) => pointAt(m, "Control step"),
       () => answered("Control step"),
+    ],
+    // Full control on a long page: scroll down with the wheel, look, and click what is there now.
+    [AGENT_TASKS.scroll]: [
+      () => ({ tool: "computer", args: { action: "scroll", coordinate: [200, 200], scroll_direction: "down", scroll_amount: 10 } }),
+      () => ({ tool: "screenshot", args: {} }),
+      (m) => pointAt(m, "Scroll step"),
+      () => answered("Scroll step"),
     ],
   };
   /** A click at the target as the last screenshot shows it; done, saying so, when it shows none. */

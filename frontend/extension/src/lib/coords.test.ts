@@ -7,6 +7,7 @@ import {
   cssViewportFromMetrics,
   DEFAULT_MAX_SIDE,
   deviceScaleFromMetrics,
+  viewportOffsetFromMetrics,
   frameFor,
   frameToCss,
 } from "./coords";
@@ -100,5 +101,17 @@ describe("deviceScaleFromMetrics", () => {
     expect(deviceScaleFromMetrics({})).toBe(1);
     expect(deviceScaleFromMetrics(null)).toBe(1);
     expect(deviceScaleFromMetrics({ visualViewport: { clientWidth: 100000 }, cssVisualViewport: { clientWidth: 1 } })).toBe(1);
+  });
+});
+
+describe("viewportOffsetFromMetrics", () => {
+  it("reads where the viewport is scrolled to, in CSS pixels", () => {
+    expect(viewportOffsetFromMetrics(layoutMetrics({ width: 870, height: 968, dpr: 1.5, pageY: 300 }))).toEqual({ x: 0, y: 300 });
+    expect(viewportOffsetFromMetrics({ cssLayoutViewport: { pageX: 5, pageY: 7 } })).toEqual({ x: 5, y: 7 });
+  });
+
+  it("is the top left when the reply cannot tell", () => {
+    expect(viewportOffsetFromMetrics({})).toEqual({ x: 0, y: 0 });
+    expect(viewportOffsetFromMetrics(null)).toEqual({ x: 0, y: 0 });
   });
 });

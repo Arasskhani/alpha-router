@@ -93,6 +93,23 @@ export function deviceScaleFromMetrics(metrics: unknown): number {
 }
 
 /**
+ * Where the viewport is in the document, in CSS pixels, from a
+ * Page.getLayoutMetrics reply: a capture's clip is in document coordinates,
+ * so a page scrolled down is captured at its scroll position, not at the top.
+ * The visual viewport's position includes a pinch-zoom pan. The top left when
+ * the reply cannot tell.
+ */
+export function viewportOffsetFromMetrics(metrics: unknown): Point {
+  const m = metrics as { cssVisualViewport?: { pageX?: unknown; pageY?: unknown }; cssLayoutViewport?: { pageX?: unknown; pageY?: unknown } } | null;
+  for (const vp of [m?.cssVisualViewport, m?.cssLayoutViewport]) {
+    const x = vp?.pageX;
+    const y = vp?.pageY;
+    if (typeof x === "number" && typeof y === "number" && Number.isFinite(x) && Number.isFinite(y)) return { x: Math.max(0, x), y: Math.max(0, y) };
+  }
+  return { x: 0, y: 0 };
+}
+
+/**
  * The CSS viewport size from a Page.getLayoutMetrics reply, or null if it has none.
  *
  * Chromium names the size `clientWidth`/`clientHeight` (the viewport without

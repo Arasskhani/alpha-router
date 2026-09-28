@@ -70,6 +70,16 @@ describe("captureViewport", () => {
     expect(shot.frame).toMatchObject({ width: 1200, height: 900, scale: 1.5 });
   });
 
+  it("captures the part of the page on screen when it is scrolled", async () => {
+    const s = await session();
+    chrome.debugger.answers.set("Page.getLayoutMetrics", layoutMetrics({ width: 870, height: 968, pageY: 1300, contentHeight: 3000 }));
+    chrome.debugger.answers.set("Page.captureScreenshot", { data: jpegOf(870, 968) });
+    await captureViewport(s, 1280);
+    const call = chrome.debugger.sent.find((c) => c.method === "Page.captureScreenshot")!;
+    // Document coordinates: at y 0 the image would be blank, the page being scrolled away from there.
+    expect(call.params).toMatchObject({ clip: { x: 0, y: 1300, width: 870, height: 968 } });
+  });
+
   it("throws when the capture returns no image", async () => {
     const s = await session();
     chrome.debugger.answers.set("Page.getLayoutMetrics", layoutMetrics({ width: 800, height: 600 }));
@@ -79,6 +89,16 @@ describe("captureViewport", () => {
 });
 
 describe("captureRegion", () => {
+  it("clips a region of the viewport where it is in the document, and at the display scale", async () => {
+    const s = await session();
+    chrome.debugger.answers.set("Page.getLayoutMetrics", layoutMetrics({ width: 870, height: 968, dpr: 1.5, pageX: 10, pageY: 500, contentHeight: 3000 }));
+    chrome.debugger.answers.set("Page.captureScreenshot", { data: "ZZ" });
+    await captureRegion(s, { x: 100, y: 50, width: 200, height: 100 }, 800);
+    const call = chrome.debugger.sent.find((c) => c.method === "Page.captureScreenshot")!;
+    expect(call.params).toMatchObject({ clip: { x: 110, y: 550, width: 200, height: 100 } });
+    expect((call.params as { clip: { scale: number } }).clip.scale).toBeCloseTo(4 / 1.5, 6);
+  });
+
   it("clips to the region and scales it up toward the max side", async () => {
     const s = await session();
     chrome.debugger.answers.set("Page.captureScreenshot", { data: "ZZ" });

@@ -97,6 +97,8 @@ describe("CdpDriver", () => {
   it("enables the page's events when it starts, so dialogs are seen", async () => {
     await driver();
     expect(chrome.debugger.sent.some((c) => c.method === "Page.enable")).toBe(true);
+    // And the page keeps its focus while a card in the side panel is answered.
+    expect(chrome.debugger.sent).toEqual(expect.arrayContaining([expect.objectContaining({ method: "Emulation.setFocusEmulationEnabled", params: { enabled: true } })]));
   });
 
   it("hands a dialog to its handler as it opens, and answers it", async () => {

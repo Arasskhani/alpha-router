@@ -541,10 +541,16 @@ function sameTarget(judged: ElementInfo, now: ElementInfo): boolean {
   );
 }
 
-/** Whether the target sits where it was, within the tolerance, and is about the same size. */
+/**
+ * Whether the target sits where it was and is about the same size: within
+ * the tolerance, or a tenth of its size for a large one - a wide field that
+ * grew a border, a button a pixel taller - so a small shift does not drop a
+ * press the rules allowed.
+ */
 function closeTo(was: PointRect, now: PointRect): boolean {
-  const t = TARGET_TOLERANCE_PX;
-  return Math.abs(was.x - now.x) <= t && Math.abs(was.y - now.y) <= t && Math.abs(was.width - now.width) <= t && Math.abs(was.height - now.height) <= t;
+  const tx = Math.max(TARGET_TOLERANCE_PX, 0.1 * Math.max(was.width, now.width));
+  const ty = Math.max(TARGET_TOLERANCE_PX, 0.1 * Math.max(was.height, now.height));
+  return Math.abs(was.x - now.x) <= tx && Math.abs(was.y - now.y) <= ty && Math.abs(was.width - now.width) <= tx && Math.abs(was.height - now.height) <= ty;
 }
 
 /** What a computer action is, as the rules know actions: the tool it amounts to, and where the element comes from. */
@@ -1531,10 +1537,13 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       if (!now || !rect || !sameTarget(element, now) || !closeTo(targetRect, rect)) {
         await visual("visuals_target", { rect: null }, tab);
         const why = !now ? (again.ok ? "nothing is there now" : again.message) : "something else is there now";
+        // What the page is like now, so the model need not ask for it.
+        const look = options.screenshotAfterAction ? await lookAfter() : undefined;
         return {
           ...base,
           summary,
-          content: `Not done: the page changed since this action was judged (${why}). Take a new screenshot and look again.`,
+          content: `Not done: the page changed since this action was judged (${why}). ${look ? "A fresh screenshot follows: look at it" : "Take a new screenshot and look"} before you act again.`,
+          ...(look ? { image: look } : {}),
           status: "error",
           detail: "The page changed",
           outcome: "error",
@@ -1627,6 +1636,8 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
         }
         entries.push({ message: { role: "tool", tool_call_id: call.id, content: answer.content }, ...(answer.page ? { page: answer.page } : {}), ...(answer.read ? { read: answer.read } : {}) });
         if (answer.image) images.push(answer.image);
+        // A fresh screenshot came with the answer: the step needs no other.
+        if (answer.image && !answer.image.caption.startsWith(ZOOM_CAPTION)) unseen = false;
         const name = call.function.name;
         const said = answer.summary ?? describeAction(name, args(call.function.arguments) ?? {});
         const kept = keptSummary(name, args(call.function.arguments) ?? {}, said);

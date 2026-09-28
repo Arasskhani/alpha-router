@@ -43,6 +43,9 @@ export class CdpDriver {
     await this.session.attach();
     // The Page domain's events: without them Chrome never says a dialog opened, and the page just waits.
     await this.session.send("Page.enable");
+    // The page keeps its focus while the person answers a card in the side panel: a blur there closes
+    // the page's menus and suggestion lists (Gmail's recipients), and moves what the rules just judged.
+    await this.session.send("Emulation.setFocusEmulationEnabled", { enabled: true }).catch(() => undefined);
     // The page may not draw over the debugging attach; the rest is lazy.
     await this.refreshViewport();
   }

@@ -463,6 +463,23 @@ describe("judged twice", () => {
     expect(String(gone.sent[1].find((m) => m.role === "tool")!.content)).toContain("nothing to act on");
   });
 
+  it("presses a large target that moved by less than a tenth of its size", async () => {
+    const wide = (x: number): PageResult => ({ ok: true, element: { ref: "e1", role: "button", name: "Next", tag: "button" }, rect: { x, y: 90, width: 400, height: 40 } });
+    const h = harness(click(), { browser: fakeBrowser(undefined, [wide(190), wide(220)]) });
+    await h.run();
+    expect(h.driver!.click).toHaveBeenCalledTimes(1);
+  });
+
+  it("with a changed target, shows the model the page as it is now", async () => {
+    const moved: PageResult = { ok: true, element: { ref: "e2", role: "button", name: "Buy now", tag: "button" }, rect: { x: 190, y: 90, width: 40, height: 20 } };
+    const h = harness(click(), { browser: fakeBrowser(undefined, [next(190, 90), moved]), screenshotAfterAction: true });
+    await h.run();
+    expect(h.driver!.screenshot).toHaveBeenCalledTimes(1);
+    const tool = String(h.sent[1].find((m) => m.role === "tool")!.content);
+    expect(tool).toContain("A fresh screenshot follows");
+    expect(h.sent[1].filter((m) => m.role === "user" && Array.isArray(m.content))).toHaveLength(1);
+  });
+
   it("the same button as a fresh node is still the same target", async () => {
     const fresh: PageResult = { ok: true, element: { ref: "e44", role: "button", name: "Next", tag: "button" }, rect: { x: 191, y: 90, width: 40, height: 20 } };
     const h = harness(click(), { browser: fakeBrowser(undefined, [next(190, 90), fresh]) });

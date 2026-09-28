@@ -127,6 +127,19 @@ describe("describeAt", () => {
     expect(fine.ok && fine.element.hidden).toBeUndefined();
   });
 
+  it("names a hidden checkbox under its label as the checkbox, boxed where the label is", () => {
+    const doc = page(`<label id="l"><input type="checkbox" id="c" style="opacity:0"><span id="s">Remember me</span></label>`);
+    at(doc.getElementById("s"));
+    vi.spyOn(doc.getElementById("l")!, "getBoundingClientRect").mockReturnValue({ left: 20, top: 30, width: 120, height: 24, right: 140, bottom: 54, x: 20, y: 30, toJSON: () => ({}) } as DOMRect);
+    const shown = (el: Element) => el.id !== "c";
+    const result = describeAt(doc, 25, 35, shown, true);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.element).toMatchObject({ role: "checkbox", name: "Remember me", tag: "input" });
+      expect(result.rect).toEqual({ x: 20, y: 30, width: 120, height: 24 });
+    }
+  });
+
   it("enters an open shadow root to the real element under the point", () => {
     const doc = page(`<div id="host"></div>`);
     const host = doc.getElementById("host")!;

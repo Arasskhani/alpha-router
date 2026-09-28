@@ -613,6 +613,30 @@ function describeElement(el: Element, role: string, isVisible: Visibility, forRu
   return info;
 }
 
+/** Controls a page often hides under a styled label: a person sees and clicks the label. */
+const LABELLED_CONTROLS = new Set(["checkbox", "radio", "file"]);
+
+/**
+ * A label standing in for the control it names, when that control is not
+ * drawn - an opacity-0 or screen-reader-only checkbox, switch or file input
+ * under a styled label: the label is what a person sees and clicks, so it is
+ * listed with the control's role, name and state, and its reference is the
+ * label's (a click on it works the control).
+ */
+function labelProxy(el: Element, isVisible: Visibility): { control: Element; role: string } | null {
+  if (el.tagName.toUpperCase() !== "LABEL") return null;
+  const control = (el as HTMLLabelElement).control;
+  if (!control || control.tagName.toUpperCase() !== "INPUT" || !LABELLED_CONTROLS.has(inputType(control))) return null;
+  if (isVisible(control)) return null;
+  const role = roleOf(control);
+  return role ? { control, role } : null;
+}
+
+/** The label's entry for the hidden control it stands in for. */
+function describeProxy(label: Element, proxy: { control: Element; role: string }, isVisible: Visibility): ElementInfo {
+  return { ...describeElement(proxy.control, proxy.role, isVisible), ref: refFor(label) };
+}
+
 /** A link's address as the model reads it: the path on this site, or the other site and path; never a query. */
 function shownHref(href: string, pageUrl: string): string {
   try {
@@ -676,14 +700,15 @@ export function snapshot(doc: Document, options: { maxChars?: number; isVisible:
       const text = visibleText(el, options.isVisible, NAME_CHARS);
       if (text) line = `${"#".repeat(level)} ${text}`;
     } else {
-      const role = roleOf(el);
+      const proxy = labelProxy(el, options.isVisible);
+      const role = proxy ? proxy.role : roleOf(el);
       if (!role) continue;
       count += 1;
       if (elements.length >= MAX_OUTLINE_ELEMENTS) {
         truncated = true;
         continue;
       }
-      const info = describeElement(el, role, options.isVisible);
+      const info = proxy ? describeProxy(el, proxy, options.isVisible) : describeElement(el, role, options.isVisible);
       elements.push(info);
       line = outlineLine(info, pageUrl);
     }
@@ -733,9 +758,10 @@ export function find(doc: Document, query: unknown, isVisible: Visibility): Resu
   const root = doc.body ?? doc.documentElement;
   for (const el of visibleElements(root, isVisible)) {
     if (usable.length >= MAX_FIND_RESULTS) break;
-    const role = roleOf(el);
+    const proxy = labelProxy(el, isVisible);
+    const role = proxy ? proxy.role : roleOf(el);
     if (role) {
-      const info = describeElement(el, role, isVisible);
+      const info = proxy ? describeProxy(el, proxy, isVisible) : describeElement(el, role, isVisible);
       if (`${info.name} ${info.value ?? ""}`.toLowerCase().includes(q)) usable.push({ ref: info.ref, role, name: info.name });
       continue;
     }
@@ -804,12 +830,21 @@ function holds(outer: Element, el: Element): boolean {
   return false;
 }
 
+/** What a click on `named` presses: its control, or - when that control is not drawn - the label that stands in for it. */
+function pressedFor(named: Element, target: Element, isVisible: Visibility): Element {
+  if (target === named || isVisible(target)) return target;
+  const label = named.tagName.toUpperCase() === "LABEL" ? named : named.closest("label");
+  return label && (label as HTMLLabelElement).control === target ? label : target;
+}
+
 export function click(ref: unknown, isVisible: Visibility): Result<{ note?: string }> {
   const named = usable(ref, isVisible);
   if (isFailure(named)) return named;
   // What the rules judged (describe with `activates`): the control the click works on.
-  const el = activationTarget(named);
-  if (el !== named && isDisabled(el)) return { ok: false, error: "disabled", message: `Element ${ref as string} is disabled.` };
+  const target = activationTarget(named);
+  if (target !== named && isDisabled(target)) return { ok: false, error: "disabled", message: `Element ${ref as string} is disabled.` };
+  // A hidden checkbox under its styled label: the label is what is pressed, as a person would; it works the control.
+  const el = pressedFor(named, target, isVisible);
   const html = el as HTMLElement;
   el.scrollIntoView?.({ block: "center", inline: "center" });
   const cover = coveredBy(el);
@@ -1408,7 +1443,8 @@ function describeAtIn(doc: Document, x: number, y: number, isVisible: Visibility
   const target = activates ? activationTarget(el) : el;
   const role = roleOf(target) ?? (headingLevel(target) !== null ? "heading" : "text");
   const element = describeElement(target, role, isVisible, true);
-  const r = target.getBoundingClientRect();
+  // A hidden control under its label: the box is the label's, where the person sees it.
+  const r = pressedFor(el, target, isVisible).getBoundingClientRect();
   if (drawnFaint(el)) element.hidden = "transparent";
   else if (r.width > 0 && r.height > 0 && (r.width <= TINY_PX || r.height <= TINY_PX)) element.hidden = "tiny";
   return { ok: true, element, rect: { x: r.left + offset.x, y: r.top + offset.y, width: r.width, height: r.height } };

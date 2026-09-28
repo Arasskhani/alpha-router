@@ -271,7 +271,8 @@ describe("acting", () => {
       <input type="checkbox" id="keep" style="display:none"><label for="keep">Keep me signed in</label>`);
     const label = find(document, "keep me signed in", visible);
     if (!label.ok) throw new Error(label.message);
-    const ref = label.matches.find((m) => m.role === "text")!.ref;
+    // The hidden checkbox is found under its label, as the checkbox it is.
+    const ref = label.matches.find((m) => m.role === "checkbox")!.ref;
     expect(describeRef(ref, visible, true)).toMatchObject({ ok: true, element: { role: "checkbox", tag: "input" } });
     expect(click(ref, visible)).toMatchObject({ ok: true });
     expect((document.querySelector("#keep") as HTMLInputElement).checked).toBe(true);
@@ -279,6 +280,26 @@ describe("acting", () => {
     if (!submitLabel.ok) throw new Error(submitLabel.message);
     const onLabel = submitLabel.matches.find((m) => m.role === "text")!.ref;
     expect(describeRef(onLabel, visible, true)).toMatchObject({ ok: true, element: { tag: "button", submits: true } });
+  });
+
+  it("lists a checkbox the page hid under its styled label, and ticks it through the label", () => {
+    page(`<label class="switch"><input type="checkbox" id="n" style="opacity:0"><span>Email me updates</span></label>
+      <input type="checkbox" id="r" class="sr-only"><label for="r">Remember me</label>
+      <label for="f">Upload a photo</label><input type="file" id="f" hidden>`);
+    const hidden = (el: Element) => visible(el) && !["n", "r", "f"].includes(el.id);
+    const shot = snapshot(document, { isVisible: hidden });
+    expect(shot.outline).toContain('checkbox "Email me updates" (not checked)');
+    expect(shot.outline).toContain('checkbox "Remember me" (not checked)');
+    expect(shot.outline).toContain('file "Upload a photo"');
+    const remember = byName(shot.elements, "Remember me");
+    // The reference is the label's, and the rules still see the checkbox.
+    expect(describeRef(remember.ref, hidden, true)).toMatchObject({ ok: true, element: { role: "checkbox", name: "Remember me", tag: "input" } });
+    expect(click(remember.ref, hidden)).toMatchObject({ ok: true });
+    expect((document.getElementById("r") as HTMLInputElement).checked).toBe(true);
+    expect(click(byName(shot.elements, "Email me updates").ref, hidden)).toMatchObject({ ok: true });
+    expect((document.getElementById("n") as HTMLInputElement).checked).toBe(true);
+    // Read again, the state shows.
+    expect(snapshot(document, { isVisible: hidden }).outline).toContain('checkbox "Remember me" (checked)');
   });
 
   it("tells a submit button as the browser does, and records where any link goes", () => {

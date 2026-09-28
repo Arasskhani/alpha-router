@@ -21,6 +21,7 @@ import {
   type Result,
   type Visibility,
 } from "./agent";
+import { observe, stopAnnouncements, watchAnnouncements } from "./observe";
 import { hideOverlay, runStopped, showOverlay, veilOverlay, type PanelSender } from "./overlay";
 import { resumeTakeover, runPaused, setDispatching, stopWatching, watchTakeover } from "./takeover";
 import { hideTarget, hideVisuals, moveCursor, pulseClick, setHighlightState, showTarget, showVisuals, veilVisuals, type ClickKind, type HighlightState } from "./visuals";
@@ -33,6 +34,7 @@ export type PageMethod =
   | "describe"
   | "describe_at"
   | "describe_focus"
+  | "observe"
   | "click"
   | "type_text"
   | "select_option"
@@ -94,6 +96,8 @@ export async function runAgentCall(
         return describeAt(doc, args.x, args.y, isVisible, args.activates === true);
       case "describe_focus":
         return describeFocus(doc, isVisible);
+      case "observe":
+        return { ok: true, ...observe(doc, isVisible) };
       case "click":
         return click(args.ref, isVisible);
       case "type_text":
@@ -114,13 +118,18 @@ export async function runAgentCall(
         const label = typeof args.label === "string" ? args.label.slice(0, 120) : "Alpharouter is working on this page";
         // The banner and the watch for a take-over share a life: the agent is working on this page.
         showOverlay(doc, run, label, send, () => resumeTakeover(doc, run, true));
-        if (!runStopped(run)) watchTakeover(doc, run, send);
+        if (!runStopped(run)) {
+          watchTakeover(doc, run, send);
+          // From the run's first call to the page, what it announces is kept for the agent's next look.
+          watchAnnouncements(doc, isVisible);
+        }
         return { ok: true };
       }
       case "hide_overlay": {
         const run = typeof args.run === "string" ? args.run : undefined;
         hideOverlay(doc, run);
         stopWatching(run);
+        stopAnnouncements(doc);
         return { ok: true };
       }
       case "takeover_dispatch":

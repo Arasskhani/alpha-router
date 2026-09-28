@@ -151,6 +151,8 @@ const NUDGE =
   "You answered without calling a tool, and the task goes on until you call done. Call the next tool now; use ask_user if you need the user, or done with a short summary if the task is complete or cannot be done.";
 /** The page's border, cursor and take-over window are best-effort: a page that does not answer this fast is not waited for. */
 const VISUAL_MS = 2000;
+/** The look at the page after an action is best-effort too, and a little longer: it reads the focused element. */
+const OBSERVE_MS = 3000;
 /** How far the target may have moved between the judgment and the press, in CSS pixels. */
 const TARGET_TOLERANCE_PX = 8;
 /** This many deletion keys in a row, and the next one asks the user. */
@@ -480,6 +482,8 @@ const PAGE_TOOLS = new Set([
   "zoom",
   "computer",
 ]);
+/** Ref actions whose result tells what the page is like after them. */
+const AFTERMATH = new Set(["click", "type_text", "select_option", "submit_form", "press_key"]);
 /** Actions after which a page may be loading. */
 const MAY_LOAD = new Set(["click", "submit_form", "press_key", "navigate", "tab_open", "tab_switch", "computer"]);
 /** Tools (as the rules know them) that change nothing: they do not break a run of deletion keys. */
@@ -554,6 +558,18 @@ function elsewhere(host: string): string {
   return `The tab is now on another site, ${host}: the user will be asked before you act there.`;
 }
 
+/** An element as a result line names it: its role, its name, and its own words when they differ. */
+function hitLine(element: ElementInfo): string {
+  return `${element.role}${element.name ? ` "${clip(element.name, 80)}"` : ""}${element.text ? ` (it shows "${clip(element.text, 60)}")` : ""}`;
+}
+
+/** The element with the keyboard, as a result line names it: with its reference, and what it holds - never a sensitive field's value. */
+function focusLine(element: ElementInfo): string {
+  if (element.role === "frame") return `a frame${element.frame?.host ? ` from ${element.frame.host}` : ""}, whose inside this page cannot see`;
+  const holds = element.sensitive ? ", a sensitive field (what it holds is not read)" : element.value !== undefined ? `, holding "${clip(element.value, 100)}"` : "";
+  return `${hitLine(element)} [${element.ref}]${holds}`;
+}
+
 function originPattern(url: string): { pattern: string; host: string } | null {
   const page = readablePage(url);
   return page ? { pattern: page.pattern, host: page.host } : null;
@@ -626,6 +642,27 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
   /** `work`, unless Stop comes first: then the run ends at once, whatever the page or the browser is doing. */
   function raced<T>(work: Promise<T>): Promise<T> {
     return Promise.race([work, stopped]);
+  }
+
+  /**
+   * The page right after an action, as lines of the page's words (for inside
+   * the tags): what the point hit, the page it is on now if that changed,
+   * where the keyboard is and what that field holds, and what the page
+   * announced. Best-effort, and only while the tab is on the site the action
+   * was judged on: another site is read only once the user has allowed it.
+   */
+  async function aftermath(before: WorkTab, after: WorkTab | null, hit?: ElementInfo): Promise<string[]> {
+    const lines: string[] = [];
+    if (hit) lines.push(`It hit: ${hitLine(hit)}.`);
+    if (!after || !after.host || after.host !== before.host) return lines;
+    if (after.url !== before.url) lines.push(`The page is now "${clip(after.title, 100) || "(untitled)"}" at ${whereTo(after.url)}.`);
+    const seen = await Promise.race([deps.browser.page("observe", {}, after, signal, OBSERVE_MS).catch(() => null), stopped.catch(() => null)]);
+    if (!seen?.ok) return lines;
+    const focus = seen.focus as ElementInfo | undefined;
+    lines.push(focus ? `The keyboard is in: ${focusLine(focus)}.` : "Nothing has the keyboard focus.");
+    const said = Array.isArray(seen.said) ? (seen.said as Array<{ kind: string; text: string }>) : [];
+    for (const item of said) lines.push(item.kind === "dialog" ? `A dialog shows: "${item.text}"` : `The page announced: "${item.text}"`);
+    return lines;
   }
 
   /** Best-effort: the visuals never fail a run, nor hold it up for long, nor outlast a Stop. */
@@ -745,7 +782,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
   }
 
   /** Full control: screenshots and the real mouse and keyboard, through the run's driver. */
-  async function control(tool: string, a: Record<string, unknown>, tab: WorkTab): Promise<Answer> {
+  async function control(tool: string, a: Record<string, unknown>, tab: WorkTab, hit?: ElementInfo): Promise<Answer> {
     const driver = deps.driver;
     if (!driver) return { content: "Full control is not on for this run: use read_page and the reference tools.", status: "error", outcome: "error", extra: { error: "no_control" } };
     const site = tab.host ?? "";
@@ -858,11 +895,14 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     const after = await deps.browser.current();
     check();
     const moved = after?.host && after.host !== site && !allowedSites.has(after.host) ? `\n${elsewhere(after.host)}` : "";
-    return { content: `${note}${moved}`, status: "done", detail: note, outcome: "ok" };
+    // What was pressed, and where the keyboard went: the model checks this before it types.
+    const saw = await aftermath(tab, after, spec.element === "point" || spec.element === "start" ? hit : undefined);
+    check();
+    return { content: `${note}${moved}`, ...(saw.length ? { page: wrapPage(options.nonce, site, saw.join("\n")) } : {}), status: "done", detail: note, outcome: "ok" };
   }
 
   /** Carry out one allowed action; everything the page says comes back wrapped. */
-  async function execute(tool: string, a: Record<string, unknown>, tab: WorkTab | null): Promise<Answer> {
+  async function execute(tool: string, a: Record<string, unknown>, tab: WorkTab | null, element?: ElementInfo): Promise<Answer> {
     const site = tab?.host ?? "";
     if (tool === "tabs_list") {
       const tabs = await deps.browser.listTabs();
@@ -914,7 +954,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       };
     }
     if (!tab) return { content: "The tab does not show a web page the agent can work on.", status: "error", outcome: "error", extra: { error: "no_page" } };
-    if (CONTROL_TOOL_NAMES.has(tool)) return control(tool, a, tab);
+    if (CONTROL_TOOL_NAMES.has(tool)) return control(tool, a, tab, element);
     const result = await page(tool as PageMethod, a, tab);
     if (!result.ok && result.error === "paused") return tookOver();
     if (!result.ok) {
@@ -928,10 +968,11 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       };
     }
     let moved = "";
+    let after: WorkTab | null = tab;
     if (MAY_LOAD.has(tool)) {
       await Promise.race([deps.browser.settle(), stopped]);
       check();
-      const after = await deps.browser.current();
+      after = await deps.browser.current();
       check();
       if (after?.host && after.host !== site && !allowedSites.has(after.host)) moved = elsewhere(after.host);
     }
@@ -954,6 +995,9 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     // What the page just showed the agent - its outline, its text, a search's matches - may carry instructions aimed at it.
     if (tool === "read_page" || tool === "get_page_text" || tool === "find") watch(body);
     const read = tool === "read_page" ? "outline" : tool === "get_page_text" || tool === "find" ? "text" : undefined;
+    // After an action, what the page is like now: the model learns whether its text went where it meant.
+    if (AFTERMATH.has(tool)) body = [body, ...(await aftermath(tab, after))].filter(Boolean).join("\n");
+    check();
     return {
       content: [read ? "" : "Done.", moved].filter(Boolean).join("\n"),
       ...(read || body ? { page: wrapPage(options.nonce, site, body) } : {}),
@@ -1278,7 +1322,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     if (targetRect) await visual("visuals_target", { rect: targetRect }, tab);
     let answer: Answer;
     try {
-      answer = await execute(name, a, tab);
+      answer = await execute(name, a, tab, element);
     } finally {
       if (targetRect) await visual("visuals_target", { rect: null }, tab);
     }

@@ -182,6 +182,17 @@ export function cleanPageResult(method: PageMethod, raw: unknown): PageResult {
       const element = cleanElement(v.element);
       return element ? { ok: true, element } : failure("failed", "The focused element could not be read.");
     }
+    case "observe": {
+      // Best-effort, what the page said: the kind and the words of each announcement, and the focused element if any.
+      const focus = v.focus === undefined || v.focus === null ? null : cleanElement(v.focus);
+      const said = (Array.isArray(v.said) ? v.said : []).slice(0, 8).flatMap((a) => {
+        if (!a || typeof a !== "object") return [];
+        const item = a as Record<string, unknown>;
+        const text = str(item.text, 200);
+        return text ? [{ kind: item.kind === "dialog" ? "dialog" : "alert", text }] : [];
+      });
+      return focus ? { ok: true, focus, said } : { ok: true, said };
+    }
     case "takeover_dispatch":
       return { ok: true, paused: v.paused === true };
     default:

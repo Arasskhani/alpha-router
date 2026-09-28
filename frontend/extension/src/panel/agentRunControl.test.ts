@@ -294,6 +294,56 @@ describe("computer actions", () => {
   });
 });
 
+describe("what an action reports", () => {
+  it("says what the click hit, where the keyboard is now and what the page announced - the page's words inside the tags", async () => {
+    const browser = fakeBrowser();
+    const plain = browser.page.getMockImplementation()!;
+    browser.page.mockImplementation(async (method: string, args: Record<string, unknown> = {}) =>
+      method === "observe"
+        ? { ok: true, focus: { ref: "e7", role: "textbox", name: "To", tag: "input", value: "bob@example.com" }, said: [{ kind: "alert", text: "Draft saved" }] }
+        : plain(method, args),
+    );
+    const h = harness([{ text: "", toolCalls: [call("computer", { action: "left_click", coordinate: [200, 100] })] }], { browser });
+    await h.run();
+    const answer = String(h.sent[1].find((m) => m.role === "tool")!.content);
+    const at = answer.indexOf(`<untrusted_page_content_${NONCE}`);
+    expect(answer.slice(0, at)).toMatch(/^Clicked at \(200, 100\)\./);
+    const page = answer.slice(at);
+    expect(page).toContain('It hit: button "Next".');
+    expect(page).toContain('The keyboard is in: textbox "To" [e7], holding "bob@example.com".');
+    expect(page).toContain('The page announced: "Draft saved"');
+  });
+
+  it("never reads what a sensitive field holds, and says when nothing has the keyboard", async () => {
+    const browser = fakeBrowser();
+    const plain = browser.page.getMockImplementation()!;
+    let focus: Record<string, unknown> | undefined = { ref: "e8", role: "textbox", name: "Password", tag: "input", type: "password", sensitive: true };
+    browser.page.mockImplementation(async (method: string, args: Record<string, unknown> = {}) => (method === "observe" ? { ok: true, said: [], ...(focus ? { focus } : {}) } : plain(method, args)));
+    const h = harness([{ text: "", toolCalls: [call("computer", { action: "left_click", coordinate: [200, 100] })] }, { text: "", toolCalls: [call("computer", { action: "key", text: "Escape" })] }], { browser });
+    h.deps.onStep = vi.fn((step) => {
+      if (step.status === "done") focus = undefined;
+    });
+    await h.run();
+    const answers = h.sent[2].filter((m) => m.role === "tool").map((m) => String(m.content));
+    expect(answers[0]).toContain('textbox "Password" [e8], a sensitive field (what it holds is not read)');
+    expect(answers[1]).toContain("Nothing has the keyboard focus.");
+  });
+
+  it("does not look at a page of another site the click went to", async () => {
+    const browser = fakeBrowser();
+    let where = TAB;
+    browser.current.mockImplementation(async () => where);
+    browser.settle.mockImplementation(async () => {
+      where = { id: 1, url: "https://elsewhere.example/", host: "elsewhere.example", title: "Elsewhere" };
+    });
+    const h = harness([{ text: "", toolCalls: [call("computer", { action: "left_click", coordinate: [200, 100] })] }], { browser });
+    await h.run();
+    expect(browser.page.mock.calls.some(([method]) => method === "observe")).toBe(false);
+    const answer = String(h.sent[1].find((m) => m.role === "tool")!.content);
+    expect(answer).toContain("The tab is now on another site, elsewhere.example: the user will be asked before you act there.");
+  });
+});
+
 describe("judged twice", () => {
   const next = (x: number, y: number): PageResult => ({ ok: true, element: { ref: "e1", role: "button", name: "Next", tag: "button" }, rect: { x, y, width: 40, height: 20 } });
   const click = () => [{ text: "", toolCalls: [call("computer", { action: "left_click", coordinate: [200, 100] })] }];

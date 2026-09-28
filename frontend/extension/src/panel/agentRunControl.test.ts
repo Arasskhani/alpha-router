@@ -28,6 +28,7 @@ function fakeDriver() {
   const driver = {
     screenshot: vi.fn(async () => ({ dataUrl: "data:image/jpeg;base64,SHOT", frame: { width: 640, height: 360, scale: 0.5 }, css: { width: 1280, height: 720 } })),
     zoom: vi.fn(async () => ({ dataUrl: "data:image/jpeg;base64,ZOOM", frame: { width: 800, height: 400, scale: 4 }, css: { width: 200, height: 100 } })),
+    crop: vi.fn(async () => ({ dataUrl: "data:image/jpeg;base64,CROP", frame: { width: 176, height: 136, scale: 2 }, css: { width: 88, height: 68 } })),
     click: vi.fn(async () => undefined),
     hover: vi.fn(async () => undefined),
     scroll: vi.fn(async () => undefined),
@@ -452,8 +453,10 @@ describe("the reviewer's crop", () => {
       review: "allow",
     });
     await h.run();
-    expect(h.driver!.zoom).toHaveBeenCalledWith({ x: 190, y: 90, width: 40, height: 20 });
-    expect(h.reviewInputs[0]?.crop).toBe("data:image/jpeg;base64,ZOOM");
+    // The target's box as the page described it, in CSS pixels - not taken for the screenshot's pixels.
+    expect(h.driver!.crop).toHaveBeenCalledWith({ x: 190, y: 90, width: 40, height: 20 });
+    expect(h.driver!.zoom).not.toHaveBeenCalled();
+    expect(h.reviewInputs[0]?.crop).toBe("data:image/jpeg;base64,CROP");
   });
 
   it("sends no crop when the model may not see screenshots of this site", async () => {

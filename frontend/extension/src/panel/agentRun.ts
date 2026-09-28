@@ -97,7 +97,7 @@ export type AgentEventReport = {
 };
 
 /** The run's driver under full control: input and screenshots (cdpDriver.ts); absent on the dom path. */
-export type ControlDriver = Pick<CdpDriver, "screenshot" | "zoom" | "click" | "hover" | "scroll" | "drag" | "type" | "key" | "toCss" | "takeDialog" | "handleDialog">;
+export type ControlDriver = Pick<CdpDriver, "screenshot" | "zoom" | "crop" | "click" | "hover" | "scroll" | "drag" | "type" | "key" | "toCss" | "takeDialog" | "handleDialog">;
 
 /** What the run is doing, as the page's border and the toolbar badge show it. */
 export type RunState = "working" | "waiting" | "paused";
@@ -1077,7 +1077,8 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       // A crop around the target for a vision reviewer: only under full control, and only where a screenshot of this site may leave at all.
       let crop: string | undefined;
       if (deps.driver && targetRect && tab && options.rules.data?.modelSeesScreenshots !== false) {
-        const shot = await visualCapture(() => deps.driver!.zoom(targetRect!), tab);
+        // The target's box is in CSS pixels, as the page described it: crop there, not in the screenshot's pixels.
+        const shot = await visualCapture(() => deps.driver!.crop(targetRect!), tab);
         if (shot) crop = shot;
       }
       const verdictFromReview = await deps.review(

@@ -94,4 +94,23 @@ describe("CdpDriver", () => {
     await d.handleDialog(true);
     expect(chrome.debugger.sent.at(-1)).toMatchObject({ method: "Page.handleJavaScriptDialog", params: { accept: true } });
   });
+
+  it("crops the page around a target given in CSS pixels, with context, never magnified past twice", async () => {
+    const d = await driver();
+    chrome.debugger.sent.length = 0;
+    await d.crop({ x: 1000, y: 500, width: 100, height: 40 });
+    const call = chrome.debugger.sent.find((c) => c.method === "Page.captureScreenshot")!;
+    // 24 px around the box, in the CSS pixels the page gave (viewport 2560x1440 at scale 0.5 for screenshots - not used here).
+    expect(call.params).toMatchObject({ clip: { x: 976, y: 476, width: 148, height: 88 } });
+    // 148 px wide, magnified at most twice: 296 on its longest side, under the 640 cap.
+    expect((call.params as { clip: { scale: number } }).clip.scale).toBeCloseTo(2, 6);
+  });
+
+  it("keeps a crop inside the viewport", async () => {
+    const d = await driver();
+    chrome.debugger.sent.length = 0;
+    await d.crop({ x: 2550, y: -5, width: 40, height: 20 });
+    const call = chrome.debugger.sent.find((c) => c.method === "Page.captureScreenshot")!;
+    expect(call.params).toMatchObject({ clip: { x: 2526, y: 0, width: 34, height: 39 } });
+  });
 });

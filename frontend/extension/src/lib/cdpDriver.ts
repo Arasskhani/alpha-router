@@ -19,6 +19,10 @@ import { insertText, pressKey } from "./keys";
 
 export type DriverMode = "cdp" | "dom";
 
+/** The reviewer's crop: this much of the page around the target, in CSS pixels, and at most this big. */
+const CROP_PADDING = 24;
+const CROP_SIDE = 640;
+
 export class CdpDriver {
   readonly mode: DriverMode = "cdp";
   private readonly session: CdpSession;
@@ -63,6 +67,25 @@ export class CdpDriver {
     this.frame = shot.frame;
     this.css = shot.css;
     return shot;
+  }
+
+  /**
+   * The page around a target, for the reviewer: the target's box in CSS
+   * pixels (as the page described it), with some of what surrounds it, at
+   * most `side` pixels on its longest side and never magnified more than
+   * twice - a small icon is not blown up into a page-sized picture.
+   */
+  async crop(rect: Region, options: { padding?: number; side?: number } = {}): Promise<Shot> {
+    if (!this.css) await this.refreshViewport();
+    const css = this.css!;
+    const padding = options.padding ?? CROP_PADDING;
+    const x0 = Math.max(0, Math.min(css.width, rect.x - padding));
+    const y0 = Math.max(0, Math.min(css.height, rect.y - padding));
+    const x1 = Math.max(x0 + 1, Math.min(css.width, rect.x + rect.width + padding));
+    const y1 = Math.max(y0 + 1, Math.min(css.height, rect.y + rect.height + padding));
+    const region = { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+    const side = Math.min(options.side ?? CROP_SIDE, 2 * Math.max(region.width, region.height));
+    return await captureRegion(this.session, region, side);
   }
 
   async zoom(region: Region): Promise<Shot> {

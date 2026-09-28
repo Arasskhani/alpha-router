@@ -1468,6 +1468,11 @@ function keyDefault(doc: Document, target: Element, combo: KeyCombo, isVisible: 
     return "";
   }
   if (key === "Enter") {
+    // A button input presses itself, as a <button> does - not its form's first sending button.
+    if (tag === "INPUT" && PRESSED_INPUTS.has(inputType(target))) {
+      (target as HTMLElement).click();
+      return "Enter pressed it.";
+    }
     if (field && tag === "INPUT") {
       const form = formOf(field);
       if (!form) return "";
@@ -1491,16 +1496,16 @@ function keyDefault(doc: Document, target: Element, combo: KeyCombo, isVisible: 
       if (typeof doc.execCommand === "function") doc.execCommand("insertParagraph");
       return "A new line went in.";
     }
-    const role = roleOf(target);
-    if (role === "button" || role === "link" || tag === "SUMMARY") {
+    // Only the browser's own controls: a <div role="button"> answers Enter in its own handlers, which have run.
+    if (tag === "BUTTON" || tag === "SUMMARY" || ((tag === "A" || tag === "AREA") && target.hasAttribute("href"))) {
       (target as HTMLElement).click();
       return "Enter pressed it.";
     }
     return "";
   }
   if (key === " " && !inText) {
-    const role = roleOf(target);
-    if (role && ["button", "checkbox", "radio", "switch", "menuitemcheckbox", "menuitemradio", "option", "tab"].includes(role)) {
+    // A link scrolls the page on Space, and an ARIA control is left to its own handlers, as the browser leaves it.
+    if (tag === "BUTTON" || tag === "SUMMARY" || (tag === "INPUT" && (PRESSED_INPUTS.has(inputType(target)) || inputType(target) === "checkbox" || inputType(target) === "radio"))) {
       (target as HTMLElement).click();
       return "Space pressed it.";
     }
@@ -1537,6 +1542,9 @@ function keyDefault(doc: Document, target: Element, combo: KeyCombo, isVisible: 
   return "";
 }
 
+/** Inputs that are buttons: Enter and Space press them. */
+const PRESSED_INPUTS = new Set(["submit", "button", "reset", "image"]);
+
 /** Characters a key types, as keypress reports them: Enter and printable keys only. */
 function typesCharacter(combo: KeyCombo): boolean {
   return !combo.ctrl && !combo.meta && !combo.alt && (combo.key === "Enter" || [...combo.key].length === 1);
@@ -1567,8 +1575,9 @@ export function pressKey(doc: Document, key: unknown, isVisible: Visibility = ()
       composed: true,
     });
   const shown = String(key).trim() || (def.key === " " ? "Space" : def.key);
-  const allowed = target.dispatchEvent(event("keydown"));
-  if (allowed && typesCharacter(combo)) target.dispatchEvent(event("keypress"));
+  const down = target.dispatchEvent(event("keydown"));
+  // A cancelled keypress keeps the character, the new line and the form's sending from happening, as in the browser.
+  const allowed = down && (!typesCharacter(combo) || target.dispatchEvent(event("keypress")));
   // What the browser would do, unless the page took the key for itself.
   const did = allowed ? keyDefault(doc, target, combo, isVisible) : "The page handled it itself.";
   target.dispatchEvent(event("keyup"));

@@ -668,6 +668,45 @@ describe("acting", () => {
     expect(box.checked).toBe(true);
   });
 
+  it("presses with Enter and Space only what the browser would press", () => {
+    page(`<form><input aria-label="Coupon"><input type="checkbox" aria-label="Agree"><input type="button" value="Apply" id="apply"><button id="order">Place order</button></form><div role="button" tabindex="0" id="like">Like</div>`);
+    const form = document.querySelector("form")!;
+    form.addEventListener("submit", (e) => e.preventDefault());
+    const order = vi.fn();
+    document.getElementById("order")!.addEventListener("click", order);
+    // A button input presses itself, never the form's sending button.
+    const apply = vi.fn();
+    const applyButton = document.getElementById("apply")!;
+    applyButton.addEventListener("click", apply);
+    applyButton.focus();
+    expect(pressKey(document, "Enter", visible)).toMatchObject({ note: "Pressed Enter. Enter pressed it." });
+    expect(apply).toHaveBeenCalledTimes(1);
+    expect(order).not.toHaveBeenCalled();
+    // Enter on the form's checkbox sends the form, as it does in the browser (and the rules judge it so).
+    document.querySelector<HTMLInputElement>("input[type=checkbox]")!.focus();
+    pressKey(document, "Enter", visible);
+    expect(order).toHaveBeenCalledTimes(1);
+    // An ARIA button's own handlers answer Enter and Space; nothing clicks it besides.
+    const like = document.getElementById("like")!;
+    const liked = vi.fn();
+    like.addEventListener("click", liked);
+    like.focus();
+    expect(pressKey(document, "Enter", visible)).toMatchObject({ note: "Pressed Enter." });
+    pressKey(document, "Space", visible);
+    expect(liked).not.toHaveBeenCalled();
+  });
+
+  it("does nothing more when the page cancels the keypress", () => {
+    page(`<form><input aria-label="Search"><button id="go">Go</button></form>`);
+    const input = document.querySelector("input")!;
+    input.addEventListener("keypress", (e) => e.preventDefault());
+    const go = vi.fn();
+    document.getElementById("go")!.addEventListener("click", go);
+    input.focus();
+    expect(pressKey(document, "Enter", visible)).toMatchObject({ note: "Pressed Enter. The page handled it itself." });
+    expect(go).not.toHaveBeenCalled();
+  });
+
   it("leaves a key to the page when it takes it, and deletes in a field when it does not", () => {
     page(`<input aria-label="Name" value="Majid">`);
     const input = document.querySelector("input")!;

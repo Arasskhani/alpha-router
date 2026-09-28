@@ -463,15 +463,15 @@ class TestAStep:
         assert resp.status_code == 200, resp.text
         assert provider.calls[0]["model"].endswith("gpt-a")
 
-    async def test_a_broken_stream_is_not_retried_without_streaming(
+    async def test_a_broken_stream_that_breaks_again_without_streaming_fails(
         self, client, browser, models, provider, session_factory
     ):
-        # The retry would read only the words and lose the tool calls.
-        broken = RuntimeError("Attempted to access streaming response content, without having called read()")
-        provider.reply(fail=broken).reply(_text("never"))
+        # Asked once more, whole (tool calls and all), the provider still cannot answer: the step failed.
+        provider.reply(fail=UNREAD_STREAM)
+        provider.replies.append(RuntimeError("upstream unavailable"))
         resp = await client.post("/api/chat/completions", json=_body(models.a), headers=browser.headers)
         frames = _frames(resp.text)
-        assert len(provider.calls) == 1
+        assert [call.get("stream") for call in provider.calls] == [True, False]
         assert [f for f in frames if isinstance(f, dict) and "error" in f]
         [log] = await _logs(session_factory)
         assert log.success is False

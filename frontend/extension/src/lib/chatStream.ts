@@ -21,6 +21,8 @@ export type StreamResult = {
 export type StreamHandlers = {
   onText?: (full: string) => void;
   onMeta?: (meta: Record<string, unknown>) => void;
+  /** Whenever bytes arrive - a frame, or a keep-alive comment: the stream is alive. */
+  onActivity?: () => void;
 };
 
 export class ChatStreamError extends Error {
@@ -49,7 +51,19 @@ export async function readChatStream(response: Response, handlers: StreamHandler
   let text = "";
   const meta: Record<string, unknown> = {};
   const calls = new Map<number, ToolCall>();
-  for await (const payload of readSseEvents(response.body.getReader())) {
+  const raw = response.body.getReader();
+  // The reader as the SSE parser sees it, telling the caller each time bytes come - keep-alive comments too.
+  const reader = {
+    read: async () => {
+      const chunk = await raw.read();
+      handlers.onActivity?.();
+      return chunk;
+    },
+    cancel: (reason?: unknown) => raw.cancel(reason),
+    releaseLock: () => raw.releaseLock(),
+    closed: raw.closed,
+  } as ReadableStreamDefaultReader<Uint8Array>;
+  for await (const payload of readSseEvents(reader)) {
     if (payload === "[DONE]") continue;
     let frame: Record<string, unknown>;
     try {

@@ -756,6 +756,25 @@ button {
   unicode-bidi: plaintext;
 }
 
+/* The model answering a step: how long it has been, and its words so far. */
+.agent__thinking {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--muted);
+}
+
+.agent__thinking-label {
+  font-style: italic;
+}
+
+.agent__thinking-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 .agent__step {
   display: flex;
   flex-wrap: wrap;

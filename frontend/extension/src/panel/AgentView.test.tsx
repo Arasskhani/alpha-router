@@ -289,6 +289,27 @@ describe("a run", () => {
     expect(button("Start")).toBeTruthy();
   });
 
+  it("shows the model thinking, with its words as they come, until the step's answer is in", async () => {
+    let stream: ReturnType<typeof sse> | null = null;
+    server.routes["POST /api/chat/completions"] = (init) => {
+      if (stream) return sse(toolFrame([{ id: "end", name: "done", args: { summary: "Done." } }]), { signal: init.signal }).response;
+      stream = sse([], { open: true, signal: init.signal });
+      return stream.response;
+    };
+    await render();
+    await start("Wait for it.");
+    await until(() => Boolean(stream), "the first step");
+    await until(() => host.textContent!.includes("Thinking… (Agent Model, "), "the thinking line");
+    await act(async () => stream!.push(frame({ choices: [{ delta: { content: "Looking at the page" } }] })));
+    await until(() => host.querySelector(".agent__thinking-text")?.textContent === "Looking at the page", "the model's words so far");
+    await act(async () => {
+      for (const f of toolFrame([{ id: "c1", name: "read_page" }])) stream!.push(f);
+      stream!.finish();
+    });
+    await until(() => host.textContent!.includes("Finished"), "the run to end");
+    expect(host.querySelector(".agent__thinking")).toBeNull();
+  });
+
   it("stops with the panel's Stop while the model is still answering", async () => {
     let finish: (() => void) | null = null;
     server.routes["POST /api/chat/completions"] = (init) => {

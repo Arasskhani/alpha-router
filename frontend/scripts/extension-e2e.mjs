@@ -1161,6 +1161,24 @@ async function main() {
     await start.close();
   });
 
+  await step("while the model thinks the panel says so, and Stop ends the run at once", async () => {
+    expect(panel, "no side panel");
+    const task = `${AGENT_TASKS.slow}: think about this page (${NONCE})`;
+    agentTasks.push(task);
+    const page = await context.newPage();
+    await page.goto(site.agentUrl("agent-shop.html"));
+    await agentStart(page, task);
+    await panel.until(agentSays("Thinking… ("), "the panel to say the model is thinking", 20_000);
+    const pressed = Date.now();
+    await panel.run(agentClick("Stop"));
+    await panel.until(agentPanel("root.querySelector('.agent__result--stopped') !== null"), "the run to stop", 8_000);
+    await panel.until(agentIdle, "the panel to be ready again", 8_000);
+    const took = Date.now() - pressed;
+    expect(took < 3_000, `stopping took ${took} ms`);
+    await page.close();
+    return `${took} ms`;
+  });
+
   await step("a page that does not answer is given up on, and the model is told", async () => {
     expect(panel, "no side panel");
     const task = `${AGENT_TASKS.busy}: read this page (${NONCE})`;

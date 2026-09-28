@@ -13,7 +13,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError } from "../lib/api";
 import { DEFAULT_APPROVALS, type AgentMode, type PolicyContext } from "../lib/agentPolicy";
 import { clearBadge, showBadge } from "../lib/badge";
-import { ChatStreamError, readChatStream } from "../lib/chatStream";
+import { ChatStreamError } from "../lib/chatStream";
 import { getClient } from "../lib/client";
 import { fromTabScript, isExtensionMessage } from "../lib/messages";
 import { readablePage } from "../lib/sites";
@@ -33,6 +33,7 @@ import {
   type StepView,
 } from "./agentRun";
 import { agentToolsFor } from "./agentTools";
+import { modelStep, ModelTimeout } from "./modelStep";
 import { createPauseGate, type PauseControl } from "./pauseGate";
 import { pickModel, textModels, type ChatModel } from "./conversation";
 import type { Me } from "./types";
@@ -152,7 +153,7 @@ const OUTCOME_LABEL: Record<RunOutcome, string> = {
 };
 
 function describeError(err: unknown): string {
-  if (err instanceof ApiError || err instanceof ChatStreamError || err instanceof TemporaryError) return err.message;
+  if (err instanceof ApiError || err instanceof ChatStreamError || err instanceof TemporaryError || err instanceof ModelTimeout) return err.message;
   return "Something went wrong.";
 }
 
@@ -174,6 +175,10 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
   const [question, setQuestion] = useState<{ text: string; resolve: (answer: string) => void } | null>(null);
   const [answer, setAnswer] = useState("");
   const [banner, setBanner] = useState("");
+  /** The model is answering the step: since when, and its words so far. */
+  const [thinking, setThinking] = useState<{ since: number; text: string } | null>(null);
+  /** Ticks once a second while the model thinks, so the wait shows how long it has been. */
+  const [, setTick] = useState(0);
   /** The person took over the page (or paused from here): the run waits for Resume. */
   const [paused, setPaused] = useState(false);
   /** A private run: not saved to the person's chat history (its steps still go to Admin Logs). */
@@ -277,7 +282,13 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
 
   useEffect(() => {
     logEnd.current?.scrollIntoView?.({ block: "end" });
-  }, [log, approval, question]);
+  }, [log, approval, question, paused, thinking]);
+
+  useEffect(() => {
+    if (!thinking) return;
+    const timer = setInterval(() => setTick((n) => n + 1), 1000);
+    return () => clearInterval(timer);
+  }, [thinking]);
 
   // A run does not outlive the panel: closing it stops the run (and its fetch).
   useEffect(() => () => controller.current?.abort(), []);
@@ -343,37 +354,45 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
     const browserTools = agentToolsFor({ fullControl: driver !== null, plan: mode === "plan" });
     return {
       async model(messages, stepSignal) {
-        for (let attempt = 0; ; attempt += 1) {
-          try {
-            const response = await api.request("/api/chat/completions", {
-              method: "POST",
-              // No chat, no history, no assistant message id: each step stands alone.
-              // The run's start goes with every step, so an administrator's stop can end it.
-              body: JSON.stringify({
-                model,
-                messages,
-                stream: true,
-                browser_tools: browserTools,
-                browser_tool_choice: "auto",
-                browser_run_started_at: startedAt,
-              }),
-              signal: stepSignal,
-            });
-            if (!response.ok) throw await ApiError.from(response);
-            const result = await readChatStream(response);
-            return { text: result.text, toolCalls: result.toolCalls };
-          } catch (err) {
-            if (err instanceof DisconnectedError) disconnected.current();
-            if (err instanceof DOMException && err.name === "AbortError") throw err;
-            // A fast run can reach the server's per-minute limit: wait for it, a few times, rather than give up.
-            if (err instanceof ApiError && err.status === 429 && attempt < RATE_LIMIT_RETRIES) {
-              const note = randomHex(6);
-              append({ kind: "text", id: note, text: "Too many requests in a minute: waiting a little before the next step…" });
-              await pause(RATE_LIMIT_WAIT_MS, stepSignal);
-              continue;
+        // No chat, no history, no assistant message id: each step stands alone.
+        // The run's start goes with every step, so an administrator's stop can end it.
+        const body = JSON.stringify({
+          model,
+          messages,
+          stream: true,
+          browser_tools: browserTools,
+          browser_tool_choice: "auto",
+          browser_run_started_at: startedAt,
+        });
+        // While the model thinks, the panel says so, with its words as they come.
+        setThinking({ since: Date.now(), text: "" });
+        try {
+          for (let attempt = 0; ; attempt += 1) {
+            try {
+              const result = await modelStep(
+                {
+                  request: (signal) => api.request("/api/chat/completions", { method: "POST", body, signal }),
+                  onText: (full) => setThinking((now) => (now ? { ...now, text: full } : now)),
+                  onRetry: (why) => append({ kind: "text", id: randomHex(6), text: `${why} Trying once more…` }),
+                },
+                stepSignal,
+              );
+              return { text: result.text, toolCalls: result.toolCalls };
+            } catch (err) {
+              if (err instanceof DisconnectedError) disconnected.current();
+              if (err instanceof DOMException && err.name === "AbortError") throw err;
+              // A fast run can reach the server's per-minute limit: wait for it, a few times, rather than give up.
+              if (err instanceof ApiError && err.status === 429 && attempt < RATE_LIMIT_RETRIES) {
+                const note = randomHex(6);
+                append({ kind: "text", id: note, text: "Too many requests in a minute: waiting a little before the next step…" });
+                await pause(RATE_LIMIT_WAIT_MS, stepSignal);
+                continue;
+              }
+              throw new Error(describeError(err));
             }
-            throw new Error(describeError(err));
           }
+        } finally {
+          setThinking(null);
         }
       },
       browser: browser.current!,
@@ -729,6 +748,15 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
             </div>
           );
         })}
+
+        {thinking && (
+          <p className="agent__text agent__thinking" role="status">
+            <span className="agent__thinking-label">
+              Thinking… ({models?.find((m) => m.id === modelId)?.name ?? "the model"}, {Math.max(0, Math.round((Date.now() - thinking.since) / 1000))} s)
+            </span>
+            {thinking.text && <span className="agent__thinking-text">{thinking.text}</span>}
+          </p>
+        )}
 
         {approval && (
           <div className="agent__card" role="alertdialog" aria-label="Allow this action?">

@@ -103,6 +103,7 @@ export const AGENT_TASKS = {
   dialog: "E2E-AGENT-DIALOG",
   tabs: "E2E-AGENT-TABS",
   busy: "E2E-AGENT-BUSY",
+  slow: "E2E-AGENT-SLOW",
 };
 /** Where agent-control.html puts its trusted-only button, in CSS pixels (its centre). */
 export const CONTROL_CLICK = [100, 140];
@@ -197,6 +198,8 @@ async function agentReply(messages, { stealUrl, openUrl, locate }) {
       (m) => pointAt(m, "Dialog step"),
       () => answered("Dialog step"),
     ],
+    // A model that takes its time: half a minute before it answers at all.
+    [AGENT_TASKS.slow]: [() => ({ delay: 30_000, tool: "done", args: { summary: "Slow step: answered" } })],
     // A page whose own script holds it: the read must come back, saying the page did not answer.
     [AGENT_TASKS.busy]: [
       () => ({ tool: "read_page", args: {} }),
@@ -269,6 +272,8 @@ export async function startMockLlm({ port = 0, plantBase = "https://planted.inva
         const created = Math.floor(Date.now() / 1000);
         if (Array.isArray(body.tools) && body.tools.length && body.stream) {
           const next = await agentReply(messages, { stealUrl, openUrl, locate });
+          if (next.delay) await new Promise((resolve) => setTimeout(resolve, next.delay));
+          if (res.destroyed || req.socket.destroyed) return;
           res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
           const frames = next.tool
             ? toolCallFrames({ id, created, callId: `call_e2e_${requests.length}`, tool: next.tool, args: next.args })

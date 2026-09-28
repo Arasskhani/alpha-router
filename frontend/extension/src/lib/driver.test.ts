@@ -53,9 +53,10 @@ describe("TabDrivers", () => {
     chrome.debugger.sent.length = 0;
     await d.screenshot().catch(() => undefined);
     await d.click({ x: 10, y: 10 });
-    // Capture and input go to the tab the agent works in now, which is brought to the front for the capture.
+    // Capture and input go to the tab the agent works in now, which is brought to the front for each.
     expect(new Set(sentTo("Page.captureScreenshot"))).toEqual(new Set([9]));
-    expect(sentTo("Page.bringToFront")).toEqual([9]);
+    expect(new Set(sentTo("Page.bringToFront"))).toEqual(new Set([9]));
+    expect(sentTo("Page.bringToFront").length).toBeGreaterThanOrEqual(2);
     expect(new Set(sentTo("Input.dispatchMouseEvent"))).toEqual(new Set([9]));
     await d.stop();
     expect(chrome.debugger.attached.size).toBe(0);

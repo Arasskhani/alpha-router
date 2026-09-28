@@ -63,9 +63,11 @@ export class CdpDriver {
   }
 
   /**
-   * The tab in front, before a capture: Chrome draws no frames for a tab in
-   * the background, and a screenshot of one waits for a frame that never
-   * comes. Best-effort: an old browser without the command still captures.
+   * The tab in front, before a capture and before input: Chrome draws no
+   * frames for a tab in the background - a screenshot of one waits for a
+   * frame that never comes - and the mouse and keys are for the page the
+   * person sees the agent work on. Best-effort: an old browser without the
+   * command still captures and presses.
    */
   private async front(): Promise<void> {
     await this.session.send("Page.bringToFront").catch(() => undefined);
@@ -125,23 +127,28 @@ export class CdpDriver {
     point: Point,
     options: { button?: MouseButton; clickCount?: number; modifiers?: readonly string[] } = {},
   ): Promise<void> {
+    await this.front();
     await click(this.session.send.bind(this.session), await this.toCss(point), options);
   }
 
   /** A click at a point in CSS pixels - an element's centre, as the page gave it - rather than in the screenshot's. */
   async clickAt(css: Point, options: { button?: MouseButton; clickCount?: number; modifiers?: readonly string[] } = {}): Promise<void> {
+    await this.front();
     await click(this.session.send.bind(this.session), css, options);
   }
 
   async hover(point: Point, modifiers: readonly string[] = []): Promise<void> {
+    await this.front();
     await hover(this.session.send.bind(this.session), await this.toCss(point), modifiers);
   }
 
   async scroll(point: Point, delta: { x?: number; y?: number }): Promise<void> {
+    await this.front();
     await scrollBy(this.session.send.bind(this.session), await this.toCss(point), delta);
   }
 
   async drag(from: Point, to: Point): Promise<{ intercepted: boolean }> {
+    await this.front();
     return await drag(
       this.session.send.bind(this.session),
       await this.toCss(from),
@@ -151,10 +158,12 @@ export class CdpDriver {
   }
 
   async type(text: string): Promise<void> {
+    await this.front();
     await insertText(this.session.send.bind(this.session), text);
   }
 
   async key(spec: string, modifiers: readonly string[] = []): Promise<boolean> {
+    await this.front();
     return await pressKey(this.session.send.bind(this.session), spec, modifiers);
   }
 

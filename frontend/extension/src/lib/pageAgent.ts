@@ -80,7 +80,7 @@ function bounded<T>(work: Promise<T>, ms: number, signal?: AbortSignal): Promise
 const MAX_MESSAGE = 500;
 const MAX_OUTLINE = 30_000;
 const MAX_TEXT = 30_000;
-const MAX_ELEMENTS = 300;
+const MAX_ELEMENTS = 600;
 
 function str(value: unknown, limit: number): string | undefined {
   return typeof value === "string" ? value.slice(0, limit) : undefined;
@@ -132,6 +132,8 @@ export function cleanElement(raw: unknown): ElementInfo | null {
     info.frame = { host: typeof host === "string" && host ? host.slice(0, 253) : null };
   }
   if (v.hidden === "transparent" || v.hidden === "tiny") info.hidden = v.hidden;
+  if (typeof v.expanded === "boolean") info.expanded = v.expanded;
+  for (const flag of ["selected", "pressed", "invalid", "required", "focused"] as const) if (v[flag] === true) info[flag] = true;
   return info;
 }
 

@@ -28,8 +28,12 @@ const AGENT_TOOLS: ToolSchema[] = [
   tool("navigate", "Open a page in the tab you work in.", { url }, ["url"]),
   tool(
     "read_page",
-    "See the page: its headings and every element a person could use, each with a reference for the other tools. Read it again after the page changes.",
-    { max_chars: maxChars },
+    "See the page: its headings and every element a person could use, each with a reference for the other tools, with its state (checked, expanded, invalid, focused…). An open dialog comes first, then the part of the page the keyboard is in, then what is in the window, then the rest. A long page comes in parts: ask for the next with page. Read it again after the page changes.",
+    {
+      max_chars: maxChars,
+      page: { type: "integer", minimum: 1, maximum: 50, description: "Which part of a long outline: 1 (the default), 2, …" },
+      scope: { type: "string", description: "A reference, to read only the part of the page inside that element (a dialog, a list)." },
+    },
   ),
   tool("find", "Find elements or text on the page by words they contain.", { query: { type: "string" } }, ["query"]),
   tool("get_page_text", "Read the page's text, to answer questions about what it says.", { max_chars: maxChars }),

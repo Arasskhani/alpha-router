@@ -79,6 +79,14 @@ export type ElementInfo = {
    * else.
    */
   hidden?: "transparent" | "tiny";
+  /** Its ARIA state, when it has one: a menu open or closed, a tab chosen, a toggle pressed, a field refused or required. */
+  expanded?: boolean;
+  selected?: boolean;
+  pressed?: boolean;
+  invalid?: boolean;
+  required?: boolean;
+  /** It has the keyboard (an outline's mark). */
+  focused?: boolean;
 };
 
 type AgentError =
@@ -109,7 +117,6 @@ const VALUE_CHARS = 100;
 const MAX_OPTIONS = 20;
 const DEFAULT_OUTLINE_CHARS = 12_000;
 const MAX_OUTLINE_CHARS = 30_000;
-const MAX_OUTLINE_ELEMENTS = 300;
 const DEFAULT_TEXT_CHARS = 8_000;
 const MAX_TEXT_CHARS = 30_000;
 const MAX_FIND_RESULTS = 20;
@@ -533,8 +540,22 @@ function currentValue(el: Element, role: string): string | undefined {
     const text = squash(el.textContent ?? "");
     return text ? clip(text, VALUE_CHARS) : undefined;
   }
+  // A menu drawn by the page: what it shows is what is chosen.
+  if (role === "combobox" && tag !== "INPUT" && tag !== "SELECT") {
+    const shown = squash(el.getAttribute("aria-valuetext") ?? (el as HTMLElement).innerText ?? el.textContent ?? "");
+    if (shown) return clip(shown, VALUE_CHARS);
+  }
   const aria = el.getAttribute("aria-valuetext") ?? el.getAttribute("aria-valuenow");
   return aria ? clip(aria, VALUE_CHARS) : undefined;
+}
+
+/** A field the browser says holds what it will not take, once the person has changed it (:user-invalid). */
+function userInvalid(el: Element): boolean {
+  try {
+    return el.matches(":user-invalid");
+  } catch {
+    return false;
+  }
 }
 
 function checkedState(el: Element, role: string): boolean | undefined {
@@ -588,6 +609,13 @@ function describeElement(el: Element, role: string, isVisible: Visibility, forRu
   const checked = checkedState(el, role);
   if (checked !== undefined) info.checked = checked;
   if (isDisabled(el)) info.disabled = true;
+  const aria = (name: string) => el.getAttribute(name);
+  if (aria("aria-expanded") === "true") info.expanded = true;
+  else if (aria("aria-expanded") === "false") info.expanded = false;
+  if (aria("aria-selected") === "true") info.selected = true;
+  if (aria("aria-pressed") === "true") info.pressed = true;
+  if (aria("aria-invalid") === "true" || userInvalid(el)) info.invalid = true;
+  if ((el as HTMLInputElement).required === true || aria("aria-required") === "true") info.required = true;
   const own = ownWords(el, role, isVisible);
   if (own && own !== info.name) info.text = own;
   // Every link's address, whatever role it claims: a menu item or a "button" that is a link still goes there.
@@ -662,7 +690,13 @@ function outlineLine(info: ElementInfo, pageUrl: string): string {
     if (where) parts.push(`→ ${where}`);
   }
   const notes: string[] = [];
+  if (info.focused) notes.push("focused");
   if (info.checked !== undefined) notes.push(info.checked ? "checked" : "not checked");
+  if (info.expanded !== undefined) notes.push(info.expanded ? "expanded" : "collapsed");
+  if (info.selected) notes.push("selected");
+  if (info.pressed) notes.push("pressed");
+  if (info.invalid) notes.push("invalid");
+  if (info.required) notes.push("required");
   if (info.disabled) notes.push("disabled");
   if (info.sensitive) notes.push("sensitive: the agent cannot type here");
   if (info.submits) notes.push("submits a form");
@@ -683,51 +717,150 @@ function modelUrl(raw: string): string {
 
 export type Snapshot = { url: string; title: string; outline: string; elements: ElementInfo[]; truncated: boolean };
 
-/** The page as the agent sees it: its headings and the elements a person could use, each with a reference. */
-export function snapshot(doc: Document, options: { maxChars?: number; isVisible: Visibility }): Snapshot {
-  prune();
-  const maxChars = Math.max(1000, Math.min(MAX_OUTLINE_CHARS, options.maxChars ?? DEFAULT_OUTLINE_CHARS));
-  const pageUrl = doc.location?.href ?? "";
-  const lines: string[] = [];
-  const elements: ElementInfo[] = [];
-  let count = 0;
-  let length = 0;
-  let truncated = false;
-  const root = doc.body ?? doc.documentElement;
-  for (const el of visibleElements(root, options.isVisible)) {
-    const level = headingLevel(el);
-    let line: string | null = null;
-    if (level !== null) {
-      const text = visibleText(el, options.isVisible, NAME_CHARS);
-      if (text) line = `${"#".repeat(level)} ${text}`;
-    } else {
-      const proxy = labelProxy(el, options.isVisible);
-      const role = proxy ? proxy.role : roleOf(el);
-      if (!role) continue;
-      count += 1;
-      if (elements.length >= MAX_OUTLINE_ELEMENTS) {
-        truncated = true;
-        continue;
-      }
-      const info = proxy ? describeProxy(el, proxy, options.isVisible) : describeElement(el, role, options.isVisible);
-      elements.push(info);
-      line = outlineLine(info, pageUrl);
-    }
-    if (!line) continue;
-    if (length + line.length + 1 > maxChars) {
-      truncated = true;
-      break;
-    }
-    lines.push(line);
-    length += line.length + 1;
+/** At most this many usable elements are looked at for one outline, however long the page. */
+const MAX_SCANNED_ELEMENTS = 2000;
+/** What a page opens over the rest: while one is up, it is where the person acts. */
+const DIALOGS = 'dialog[open], [role="dialog"], [role="alertdialog"], [aria-modal="true"]';
+/** What the element with the keyboard is part of: the part of the page the person works in. */
+const CONTAINERS = 'form, [role="dialog"], [role="alertdialog"], [role="region"], [role="search"], [role="toolbar"], [role="menu"], [role="listbox"], [role="grid"], [role="tree"], [role="tabpanel"], section, article, aside, nav, main';
+/** Where a page says what just happened. */
+const LIVE = '[role="alert"], [role="status"], [aria-live="assertive"], [aria-live="polite"]';
+const GROUP_TITLES = ["Open dialog", "Where the keyboard is", "In the window", "Further on the page (scroll, or use find)"];
+
+/** Whether the element can be seen in the window: its box meets the window and every area that clips it. */
+function inView(el: Element): boolean {
+  const view = el.ownerDocument.defaultView;
+  const r = el.getBoundingClientRect();
+  // No layout to go by (a document not drawn): nothing to say it is out of view.
+  if (!r.width && !r.height) return true;
+  const width = view?.innerWidth || el.ownerDocument.documentElement.clientWidth;
+  const height = view?.innerHeight || el.ownerDocument.documentElement.clientHeight;
+  if (r.bottom <= 0 || r.right <= 0 || r.top >= height || r.left >= width) return false;
+  // A list that scrolls inside the page shows only part of what is in it.
+  for (let node = parentAcrossShadow(el), depth = 0; node && depth < 40; node = parentAcrossShadow(node), depth += 1) {
+    if (node === el.ownerDocument.body || node === el.ownerDocument.documentElement) break;
+    if (!(scrollsItself(node, "y") || scrollsItself(node, "x"))) continue;
+    const c = node.getBoundingClientRect();
+    if (r.bottom <= c.top || r.top >= c.bottom || r.right <= c.left || r.left >= c.right) return false;
   }
+  return true;
+}
+
+/** The dialogs open on the page now: shown, and not the agent's own. */
+function openDialogs(doc: Document, isVisible: Visibility): Element[] {
+  return Array.from(doc.querySelectorAll(DIALOGS)).filter((el) => {
+    if (el.id === OVERLAY_ID || el.closest(`#${OVERLAY_ID}`)) return false;
+    for (let node: Element | null = el; node; node = parentAcrossShadow(node)) if (!isVisible(node)) return false;
+    return true;
+  });
+}
+
+/** A live region's words as an outline line, when it says something. */
+function liveLine(el: Element, isVisible: Visibility): string | null {
+  if (!el.matches(LIVE)) return null;
+  const role = (el.getAttribute("role") ?? "").trim().toLowerCase();
+  const words = visibleText(el, isVisible, 200);
+  return words ? `(${role === "alert" || el.getAttribute("aria-live") === "assertive" ? "alert" : "status"}) ${quoted(words)}` : null;
+}
+
+/**
+ * The page as the agent sees it: its headings and the elements a person
+ * could use, each with a reference. What matters first comes first - an
+ * open dialog, then the part of the page the keyboard is in, then what is
+ * in the window, then the rest - within a budget of characters; `page`
+ * gives the next parts of a long outline, and `root` (a scope) only the
+ * part of the page under an element.
+ */
+export function snapshot(doc: Document, options: { maxChars?: number; isVisible: Visibility; root?: Element; page?: number }): Snapshot {
+  prune();
+  const { isVisible } = options;
+  const maxChars = Math.max(1000, Math.min(MAX_OUTLINE_CHARS, options.maxChars ?? DEFAULT_OUTLINE_CHARS));
+  const wanted = Math.max(1, Math.min(50, Math.floor(options.page ?? 1)));
+  const pageUrl = doc.location?.href ?? "";
+  const dialogs = options.root ? [] : openDialogs(doc, isVisible);
+  const focused = focusedElement(doc);
+  const around = focused && !options.root ? focused.closest(CONTAINERS) : null;
+  const groupOf = (el: Element): number => {
+    if (dialogs.some((d) => holds(d, el))) return 0;
+    if (around && holds(around, el)) return 1;
+    return inView(el) ? 2 : 3;
+  };
+  const lines: Array<{ text: string; group: number; info?: ElementInfo }> = [];
+  let scanned = 0;
+  let skipped = 0;
+  const root = options.root ?? doc.body ?? doc.documentElement;
+  for (const el of visibleElements(root, isVisible)) {
+    const level = headingLevel(el);
+    if (level !== null) {
+      const text = visibleText(el, isVisible, NAME_CHARS);
+      if (text) lines.push({ text: `${"#".repeat(level)} ${text}`, group: groupOf(el) });
+      continue;
+    }
+    const live = liveLine(el, isVisible);
+    if (live) lines.push({ text: live, group: groupOf(el) });
+    const proxy = labelProxy(el, isVisible);
+    const role = proxy ? proxy.role : roleOf(el);
+    if (!role) continue;
+    if (scanned >= MAX_SCANNED_ELEMENTS) {
+      skipped += 1;
+      continue;
+    }
+    scanned += 1;
+    const info = proxy ? describeProxy(el, proxy, isVisible) : describeElement(el, role, isVisible);
+    if (focused && (el === focused || (proxy && proxy.control === focused))) info.focused = true;
+    lines.push({ text: outlineLine(info, pageUrl), group: groupOf(el), info });
+  }
+  // What matters first, each part in the page's order.
+  const ordered = [0, 1, 2, 3].flatMap((group) => lines.filter((line) => line.group === group));
+  const groups = new Set(ordered.map((line) => line.group));
+  const titled = groups.size > 1 || groups.has(0) || groups.has(1);
+  // Pages of the outline, each within the budget; the one asked for is shown.
+  const pages: Array<typeof ordered> = [[]];
+  let length = 0;
+  for (const line of ordered) {
+    const cost = line.text.length + 1;
+    if (length + cost > maxChars && pages[pages.length - 1].length) {
+      pages.push([]);
+      length = 0;
+    }
+    pages[pages.length - 1].push(line);
+    length += cost;
+  }
+  const shown = pages[Math.min(wanted, pages.length) - 1] ?? [];
+  const body: string[] = [];
+  let last = -1;
+  for (const line of shown) {
+    if (titled && line.group !== last) {
+      const dialogName = line.group === 0 && dialogs.length ? accessibleName(dialogs[dialogs.length - 1], "dialog") : "";
+      body.push(`${body.length ? "\n" : ""}${GROUP_TITLES[line.group]}${dialogName ? ` ${quoted(clip(dialogName, 80))}` : ""}:`);
+      last = line.group;
+    }
+    body.push(line.text);
+  }
+  const elements = shown.flatMap((line) => (line.info ? [line.info] : []));
   const title = squash(doc.title ?? "").slice(0, 300);
   const header = [`Page: ${title || "(untitled)"}`, `URL: ${modelUrl(pageUrl)}`];
-  const footer = truncated
-    ? [`(The outline stops here${count > elements.length ? `: ${elements.length} of ${count} elements are listed` : ""}. Scroll, or use find, to reach the rest.)`]
-    : [];
-  const body = lines.length ? lines : ["(No headings or usable elements are visible on this page.)"];
-  return { url: pageUrl, title, outline: [...header, "", ...body, ...footer].join("\n"), elements, truncated };
+  const at = Math.min(wanted, pages.length);
+  const truncated = pages.length > 1 || skipped > 0;
+  const footer: string[] = [];
+  if (pages.length > 1) {
+    footer.push(at < pages.length ? `(Part ${at} of ${pages.length} of the outline: read_page with page: ${at + 1} for the next part, or scroll, or use find, to reach the rest.)` : `(Part ${at} of ${pages.length} of the outline: the last.)`);
+  }
+  if (skipped) footer.push(`(${skipped} more elements are not listed: scroll, or use find, to reach the rest.)`);
+  const listed = body.length ? body : ["(No headings or usable elements are visible on this page.)"];
+  return { url: pageUrl, title, outline: [...header, "", ...listed, ...footer].join("\n"), elements, truncated };
+}
+
+/** read_page as the panel asks for it: the whole page or the part under `scope` (a reference), one part of it at a time. */
+export function readPage(doc: Document, args: { max_chars?: unknown; scope?: unknown; page?: unknown }, isVisible: Visibility): Result<Snapshot> {
+  let root: Element | undefined;
+  if (args.scope !== undefined && args.scope !== null && args.scope !== "") {
+    const found = usable(args.scope, isVisible);
+    if (isFailure(found)) return found;
+    root = found;
+  }
+  const count = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : undefined);
+  return { ok: true, ...snapshot(doc, { maxChars: count(args.max_chars), isVisible, root, page: count(args.page) }) };
 }
 
 export type PageText = { url: string; title: string; text: string; truncated: boolean };

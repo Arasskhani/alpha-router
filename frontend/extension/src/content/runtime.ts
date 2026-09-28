@@ -14,9 +14,9 @@ import {
   locate,
   pageText,
   pressKey,
+  readPage,
   scroll,
   selectOption,
-  snapshot,
   submitForm,
   typeText,
   waitFor,
@@ -89,7 +89,7 @@ export async function runAgentCall(
   try {
     switch (method) {
       case "read_page":
-        return { ok: true, ...snapshot(doc, { maxChars: count(args.max_chars), isVisible }) };
+        return readPage(doc, args, isVisible);
       case "get_page_text":
         return { ok: true, ...pageText(doc, { maxChars: count(args.max_chars), isVisible }) };
       case "find":

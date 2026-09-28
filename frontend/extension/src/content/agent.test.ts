@@ -3,7 +3,7 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { click, describe as describeRef, describeFocus, find, findRef, pressKey, scroll, selectOption, snapshot, submitForm, typeText, waitFor, type ElementInfo } from "./agent";
+import { click, describe as describeRef, describeFocus, find, findRef, pressKey, readPage, scroll, selectOption, snapshot, submitForm, typeText, waitFor, type ElementInfo } from "./agent";
 import { hideOverlay, OVERLAY_ID, showOverlay } from "./overlay";
 import { runAgentCall } from "./runtime";
 
@@ -145,12 +145,57 @@ describe("what the agent sees", () => {
     expect(click("e99999", visible)).toMatchObject({ ok: false, error: "stale_ref" });
   });
 
-  it("stops the outline at its size and says there is more", () => {
+  it("stops the outline at its size, and gives the rest part by part", () => {
     const links = Array.from({ length: 400 }, (_, i) => `<a href="/p/${i}">Product number ${i}</a>`).join("");
     const shot = outline(links);
     expect(shot.truncated).toBe(true);
-    expect(shot.elements.length).toBeLessThanOrEqual(300);
-    expect(shot.outline).toMatch(/Scroll, or use find, to reach the rest/);
+    expect(shot.outline.length).toBeLessThan(13_000);
+    expect(shot.outline).toMatch(/\(Part 1 of 2 of the outline: read_page with page: 2 for the next part/);
+    const next = snapshot(document, { isVisible: visible, page: 2 });
+    expect(next.outline).toContain('link "Product number 399"');
+    expect(next.outline).not.toContain('link "Product number 0"');
+    expect(next.outline).toMatch(/\(Part 2 of 2 of the outline: the last\.\)/);
+    // Every element is in one part or the other, once.
+    expect(shot.elements.length + next.elements.length).toBe(400);
+  });
+
+  it("puts an open dialog first, then where the keyboard is, and marks the focus", () => {
+    page(`<h1>Inbox</h1><a href="/m/1">First message</a>
+      <form aria-label="Search"><input aria-label="Search mail"></form>
+      <div role="dialog" aria-label="New Message"><input aria-label="To" aria-required="true"><button>Send</button></div>`);
+    (document.querySelector('input[aria-label="Search mail"]') as HTMLInputElement).focus();
+    const text = snapshot(document, { isVisible: visible }).outline;
+    const at = (needle: string) => text.indexOf(needle);
+    expect(at('Open dialog "New Message":')).toBeGreaterThan(0);
+    expect(at('Open dialog "New Message":')).toBeLessThan(at('textbox "To"'));
+    expect(at('textbox "To"')).toBeLessThan(at("Where the keyboard is:"));
+    expect(at("Where the keyboard is:")).toBeLessThan(at('textbox "Search mail"'));
+    expect(at('textbox "Search mail"')).toBeLessThan(at('link "First message"'));
+    expect(text).toMatch(/textbox "Search mail" \(focused\)/);
+    expect(text).toMatch(/textbox "To" \(required\)/);
+  });
+
+  it("says what state a control is in, and what the page announces", () => {
+    page(`<button aria-expanded="false">More</button><div role="tab" aria-selected="true">Primary</div>
+      <button aria-pressed="true">Bold</button><input aria-label="Email" aria-invalid="true">
+      <div role="combobox" aria-label="Country">France</div><div role="alert">Enter a valid address</div>`);
+    const text = snapshot(document, { isVisible: visible }).outline;
+    expect(text).toContain('button "More" (collapsed)');
+    expect(text).toContain('tab "Primary" (selected)');
+    expect(text).toContain('button "Bold" (pressed)');
+    expect(text).toContain('textbox "Email" (invalid)');
+    expect(text).toContain('combobox "Country" = "France"');
+    expect(text).toContain('(alert) "Enter a valid address"');
+  });
+
+  it("reads only the part of the page under a scope", () => {
+    page(`<nav><a href="/a">Elsewhere</a></nav><ul id="list" role="list"><li><a href="/1">One</a></li><li><a href="/2">Two</a></li></ul>`);
+    const found = find(document, "One", visible);
+    if (!found.ok) throw new Error(found.message);
+    const list = document.getElementById("list")!;
+    const ref = snapshot(document, { isVisible: visible, root: list }).elements.map((e) => e.name);
+    expect(ref).toEqual(["One", "Two"]);
+    expect(readPage(document, { scope: "e99999" }, visible)).toMatchObject({ ok: false, error: "stale_ref" });
   });
 
   it("names elements the way a screen reader would", () => {

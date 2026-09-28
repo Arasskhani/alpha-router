@@ -797,6 +797,11 @@ describe("the standing instructions", () => {
     expect(agentInstructions(NONCE, { fullControl: true, mode: "ask" })).not.toMatch(/ends with a fresh screenshot/);
   });
 
+  it("come with tools well within the server's 32 KB for them", () => {
+    const size = new TextEncoder().encode(JSON.stringify(agentToolsFor({ fullControl: true, plan: true }))).length;
+    expect(size).toBeLessThan(24 * 1024);
+  });
+
   it("say how to finish, and what each mode means for batches", () => {
     const ask = agentInstructions(NONCE, { mode: "ask" });
     expect(ask).toMatch(/Send one action at a time when the next depends on what the last one did/);

@@ -696,6 +696,18 @@ describe("acting", () => {
     expect(liked).not.toHaveBeenCalled();
   });
 
+  it("moves with Tab through a web component's controls where the component is", () => {
+    page(`<input aria-label="Before"><x-picker></x-picker><input aria-label="After">`);
+    const shadow = document.querySelector("x-picker")!.attachShadow({ mode: "open" });
+    shadow.innerHTML = '<input aria-label="From"><input aria-label="To">';
+    const [from, to] = Array.from(shadow.querySelectorAll("input"));
+    from.focus();
+    expect(pressKey(document, "Tab", visible)).toMatchObject({ note: expect.stringContaining('textbox "To"') });
+    expect(shadow.activeElement).toBe(to);
+    pressKey(document, "Tab", visible);
+    expect(document.activeElement).toBe(document.querySelector('input[aria-label="After"]'));
+  });
+
   it("types a character key's character where the caret is", () => {
     page(`<input aria-label="City" value="Tehan">`);
     const input = document.querySelector("input")!;

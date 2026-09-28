@@ -1398,14 +1398,28 @@ export function describeFocus(doc: Document, isVisible: Visibility): Result<{ el
   return { ok: true, element: describeElement(el, role, isVisible, true) };
 }
 
-/** What can take the keyboard with Tab, as a browser has it (roughly): in the page's order, positive tabindex first. */
+const TABBABLE = 'a[href], area[href], button, input, select, textarea, summary, iframe, [tabindex], [contenteditable=""], [contenteditable="true"]';
+
+/**
+ * What can take the keyboard with Tab, as a browser has it (roughly): in the
+ * document's order - a web component's controls where the component is,
+ * open or closed - positive tabindex first.
+ */
 function tabOrder(doc: Document, isVisible: Visibility): HTMLElement[] {
-  const candidates = Array.from(
-    doc.querySelectorAll<HTMLElement>('a[href], area[href], button, input, select, textarea, summary, iframe, [tabindex], [contenteditable=""], [contenteditable="true"]'),
-  ).filter((el) => {
+  const found: HTMLElement[] = [];
+  const walk = (root: Document | ShadowRoot, depth: number) => {
+    for (const el of Array.from(root.querySelectorAll("*"))) {
+      if (isOwnHost(el)) continue;
+      if (el.matches(TABBABLE)) found.push(el as HTMLElement);
+      const shadow = depth < MAX_FRAME_DEPTH ? shadowOf(el) : null;
+      if (shadow) walk(shadow, depth + 1);
+    }
+  };
+  walk(doc, 0);
+  const candidates = found.filter((el) => {
     if (el.tabIndex < 0 || isDisabled(el) || inOwnUi(el)) return false;
     if (el.tagName.toUpperCase() === "INPUT" && inputType(el) === "hidden") return false;
-    for (let node: Element | null = el; node; node = node.parentElement) if (!isVisible(node) || node.hasAttribute("inert")) return false;
+    for (let node: Element | null = el; node; node = parentAcrossShadow(node)) if (!isVisible(node) || node.hasAttribute("inert")) return false;
     return true;
   });
   const positive = candidates.filter((el) => el.tabIndex > 0).sort((a, b) => a.tabIndex - b.tabIndex);
@@ -1448,7 +1462,9 @@ function editField(
  * presses a control, Backspace and Delete delete, and the paging keys
  * scroll. Said in words for the result; "" when nothing happened.
  */
-function keyDefault(doc: Document, target: Element, combo: KeyCombo, isVisible: Visibility): string {
+function keyDefault(target: Element, combo: KeyCombo, isVisible: Visibility): string {
+  // The document the keyboard is in: a frame of this site's editor, not the page around it.
+  const doc = target.ownerDocument;
   const key = combo.key;
   const tag = target.tagName.toUpperCase();
   const field = tag === "INPUT" || tag === "TEXTAREA" ? (target as HTMLInputElement | HTMLTextAreaElement) : null;
@@ -1574,7 +1590,7 @@ export function pressKey(doc: Document, key: unknown, isVisible: Visibility = ()
   const def = keyDefFor(combo);
   // Where describeFocus looked: the element with the keyboard, inside a web component too.
   const target = focusedElement(doc) ?? doc.body ?? doc.documentElement;
-  const view = doc.defaultView;
+  const view = target.ownerDocument.defaultView ?? doc.defaultView;
   const Ctor = view?.KeyboardEvent ?? KeyboardEvent;
   const held = { ctrlKey: combo.ctrl, altKey: combo.alt, shiftKey: combo.shift, metaKey: combo.meta };
   // The legacy codes go in the event itself, where the page's own scripts read them (a property set here would stay in this world).
@@ -1594,7 +1610,7 @@ export function pressKey(doc: Document, key: unknown, isVisible: Visibility = ()
   // A cancelled keypress keeps the character, the new line and the form's sending from happening, as in the browser.
   const allowed = down && (!typesCharacter(combo) || target.dispatchEvent(event("keypress")));
   // What the browser would do, unless the page took the key for itself.
-  const did = allowed ? keyDefault(doc, target, combo, isVisible) : "The page handled it itself.";
+  const did = allowed ? keyDefault(target, combo, isVisible) : "The page handled it itself.";
   target.dispatchEvent(event("keyup"));
   return { ok: true, note: `Pressed ${shown}.${did ? ` ${did}` : ""}` };
 }

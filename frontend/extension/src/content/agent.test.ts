@@ -1005,6 +1005,16 @@ describe("one call from the panel", () => {
   });
 });
 
+describe("a web component's slot", () => {
+  it("names a button by what the page put in its slot", () => {
+    document.body.innerHTML = `<x-button>Send</x-button>`;
+    const host = document.querySelector("x-button")!;
+    host.attachShadow({ mode: "open" }).innerHTML = `<button><slot></slot></button>`;
+    const shot = snapshot(document, { isVisible: visible });
+    expect(shot.elements.find((e) => e.role === "button")).toMatchObject({ name: "Send" });
+  });
+});
+
 describe("the notice a control sits in", () => {
   it("is given to the rules for a dialog or a cookie banner, and for nothing else", () => {
     document.body.innerHTML = `

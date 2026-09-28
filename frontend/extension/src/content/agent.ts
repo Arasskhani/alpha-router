@@ -304,7 +304,11 @@ function visibleText(el: Element, isVisible: Visibility, limit = 200): string {
       continue;
     }
     if (isBlockDisplayed(child)) parts.push(" ");
-    pushChildren(stack, Array.from((shadowOf(child) ?? child).childNodes));
+    if (tag === "SLOT") {
+      // A web component's slot shows what the page put in it ("Send" in <md-button>Send</md-button>), else its own words.
+      const assigned = (child as HTMLSlotElement).assignedNodes?.({ flatten: true }) ?? [];
+      pushChildren(stack, assigned.length ? assigned : Array.from(child.childNodes));
+    } else pushChildren(stack, Array.from((shadowOf(child) ?? child).childNodes));
     if (isBlockDisplayed(child)) parts.push(" ");
   }
   return clip(parts.join(""), limit);

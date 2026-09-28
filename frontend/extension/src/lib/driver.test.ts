@@ -104,6 +104,23 @@ describe("TabDrivers", () => {
     expect(sentTo("Page.handleJavaScriptDialog")).toEqual([9]);
   });
 
+  it("leaves nothing attached when the run stops while a tab is being attached", async () => {
+    const d = await drivers();
+    let release: () => void = () => undefined;
+    chrome.debugger.attach.mockImplementationOnce((target: { tabId?: number }, _v: string, cb: () => void) => {
+      release = () => {
+        chrome.debugger.attached.add(target.tabId!);
+        cb();
+      };
+    });
+    const using = d.use(9);
+    await d.stop();
+    release();
+    await expect(using).resolves.toBe(false);
+    expect(chrome.debugger.attached.has(9)).toBe(false);
+    await expect(d.use(11)).resolves.toBe(false);
+  });
+
   it("answers each of two dialogs in its own tab, however their cards are answered", async () => {
     const d = await drivers();
     await d.use(9);

@@ -57,6 +57,8 @@ export async function chooseDriver(
 export class TabDrivers {
   private readonly drivers = new Map<number, CdpDriver>();
   private readonly refused = new Set<number>();
+  /** The run is over: an attach still under way is undone as it finishes. */
+  private stopped = false;
   private current: CdpDriver;
   /** The session a dialog last opened in: its answer goes there, whichever tab the agent is on. */
   private dialogIn: CdpDriver | null = null;
@@ -94,6 +96,7 @@ export class TabDrivers {
    * yet (or no longer). False when Chrome will not attach to it.
    */
   async use(tabId: number): Promise<boolean> {
+    if (this.stopped) return false;
     const known = this.drivers.get(tabId);
     if (known?.attached) {
       this.current = known;
@@ -108,6 +111,11 @@ export class TabDrivers {
     } catch {
       await driver.stop().catch(() => undefined);
       this.refused.add(tabId);
+      return false;
+    }
+    // The run ended while Chrome attached: nothing stays attached after it (the debugging bar, the focus emulation).
+    if (this.stopped) {
+      await driver.stop().catch(() => undefined);
       return false;
     }
     this.adopt(tabId, driver);
@@ -168,8 +176,9 @@ export class TabDrivers {
     return this.current.key(spec, modifiers);
   }
 
-  /** Detach from every tab the run attached to. */
+  /** Detach from every tab the run attached to, and attach to none from now on. */
   async stop(): Promise<void> {
+    this.stopped = true;
     await Promise.all([...this.drivers.values()].map((driver) => driver.stop().catch(() => undefined)));
   }
 }

@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   hideTarget,
   hideVisuals,
+  highlightState,
   moveCursor,
   pulseClick,
   setHighlightState,
@@ -92,5 +93,24 @@ describe("hideVisuals", () => {
     showVisuals(document);
     hideVisuals(document);
     expect(document.getElementById(VISUALS_ID)).toBeNull();
+  });
+});
+
+describe("the layer on a page the agent reached later", () => {
+  it("comes up with the border, the cursor or the target, on a page that had none", async () => {
+    const { runAgentCall } = await import("./runtime");
+    const { isRendered } = await import("./extract");
+    // A fresh page after a navigation: no layer yet.
+    hideVisuals(document);
+    expect(document.getElementById(VISUALS_ID)).toBeNull();
+    await runAgentCall(document, "visuals_state", { state: "waiting" }, isRendered, () => undefined);
+    expect(document.getElementById(VISUALS_ID)).not.toBeNull();
+    expect(highlightState(document)).toBe("waiting");
+    hideVisuals(document);
+    await runAgentCall(document, "visuals_cursor", { x: 10, y: 20 }, isRendered, () => undefined);
+    expect(document.getElementById(VISUALS_ID)).not.toBeNull();
+    hideVisuals(document);
+    await runAgentCall(document, "visuals_target", { rect: { x: 1, y: 2, width: 3, height: 4 } }, isRendered, () => undefined);
+    expect(document.getElementById(VISUALS_ID)).not.toBeNull();
   });
 });

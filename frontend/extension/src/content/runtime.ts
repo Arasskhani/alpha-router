@@ -137,9 +137,12 @@ export async function runAgentCall(
       case "visuals_veil":
         veilVisuals(doc, args.veiled === true);
         return { ok: true };
+      // A page the agent reached after the run began has no layer yet: the border, the cursor and the target
+      // put it up, so what a person sees does not end at the first page load.
       case "visuals_state": {
         const state = args.state as HighlightState;
         if (!HIGHLIGHT_STATES.has(state)) return { ok: false, error: "bad_request", message: "Unknown highlight state." };
+        showVisuals(doc);
         setHighlightState(doc, state);
         return { ok: true };
       }
@@ -147,6 +150,7 @@ export async function runAgentCall(
         const x = num(args.x);
         const y = num(args.y);
         if (x === null || y === null) return { ok: false, error: "bad_request", message: "The cursor needs x and y." };
+        showVisuals(doc);
         moveCursor(doc, { x, y });
         const kind = args.click as ClickKind | undefined;
         if (kind !== undefined && CLICK_KINDS.has(kind)) pulseClick(doc, { x, y }, kind);
@@ -163,6 +167,7 @@ export async function runAgentCall(
         const width = num(rect.width);
         const height = num(rect.height);
         if (x === null || y === null || width === null || height === null) return { ok: false, error: "bad_request", message: "The target needs a rect." };
+        showVisuals(doc);
         showTarget(doc, { x, y, width, height });
         return { ok: true };
       }

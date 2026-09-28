@@ -23,6 +23,9 @@ export type DriverMode = "cdp" | "dom";
 const CROP_PADDING = 24;
 const CROP_SIDE = 640;
 
+/** Answering one dialog: accept (with a prompt's text) or dismiss it. */
+export type DialogAnswer = (accept: boolean, promptText?: string) => Promise<void>;
+
 export class CdpDriver {
   readonly mode: DriverMode = "cdp";
   private readonly session: CdpSession;
@@ -157,10 +160,11 @@ export class CdpDriver {
 
   /**
    * Who answers the page's JavaScript dialogs: called as one opens, while the
-   * input that opened it waits for the answer (null: nobody).
+   * input that opened it waits for the answer (null: nobody), with the way to
+   * answer this very dialog - in this tab, whichever the agent is on by then.
    */
-  onDialog(cb: ((dialog: DialogInfo) => Promise<void>) | null): void {
-    this.session.onDialog(cb ? (dialog) => void cb(dialog).catch(() => undefined) : null);
+  onDialog(cb: ((dialog: DialogInfo, answer: DialogAnswer) => Promise<void>) | null): void {
+    this.session.onDialog(cb ? (dialog) => void cb(dialog, (accept, promptText) => this.handleDialog(accept, promptText)).catch(() => undefined) : null);
   }
 
   async handleDialog(accept: boolean, promptText?: string): Promise<void> {

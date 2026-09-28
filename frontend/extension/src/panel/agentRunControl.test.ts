@@ -708,9 +708,20 @@ describe("the page's dialogs", () => {
   /** A click that opens a dialog: as with Chrome's input, it returns only once the dialog is answered. */
   function opens(h: ReturnType<typeof harness>, dialog: Dialog) {
     h.driver!.click = vi.fn(async () => {
-      await handlerOf(h.driver!)(dialog);
+      await handlerOf(h.driver!)(dialog, h.driver!.handleDialog);
     });
   }
+
+  it("answers a dialog in the tab that asked, whichever tab the agent is on", async () => {
+    const h = harness(click());
+    const inTheTabThatAsked = vi.fn(async () => undefined);
+    h.driver!.click = vi.fn(async () => {
+      await handlerOf(h.driver!)({ type: "confirm", message: "Leave?" }, inTheTabThatAsked);
+    });
+    await h.run();
+    expect(inTheTabThatAsked).toHaveBeenCalledWith(true);
+    expect(h.driver!.handleDialog).not.toHaveBeenCalled();
+  });
 
   it("closes an alert as it opens and tells the model what it said", async () => {
     const h = harness(click());
@@ -780,7 +791,7 @@ describe("the page's dialogs", () => {
       order.push(`open ${request.tool}`);
       if (request.tool === "computer") {
         // A timer on the page opens a confirm while the click's own card is up.
-        void handlerOf(h.driver!)({ type: "confirm", message: "Stay?" });
+        void handlerOf(h.driver!)({ type: "confirm", message: "Stay?" }, h.driver!.handleDialog);
         await new Promise((resolve) => setTimeout(resolve, 10));
         await new Promise<boolean>((resolve) => {
           release = resolve;

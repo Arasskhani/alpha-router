@@ -16,7 +16,7 @@
  */
 
 import { CdpSession, type DialogInfo } from "./cdp";
-import { CdpDriver } from "./cdpDriver";
+import { CdpDriver, type DialogAnswer } from "./cdpDriver";
 import type { Region, Shot } from "./capture";
 import type { Point } from "./coords";
 import type { MouseButton } from "./input";
@@ -60,7 +60,7 @@ export class TabDrivers {
   private current: CdpDriver;
   /** The session a dialog last opened in: its answer goes there, whichever tab the agent is on. */
   private dialogIn: CdpDriver | null = null;
-  private dialogCb: ((dialog: DialogInfo) => Promise<void>) | null = null;
+  private dialogCb: ((dialog: DialogInfo, answer: DialogAnswer) => Promise<void>) | null = null;
   private readonly maxSide: number;
   private readonly onDetached: (reason: string) => void;
 
@@ -81,9 +81,9 @@ export class TabDrivers {
     const cb = this.dialogCb;
     driver.onDialog(
       cb
-        ? async (dialog) => {
+        ? async (dialog, answer) => {
             this.dialogIn = driver;
-            await cb(dialog);
+            await cb(dialog, answer);
           }
         : null,
     );
@@ -115,7 +115,7 @@ export class TabDrivers {
     return true;
   }
 
-  onDialog(cb: ((dialog: DialogInfo) => Promise<void>) | null): void {
+  onDialog(cb: ((dialog: DialogInfo, answer: DialogAnswer) => Promise<void>) | null): void {
     this.dialogCb = cb;
     for (const driver of this.drivers.values()) this.bindDialogs(driver);
   }

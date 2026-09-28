@@ -103,4 +103,22 @@ describe("TabDrivers", () => {
     expect(seen).toMatchObject([{ message: "from 9" }]);
     expect(sentTo("Page.handleJavaScriptDialog")).toEqual([9]);
   });
+
+  it("answers each of two dialogs in its own tab, however their cards are answered", async () => {
+    const d = await drivers();
+    await d.use(9);
+    const answers: Array<(accept: boolean) => Promise<void>> = [];
+    d.onDialog(async (_dialog, answer) => {
+      answers.push(answer);
+    });
+    await d.use(7);
+    chrome.debugger.emitEvent(9, "Page.javascriptDialogOpening", { type: "confirm", message: "in 9" });
+    chrome.debugger.emitEvent(7, "Page.javascriptDialogOpening", { type: "confirm", message: "in 7" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    chrome.debugger.sent.length = 0;
+    // The first card answered last: its answer still goes to tab 9, where its dialog is.
+    await answers[1](true);
+    await answers[0](false);
+    expect(sentTo("Page.handleJavaScriptDialog")).toEqual([7, 9]);
+  });
 });

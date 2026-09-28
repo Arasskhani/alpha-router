@@ -864,14 +864,16 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
    * type. The page cannot be reached while the dialog is up, so the border
    * stays as it is; the badge shows the wait.
    */
-  async function answerDialog(dialog: { type?: string; message?: string }): Promise<void> {
+  async function answerDialog(dialog: { type?: string; message?: string }, answer?: (accept: boolean, promptText?: string) => Promise<void>): Promise<void> {
     const driver = deps.driver;
     if (!driver) return;
+    // To the tab that asked: the agent may be on another by the time the user answers.
+    const respond = answer ?? ((accept: boolean, promptText?: string) => driver.handleDialog(accept, promptText));
     const message = clip(String(dialog.message ?? ""), 300);
     watch(message);
     const shown = message ? ` "${message}"` : "";
     if (dialog.type === "alert") {
-      await driver.handleDialog(true).catch(() => undefined);
+      await respond(true).catch(() => undefined);
       dialogNotes.push(`The page showed a message:${shown}`);
       return;
     }
@@ -891,8 +893,8 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     } else {
       accept = dialog.type !== "prompt";
     }
-    if (accept && dialog.type === "prompt") await driver.handleDialog(true, "").catch(() => undefined);
-    else await driver.handleDialog(accept).catch(() => undefined);
+    if (accept && dialog.type === "prompt") await respond(true, "").catch(() => undefined);
+    else await respond(accept).catch(() => undefined);
     dialogNotes.push(`The page ${kind}:${shown} - it was ${accept ? "accepted" : "dismissed"}${asks && !signal.aborted ? " by the user" : ""}.`);
   }
 

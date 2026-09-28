@@ -2147,8 +2147,14 @@ export const docSections: DocSection[] = [
             <tr>
               <td>Models the agent may use</td>
               <td>
-                None selected: any. The agent sends what it reads on pages to its model, so its model must also be
-                allowed page content: the two lists together decide.
+                None selected: the models that passed the <em>browser_control</em> probe (below), and any model
+                while none has. The agent sends what it reads on pages to its model, so its model must also be
+                allowed page content: the two lists together decide. The panel&apos;s Agent tab lists only these,
+                and the server refuses a step for another model (<code>agent_model_not_allowed</code>).{" "}
+                <strong>Auto Router</strong> is never the agent&apos;s, whatever the lists say: it would pick
+                another model at each step, one that may not read images or call tools.{" "}
+                <strong>Recommended agent model</strong> (one of these) is chosen for people in the Agent tab and
+                marked <em>(recommended)</em>; with none set, the model that did best in the probe.
               </td>
             </tr>
             <tr>
@@ -2306,7 +2312,15 @@ export const docSections: DocSection[] = [
                 <em>fixed</em> and cannot be relaxed: payments and trades, creating accounts, deleting for good,
                 downloading a program, identity and card fields, giving a program access to an account (OAuth consent),
                 changing what keeps an account safe, typing personal details, and CAPTCHAs — these always ask or are
-                refused. Text on a page that reads like instructions to the agent also forces the next change to ask.
+                refused. So do a card number, a bank account number (IBAN or Sheba) or a national ID in the text the
+                agent would type, into any field (refused), a short number typed where the page asks for a code, an{" "}
+                <em>Upgrade</em>, <em>Subscribe</em> or <em>Start free trial</em> button, and a one-letter key
+                outside a text field, which sites use as shortcuts (these ask). Labels are read as a whole, in
+                English and Persian, so a <em>Sign in | Register</em> link or a bare <em>لغو</em> is an ordinary
+                click. Text on a page that reads like instructions to the agent also forces the next change to ask.
+                In Ask mode, the card for an ordinary action offers <strong>Allow on</strong> <em>site</em>{" "}
+                <strong>for this run</strong>: the rest of that run does such actions on that site without asking.
+                It never covers what always asks or what is fixed, and it ends with the run.
               </td>
             </tr>
           </tbody>
@@ -2371,9 +2385,17 @@ export const docSections: DocSection[] = [
           </li>
           <li>
             An agent step is a chat completion with the agent&apos;s tools, accepted only from a connected browser
-            whose owner has Browser Agent, only for a model both lists allow, never together with an Agent Studio
-            agent, chat tools, Code Interpreter or a saved chat, and never saved to history. Its tool calls are
-            billed as output.
+            whose owner has Browser Agent, only for a model both lists allow (never Auto Router), never together
+            with an Agent Studio agent, chat tools, Code Interpreter or a saved chat, and never saved to history.
+            Its tool calls are billed as output.
+          </li>
+          <li>
+            A step&apos;s instructions and tools are marked for the provider&apos;s prompt cache (a long run pays
+            for them once), and a step is never kept in the response cache, since it carries what the agent
+            types. A model that thinks before its first token gets an SSE keep-alive comment every 15 seconds, so
+            no proxy closes the quiet connection. When the provider refuses a streamed step before any of it reached
+            the browser, it is asked once more whole; if it refuses again, the panel shows the provider&apos;s own reason (no endpoint for tools or
+            images, a context that is too long) rather than a generic error.
           </li>
           <li>
             Limits: the generation limit per person (<code>GENERATION_RATE_LIMIT_PER_MIN</code>, 60 a minute by

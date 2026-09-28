@@ -1040,16 +1040,20 @@ export const userManualSections: DocSection[] = [
               <td>Sensitive</td>
               <td>
                 Sending a form; a button that sends, submits, deletes, confirms, shares, accepts, transfers,
-                downloads or publishes; Enter in a message box; a button with no name, whose purpose nobody can
-                tell; going to another site, or working on one the page went to by itself
+                downloads or publishes; an <em>Upgrade</em>, <em>Subscribe</em> or <em>Start free trial</em> button;
+                Enter in a message box; a one-letter key pressed outside a text field (sites use them to archive,
+                delete or send); a short number typed where a page asks for a code; a button with no name, whose
+                purpose nobody can tell; going to another site, or working on one the page went to by itself
               </td>
               <td>Always asks you, in either mode.</td>
             </tr>
             <tr>
               <td>Refused</td>
               <td>
-                Typing into a password, card, one-time-code or identity field; buying, paying, bidding or
-                donating; a site your administrator blocks; any address of Alpharouter itself
+                Typing into a password, card, one-time-code or identity field, and typing a card number, a bank
+                account number (IBAN or Sheba) or a national ID into any field; buying, paying, bidding or
+                donating; selling, trading or moving money; a CAPTCHA; a site your administrator blocks; any address
+                of Alpharouter itself
               </td>
               <td>Never happens; the agent is told why.</td>
             </tr>
@@ -1060,7 +1064,17 @@ export const userManualSections: DocSection[] = [
           the option that will be chosen, where a form goes.{" "}
           <strong>Deny</strong> refuses that action and any others the agent planned alongside it, and the agent is
           told not to look for a way around your answer. When it needs something only you know, it asks in the
-          panel.
+          panel. <strong>Allow</strong> has the keyboard, so Enter answers it; a card that waits for you turns the
+          border on the page amber and, while you are on the Chat tab, puts a dot on the Agent tab.
+        </p>
+        <p>
+          In <strong>Ask</strong> mode, a card about an ordinary action — a click, typing, a choice on a site —
+          also offers <strong>Allow on</strong> <em>site</em> <strong>for this run</strong>: the agent then does
+          such actions on that site without asking again until the run ends. It never covers what always asks
+          (sending, deleting, another site, the rows above) or what is refused, and it is forgotten when the run
+          ends. The rules read a button by its whole label, in English and Persian: <em>ورود | ثبت‌نام</em> is a
+          sign-in link, a bare <em>لغو</em> or <em>تایید</em> is an ordinary click, and one that says what it
+          cancels or confirms (<em>لغو سفارش</em>, <em>تایید انتقال</em>) always asks.
         </p>
         <p>
           <strong>Plan mode</strong> is a good fit for longer, mostly-on-its-own work: the agent looks first, then
@@ -1162,7 +1176,8 @@ export const userManualSections: DocSection[] = [
             The same rules apply: a click is judged by what is under the point, typing by the field that has the
             focus. Nothing is typed into a password field, nothing is bought, and sensitive actions ask first. Right
             before the mouse presses, the agent looks again at what is under the point — if the page moved or changed,
-            it does not press, and takes a fresh screenshot instead.
+            it does not press, and takes a fresh screenshot instead. Answering a card in the panel leaves the page as
+            it was: a list of suggestions under a field stays open.
           </li>
           <li>
             Some things it never does, whatever you ask: buy, pay or trade, create an account, delete for good,
@@ -1177,6 +1192,23 @@ export const userManualSections: DocSection[] = [
           <li>
             Full control adds the <em>debugger</em> permission to the extension. When your administrator turns it
             on, download the extension again from Settings → Extension and load the new package.
+          </li>
+        </ul>
+        <h3>Its model</h3>
+        <ul>
+          <li>
+            The Agent tab lists the models your administrator chose for the agent — or, when none are chosen, the
+            ones that passed Alpharouter&apos;s check that a model sees the page and clicks where it means. The one
+            your administrator recommends is marked <em>(recommended)</em> and chosen for you.
+          </li>
+          <li>
+            <strong>Auto Router</strong> is not offered for the agent: it would pick another model at every step,
+            one that may not see the page or use the agent&apos;s tools.
+          </li>
+          <li>
+            When the provider refuses a step, the panel shows its own reason — for example that no endpoint of the
+            model takes tools or images — so you know to choose another model. A model that thinks for a long while
+            before it acts keeps its connection open meanwhile, so the step is not dropped for being quiet.
           </li>
         </ul>
         <p>

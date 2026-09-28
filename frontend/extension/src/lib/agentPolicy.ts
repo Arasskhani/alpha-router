@@ -252,7 +252,22 @@ const CONSENT_PAGES: Array<{ host: RegExp; path: RegExp }> = [
 ];
 
 /** Where CAPTCHAs are served from: a click in one of their frames is the user's. */
-const CAPTCHA_HOSTS = ["recaptcha.net", "www.recaptcha.net", "*.hcaptcha.com", "hcaptcha.com", "challenges.cloudflare.com", "*.arkoselabs.com", "*.funcaptcha.com"];
+const CAPTCHA_HOSTS = [
+  "recaptcha.net",
+  "www.recaptcha.net",
+  "*.hcaptcha.com",
+  "hcaptcha.com",
+  "challenges.cloudflare.com",
+  "*.arkoselabs.com",
+  "*.funcaptcha.com",
+  // ArCaptcha, which many Iranian sites use, GeeTest and Yandex SmartCaptcha.
+  "arcaptcha.ir",
+  "*.arcaptcha.ir",
+  "arcaptcha.co",
+  "*.arcaptcha.co",
+  "*.geetest.com",
+  "smartcaptcha.yandexcloud.net",
+];
 /** Google serves reCAPTCHA from its own host, beside Maps and the rest: there, by its path. */
 const CAPTCHA_ON_GOOGLE = { hosts: ["www.google.com", "google.com"], path: /^\/recaptcha\// };
 

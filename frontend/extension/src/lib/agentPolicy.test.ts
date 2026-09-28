@@ -486,7 +486,7 @@ describe("full control's targets", () => {
     expect(classify("click", { element: el({ role: "frame", name: "", tag: "iframe", frame: { host: null } }) })).toMatchObject({ class: "sensitive", reason: "other_site_frame" });
   });
 
-  it.each(["recaptcha.net", "newassets.hcaptcha.com", "challenges.cloudflare.com", "client-api.arkoselabs.com"])("leaves a CAPTCHA served from %s to the user", (host) => {
+  it.each(["recaptcha.net", "newassets.hcaptcha.com", "challenges.cloudflare.com", "client-api.arkoselabs.com", "widget.arcaptcha.ir", "static.geetest.com", "smartcaptcha.yandexcloud.net"])("leaves a CAPTCHA served from %s to the user", (host) => {
     expect(classify("click", { element: el({ role: "frame", name: "", tag: "iframe", frame: { host } }) })).toMatchObject({ class: "blocked", reason: "captcha" });
   });
 

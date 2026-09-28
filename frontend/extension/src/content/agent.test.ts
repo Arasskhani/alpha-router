@@ -3,7 +3,7 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { click, describe as describeRef, describeFocus, find, findRef, pressKey, readPage, scroll, selectOption, snapshot, submitForm, typeText, waitFor, type ElementInfo } from "./agent";
+import { click, describe as describeRef, describeFocus, find, findRef, locate, pressKey, readPage, scroll, selectOption, snapshot, submitForm, typeText, waitFor, type ElementInfo } from "./agent";
 import { hideOverlay, OVERLAY_ID, showOverlay } from "./overlay";
 import { runAgentCall } from "./runtime";
 
@@ -345,6 +345,41 @@ describe("acting", () => {
     expect((document.getElementById("n") as HTMLInputElement).checked).toBe(true);
     // Read again, the state shows.
     expect(snapshot(document, { isVisible: hidden }).outline).toContain('checkbox "Remember me" (checked)');
+  });
+
+  it("reads inside a closed shadow root, and names a field by a label in its own shadow root", () => {
+    page(`<x-card></x-card>`);
+    const host = document.querySelector("x-card")!;
+    const shadow = host.attachShadow({ mode: "closed" });
+    shadow.innerHTML = `<span id="lbl">Card holder</span><input aria-labelledby="lbl"><button>Save card</button>`;
+    // Closed to the page's scripts; an extension reads it through chrome.dom.
+    vi.stubGlobal("chrome", { dom: { openOrClosedShadowRoot: (el: Element) => (el === host ? shadow : null) } });
+    try {
+      const text = snapshot(document, { isVisible: visible }).outline;
+      expect(text).toContain('textbox "Card holder"');
+      expect(text).toContain('button "Save card"');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("reads into a frame of the page's own site, and places its elements in the top window", () => {
+    page(`<p>Top</p>`);
+    const frame = document.createElement("iframe");
+    const inner = document.implementation.createHTMLDocument("inner");
+    inner.body.innerHTML = `<button id="ib">Reply in the frame</button>`;
+    Object.defineProperty(frame, "contentDocument", { value: inner, configurable: true });
+    document.body.append(frame);
+    const shot = snapshot(document, { isVisible: visible });
+    const reply = byName(shot.elements, "Reply in the frame");
+    expect(reply.role).toBe("button");
+    // Its box, moved by where the frame is in the page.
+    Object.defineProperty(inner, "defaultView", { value: { frameElement: frame, innerWidth: 300, innerHeight: 200, getComputedStyle: (el: Element) => window.getComputedStyle(el) }, configurable: true });
+    vi.spyOn(frame, "getBoundingClientRect").mockReturnValue({ left: 100, top: 50, width: 300, height: 200, right: 400, bottom: 250, x: 100, y: 50, toJSON: () => ({}) } as DOMRect);
+    const button = inner.getElementById("ib")!;
+    vi.spyOn(button, "getBoundingClientRect").mockReturnValue({ left: 10, top: 20, width: 80, height: 30, right: 90, bottom: 50, x: 10, y: 20, toJSON: () => ({}) } as DOMRect);
+    Object.defineProperty(inner, "elementFromPoint", { value: () => button, configurable: true });
+    expect(locate(reply.ref, visible, true)).toMatchObject({ ok: true, rect: { x: 110, y: 70, width: 80, height: 30 } });
   });
 
   it("finds the best match first: a control before text, the whole name before part of one", () => {

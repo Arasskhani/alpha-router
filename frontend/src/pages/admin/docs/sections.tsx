@@ -2191,7 +2191,12 @@ export const docSections: DocSection[] = [
                 error) and Chrome&apos;s debugging bar; the coloured dot on the toolbar button for the length of a
                 run; and the <strong>take-over pause</strong> - a click, key or scroll of the person&apos;s own on
                 the page holds the run until they press Resume, on the banner or in the panel, and the agent
-                judges the page afresh before it goes on.
+                judges the page afresh before it goes on. Also fixed, so that no page or model can hang a run:
+                a page gets 15 seconds to answer each call (then the agent is told it did not answer); a model
+                step is dropped after 90 seconds without a byte, or 4 minutes in all, and tried once more; the
+                page&apos;s own dialogs are answered as they open (see <em>Always ask before</em>); and Stop ends
+                a run at once, whatever it waits on. The banner is a small pill at the top centre that takes a
+                click only on its own Stop and Resume, and is left out of screenshots.
               </td>
             </tr>
             <tr>

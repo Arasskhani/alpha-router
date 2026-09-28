@@ -1087,6 +1087,19 @@ export const userManualSections: DocSection[] = [
             many tabs a run opens and how many runs you start in a day.
           </li>
           <li>
+            While the model works out its next step the panel says <em>Thinking… (model, 25 s)</em>, with its words
+            as they come. A step that gets nothing back for a minute and a half is tried once more, and the panel
+            says so; a page that does not answer within 15 seconds (a busy page, or one waiting on a dialog) is left,
+            and the agent is told. If the model only says what it will do without doing it, it is reminded once; a
+            second time, the run ends as <em>Stopped: the model did not act</em> — never as finished.
+          </li>
+          <li>
+            When a page asks something itself — an <em>alert</em>, a <em>Are you sure?</em>, a question, or{" "}
+            <em>Leave this page?</em> — the agent closes a plain message and tells the model what it said; a
+            question comes to you as a card (Allow accepts it, Deny dismisses it), unless your administrator lets the
+            agent answer them.
+          </li>
+          <li>
             Your administrator can stop every run at once. Yours then ends at its next step and the panel says so;
             start it again and it runs normally.
           </li>
@@ -1112,8 +1125,14 @@ export const userManualSections: DocSection[] = [
         <ul>
           <li>
             While it works, the page glows at its edge — cyan while working, amber while waiting for you, grey when
-            paused, red on an error — and a small cursor moves to each target, with a ripple where it clicks and an
-            outline around what it is about to act on.
+            paused, red on an error — on every page it reaches, and a small cursor moves to each target, with a
+            ripple where it clicks and an outline around what it is about to act on. Its banner, with Stop, is a
+            small pill at the top centre of the page: it never covers the page&apos;s own buttons, and only its Stop
+            and Resume take a click.
+          </li>
+          <li>
+            Screenshots and clicks work at any display scaling (a laptop at 125 % or 150 %), any window size, and
+            on a page scrolled down; when the agent opens or switches to another tab, full control goes with it.
           </li>
           <li>
             Chrome shows its <em>&quot;Alpharouter started debugging this browser&quot;</em> bar above the page

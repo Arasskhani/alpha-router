@@ -51,7 +51,7 @@ from app.services.code_interpreter_service import (
 from app.services.model_tool_compatibility_service import is_auto_router_model_id, openrouter_auto_plugin
 from app.services.private_mode_service import effective_private_mode, resolve_private_mode
 from app.services.project_turn_planner import augment_messages_with_project_context
-from app.services.prompt_cache_service import apply_prompt_cache_breakpoints
+from app.services.prompt_cache_service import apply_prompt_cache_breakpoints, apply_system_cache_breakpoint
 from app.services.provider_utils import apply_litellm_provider_kwargs, sse_delta_chunk
 from app.services.resource_access_service import resolve_resource_access_subject
 from app.services.turn_settlement import agent_identity_metadata
@@ -484,6 +484,9 @@ async def build_turn_context(  # noqa: C901 -- straight-line preparation moved o
         browser_tools, browser_tool_choice = _browser_tools(body)
         if browser_tools:
             completion_kwargs["tools"] = browser_tools
+            # No response cache for an agent step: it would never be hit (each step's conversation is new), and
+            # would keep what the agent typed and read on pages.
+            completion_kwargs["caching"] = False
             if browser_tool_choice is not None:
                 completion_kwargs["tool_choice"] = browser_tool_choice
 
@@ -546,6 +549,9 @@ async def build_turn_context(  # noqa: C901 -- straight-line preparation moved o
                 await lease.abandon("memory setup error")
                 raise
         messages = apply_prompt_cache_breakpoints(messages)
+        if browser_tools:
+            # The agent's tools and instructions, the same at every step of a run: cached by the provider.
+            messages = apply_system_cache_breakpoint(messages)
         original_messages = list(body.get("messages", []))
         resolved_workspace_files = getattr(
             resolved,

@@ -299,6 +299,26 @@ def _whole_click() -> object:
 
 
 @pytest.mark.usefixtures("agent_on")
+class TestCaching:
+    async def test_the_tools_and_instructions_are_marked_for_the_provider_s_cache(
+        self, client, browser, models, provider
+    ):
+        provider.reply(*CLICK_REPLY)
+        await client.post("/api/chat/completions", json=_body(models.a, messages=FOLLOW_UP), headers=browser.headers)
+        [call] = provider.calls
+        # The system message ends the cached prefix; the tools come before it.
+        assert call["messages"][0]["role"] == "system"
+        assert call["messages"][0]["cache_control"] == {"type": "ephemeral"}
+        assert not any("cache_control" in m for m in call["messages"][1:])
+
+    async def test_a_step_is_never_kept_in_the_response_cache(self, client, browser, models, provider):
+        provider.reply(*CLICK_REPLY)
+        await client.post("/api/chat/completions", json=_body(models.a), headers=browser.headers)
+        [call] = provider.calls
+        assert call["caching"] is False
+
+
+@pytest.mark.usefixtures("agent_on")
 class TestAStreamTheProviderRefused:
     async def test_is_asked_again_whole_and_its_tool_calls_go_out_in_one_frame(self, client, browser, models, provider):
         provider.reply(fail=UNREAD_STREAM)

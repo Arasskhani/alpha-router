@@ -34,3 +34,22 @@ def apply_prompt_cache_breakpoints(messages: list[dict]) -> list[dict]:
     marked["cache_control"] = {"type": "ephemeral"}
     out[idx] = marked
     return out
+
+
+def apply_system_cache_breakpoint(messages: list[dict]) -> list[dict]:
+    """
+    Mark the first system message as the end of a cached prefix.
+
+    A browser agent run sends the same tools and instructions with every
+    step, while its last message is a tool's answer or a screenshot, where
+    ``apply_prompt_cache_breakpoints`` sets no marker. Providers read the
+    tools before the system message, so this one marker covers both.
+    """
+    out = [dict(m) for m in messages]
+    for idx, message in enumerate(out):
+        if message.get("role") == "system":
+            marked = copy.deepcopy(message)
+            marked["cache_control"] = {"type": "ephemeral"}
+            out[idx] = marked
+            break
+    return out

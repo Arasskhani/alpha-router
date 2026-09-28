@@ -1170,7 +1170,7 @@ export function click(ref: unknown, isVisible: Visibility): Result<{ note?: stri
   // A hidden checkbox under its styled label: the label is what is pressed, as a person would; it works the control.
   const el = pressedFor(named, target, isVisible);
   const html = el as HTMLElement;
-  el.scrollIntoView?.({ block: "center", inline: "center" });
+  el.scrollIntoView?.({ block: "center", inline: "center", behavior: INSTANT });
   const cover = coveredBy(el);
   if (cover) {
     const role = roleOf(cover);
@@ -1281,7 +1281,7 @@ export async function typeText(ref: unknown, text: unknown, clear: unknown, isVi
     return { ok: false, error: "sensitive_field", message: "The agent never types into password, card or one-time-code fields. Ask the user to fill it in." };
   }
   const html = el as HTMLElement;
-  el.scrollIntoView?.({ block: "center" });
+  el.scrollIntoView?.({ block: "center", behavior: INSTANT });
   html.focus?.({ preventScroll: true });
   const view = el.ownerDocument.defaultView;
   const tick = () => new Promise((done) => (view ?? globalThis).setTimeout(done, READ_BACK_MS));
@@ -1799,7 +1799,7 @@ export function scroll(doc: Document, direction: unknown, ref: unknown, isVisibl
     const el = usable(ref, isVisible);
     if (isFailure(el)) return el;
     if (!move) {
-      el.scrollIntoView?.({ block: "center" });
+      el.scrollIntoView?.({ block: "center", behavior: INSTANT });
       return { ok: true, note: `Element ${ref as string} is in view.` };
     }
     // With a direction: the list or area the element is in (or is) scrolls.
@@ -1871,6 +1871,13 @@ export function describeAt(doc: Document, x: unknown, y: unknown, isVisible: Vis
   }
   return describeAtIn(doc, x, y, isVisible, activates, { x: 0, y: 0 }, 0);
 }
+
+/**
+ * Scrolls are instant: on a page with smooth scrolling (Bootstrap sets it on
+ * :root) an element's box read right after a smooth scroll is where it was,
+ * not where it goes - a press there lands on whatever takes its place.
+ */
+const INSTANT = "instant" as ScrollBehavior;
 
 /** Frames within frames: this deep and no further. */
 const MAX_FRAME_DEPTH = 5;
@@ -2013,7 +2020,7 @@ export function locate(ref: unknown, isVisible: Visibility, activates = false): 
   if (target !== named && isDisabled(target)) return { ok: false, error: "disabled", message: `Element ${ref as string} is disabled.` };
   const press = pressedFor(named, target, isVisible);
   const doc = press.ownerDocument;
-  if (!inWindow(doc, press.getBoundingClientRect())) press.scrollIntoView?.({ block: "center", inline: "center" });
+  if (!inWindow(doc, press.getBoundingClientRect())) press.scrollIntoView?.({ block: "center", inline: "center", behavior: INSTANT });
   const r = press.getBoundingClientRect();
   if (!r.width || !r.height) return { ok: false, error: "not_visible", message: `Element ${ref as string} takes no space on the page.` };
   const x = r.left + r.width / 2;

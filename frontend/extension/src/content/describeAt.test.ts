@@ -205,7 +205,8 @@ describe("locate", () => {
     button.scrollIntoView = intoView;
     at(button);
     locate(refOf("Far"), visible, true);
-    expect(intoView).toHaveBeenCalledWith({ block: "center", inline: "center" });
+    // Instant: a smooth scroll would leave the box where it was when it is read.
+    expect(intoView).toHaveBeenCalledWith({ block: "center", inline: "center", behavior: "instant" });
   });
 
   it("refuses when something else would take the press, the agent's banner included", () => {

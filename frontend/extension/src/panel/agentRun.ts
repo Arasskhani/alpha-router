@@ -953,6 +953,15 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       : { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
     await visual("visuals_target", { rect }, tab);
     await visual("visuals_cursor", { x: at.x, y: at.y, click: "left" }, tab);
+    // Judged again right before the press, as a computer click is: the showing took a moment, and the page may have
+    // moved the element (an animation, a late layout) - the press is made only where it still is.
+    const again = await page("locate", { ref: a.ref, activates: tool === "click" }, tab);
+    if (!again.ok) return again;
+    const still = again.element as ElementInfo | undefined;
+    const there = again.rect as PointRect | undefined;
+    if (!still || !there || !sameTarget(now, still) || !closeTo(rect, there)) {
+      return { ok: false, error: "changed", message: "The element moved or changed while the agent was about to press it." };
+    }
     const clicked = await inputWindow(tab, () => driver.clickAt(at, { button: "left", clickCount: 1 }));
     if (clicked === null) return { ok: false, error: "paused", message: "The user took over this page." };
     if (tool === "click") return { ok: true, note: "" };

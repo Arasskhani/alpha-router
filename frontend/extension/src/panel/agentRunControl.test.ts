@@ -645,6 +645,23 @@ describe("reference actions under full control", () => {
     expect(String(h.sent[1].find((m) => m.role === "tool")!.content)).toMatch(/^Not done \(changed\)/);
   });
 
+  it("presses nothing when the element moved while it was being shown", async () => {
+    const browser = page();
+    const plain = browser.page.getMockImplementation()!;
+    let located = 0;
+    browser.page.mockImplementation(async (method: string, args: Record<string, unknown> = {}) => {
+      // The second look, right before the press: a smooth scroll or a late layout put it elsewhere.
+      if (method === "locate") located += 1;
+      if (method === "locate" && located === 2) return { ok: true, element: SEND, rect: { x: 100, y: 520, width: 80, height: 30 } };
+      return plain(method, args);
+    });
+    const h = harness([{ text: "", toolCalls: [call("click", { ref: "e4" })] }], { browser });
+    await h.run();
+    expect(located).toBe(2);
+    expect(h.driver!.clickAt).not.toHaveBeenCalled();
+    expect(String(h.sent[1].find((m) => m.role === "tool")!.content)).toMatch(/^Not done \(changed\)/);
+  });
+
   it("presses keys with the real keyboard", async () => {
     const browser = page({ focus: TO });
     const h = harness([{ text: "", toolCalls: [call("press_key", { key: "Tab" })] }], { browser });

@@ -1691,7 +1691,8 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
         type: "function",
         function: { name: call.name, arguments: call.arguments },
       }));
-      entries.push({ message: { role: "assistant", content: reply.text || null, ...(calls.length ? { tool_calls: calls } : {}) } });
+      // An empty reply - no words, no calls - is not kept: an assistant message with neither is one providers refuse.
+      if (calls.length || reply.text.trim()) entries.push({ message: { role: "assistant", content: reply.text || null, ...(calls.length ? { tool_calls: calls } : {}) } });
       if (!calls.length) {
         // Words alone are not the end: a model that says what it will do, and does not, is reminded once.
         if (!nudged) {

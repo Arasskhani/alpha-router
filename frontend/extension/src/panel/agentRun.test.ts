@@ -253,6 +253,16 @@ describe("a run", () => {
     expect(h.reports.at(-1)).toMatchObject({ kind: "agent_task", outcome: "no_action" });
   });
 
+  it("keeps no empty reply in the conversation, which a provider would refuse", async () => {
+    const h = harness([
+      { text: "", toolCalls: [] },
+      { text: "", toolCalls: [call("done", { summary: "ok" })] },
+    ]);
+    await expect(run(h)).resolves.toMatchObject({ outcome: "done" });
+    expect(h.sent[1].some((m) => m.role === "assistant" && !m.content && !("tool_calls" in m && m.tool_calls))).toBe(false);
+    expect(String(h.sent[1].at(-1)!.content)).toMatch(/without calling a tool/);
+  });
+
   it("stops at its step limit", async () => {
     const replies = Array.from({ length: 10 }, () => ({ text: "", toolCalls: [call("scroll", { direction: "down" })] }));
     const h = harness(replies);

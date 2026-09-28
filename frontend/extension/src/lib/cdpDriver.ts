@@ -51,6 +51,20 @@ export class CdpDriver {
     await this.session.detach();
   }
 
+  /** Whether the session is still attached (Chrome ends it when the tab closes, or DevTools takes it). */
+  get attached(): boolean {
+    return this.session.isAttached;
+  }
+
+  /**
+   * The tab in front, before a capture: Chrome draws no frames for a tab in
+   * the background, and a screenshot of one waits for a frame that never
+   * comes. Best-effort: an old browser without the command still captures.
+   */
+  private async front(): Promise<void> {
+    await this.session.send("Page.bringToFront").catch(() => undefined);
+  }
+
   private async refreshViewport(): Promise<Size> {
     this.css = await viewportSize(this.session);
     this.frame = frameFor(this.css, this.maxSide);
@@ -65,6 +79,7 @@ export class CdpDriver {
   }
 
   async screenshot(): Promise<Shot> {
+    await this.front();
     const shot = await captureViewport(this.session, this.maxSide);
     this.frame = shot.frame;
     this.css = shot.css;
@@ -87,6 +102,7 @@ export class CdpDriver {
     const y1 = Math.max(y0 + 1, Math.min(css.height, rect.y + rect.height + padding));
     const region = { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
     const side = Math.min(options.side ?? CROP_SIDE, 2 * Math.max(region.width, region.height));
+    await this.front();
     return await captureRegion(this.session, region, side);
   }
 
@@ -95,6 +111,7 @@ export class CdpDriver {
     if (!this.frame) await this.refreshViewport();
     const topLeft = frameToCss({ x: region.x, y: region.y }, this.frame!);
     const size = frameToCss({ x: region.width, y: region.height }, this.frame!);
+    await this.front();
     return await captureRegion(this.session, { x: topLeft.x, y: topLeft.y, width: size.x, height: size.y }, this.maxSide);
   }
 

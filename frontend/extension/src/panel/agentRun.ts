@@ -97,7 +97,10 @@ export type AgentEventReport = {
 };
 
 /** The run's driver under full control: input and screenshots (cdpDriver.ts); absent on the dom path. */
-export type ControlDriver = Pick<CdpDriver, "screenshot" | "zoom" | "crop" | "click" | "hover" | "scroll" | "drag" | "type" | "key" | "toCss" | "onDialog" | "handleDialog">;
+export type ControlDriver = Pick<CdpDriver, "screenshot" | "zoom" | "crop" | "click" | "hover" | "scroll" | "drag" | "type" | "key" | "toCss" | "onDialog" | "handleDialog"> & {
+  /** Work in this tab from now on (lib/driver.ts TabDrivers); false when Chrome will not attach to it. */
+  use?(tabId: number): Promise<boolean>;
+};
 
 /** What the run is doing, as the page's border and the toolbar badge show it. */
 export type RunState = "working" | "waiting" | "paused";
@@ -934,6 +937,21 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     }
     const tab = await deps.browser.current();
     check();
+    // Full control follows the tab the agent works in: its own session, attached the first time the agent works there -
+    // for its mouse and screenshots, and so that a dialog the page opens is seen, whatever the tool.
+    if (deps.driver?.use && tab && PAGE_TOOLS.has(name)) {
+      const controlled = await deps.driver.use(tab.id);
+      check();
+      if (!controlled && CONTROL_TOOL_NAMES.has(name)) {
+        return {
+          content: "Full control is not available on this tab: the browser would not let the extension attach to it. Use read_page and the reference tools here.",
+          status: "error",
+          detail: "No full control on this tab",
+          outcome: "error",
+          extra: { error: "no_control" },
+        };
+      }
+    }
     const pageNow = tab?.host ? { url: tab.url, host: tab.host } : undefined;
     // Nothing is asked of a page the agent may not work on, not even a description: the rules refuse the action below.
     const workable = Boolean(tab && pageNow && classifyAction({ tool: "read_page", args: {}, page: pageNow }, options.rules).class !== "blocked");

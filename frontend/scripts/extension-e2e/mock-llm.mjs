@@ -101,6 +101,7 @@ export const AGENT_TASKS = {
   scroll: "E2E-AGENT-SCROLL",
   low: "E2E-AGENT-LOW",
   dialog: "E2E-AGENT-DIALOG",
+  tabs: "E2E-AGENT-TABS",
 };
 /** Where agent-control.html puts its trusted-only button, in CSS pixels (its centre). */
 export const CONTROL_CLICK = [100, 140];
@@ -139,7 +140,7 @@ function refIn(messages, role, name) {
  * holds; each script reads the page first and ends with done, saying what
  * the last answer it got was.
  */
-async function agentReply(messages, { stealUrl, locate }) {
+async function agentReply(messages, { stealUrl, openUrl, locate }) {
   const task = text(messages.find((m) => m.role === "user"));
   const step = messages.filter((m) => m.role === "assistant" && Array.isArray(m.tool_calls)).length;
   const last = String([...messages].reverse().find((m) => m.role === "tool")?.content ?? "");
@@ -195,6 +196,13 @@ async function agentReply(messages, { stealUrl, locate }) {
       (m) => pointAt(m, "Dialog step"),
       () => answered("Dialog step"),
     ],
+    // Full control in a tab the agent opens: the screenshot and the click must be that tab's, not the one it left.
+    [AGENT_TASKS.tabs]: [
+      () => ({ tool: "tab_open", args: { url: openUrl } }),
+      () => ({ tool: "screenshot", args: {} }),
+      (m) => pointAt(m, "Tabs step"),
+      () => answered("Tabs step"),
+    ],
     // Full control on a long page: scroll down with the wheel, look, and click what is there now.
     [AGENT_TASKS.scroll]: [
       () => ({ tool: "computer", args: { action: "scroll", coordinate: [200, 200], scroll_direction: "down", scroll_amount: 10 } }),
@@ -231,9 +239,10 @@ function toolCallFrames({ id, created, callId, tool, args }) {
 
 /**
  * Start the server on 127.0.0.1:port (0 picks a free one). `plantBase` is
- * where the planted images point: somewhere the check watches for requests.
+ * where the planted images point: somewhere the check watches for requests;
+ * `openUrl` is the page the tabs script opens in a new tab.
  */
-export async function startMockLlm({ port = 0, plantBase = "https://planted.invalid", stealUrl = "http://localhost:9/steal" } = {}) {
+export async function startMockLlm({ port = 0, plantBase = "https://planted.invalid", stealUrl = "http://localhost:9/steal", openUrl = "http://localhost:9/" } = {}) {
   const requests = [];
   /** Finds TARGET_COLOR in a screenshot: set by the check once it has a browser (setLocator). */
   let locate = null;
@@ -253,7 +262,7 @@ export async function startMockLlm({ port = 0, plantBase = "https://planted.inva
         const id = `chatcmpl-e2e-${requests.length}`;
         const created = Math.floor(Date.now() / 1000);
         if (Array.isArray(body.tools) && body.tools.length && body.stream) {
-          const next = await agentReply(messages, { stealUrl, locate });
+          const next = await agentReply(messages, { stealUrl, openUrl, locate });
           res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
           const frames = next.tool
             ? toolCallFrames({ id, created, callId: `call_e2e_${requests.length}`, tool: next.tool, args: next.args })

@@ -610,7 +610,7 @@ async function main() {
 
   const site = await startTestSite();
   localUndo.push({ name: "stop the test site", fn: () => site.close() });
-  const mock = await startMockLlm({ plantBase: `${BASE}${PLANT_PATH}`, stealUrl: site.stealUrl });
+  const mock = await startMockLlm({ plantBase: `${BASE}${PLANT_PATH}`, stealUrl: site.stealUrl, openUrl: site.agentUrl("agent-control.html") });
   const locator = await startLocator();
   localUndo.push({ name: "close the mock model's screenshot reader", fn: () => locator.close() });
   mock.setLocator(locator.locate);
@@ -1134,6 +1134,27 @@ async function main() {
     expect((await page.title()) === "CONFIRMED", `the page's title is ${await page.title()}`);
     expect(await panel.run(agentSays("accepted by the user")), "the model was not told the user accepted the dialog");
     await page.close();
+  });
+
+  await step("under full control the agent opens a tab and clicks in it, not in the tab it left", async () => {
+    expect(panel, "no side panel");
+    const task = `${AGENT_TASKS.tabs}: open the control page and press its button (${NONCE})`;
+    agentTasks.push(task);
+    const start = await context.newPage();
+    await start.goto(site.agentUrl("agent-shop.html"));
+    const opened = context.waitForEvent("page", { predicate: (p) => p.url().includes("agent-control.html"), timeout: 60_000 });
+    await agentStart(start, task);
+    await panel.until(agentSays("in a new tab"), "the approval to open the tab", 40_000);
+    await panel.run(agentClick("Allow"));
+    const tab = await opened;
+    await panel.until(agentSays('Click button "Trusted?"'), "the approval to click in the new tab", 40_000);
+    await panel.run(agentClick("Allow"));
+    await panel.until(agentSays("Tabs step: Clicked at"), "the agent's summary", 40_000);
+    await panel.until(agentIdle, "the run to end");
+    const clicks = await tab.evaluate(() => window.__clicks);
+    expect(clicks.length === 1 && clicks[0] === true, `the new tab's button got ${JSON.stringify(clicks)}`);
+    await tab.close();
+    await start.close();
   });
 
   await step("under full control a screenshot shows the part of the page scrolled to, and a click there lands", async () => {

@@ -19,7 +19,7 @@ import { fromTabScript, isExtensionMessage } from "../lib/messages";
 import { readablePage } from "../lib/sites";
 import { DisconnectedError, TemporaryError } from "../lib/tokens";
 import { useActivePage, useSiteAccess } from "./activePage";
-import { chooseDriver } from "../lib/driver";
+import { chooseDriver, TabDrivers } from "../lib/driver";
 import { clampMaxSide } from "../lib/coords";
 import { createAgentBrowser, type PanelBrowser } from "./agentBrowser";
 import {
@@ -475,11 +475,18 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
         } else {
           const choice = await chooseDriver(activePage.tabId, { fullControl: true, maxSide });
           if (choice.mode === "cdp") {
-            driver = choice.driver;
-            stopDriver = () => choice.driver.stop();
-            choice.driver.onDetached((reason) => {
-              if (reason === "canceled_by_user") abort.abort();
-            });
+            // Each tab the agent works in gets its own session; Cancel on Chrome's bar, on any of them, stops the run.
+            const drivers = new TabDrivers(
+              { tabId: activePage.tabId, driver: choice.driver },
+              {
+                maxSide,
+                onDetached: (reason) => {
+                  if (reason === "canceled_by_user") abort.abort();
+                },
+              },
+            );
+            driver = drivers;
+            stopDriver = () => drivers.stop();
             append({ kind: "text", id: `${run}-driver`, text: "Full control is on: a real mouse and keyboard, and screenshots. Chrome shows its debugging bar while this runs." });
           } else {
             append({ kind: "text", id: `${run}-driver`, text: `Working without full control: ${choice.reason}.` });

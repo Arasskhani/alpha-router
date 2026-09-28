@@ -361,6 +361,25 @@ describe("runs of deletion keys", () => {
   });
 });
 
+describe("full control follows the tab", () => {
+  it("works in the tab the agent is on before it sends input or captures there", async () => {
+    const h = harness([{ text: "", toolCalls: [call("screenshot")] }, { text: "", toolCalls: [call("done", { summary: "ok" })] }]);
+    const use = vi.fn(async () => true);
+    (h.driver as ControlDriver).use = use;
+    await h.run();
+    expect(use).toHaveBeenCalledWith(TAB.id);
+    expect(h.driver!.screenshot).toHaveBeenCalled();
+  });
+
+  it("tells the model when the browser will not let it take over a tab, and works on without", async () => {
+    const h = harness([{ text: "", toolCalls: [call("screenshot")] }, { text: "", toolCalls: [call("done", { summary: "ok" })] }]);
+    (h.driver as ControlDriver).use = vi.fn(async () => false);
+    await h.run();
+    expect(h.driver!.screenshot).not.toHaveBeenCalled();
+    expect(String(h.sent[1].find((m) => m.role === "tool")!.content)).toContain("Full control is not available on this tab");
+  });
+});
+
 describe("the page's dialogs", () => {
   const click = () => [{ text: "", toolCalls: [call("computer", { action: "left_click", coordinate: [200, 100] })] }];
   type Dialog = { type: string; message: string };

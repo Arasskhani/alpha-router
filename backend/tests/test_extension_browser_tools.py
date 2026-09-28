@@ -74,6 +74,11 @@ FOLLOW_UP = [
 ]
 
 
+def _cached(messages: list) -> list:
+    """``messages`` as the provider gets them: the agent's instructions end the part its cache keeps."""
+    return [{**m, "cache_control": {"type": "ephemeral"}} if i == 0 else m for i, m in enumerate(messages)]
+
+
 # --- the provider -------------------------------------------------------------
 
 
@@ -397,7 +402,7 @@ class TestAStep:
         [call] = provider.calls
         assert call["tools"] == TOOLS
         assert call["tool_choice"] == "auto"
-        assert call["messages"] == TASK
+        assert call["messages"] == _cached(TASK)
 
     async def test_a_reply_of_tool_calls_alone_is_a_success(self, client, browser, models, provider, session_factory):
         provider.reply(*CLICK_REPLY)
@@ -434,7 +439,7 @@ class TestAStep:
         resp = await client.post("/api/chat/completions", json=_body(models.a, FOLLOW_UP), headers=browser.headers)
         assert resp.status_code == 200, resp.text
         # Nothing was added to or taken from the conversation: no memory, no profile.
-        assert provider.calls[0]["messages"] == FOLLOW_UP
+        assert provider.calls[0]["messages"] == _cached(FOLLOW_UP)
         [log] = await _logs(session_factory)
         assert log.success is True
 
@@ -807,7 +812,7 @@ class TestTheTurn:
         )
         assert ctx.completion_kwargs["tools"] == TOOLS
         assert ctx.completion_kwargs["tool_choice"] == "required"
-        assert ctx.completion_kwargs["messages"] == FOLLOW_UP
+        assert ctx.completion_kwargs["messages"] == _cached(FOLLOW_UP)
 
     @pytest.mark.parametrize("choice", [None, "any", 3])
     async def test_an_unknown_choice_is_left_to_the_provider(self, db_session, user, choice):

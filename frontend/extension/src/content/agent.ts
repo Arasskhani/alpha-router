@@ -1563,12 +1563,17 @@ function keyDefault(target: Element, combo: KeyCombo, isVisible: Visibility): st
     return "";
   }
   if (!inText && ["PageDown", "PageUp", "Home", "End", " "].includes(key)) {
-    const scroller = doc.scrollingElement ?? doc.documentElement;
-    const page = (doc.defaultView?.innerHeight || 800) * 0.9;
-    if (key === "Home") scroller.scrollTo?.({ top: 0 });
-    else if (key === "End") scroller.scrollTo?.({ top: scroller.scrollHeight });
-    else scroller.scrollBy?.({ top: key === "PageUp" || (key === " " && combo.shift) ? -page : page });
-    return `The page scrolled: ${Math.round(scroller.scrollTop)} of ${Math.round(scroller.scrollHeight)} pixels from the top.`;
+    // What the browser pages: the scrolling list or area the keyboard is in, or the page - never a page that does not scroll.
+    const scroller = scrollerFor(doc, target, "y");
+    if (!scroller) return "Nothing here scrolls.";
+    const home = scroller.ownerDocument;
+    const isPage = scroller === (home.scrollingElement ?? home.documentElement);
+    const page = ((isPage ? home.defaultView?.innerHeight : scroller.clientHeight) || 800) * 0.9;
+    const instant = "instant" as ScrollBehavior;
+    if (key === "Home") scroller.scrollTo?.({ top: 0, behavior: instant });
+    else if (key === "End") scroller.scrollTo?.({ top: scroller.scrollHeight, behavior: instant });
+    else scroller.scrollBy?.({ top: key === "PageUp" || (key === " " && combo.shift) ? -page : page, behavior: instant });
+    return `Scrolled ${scrollerName(doc, scroller)}: ${scrolledTo(doc, scroller, "y")}.`;
   }
   return "";
 }
@@ -1631,10 +1636,19 @@ function documentScroller(doc: Document, axis: Axis): Element | null {
   return room > 1 ? scroller : null;
 }
 
-/** Whether an element scrolls its own content along the axis: overflow auto or scroll, with more than it shows. */
+/**
+ * Whether an element scrolls its own content along the axis: overflow auto or
+ * scroll, with more than it shows. The body does only when the root element
+ * keeps its own overflow (html { overflow: hidden }); otherwise the body's
+ * overflow is the page's.
+ */
 function scrollsItself(el: Element, axis: Axis): boolean {
   const view = el.ownerDocument.defaultView;
-  if (!view || el === el.ownerDocument.documentElement || el === el.ownerDocument.body) return false;
+  if (!view || el === el.ownerDocument.documentElement) return false;
+  if (el === el.ownerDocument.body) {
+    const root = view.getComputedStyle(el.ownerDocument.documentElement);
+    if ((axis === "y" ? root.overflowY : root.overflowX) === "visible") return false;
+  }
   const style = view.getComputedStyle(el);
   const overflow = axis === "y" ? style.overflowY : style.overflowX;
   const room = axis === "y" ? el.scrollHeight - el.clientHeight : el.scrollWidth - el.clientWidth;
@@ -1647,16 +1661,38 @@ function scrollsItself(el: Element, axis: Axis): boolean {
  * list, a side panel - or else the page itself; null when nothing does.
  */
 export function scrollerFor(doc: Document, start: Element | null, axis: Axis): Element | null {
-  for (let node: Element | null = start, depth = 0; node && depth < 100; node = parentAcrossShadow(node), depth += 1) {
-    if (isOwnHost(node)) break;
-    if (scrollsItself(node, axis)) return node;
+  let home = start?.ownerDocument ?? doc;
+  let node: Element | null = start;
+  for (let depth = 0; depth < 200; depth += 1) {
+    if (node && !isOwnHost(node)) {
+      if (scrollsItself(node, axis)) return node;
+      node = parentAcrossShadow(node);
+      continue;
+    }
+    const own = documentScroller(home, axis);
+    if (own) return own;
+    // A frame of this site that does not scroll itself: what scrolls around the frame.
+    const frame = frameElementOf(home);
+    if (!frame) return null;
+    home = frame.ownerDocument;
+    node = frame;
   }
-  return documentScroller(doc, axis);
+  return null;
+}
+
+/** The frame element a document is shown in, when the page around it is this site's; null for the top document. */
+function frameElementOf(doc: Document): Element | null {
+  try {
+    return doc.defaultView?.frameElement ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /** What a scroller is, for the result: the page, or the list or area by its role and name. */
 export function scrollerName(doc: Document, scroller: Element): string {
-  if (scroller === (doc.scrollingElement ?? doc.documentElement)) return "the page";
+  const home = scroller.ownerDocument ?? doc;
+  if (scroller === (home.scrollingElement ?? home.documentElement)) return home === doc ? "the page" : "the frame's page";
   const role = roleOf(scroller) ?? ((scroller.getAttribute("role") ?? "").trim().split(/\s+/)[0].toLowerCase() || "area");
   const name = accessibleName(scroller, role);
   return `the ${role}${name ? ` ${quoted(clip(name, 60))}` : ""} [${refFor(scroller)}]`;
@@ -1664,8 +1700,9 @@ export function scrollerName(doc: Document, scroller: Element): string {
 
 /** Where a scroller is now, and how much is left, in CSS pixels. */
 export function scrolledTo(doc: Document, scroller: Element, axis: Axis): string {
-  const isPage = scroller === (doc.scrollingElement ?? doc.documentElement);
-  const view = doc.defaultView;
+  const home = scroller.ownerDocument ?? doc;
+  const isPage = scroller === (home.scrollingElement ?? home.documentElement);
+  const view = home.defaultView;
   const shown = axis === "y" ? (isPage ? view?.innerHeight : undefined) ?? scroller.clientHeight : (isPage ? view?.innerWidth : undefined) ?? scroller.clientWidth;
   const at = Math.round(axis === "y" ? scroller.scrollTop : scroller.scrollLeft);
   const size = Math.round(axis === "y" ? scroller.scrollHeight : scroller.scrollWidth);
@@ -1705,8 +1742,9 @@ export function scroll(doc: Document, direction: unknown, ref: unknown, isVisibl
   const axis: Axis = move === "top" || move === "bottom" ? "y" : move!.axis;
   const scroller = scrollerFor(doc, from, axis);
   if (!scroller) return { ok: false, error: "not_found", message: "Nothing here scrolls: all of it is in view already." };
-  const isPage = scroller === (doc.scrollingElement ?? doc.documentElement);
-  const view = doc.defaultView;
+  const home = scroller.ownerDocument;
+  const isPage = scroller === (home.scrollingElement ?? home.documentElement);
+  const view = home.defaultView;
   const step = Math.round((axis === "y" ? (isPage ? view?.innerHeight : scroller.clientHeight) || 800 : (isPage ? view?.innerWidth : scroller.clientWidth) || 1200) * 0.8);
   const before = axis === "y" ? scroller.scrollTop : scroller.scrollLeft;
   // Instant: a page's smooth scrolling would still be under way when the result is read.

@@ -708,6 +708,20 @@ describe("acting", () => {
     expect(document.activeElement).toBe(document.querySelector('input[aria-label="After"]'));
   });
 
+  it("pages the list the keyboard is in, not a page that does not scroll", () => {
+    page(`<div id="list" role="listbox" aria-label="Inbox" style="overflow-y: auto"><div role="option" tabindex="0" id="row">Row</div></div>`);
+    const list = document.getElementById("list")!;
+    Object.defineProperty(list, "scrollHeight", { value: 5000, configurable: true });
+    Object.defineProperty(list, "clientHeight", { value: 500, configurable: true });
+    let top = 0;
+    Object.defineProperty(list, "scrollTop", { get: () => top, configurable: true });
+    list.scrollBy = ((options: ScrollToOptions) => {
+      top += options.top ?? 0;
+    }) as typeof list.scrollBy;
+    document.getElementById("row")!.focus();
+    expect(pressKey(document, "PageDown", visible)).toMatchObject({ note: expect.stringMatching(/Scrolled the listbox "Inbox" \[e\d+\]: 450 of 5000 pixels from the top/) });
+  });
+
   it("types a character key's character where the caret is", () => {
     page(`<input aria-label="City" value="Tehan">`);
     const input = document.querySelector("input")!;
@@ -825,6 +839,18 @@ describe("acting", () => {
     expect(list.scrollTop).toBe(4500);
     expect(scroll(document, "down", ref, visible)).toMatchObject({ ok: true, note: expect.stringContaining("did not move") });
     document.documentElement.style.overflow = "";
+  });
+
+  it("scrolls the body when the root element keeps its own overflow", () => {
+    page(`<p>Long</p>`);
+    document.documentElement.style.overflow = "hidden";
+    document.body.style.overflowY = "auto";
+    scrollable(document.body, { height: 4000, client: 700 });
+    vi.spyOn(document, "elementFromPoint").mockReturnValue(document.querySelector("p"));
+    expect(scroll(document, "down", undefined, visible)).toMatchObject({ ok: true, note: expect.stringMatching(/^Scrolled down 560 pixels in /) });
+    expect(document.body.scrollTop).toBe(560);
+    document.documentElement.style.overflow = "";
+    document.body.style.overflowY = "";
   });
 
   it("waits for text to appear, and gives up after the time it was given", async () => {

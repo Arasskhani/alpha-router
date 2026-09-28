@@ -47,7 +47,8 @@ function isAbort(err: unknown): boolean {
 
 /** Whether a second try may mend what went wrong: a limit, a cut or failed stream, a server error, the network. */
 function worthRetrying(err: unknown): boolean {
-  if (err instanceof ModelTimeout || err instanceof ChatStreamError) return true;
+  if (err instanceof ModelTimeout) return true;
+  if (err instanceof ChatStreamError) return err.retryable;
   if (err instanceof ApiError) return err.status >= 500;
   if (err instanceof DisconnectedError) return false;
   // fetch() rejects with a TypeError when the network fails.
@@ -75,7 +76,7 @@ async function once(call: ModelStepCall, stepSignal: AbortSignal): Promise<Strea
   try {
     const response = await call.request(attempt.signal);
     if (!response.ok) throw await ApiError.from(response);
-    return await readChatStream(response, { onText: call.onText, onActivity: alive });
+    return await readChatStream(response, { onText: call.onText, onActivity: alive }, { strict: true });
   } catch (err) {
     if (stepSignal.aborted) throw new DOMException("The run was stopped.", "AbortError");
     if (limit && (isAbort(err) || err instanceof TypeError || err instanceof ChatStreamError)) throw limit;

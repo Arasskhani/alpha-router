@@ -39,10 +39,15 @@ let tabId: number;
 const pageCalls: Array<{ method: string; args: Record<string, unknown>; banner?: { run: string; label: string } | null }> = [];
 const onDisconnected = vi.fn();
 
+/** A step's answer as the server streams it: the calls, why the model finished, and [DONE]. */
 function toolFrame(calls: Array<{ id: string; name: string; args?: Record<string, unknown> }>): string[] {
-  return calls.map((c, index) =>
-    frame({ choices: [{ delta: { tool_calls: [{ index, id: c.id, type: "function", function: { name: c.name, arguments: JSON.stringify(c.args ?? {}) } }] } }] }),
-  );
+  return [
+    ...calls.map((c, index) =>
+      frame({ choices: [{ delta: { tool_calls: [{ index, id: c.id, type: "function", function: { name: c.name, arguments: JSON.stringify(c.args ?? {}) } }] } }] }),
+    ),
+    frame({ choices: [{ delta: {}, finish_reason: "tool_calls" }] }),
+    "data: [DONE]\n\n",
+  ];
 }
 
 beforeEach(() => {

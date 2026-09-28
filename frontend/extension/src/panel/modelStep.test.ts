@@ -74,6 +74,16 @@ describe("a model step", () => {
     await expect(modelStep({ request, idleMs: 40, retries: 0 }, new AbortController().signal)).resolves.toMatchObject({ text: "ok" });
   });
 
+  it("tries again after a stream that was cut short", async () => {
+    let tries = 0;
+    const request = vi.fn(async (signal: AbortSignal) => {
+      tries += 1;
+      return sse(tries === 1 ? [frame({ choices: [{ delta: { content: "half" } }] })] : DONE, { signal }).response;
+    });
+    await expect(modelStep({ request }, new AbortController().signal)).resolves.toMatchObject({ text: "ok" });
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
   it("tries again after a server error, but not after a refusal", async () => {
     const failing = server([502, "ok"]);
     await expect(modelStep({ request: failing.request }, new AbortController().signal)).resolves.toMatchObject({ text: "ok" });

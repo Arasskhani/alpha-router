@@ -76,4 +76,58 @@ describe("reading a chat stream", () => {
     const result = await readChatStream(streamOf([": keep-alive\n\n", "data: not json\n\n", text("ok"), "data: [DONE]\n\n"]));
     expect(result).toEqual({ text: "ok", toolCalls: [], meta: {} });
   });
+
+  it("keeps two calls apart that a provider sends under one index", async () => {
+    const result = await readChatStream(
+      streamOf([
+        frame({ choices: [{ delta: { tool_calls: [{ index: 0, id: "a", function: { name: "read_page", arguments: "{}" } }] } }] }),
+        frame({ choices: [{ delta: { tool_calls: [{ index: 0, id: "b", function: { name: "find", arguments: '{"query":"To"}' } }] } }] }),
+      ]),
+    );
+    expect(result.toolCalls).toEqual([
+      { id: "a", name: "read_page", arguments: "{}" },
+      { id: "b", name: "find", arguments: '{"query":"To"}' },
+    ]);
+  });
+
+  it("adds a fragment without an index to the call it continues", async () => {
+    const result = await readChatStream(
+      streamOf([
+        frame({ choices: [{ delta: { tool_calls: [{ id: "a", function: { name: "type_text", arguments: '{"ref":"e1",' } }] } }] }),
+        frame({ choices: [{ delta: { tool_calls: [{ function: { arguments: '"text":"hi"}' } }] } }] }),
+      ]),
+    );
+    expect(result.toolCalls).toEqual([{ id: "a", name: "type_text", arguments: '{"ref":"e1","text":"hi"}' }]);
+  });
+
+  it("reads a whole answer sent at once rather than in pieces", async () => {
+    const result = await readChatStream(
+      streamOf([frame({ choices: [{ message: { content: "Done", tool_calls: [{ index: 0, id: "a", function: { name: "done", arguments: '{"summary":"ok"}' } }] }, finish_reason: "tool_calls" }] })]),
+    );
+    expect(result).toMatchObject({ text: "Done", toolCalls: [{ id: "a", name: "done" }] });
+  });
+
+  describe("strictly, for the agent", () => {
+    it("takes a stream that ends with [DONE] or says why it finished", async () => {
+      await expect(readChatStream(streamOf([text("a"), "data: [DONE]\n\n"]), {}, { strict: true })).resolves.toMatchObject({ text: "a" });
+      await expect(readChatStream(streamOf([frame({ choices: [{ delta: { content: "b" }, finish_reason: "stop" }] })]), {}, { strict: true })).resolves.toMatchObject({ text: "b" });
+    });
+
+    it("refuses a stream that just stops, which asking again may mend", async () => {
+      const err = await readChatStream(streamOf([text("half an ans")]), {}, { strict: true }).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ChatStreamError);
+      expect((err as ChatStreamError).retryable).toBe(true);
+      await expect(readChatStream(streamOf([]), {}, { strict: true })).rejects.toThrow(/cut short/);
+    });
+
+    it("refuses an answer cut at its length limit in the middle of an action, which asking again will not mend", async () => {
+      const err = await readChatStream(
+        streamOf([frame({ choices: [{ delta: { tool_calls: [{ index: 0, id: "a", function: { name: "type_text", arguments: '{"ref":"e1","te' } }] }, finish_reason: "length" }] }), "data: [DONE]\n\n"]),
+        {},
+        { strict: true },
+      ).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ChatStreamError);
+      expect((err as ChatStreamError).retryable).toBe(false);
+    });
+  });
 });

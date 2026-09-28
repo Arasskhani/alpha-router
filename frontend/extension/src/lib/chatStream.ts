@@ -26,9 +26,13 @@ export type StreamHandlers = {
 };
 
 export class ChatStreamError extends Error {
-  constructor(message: string) {
+  /** Whether asking again may get a whole answer: a cut or failed stream may; one cut at its length limit will not. */
+  readonly retryable: boolean;
+
+  constructor(message: string, options: { retryable?: boolean } = {}) {
     super(message);
     this.name = "ChatStreamError";
+    this.retryable = options.retryable ?? true;
   }
 }
 
@@ -38,6 +42,32 @@ type ToolCallFragment = {
   function?: { name?: string; arguments?: string };
 };
 
+type Choice = {
+  delta?: { content?: unknown; tool_calls?: ToolCallFragment[] };
+  /** A provider that sends the whole answer at once, not in pieces. */
+  message?: { content?: unknown; tool_calls?: ToolCallFragment[] };
+  finish_reason?: unknown;
+};
+
+export type StreamOptions = {
+  /**
+   * The answer must be whole: the stream ends with [DONE] or says why it
+   * finished. A stream that just stops - a proxy cutting it, the server going
+   * away - is then an error, not an answer; so is one cut at its length limit
+   * in the middle of a tool call. For the agent, which acts on what it gets.
+   */
+  strict?: boolean;
+};
+
+function parses(json: string): boolean {
+  try {
+    JSON.parse(json || "{}");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function errorText(error: unknown): string {
   if (typeof error === "string") return error;
   if (error && typeof error === "object" && typeof (error as { message?: unknown }).message === "string") {
@@ -46,11 +76,35 @@ function errorText(error: unknown): string {
   return "The model could not answer.";
 }
 
-export async function readChatStream(response: Response, handlers: StreamHandlers = {}): Promise<StreamResult> {
+export async function readChatStream(response: Response, handlers: StreamHandlers = {}, options: StreamOptions = {}): Promise<StreamResult> {
   if (!response.body) throw new ChatStreamError("The server sent no reply.");
   let text = "";
   const meta: Record<string, unknown> = {};
-  const calls = new Map<number, ToolCall>();
+  /** The calls in the order they began; each fragment finds its call by index, and a new id at a used index is a new call. */
+  const calls: ToolCall[] = [];
+  const byIndex = new Map<number, ToolCall>();
+  let done = false;
+  let finish: string | null = null;
+  const take = (fragment: ToolCallFragment) => {
+    let call: ToolCall | undefined;
+    if (typeof fragment.index === "number") {
+      call = byIndex.get(fragment.index);
+      // Two calls under one index (some providers number them all 0): a new id starts a new one.
+      if (call && fragment.id && call.id && fragment.id !== call.id) call = undefined;
+    } else {
+      // No index: a piece of the last call, unless it names another.
+      const last = calls[calls.length - 1];
+      call = last && (!fragment.id || !last.id || fragment.id === last.id) ? last : undefined;
+    }
+    if (!call) {
+      call = { id: "", name: "", arguments: "" };
+      calls.push(call);
+      if (typeof fragment.index === "number") byIndex.set(fragment.index, call);
+    }
+    if (fragment.id) call.id = fragment.id;
+    if (fragment.function?.name) call.name = fragment.function.name;
+    if (fragment.function?.arguments) call.arguments += fragment.function.arguments;
+  };
   const raw = response.body.getReader();
   // The reader as the SSE parser sees it, telling the caller each time bytes come - keep-alive comments too.
   const reader = {
@@ -64,7 +118,10 @@ export async function readChatStream(response: Response, handlers: StreamHandler
     closed: raw.closed,
   } as ReadableStreamDefaultReader<Uint8Array>;
   for await (const payload of readSseEvents(reader)) {
-    if (payload === "[DONE]") continue;
+    if (payload === "[DONE]") {
+      done = true;
+      continue;
+    }
     let frame: Record<string, unknown>;
     try {
       frame = JSON.parse(payload) as Record<string, unknown>;
@@ -77,22 +134,22 @@ export async function readChatStream(response: Response, handlers: StreamHandler
       Object.assign(meta, extra);
       handlers.onMeta?.(extra as Record<string, unknown>);
     }
-    const choices = frame.choices as Array<{ delta?: { content?: unknown; tool_calls?: ToolCallFragment[] } }> | undefined;
-    const delta = choices?.[0]?.delta;
-    if (!delta) continue;
-    if (typeof delta.content === "string" && delta.content) {
-      text += delta.content;
+    const choice = (frame.choices as Choice[] | undefined)?.[0];
+    if (!choice) continue;
+    if (typeof choice.finish_reason === "string" && choice.finish_reason) finish = choice.finish_reason;
+    const part = choice.delta ?? choice.message;
+    if (!part) continue;
+    if (typeof part.content === "string" && part.content) {
+      text += part.content;
       handlers.onText?.(text);
     }
-    for (const fragment of delta.tool_calls ?? []) {
-      const index = typeof fragment.index === "number" ? fragment.index : calls.size;
-      const call = calls.get(index) ?? { id: "", name: "", arguments: "" };
-      if (fragment.id) call.id = fragment.id;
-      if (fragment.function?.name) call.name = fragment.function.name;
-      if (fragment.function?.arguments) call.arguments += fragment.function.arguments;
-      calls.set(index, call);
+    for (const fragment of part.tool_calls ?? []) take(fragment);
+  }
+  if (options.strict) {
+    if (!done && !finish) throw new ChatStreamError("The model's answer was cut short.");
+    if (finish === "length" && calls.some((call) => !parses(call.arguments))) {
+      throw new ChatStreamError("The model's answer was cut at its length limit, in the middle of an action.", { retryable: false });
     }
   }
-  const toolCalls = [...calls.entries()].sort(([a], [b]) => a - b).map(([, call]) => call);
-  return { text, toolCalls, meta };
+  return { text, toolCalls: calls, meta };
 }

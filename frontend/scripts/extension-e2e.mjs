@@ -361,6 +361,12 @@ async function startTestSite() {
 <h1 style="position:absolute;left:40px;top:20px;margin:0">Control</h1><button id="btn">Trusted?</button>
 <script>window.__clicks=[];document.getElementById('btn').addEventListener('click',(e)=>{window.__clicks.push(e.isTrusted);if(e.isTrusted)document.title='TRUSTED CLICK';});</script>
 </body></html>`,
+    // A button kept at the bottom of the window: in a tall window, lower than 800 CSS pixels.
+    "/agent-low.html": `<!doctype html><html lang="en"><head><title>Low ${NONCE}</title>
+<style>body{margin:0}#btn{position:fixed;left:80px;bottom:40px;width:160px;height:48px;background:${TARGET_COLOR};color:#fff;border:0}</style></head><body>
+<h1 style="margin:20px">At the bottom</h1><button id="btn">Bottom button</button>
+<script>window.__clicks=[];document.getElementById('btn').addEventListener('click',(e)=>{window.__clicks.push(e.isTrusted);});</script>
+</body></html>`,
     // A long page whose button is below the first screen: seen only in a screenshot taken where the page is scrolled to.
     "/agent-scroll.html": `<!doctype html><html lang="en"><head><title>Scroll ${NONCE}</title>
 <style>body{margin:0;height:3000px}#btn{position:absolute;left:80px;top:1600px;width:160px;height:48px;background:${TARGET_COLOR};color:#fff;border:0}</style></head><body>
@@ -1065,6 +1071,25 @@ async function main() {
     expect(shot && shot.content.some((part) => part.type === "image_url" && String(part.image_url?.url).startsWith("data:image/jpeg;base64,")), "the screenshot did not reach the model as an image");
     expect(String(requests[1].messages[0].content).includes("full control"), "the instructions do not mention full control");
     await control.close();
+  });
+
+  await step("under full control a button at the bottom of the window is seen and clicked, however tall the window", async () => {
+    expect(panel, "no side panel");
+    const task = `${AGENT_TASKS.low}: press the button at the bottom (${NONCE})`;
+    agentTasks.push(task);
+    const page = await context.newPage();
+    await page.goto(site.agentUrl("agent-low.html"));
+    await agentStart(page, task);
+    await panel.until(agentCard, "the approval to click the button at the bottom", 40_000);
+    expect(await panel.run(agentSays('Click button "Bottom button"')), "the card does not name the button under the point");
+    await panel.run(agentClick("Allow"));
+    await panel.until(agentSays("Low step: Clicked at"), "the agent's summary", 40_000);
+    await panel.until(agentIdle, "the run to end");
+    const clicks = await page.evaluate(() => window.__clicks);
+    expect(clicks.length === 1 && clicks[0] === true, `the button got ${JSON.stringify(clicks)}`);
+    const bottom = await page.evaluate(() => Math.round(document.getElementById("btn").getBoundingClientRect().bottom));
+    await page.close();
+    return `its bottom at ${bottom} CSS pixels`;
   });
 
   await step("under full control a screenshot shows the part of the page scrolled to, and a click there lands", async () => {

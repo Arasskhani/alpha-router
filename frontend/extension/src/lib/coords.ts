@@ -68,6 +68,31 @@ function positive(value: unknown): value is number {
 }
 
 /**
+ * Device pixels per CSS pixel, from a Page.getLayoutMetrics reply: the
+ * display scale (a Windows laptop at 150 % is 1.5) times the page zoom.
+ * `Page.captureScreenshot` answers in device pixels, so a capture scaled for
+ * the frame is divided by this. The deprecated viewports without the `css`
+ * prefix are in device pixels; their ratio to the CSS ones is the scale. 1
+ * when the reply cannot tell.
+ */
+export function deviceScaleFromMetrics(metrics: unknown): number {
+  const m = metrics as {
+    visualViewport?: ViewportMetrics;
+    cssVisualViewport?: ViewportMetrics;
+    layoutViewport?: ViewportMetrics;
+    cssLayoutViewport?: ViewportMetrics;
+  } | null;
+  for (const [device, css] of [
+    [m?.visualViewport, m?.cssVisualViewport],
+    [m?.layoutViewport, m?.cssLayoutViewport],
+  ] as const) {
+    const ratio = positive(device?.clientWidth) && positive(css?.clientWidth) ? device.clientWidth / css.clientWidth : NaN;
+    if (Number.isFinite(ratio) && ratio >= 0.25 && ratio <= 8) return Math.round(ratio * 1000) / 1000;
+  }
+  return 1;
+}
+
+/**
  * The CSS viewport size from a Page.getLayoutMetrics reply, or null if it has none.
  *
  * Chromium names the size `clientWidth`/`clientHeight` (the viewport without

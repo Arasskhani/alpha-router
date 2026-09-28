@@ -38,3 +38,17 @@ export function layoutMetrics(options: MetricsOptions) {
     cssContentSize: { x: 0, y: 0, width: contentWidth, height: contentHeight },
   };
 }
+
+/**
+ * The start of a JPEG of this size - its frame header - as base64: enough for
+ * the extension to read the size a capture came back at.
+ */
+export function jpegOf(width: number, height: number): string {
+  const bytes = [
+    0xff, 0xd8, // SOI
+    0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, // APP0 JFIF
+    0xff, 0xc0, 0x00, 0x11, 0x08, height >> 8, height & 0xff, width >> 8, width & 0xff, 0x03, 0x01, 0x22, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01, // SOF0
+    0xff, 0xd9, // EOI
+  ];
+  return btoa(String.fromCharCode(...bytes));
+}

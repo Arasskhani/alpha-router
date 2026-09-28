@@ -6,6 +6,7 @@ import {
   cssToFrame,
   cssViewportFromMetrics,
   DEFAULT_MAX_SIDE,
+  deviceScaleFromMetrics,
   frameFor,
   frameToCss,
 } from "./coords";
@@ -85,5 +86,19 @@ describe("cssViewportFromMetrics", () => {
 
   it("takes width and height too, if a browser sends those", () => {
     expect(cssViewportFromMetrics({ cssVisualViewport: { width: 800, height: 600 } })).toEqual({ width: 800, height: 600 });
+  });
+});
+
+describe("deviceScaleFromMetrics", () => {
+  it("reads the display scale from the device and CSS viewports", () => {
+    expect(deviceScaleFromMetrics(layoutMetrics({ width: 870.6666870117188, height: 968, dpr: 1.5 }))).toBe(1.5);
+    expect(deviceScaleFromMetrics(layoutMetrics({ width: 872, height: 970.4, dpr: 1.25 }))).toBe(1.25);
+    expect(deviceScaleFromMetrics(layoutMetrics({ width: 1280, height: 720 }))).toBe(1);
+  });
+
+  it("is 1 when the reply cannot tell", () => {
+    expect(deviceScaleFromMetrics({})).toBe(1);
+    expect(deviceScaleFromMetrics(null)).toBe(1);
+    expect(deviceScaleFromMetrics({ visualViewport: { clientWidth: 100000 }, cssVisualViewport: { clientWidth: 1 } })).toBe(1);
   });
 });

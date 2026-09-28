@@ -1341,6 +1341,11 @@ async function main() {
       seen.add(chat.id);
       expect(chat.messages.length === 2, `the run's chat has ${chat.messages.length} messages`);
       const answer = answerTo(chat.messages, task);
+      // Stopped while the model was still thinking: the run did nothing, and its chat says only that.
+      if (task.startsWith(AGENT_TASKS.slow)) {
+        expect(answer?.role === "assistant" && answer.content.startsWith("**Stopped") && !answer.content.includes("**Steps ("), "the run stopped while thinking is not saved as stopped, with no steps");
+        continue;
+      }
       expect(answer?.role === "assistant" && answer.content.includes("**Steps ("), "the run's chat does not list its steps");
       // The model's own answer may repeat what a page showed it; the step list never carries what was typed.
       const stepList = answer.content.slice(answer.content.indexOf("**Steps ("));

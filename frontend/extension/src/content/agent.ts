@@ -882,33 +882,56 @@ export type Match = { ref: string; role: string; name: string; snippet?: string 
 
 const TEXT_BLOCKS = new Set(["P", "LI", "TD", "TH", "DT", "DD", "BLOCKQUOTE", "FIGCAPTION", "LABEL", "SPAN", "DIV", "PRE", "CODE"]);
 
-/** Elements whose name, value or text contains `query`: the ones a person could use first, then text. */
+/** How well words match a search, as a person scanning the page would judge it: the whole of it, a word's start, anywhere in it. */
+function matchScore(fields: string[], q: string): number {
+  let best = 0;
+  for (const raw of fields) {
+    const field = squash(raw).toLowerCase();
+    if (!field) continue;
+    if (field === q) return 3;
+    const at = field.indexOf(q);
+    if (at < 0) continue;
+    best = Math.max(best, at === 0 || /[\s\p{P}]/u.test(field[at - 1]) ? 2 : 1);
+  }
+  return best;
+}
+
+/**
+ * Elements whose name, value, placeholder or text contains `query`, best
+ * first: what a person could use before plain text, then the whole name
+ * matched before a word's start before anywhere in it, then what is in the
+ * window before the rest, then the page's order. The first twenty.
+ */
 export function find(doc: Document, query: unknown, isVisible: Visibility): Result<{ matches: Match[] }> {
   const q = typeof query === "string" ? squash(query).toLowerCase() : "";
   if (!q || q.length > 200) return { ok: false, error: "bad_request", message: "Say what to look for, in up to 200 characters." };
   prune();
-  const usable: Match[] = [];
-  const text: Match[] = [];
+  type Found = Match & { score: number; usable: boolean; order: number; seen: boolean };
+  const found: Found[] = [];
+  let order = 0;
   const root = doc.body ?? doc.documentElement;
   for (const el of visibleElements(root, isVisible)) {
-    if (usable.length >= MAX_FIND_RESULTS) break;
+    if (order >= MAX_SCANNED_ELEMENTS * 2) break;
     const proxy = labelProxy(el, isVisible);
     const role = proxy ? proxy.role : roleOf(el);
     if (role) {
       const info = proxy ? describeProxy(el, proxy, isVisible) : describeElement(el, role, isVisible);
-      if (`${info.name} ${info.value ?? ""}`.toLowerCase().includes(q)) usable.push({ ref: info.ref, role, name: info.name });
+      const control = proxy ? proxy.control : el;
+      const score = matchScore([info.name, info.value ?? "", info.text ?? "", control.getAttribute("placeholder") ?? "", control.getAttribute("aria-label") ?? "", control.getAttribute("title") ?? ""], q);
+      if (score) found.push({ ref: info.ref, role, name: info.name, score, usable: true, order: order++, seen: inView(el) });
       continue;
     }
-    if (text.length >= MAX_FIND_RESULTS || !(TEXT_BLOCKS.has(el.tagName.toUpperCase()) || headingLevel(el) !== null)) continue;
+    if (!(TEXT_BLOCKS.has(el.tagName.toUpperCase()) || headingLevel(el) !== null)) continue;
     // The innermost element holding the words: its own text nodes contain them.
     const own = squash(Array.from(el.childNodes, (child) => (child.nodeType === Node.TEXT_NODE ? child.nodeValue ?? "" : " ")).join(""));
     const at = own.toLowerCase().indexOf(q);
     if (at < 0 || !isTextRendered(el)) continue;
     const start = Math.max(0, at - 50);
     const snippet = `${start > 0 ? "…" : ""}${own.slice(start, at + q.length + 70)}${at + q.length + 70 < own.length ? "…" : ""}`;
-    text.push({ ref: refFor(el), role: headingLevel(el) !== null ? "heading" : "text", name: "", snippet });
+    found.push({ ref: refFor(el), role: headingLevel(el) !== null ? "heading" : "text", name: "", snippet, score: matchScore([own], q), usable: false, order: order++, seen: inView(el) });
   }
-  const matches = [...usable, ...text].slice(0, MAX_FIND_RESULTS);
+  found.sort((a, b) => Number(b.usable) - Number(a.usable) || b.score - a.score || Number(b.seen) - Number(a.seen) || a.order - b.order);
+  const matches = found.slice(0, MAX_FIND_RESULTS).map(({ ref, role, name, snippet }) => (snippet === undefined ? { ref, role, name } : { ref, role, name, snippet }));
   if (!matches.length) return { ok: false, error: "not_found", message: `Nothing visible on the page matches "${clip(q, 60)}".` };
   return { ok: true, matches };
 }

@@ -347,6 +347,17 @@ describe("acting", () => {
     expect(snapshot(document, { isVisible: hidden }).outline).toContain('checkbox "Remember me" (checked)');
   });
 
+  it("finds the best match first: a control before text, the whole name before part of one", () => {
+    page(`<p>Send it to your friends</p><button>Resend code</button><a href="/s">Sending options</a><button>Send</button>
+      <input placeholder="Search mail"><input aria-label="To">`);
+    const found = find(document, "send", visible);
+    if (!found.ok) throw new Error(found.message);
+    expect(found.matches.map((m) => `${m.role}:${m.name || m.snippet}`)).toEqual(["button:Send", "link:Sending options", "button:Resend code", "text:Send it to your friends"]);
+    // A field is found by its placeholder too.
+    const search = find(document, "search mail", visible);
+    expect(search.ok && search.matches[0]).toMatchObject({ role: "textbox" });
+  });
+
   it("finds an element again by its role and name, counts aside", () => {
     page(`<button>Archive B</button><button>Archive A</button><a href="/in">Inbox (4)</a>`);
     const found = findRef(document, "link", "Inbox (3)", visible);

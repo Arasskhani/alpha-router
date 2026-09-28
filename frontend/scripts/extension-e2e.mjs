@@ -104,6 +104,8 @@ import {
   AGENT_STEAL_PATH,
   AGENT_TASKS,
   CONTROL_CLICK,
+  EDITOR,
+  MAIL,
   MOCK_MODEL,
   PLAIN_REPLY,
   PLANT_IMAGE_MESSAGE,
@@ -398,6 +400,39 @@ async function startTestSite() {
     "/agent-busy.html": `<!doctype html><html lang="en"><head><title>Busy ${NONCE}</title></head><body>
 <h1>Busy</h1><script>setTimeout(() => { const until = Date.now() + 40000; while (Date.now() < until) {} }, 500)</script>
 </body></html>`,
+    // Gmail-like: a page that does not scroll, a message list that does, and a compose window docked at the end of the page,
+    // whose To field turns what is typed into a chip on Enter, whose body carries a signature, and whose Send is at the bottom.
+    "/agent-mail.html": `<!doctype html><html lang="en"><head><title>Mail ${NONCE}</title>
+<style>html,body{margin:0;height:100%;overflow:hidden;font:14px sans-serif}#list{position:absolute;top:40px;left:0;width:55%;bottom:0;overflow-y:auto}
+.row{height:48px;border-bottom:1px solid #ddd;padding:4px 8px}#compose{position:fixed;right:16px;bottom:0;width:360px;background:#fff;border:1px solid #888}
+#compose input{display:block;width:95%;margin:4px}#body{min-height:140px;padding:6px;border-top:1px solid #ddd}.chip{background:#e8eaed;border-radius:12px;padding:2px 8px;margin:2px}</style></head><body>
+<h1 style="margin:8px;font-size:18px">Inbox</h1>
+<div id="list" role="list" aria-label="Messages">${Array.from({ length: 60 }, (_, i) => `<div class="row" role="listitem">Message ${i + 1}</div>`).join("")}</div>
+<div id="compose" role="dialog" aria-label="New Message">
+<div><span id="chips"></span><input id="to" role="combobox" aria-label="To recipients" aria-expanded="false" autocomplete="off"></div>
+<input id="subject" aria-label="Subject" placeholder="Subject">
+<div id="body" contenteditable="true" role="textbox" aria-label="Message Body" aria-multiline="true"><div><br></div><div class="sig">-- <br>Majid</div></div>
+<button id="send">Send</button></div>
+<script>
+window.__sent = null;
+const to = document.getElementById('to'), chips = document.getElementById('chips');
+to.addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === 'Tab') && to.value.trim()) { e.preventDefault(); const c = document.createElement('span'); c.className = 'chip'; c.textContent = to.value.trim(); chips.append(c); to.value = ''; } });
+document.getElementById('send').addEventListener('click', () => {
+  window.__sent = { to: [...chips.children].map((c) => c.textContent), subject: document.getElementById('subject').value, body: document.getElementById('body').innerText };
+  document.getElementById('compose').remove();
+  const done = document.createElement('div'); done.setAttribute('role', 'alert'); done.textContent = 'Message sent'; document.body.append(done);
+});
+</script></body></html>`,
+    // An editor that does its own typing from beforeinput, a date that has a value, and a checkbox hidden under its styled label.
+    "/agent-editor.html": `<!doctype html><html lang="en"><head><title>Editor ${NONCE}</title>
+<style>body{font:14px sans-serif;margin:16px}#bio{min-height:60px;border:1px solid #888;padding:4px}.toggle input{opacity:0;position:absolute;width:1px;height:1px}.slider{display:inline-block;width:28px;height:14px;background:#bbb;border-radius:7px}</style></head><body>
+<h1>Profile</h1><div id="bio" contenteditable="true" role="textbox" aria-label="Bio"></div>
+<p><label for="born">Birthday</label> <input type="date" id="born" value="1990-01-01"></p>
+<p><label class="toggle"><input type="checkbox" id="news"><span class="slider"></span> Send me news</label></p>
+<script>
+const bio = document.getElementById('bio'); let model = '';
+bio.addEventListener('beforeinput', (e) => { e.preventDefault(); if (e.inputType === 'insertText' || e.inputType === 'insertReplacementText') model += e.data ?? ''; else if (e.inputType === 'deleteContentBackward') model = model.slice(0, -1); bio.textContent = model; });
+</script></body></html>`,
     // A long page whose button is below the first screen: seen only in a screenshot taken where the page is scrolled to.
     "/agent-scroll.html": `<!doctype html><html lang="en"><head><title>Scroll ${NONCE}</title>
 <style>body{margin:0;height:3000px}#btn{position:absolute;left:80px;top:1600px;width:160px;height:48px;background:${TARGET_COLOR};color:#fff;border:0}</style></head><body>
@@ -1247,6 +1282,52 @@ async function main() {
     await panel.until(agentIdle, "the run to end");
     const clicks = await page.evaluate(() => window.__clicks);
     expect(clicks.length === 1 && clicks[0] === true, `the button got ${JSON.stringify(clicks)}`);
+    await page.close();
+  });
+
+  await step("a Gmail-like compose: the list scrolls, the recipient becomes a chip, the text goes above the signature, and Send asks", async () => {
+    expect(panel, "no side panel");
+    const task = `${AGENT_TASKS.mail}: write to my friend about lunch (${NONCE})`;
+    agentTasks.push(task);
+    const page = await context.newPage();
+    await page.goto(site.agentUrl("agent-mail.html"));
+    await agentStart(page, task);
+    // Typing into To, Enter, Subject, the body, and Send: each asks in Ask mode.
+    for (const what of [`Type "${MAIL.to}" into "To recipients"`, "Press Enter", `Type "${MAIL.subject}" into "Subject"`, `Type "${MAIL.body}" into "Message Body"`, 'Click "Send"']) {
+      await panel.until(agentSays(what), `the approval to ${what}`, 40_000);
+      await agentAnswer("Allow");
+    }
+    await panel.until(agentSays("Mail step:"), "the agent's summary", 40_000);
+    await panel.until(agentIdle, "the run to end");
+    const state = await page.evaluate(() => ({ sent: window.__sent, list: document.getElementById("list").scrollTop, page: document.scrollingElement.scrollTop }));
+    expect(state.list > 0 && state.page === 0, `the list is at ${state.list} and the page at ${state.page}: the list did not scroll`);
+    expect(state.sent, "the message was not sent");
+    expect(JSON.stringify(state.sent.to) === JSON.stringify([MAIL.to]), `the recipients were ${JSON.stringify(state.sent.to)}`);
+    expect(state.sent.subject === MAIL.subject, `the subject was ${JSON.stringify(state.sent.subject)}`);
+    const body = String(state.sent.body);
+    expect(body.includes(MAIL.body) && body.indexOf(MAIL.body) < body.indexOf("Majid"), `the body was ${JSON.stringify(body)}: the text is not above the signature`);
+    expect(await panel.run(agentSays("Message sent")), "the agent was not told the page said the message was sent");
+    await page.close();
+    return `list at ${state.list} px`;
+  });
+
+  await step("an editor that types for itself, a date, and a checkbox under its label are filled in", async () => {
+    expect(panel, "no side panel");
+    const task = `${AGENT_TASKS.editor}: fill in my profile (${NONCE})`;
+    agentTasks.push(task);
+    const page = await context.newPage();
+    await page.goto(site.agentUrl("agent-editor.html"));
+    await agentStart(page, task);
+    for (const what of [`Type "${EDITOR.bio}" into "Bio"`, `Type "${EDITOR.birthday}" into "Birthday"`, 'Click "Send me news"']) {
+      await panel.until(agentSays(what), `the approval to ${what}`, 40_000);
+      await agentAnswer("Allow");
+    }
+    await panel.until(agentSays("Editor step:"), "the agent's summary", 40_000);
+    await panel.until(agentIdle, "the run to end");
+    const state = await page.evaluate(() => ({ bio: document.getElementById("bio").textContent, born: document.getElementById("born").value, news: document.getElementById("news").checked }));
+    expect(state.bio === EDITOR.bio, `the bio holds ${JSON.stringify(state.bio)}`);
+    expect(state.born === EDITOR.birthday, `the birthday is ${state.born}`);
+    expect(state.news === true, "the checkbox under the label is not ticked");
     await page.close();
   });
 

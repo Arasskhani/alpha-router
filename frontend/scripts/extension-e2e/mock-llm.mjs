@@ -105,7 +105,13 @@ export const AGENT_TASKS = {
   busy: "E2E-AGENT-BUSY",
   slow: "E2E-AGENT-SLOW",
   words: "E2E-AGENT-WORDS",
+  mail: "E2E-AGENT-MAIL",
+  editor: "E2E-AGENT-EDITOR",
 };
+/** What the mail script writes, for the check to find on the page. */
+export const MAIL = { to: "friend@example.com", subject: "Lunch", body: "See you at noon." };
+/** What the editor script sets. */
+export const EDITOR = { bio: "Hello editor", birthday: "2000-05-17" };
 /** Where agent-control.html puts its trusted-only button, in CSS pixels (its centre). */
 export const CONTROL_CLICK = [100, 140];
 /** The colour the check's pages paint what the agent should click, for the mock to find in a screenshot. */
@@ -219,6 +225,26 @@ async function agentReply(messages, { stealUrl, openUrl, locate }) {
       () => ({ tool: "screenshot", args: {} }),
       (m) => pointAt(m, "Tabs step"),
       () => answered("Tabs step"),
+    ],
+    // A Gmail-like page: the list scrolls inside the page, the compose window is docked at its end; the recipient
+    // becomes a chip on Enter, the body has a signature, and Send is at the bottom. By reference, under full control.
+    [AGENT_TASKS.mail]: [
+      () => ({ tool: "read_page", args: {} }),
+      () => ({ tool: "scroll", args: { direction: "down" } }),
+      (m) => ({ tool: "type_text", args: { ref: refIn(m, "combobox", "To recipients"), text: MAIL.to } }),
+      () => ({ tool: "press_key", args: { key: "Enter" } }),
+      (m) => ({ tool: "type_text", args: { ref: refIn(m, "textbox", "Subject"), text: MAIL.subject } }),
+      (m) => ({ tool: "type_text", args: { ref: refIn(m, "textbox", "Message Body"), text: MAIL.body } }),
+      (m) => ({ tool: "click", args: { ref: refIn(m, "button", "Send") } }),
+      () => answered("Mail step"),
+    ],
+    // An editor that does its own typing (beforeinput), a date with a value, and a checkbox hidden under its label.
+    [AGENT_TASKS.editor]: [
+      () => ({ tool: "read_page", args: {} }),
+      (m) => ({ tool: "type_text", args: { ref: refIn(m, "textbox", "Bio"), text: EDITOR.bio } }),
+      (m) => ({ tool: "type_text", args: { ref: refIn(m, "textbox", "Birthday"), text: EDITOR.birthday, clear: true } }),
+      (m) => ({ tool: "click", args: { ref: refIn(m, "checkbox", "Send me news") } }),
+      () => answered("Editor step"),
     ],
     // Full control on a long page: scroll down with the wheel, look, and click what is there now.
     [AGENT_TASKS.scroll]: [

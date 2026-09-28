@@ -575,6 +575,18 @@ class TestRefused:
         assert provider.calls == []
 
     @pytest.mark.usefixtures("agent_on")
+    async def test_never_auto_router_whatever_the_lists_say(self, client, browser, models, provider, db_session):
+        router = await _model(db_session, "openrouter/auto")
+        await save_extension_settings(db_session, ExtensionSettings(agent_models=(f"model::{router.id}",)))
+        await db_session.commit()
+        resp = await client.post("/api/chat/completions", json=_body(router), headers=browser.headers)
+        assert resp.status_code == 403
+        detail = resp.json()["detail"]
+        assert detail["code"] == "agent_model_not_allowed"
+        assert "Auto Router" in detail["message"]
+        assert provider.calls == []
+
+    @pytest.mark.usefixtures("agent_on")
     async def test_with_no_list_and_no_probe_any_model(self, client, browser, models, provider):
         resp = await client.post("/api/chat/completions", json=_body(models.b), headers=browser.headers)
         assert resp.status_code == 200, resp.text

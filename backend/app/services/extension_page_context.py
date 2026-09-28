@@ -48,6 +48,7 @@ from app.services.extension_settings import (
 from app.services.extension_probe import effective_agent_models
 from app.services.model_capabilities import model_media_flags, supports_vision
 from app.services.model_resolution_service import resolve_model_row
+from app.services.model_tool_compatibility_service import is_auto_router_model_id
 
 #: Sites one request may declare; the panel sends one per tab it shares.
 MAX_PAGE_SITES = 20
@@ -186,6 +187,15 @@ async def check_agent_model(db: AsyncSession, *, model_ref: str, settings: Exten
     found = await resolve_model_row(db, model_ref)
     model = found[0] if found is not None else None
     ref = f"model::{model.id}" if model is not None else None
+    # Auto Router picks another model for every step - one that may read no images, or call no tools - so a run
+    # would change hands at each step. Whatever the lists say, it is not the agent's.
+    if model is not None and is_auto_router_model_id(model.external_id):
+        raise PageContextRefused(
+            403,
+            "agent_model_not_allowed",
+            "Auto Router picks another model at each step, which may not see the page or use the browser agent's "
+            "tools. Choose a model for the agent in the Agent tab.",
+        )
     allowed, _ = await effective_agent_models(db, settings.agent_models, settings.agent_recommended_model)
     if allowed and ref not in allowed:
         raise PageContextRefused(

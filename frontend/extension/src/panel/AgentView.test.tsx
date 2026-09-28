@@ -122,6 +122,9 @@ describe("the agent's models", () => {
     const me = { ...ME, policy: { ...ME.policy!, agent_models: ["model::1", "model::2"], page_content_models: ["model::2", "model::3"] } };
     expect(agentModels(MODELS, me).map((m) => m.id)).toEqual(["model::2"]);
     expect(agentModels(MODELS, ME).map((m) => m.id)).toEqual(["model::1", "model::2"]);
+    // Never Auto Router, whatever the lists say.
+    const withRouter = [...MODELS, { ...MODELS[0], id: "model::9", name: "Auto Router", external_id: "openrouter/auto" }];
+    expect(agentModels(withRouter, ME).map((m) => m.id)).toEqual(["model::1", "model::2"]);
   });
 
   it("offers Ask and Plan always, and Auto only when the administrator turned it on", async () => {

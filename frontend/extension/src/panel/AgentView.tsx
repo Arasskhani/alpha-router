@@ -128,12 +128,22 @@ function hostOf(url: string | null | undefined): string | null {
   return readablePage(url ?? undefined)?.host ?? null;
 }
 
-/** Models the agent may use: the text models this account may use, within both of the administrator's lists. */
+/** Auto Router, as its model id names it: it picks another model at each step, so the agent never runs on it. */
+const AUTO_ROUTER = /(^|\/)~?auto(-beta)?$/i;
+
+/**
+ * Models the agent may use: the text models this account may use, within
+ * both of the administrator's lists - and never Auto Router, which would hand
+ * the run to another model at each step.
+ */
 export function agentModels(models: ChatModel[], me: Me): ChatModel[] {
   const agentList = me.policy?.agent_models ?? [];
   const pageList = me.policy?.page_content_models ?? [];
   return textModels(models).filter(
-    (model) => (!agentList.length || agentList.includes(model.id)) && (!pageList.length || pageList.includes(model.id)),
+    (model) =>
+      !AUTO_ROUTER.test(model.external_id ?? "") &&
+      (!agentList.length || agentList.includes(model.id)) &&
+      (!pageList.length || pageList.includes(model.id)),
   );
 }
 

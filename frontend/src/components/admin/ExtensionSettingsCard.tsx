@@ -697,8 +697,9 @@ export default function ExtensionSettingsCard() {
             />
             <span className="settings-row__hint">
               None selected: the models that passed the browser control check below - models that see the page and
-              land their clicks - and, until one has, any model the person may use. The agent sends what it reads on
-              pages to its model, so the model must also be one that may receive page content.
+              land their clicks - and, until one has, any model the person may use. Auto Router is never the
+              agent&apos;s: it picks another model at each step. The agent sends what it reads on pages to its model,
+              so the model must also be one that may receive page content.
             </span>
           </div>
           <div className="extension-admin__field">

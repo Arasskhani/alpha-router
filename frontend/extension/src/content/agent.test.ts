@@ -425,6 +425,24 @@ describe("acting", () => {
     expect(submitForm(byName(shot.elements, "Outside").ref, visible)).toMatchObject({ ok: false, error: "no_form" });
   });
 
+  it("sends a form the way the site does: its send button is clicked, and its handlers run", () => {
+    page(`<form><input aria-label="Search"><button id="go">Go</button></form>`);
+    const form = document.querySelector("form")!;
+    const clicked = vi.fn();
+    document.getElementById("go")!.addEventListener("click", clicked);
+    const submitted = vi.fn((event: Event) => event.preventDefault());
+    form.addEventListener("submit", submitted);
+    const shot = snapshot(document, { isVisible: visible });
+    // From the field: the form's own button is what sends it.
+    expect(submitForm(byName(shot.elements, "Search").ref, visible)).toMatchObject({ ok: true, note: 'Pressed the form\'s "Go" button.' });
+    expect(clicked).toHaveBeenCalledTimes(1);
+    expect(submitted).toHaveBeenCalledTimes(1);
+    // A disabled send button is the page saying no.
+    (document.getElementById("go") as HTMLButtonElement).disabled = true;
+    expect(submitForm(byName(shot.elements, "Search").ref, visible)).toMatchObject({ ok: false, error: "disabled" });
+    expect(submitted).toHaveBeenCalledTimes(1);
+  });
+
   it("presses the keys it knows, to the focused element, with their legacy codes", () => {
     page(`<input aria-label="Chat">`);
     const input = document.querySelector("input")!;

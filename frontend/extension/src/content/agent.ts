@@ -951,8 +951,17 @@ export function submitForm(ref: unknown, isVisible: Visibility): Result<{ note: 
     });
     return { ok: false, error: "invalid_form", message: `The form is not complete: ${names.map(quoted).join(", ")}.` };
   }
-  const submitter = submits(el) ? (el as HTMLButtonElement | HTMLInputElement) : undefined;
-  if (typeof form.requestSubmit === "function") form.requestSubmit(submitter);
+  // The way the site sends it: a click on its submit button, whose own handlers run - many pages send from
+  // there, not from the form's submit event. The form alone is submitted only when it has no such button.
+  const submitter = submits(el) ? el : defaultButton(form);
+  if (submitter) {
+    if (isDisabled(submitter)) return { ok: false, error: "disabled", message: "The form's send button is disabled: something it needs is missing." };
+    const role = roleOf(submitter) ?? "button";
+    const name = accessibleName(submitter, role) || ownWords(submitter, role, isVisible);
+    (submitter as HTMLElement).click();
+    return { ok: true, note: name ? `Pressed the form's ${quoted(clip(name, 60))} button.` : "Pressed the form's send button." };
+  }
+  if (typeof form.requestSubmit === "function") form.requestSubmit();
   else form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
   return { ok: true, note: "The form was sent." };
 }

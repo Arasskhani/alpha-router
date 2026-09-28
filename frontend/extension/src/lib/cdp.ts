@@ -21,7 +21,7 @@
 const CDP_VERSION = "1.3";
 
 /** How long a command may take before the session gives up on it; longer for a capture. Not while a dialog holds the page. */
-export const SEND_TIMEOUT_MS = 10_000;
+const SEND_TIMEOUT_MS = 10_000;
 export const CAPTURE_TIMEOUT_MS = 15_000;
 
 export type CdpTarget = { tabId: number };

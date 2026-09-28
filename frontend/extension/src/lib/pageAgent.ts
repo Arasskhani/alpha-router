@@ -44,7 +44,7 @@ const ERRORS = new Set([
 ]);
 
 /** How long a call to the page may take, both injections together, before the agent is told the page did not answer. */
-export const PAGE_CALL_MS = 15_000;
+const PAGE_CALL_MS = 15_000;
 
 class PageTimeout extends Error {}
 

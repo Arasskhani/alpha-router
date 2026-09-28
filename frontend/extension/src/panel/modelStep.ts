@@ -16,11 +16,11 @@ import { ChatStreamError, readChatStream, type StreamResult } from "../lib/chatS
 import { DisconnectedError } from "../lib/tokens";
 
 /** Without a byte from the server for this long, a step is given up. */
-export const MODEL_IDLE_MS = 90_000;
+const MODEL_IDLE_MS = 90_000;
 /** However the server keeps it alive, a step never takes longer than this. */
-export const MODEL_TOTAL_MS = 240_000;
+const MODEL_TOTAL_MS = 240_000;
 /** A step that failed in a way a second try can mend is tried this many more times. */
-export const MODEL_RETRIES = 1;
+const MODEL_RETRIES = 1;
 
 export class ModelTimeout extends Error {
   constructor(message: string) {

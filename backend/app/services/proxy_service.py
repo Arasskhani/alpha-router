@@ -128,6 +128,7 @@ from app.services.provider_stream import (
     count_completion_tokens,
     count_prompt_tokens,
     estimate_tokens,
+    keep_alive_until,
 )
 from app.services.provider_utils import (  # noqa: F401 -- re-exported under the historical names
     _apply_litellm_provider_kwargs,
@@ -1347,8 +1348,26 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
                     completion_kwargs=completion_kwargs,
                     completion_fn=acompletion,
                 )
+                retry_stopped = False
                 try:
-                    await retry.run()
+                    if tools_turn:
+                        # Asked again whole, the model thinks as long again, with no chunk on the way: the
+                        # connection is kept alive meanwhile, and a Stop calls the retry off.
+                        waiting = asyncio.ensure_future(retry.run())
+                        waiting.add_done_callback(lambda task: task.cancelled() or task.exception())
+                        try:
+                            async for _ in keep_alive_until(waiting):
+                                if await _client_stopped():
+                                    retry_stopped = True
+                                    break
+                                yield SSE_KEEP_ALIVE
+                        finally:
+                            if not waiting.done():
+                                waiting.cancel()
+                        if not retry_stopped:
+                            await waiting
+                    else:
+                        await retry.run()
                 except Exception as retry_exc:  # noqa: BLE001 -- error text is surfaced to the caller
                     usage_events.append(
                         retry.usage_event(
@@ -1361,21 +1380,30 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
                     error_message = _format_provider_error(retry_exc, provider)[:500]
                     yield _sse_error_frame(error_message)
                 else:
-                    stream_end_at = time.perf_counter()
-                    collected_content = retry.content
-                    usage_events.append(retry.usage_event(attempt_index=len(usage_events), status="succeeded"))
-                    prompt_tokens += retry.prompt_tokens
-                    completion_tokens += retry.completion_tokens
-                    cached_tokens += retry.cached_tokens
-                    if tools_turn and agent_turn is None:
-                        yield _sse_message_frame(retry.content, retry.tool_calls())
-                    elif retry.content and agent_turn is None:
-                        yield _sse_delta_chunk(retry.content)
-                        await _persist_content(collected_content)
-                    _compute_cost()
-                    if agent_turn is not None:
-                        await _review_agent_output()
-                        yield _sse_delta_chunk(collected_content)
+                    if retry_stopped:
+                        # The client went while the model was asked again: nothing is sent, and it is booked as such.
+                        client_disconnected = True
+                        usage_events.append(
+                            retry.usage_event(
+                                attempt_index=len(usage_events), status="cancelled", error_message="Request cancelled"
+                            )
+                        )
+                    else:
+                        stream_end_at = time.perf_counter()
+                        collected_content = retry.content
+                        usage_events.append(retry.usage_event(attempt_index=len(usage_events), status="succeeded"))
+                        prompt_tokens += retry.prompt_tokens
+                        completion_tokens += retry.completion_tokens
+                        cached_tokens += retry.cached_tokens
+                        if tools_turn and agent_turn is None:
+                            yield _sse_message_frame(retry.content, retry.tool_calls())
+                        elif retry.content and agent_turn is None:
+                            yield _sse_delta_chunk(retry.content)
+                            await _persist_content(collected_content)
+                        _compute_cost()
+                        if agent_turn is not None:
+                            await _review_agent_output()
+                            yield _sse_delta_chunk(collected_content)
             else:
                 success = False
                 failure = describe_failure(exc)

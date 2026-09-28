@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import datetime
 import json
+from dataclasses import dataclass
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -158,6 +159,14 @@ class _Stream:
         return None
 
 
+@dataclass
+class _Later:
+    """A reply the provider takes a while to give: a model that thinks."""
+
+    value: object
+    seconds: float
+
+
 class Provider:
     """Answers each call with the next scripted reply, and keeps what each call asked for."""
 
@@ -172,6 +181,9 @@ class Provider:
     async def __call__(self, **kwargs):
         self.calls.append(kwargs)
         reply = self.replies.pop(0)
+        if isinstance(reply, _Later):
+            await asyncio.sleep(reply.seconds)
+            reply = reply.value
         # A whole reply (a call without streaming) may fail as the provider refuses it.
         if isinstance(reply, Exception):
             raise reply
@@ -417,6 +429,41 @@ class TestASlowStep:
         # Booked as the stop it was, not as a model that answered nothing.
         assert [e.status for e in events] == ["cancelled"]
         assert all("empty completion" not in (e.error_message or "") for e in events)
+
+    async def test_a_step_asked_again_whole_is_kept_alive_while_the_model_thinks(
+        self, client, browser, models, provider, monkeypatch
+    ):
+        monkeypatch.setattr(provider_stream, "KEEP_ALIVE_SECONDS", 0.02)
+        provider.reply(fail=UNREAD_STREAM)
+        provider.replies.append(_Later(_whole_click(), 0.2))
+        resp = await client.post("/api/chat/completions", json=_body(models.a), headers=browser.headers)
+        before, _, _ = resp.text.partition("data:")
+        assert before.count(": keep-alive\n\n") >= 2
+        [whole] = [
+            f for f in _frames(resp.text) if isinstance(f, dict) and "choices" in f and "message" in f["choices"][0]
+        ]
+        assert whole["choices"][0]["message"]["tool_calls"][0]["function"]["name"] == "click"
+
+    async def test_a_client_gone_while_the_step_was_asked_again_is_cancelled(
+        self, client, browser, models, provider, monkeypatch, session_factory
+    ):
+        from starlette.requests import Request
+
+        from app.models.cost_accounting import UsageEvent
+
+        monkeypatch.setattr(provider_stream, "KEEP_ALIVE_SECONDS", 0.02)
+        provider.reply(fail=UNREAD_STREAM)
+        provider.replies.append(_Later(_whole_click(), 5))
+
+        async def gone(self) -> bool:
+            return True
+
+        monkeypatch.setattr(Request, "is_disconnected", gone)
+        resp = await client.post("/api/chat/completions", json=_body(models.a), headers=browser.headers)
+        assert not [f for f in _frames(resp.text) if isinstance(f, dict) and "choices" in f]
+        async with session_factory() as db:
+            events = (await db.execute(select(UsageEvent))).scalars().all()
+        assert sorted(e.status for e in events) == ["cancelled", "failed"]
 
     async def test_a_quick_step_has_none(self, client, browser, models, provider, monkeypatch):
         monkeypatch.setattr(provider_stream, "KEEP_ALIVE_SECONDS", 0.5)

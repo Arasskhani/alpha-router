@@ -361,6 +361,19 @@ describe("runs of deletion keys", () => {
   });
 });
 
+describe("the screenshots a run keeps", () => {
+  it("keeps the latest full screenshot however many zooms came after it", async () => {
+    const zoom = () => ({ text: "", toolCalls: [call("zoom", { region: [10, 10, 60, 40] })] });
+    const h = harness([{ text: "", toolCalls: [call("screenshot")] }, zoom(), zoom(), zoom(), { text: "", toolCalls: [call("done", { summary: "ok" })] }]);
+    await h.run();
+    const last = h.sent.at(-1)!;
+    const images = last.filter((m) => m.role === "user" && Array.isArray(m.content) && m.content.some((p) => p.type === "image_url"));
+    expect(images).toHaveLength(3);
+    const captions = images.map((m) => (m.content as Array<{ type: string; text?: string }>).find((p) => p.type === "text")!.text!);
+    expect(captions.filter((c) => c.startsWith("The page ("))).toHaveLength(1);
+  });
+});
+
 describe("a browser that fails at an action", () => {
   it("tells the model and goes on, rather than ending the run", async () => {
     const h = harness(

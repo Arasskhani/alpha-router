@@ -394,7 +394,8 @@ def _browser_tools_conflict(body: ChatRequest, tools: dict) -> str | None:
     return None
 
 
-#: Screenshots one agent step may carry, and how big each may be as a data URL.
+#: Screenshots one agent step may carry, and how big each may be as a data URL. The
+#: most an administrator may keep in the conversation (MAX_SCREENSHOTS_KEPT) is held to it.
 MAX_AGENT_IMAGES = 4
 MAX_AGENT_IMAGE_BYTES = 1_500_000
 _AGENT_IMAGE_PREFIXES = ("data:image/jpeg;base64,", "data:image/png;base64,", "data:image/webp;base64,")

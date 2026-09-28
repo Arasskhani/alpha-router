@@ -451,9 +451,18 @@ class TestTheRunLimits:
         }
         s = parse_settings(json.dumps(stored))
         assert (s.agent_max_minutes, s.agent_max_tabs, s.agent_runs_per_day) == (20, 10, None)
-        assert (s.screenshot_max_side, s.screenshots_kept, s.min_browser_version) == (1280, 3, 116)
+        # Screenshots kept past the most a step may carry is kept at that most, not dropped to the default.
+        assert (s.screenshot_max_side, s.screenshots_kept, s.min_browser_version) == (1280, 4, 116)
         assert s.agent_default_mode == "plan"
         assert s.internal_connections == (3,)
+
+    def test_screenshots_kept_above_what_a_step_may_carry_is_kept_at_the_most_it_may(self):
+        from app.api.chat import MAX_AGENT_IMAGES
+        from app.services.extension_settings import MAX_SCREENSHOTS_KEPT
+
+        # An earlier version allowed 5, which made every step past the fifth screenshot fail.
+        assert parse_settings(json.dumps({"screenshots_kept": 5})).screenshots_kept == 4
+        assert MAX_SCREENSHOTS_KEPT <= MAX_AGENT_IMAGES
 
     def test_modes_on_offer_follow_the_switches(self):
         assert ExtensionSettings(plan_mode=False).modes_json() == ["ask"]
@@ -471,7 +480,7 @@ class TestTheRunLimits:
             ({"agent_max_tabs": 51}, "Tabs per run"),
             ({"agent_runs_per_day": 0}, "Runs per person"),
             ({"screenshot_max_side": 799}, "longest side"),
-            ({"screenshots_kept": 6}, "Screenshots kept"),
+            ({"screenshots_kept": 5}, "Screenshots kept"),
             ({"min_browser_version": 115}, "minimum browser version"),
             ({"agent_default_mode": "skip"}, "default mode"),
             ({"agent_default_mode": "plan", "plan_mode": False}, "Plan cannot be the default"),

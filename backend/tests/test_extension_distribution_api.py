@@ -728,7 +728,7 @@ class TestTheAdminCard:
             "agent_max_tabs": 5,
             "agent_runs_per_day": 20,
             "screenshot_max_side": 1600,
-            "screenshots_kept": 5,
+            "screenshots_kept": 4,
             "save_runs": False,
             "private_runs": False,
         }

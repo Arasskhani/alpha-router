@@ -2258,8 +2258,9 @@ export const docSections: DocSection[] = [
                 <strong>Runs per person per day</strong> (empty: no limit): counted from the runs in Admin Logs by
                 UTC day; past it, no step is served (<code>daily_runs_reached</code>) until the next day. Screenshots:
                 the <strong>longest side</strong> (1280 px, 800–1600) and how many of the latest are{" "}
-                <strong>kept</strong> in the conversation (3, 1–5); the rest are replaced by a note, so a long run
-                stays affordable.
+                <strong>kept</strong> in the conversation (3, 1–4: a step carries at most four images); the rest are
+                replaced by a note, so a long run stays affordable, and the latest full screenshot is always kept,
+                however many zooms came after it.
               </td>
             </tr>
             <tr>

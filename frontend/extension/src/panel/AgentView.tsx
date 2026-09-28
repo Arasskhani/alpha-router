@@ -43,6 +43,8 @@ const MODE_KEY = "alpharouter.agentMode";
 const DEFAULT_MAX_STEPS = 25;
 const DEFAULT_MAX_MINUTES = 20;
 const DEFAULT_MAX_TABS = 10;
+/** The images one step may carry, as the server takes them. */
+const MAX_SCREENSHOTS_KEPT = 4;
 /** What the server takes of a saved run: this many steps, each this long. */
 const MAX_SAVED_STEPS = 200;
 const MAX_SAVED_STEP_CHARS = 200;
@@ -211,7 +213,8 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
   }, [me, modes]);
   const maxMinutes = me.policy?.agent_max_minutes ?? DEFAULT_MAX_MINUTES;
   const maxTabs = me.policy?.agent_max_tabs ?? DEFAULT_MAX_TABS;
-  const screenshotsKept = me.policy?.screenshots_kept ?? SCREENSHOTS_KEPT;
+  /** At most four: the server takes no more images in a step (a server of an older version may say five). */
+  const screenshotsKept = Math.min(MAX_SCREENSHOTS_KEPT, Math.max(1, me.policy?.screenshots_kept ?? SCREENSHOTS_KEPT));
   const maxSide = clampMaxSide(me.policy?.screenshot_max_side);
   /** Finished runs become chats unless the administrator turned that off. */
   const savesRuns = me.policy?.save_runs !== false;

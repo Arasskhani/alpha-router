@@ -211,10 +211,24 @@ function hasImage(message: ApiMessage): boolean {
   return Array.isArray(message.content) && message.content.some((part) => part.type === "image_url");
 }
 
-/** All but the last `kept` screenshots replaced by a note, so a long run stays affordable. */
+/** A zoom's caption: its image shows a region magnified, and gives no page coordinates. */
+const ZOOM_CAPTION = "That region, magnified.";
+
+function isZoom(message: ApiMessage): boolean {
+  return Array.isArray(message.content) && message.content.some((part) => part.type === "text" && part.text.startsWith(ZOOM_CAPTION));
+}
+
+/**
+ * All but the last `kept` screenshots replaced by a note, so a long run stays
+ * affordable. The latest full screenshot is always among them - it is the
+ * model's only source of coordinates - however many zooms came after it.
+ */
 function withRecentScreenshots(messages: ApiMessage[], kept: number = SCREENSHOTS_KEPT): ApiMessage[] {
   const shots = messages.flatMap((message, index) => (hasImage(message) ? [index] : []));
-  const keep = new Set(shots.slice(-Math.max(1, Math.floor(kept))));
+  const newest = shots.slice(-Math.max(1, Math.floor(kept)));
+  const lastFull = [...shots].reverse().find((index) => !isZoom(messages[index]));
+  if (lastFull !== undefined && !newest.includes(lastFull)) newest.splice(0, 1, lastFull);
+  const keep = new Set(newest);
   return messages.map((message, index): ApiMessage => {
     if (message.role !== "user" || !Array.isArray(message.content) || keep.has(index) || !hasImage(message)) return message;
     return { role: "user", content: message.content.map((part) => (part.type === "image_url" ? OMITTED_SHOT : part)) };
@@ -730,7 +744,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
         status: "done",
         detail: `[${r.join(", ")}]`,
         outcome: "ok",
-        image: { url: shot.dataUrl, caption: "That region, magnified. Its pixels are not page coordinates: use the last full screenshot for those." },
+        image: { url: shot.dataUrl, caption: `${ZOOM_CAPTION} Its pixels are not page coordinates: use the last full screenshot for those.` },
       };
     }
     // computer

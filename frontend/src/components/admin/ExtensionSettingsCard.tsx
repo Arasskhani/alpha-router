@@ -129,7 +129,7 @@ const NUMBERS = {
   agent_max_tabs: { min: 1, max: 50, label: "Most tabs per task" },
   agent_runs_per_day: { min: 1, max: 1000, label: "Runs per person per day", optional: true },
   screenshot_max_side: { min: 800, max: 1600, label: "A screenshot's longest side" },
-  screenshots_kept: { min: 1, max: 5, label: "Screenshots kept" },
+  screenshots_kept: { min: 1, max: 4, label: "Screenshots kept" },
   min_browser_version: { min: 116, max: 999, label: "Minimum browser version" },
 } as const;
 type NumberKey = keyof typeof NUMBERS;

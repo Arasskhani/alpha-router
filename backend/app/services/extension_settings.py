@@ -73,7 +73,8 @@ MIN_SCREENSHOT_SIDE = 800
 MAX_SCREENSHOT_SIDE = 1600
 DEFAULT_SCREENSHOTS_KEPT = 3
 MIN_SCREENSHOTS_KEPT = 1
-MAX_SCREENSHOTS_KEPT = 5
+#: The images one agent step may carry (MAX_AGENT_IMAGES in app/api/chat.py): keeping more would refuse every step.
+MAX_SCREENSHOTS_KEPT = 4
 #: The manifest's minimum_chrome_version: the template's own, and how far an admin may raise it.
 TEMPLATE_BROWSER_VERSION = 116
 MAX_BROWSER_VERSION = 999
@@ -405,6 +406,13 @@ def _bounded(value: Any, low: int, high: int, default: int) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) and low <= value <= high else default
 
 
+def _at_most(value: Any, low: int, high: int, default: int) -> int:
+    """Like _bounded, but a value above ``high`` - one an earlier version allowed - is kept at ``high``."""
+    if isinstance(value, int) and not isinstance(value, bool) and value > high:
+        return high
+    return _bounded(value, low, high, default)
+
+
 def parse_settings(raw: str | None) -> ExtensionSettings:
     """Settings as stored. A value this code did not write falls back to the default, field by field."""
     if not raw:
@@ -465,7 +473,7 @@ def parse_settings(raw: str | None) -> ExtensionSettings:
         screenshot_max_side=_bounded(
             data.get("screenshot_max_side"), MIN_SCREENSHOT_SIDE, MAX_SCREENSHOT_SIDE, defaults.screenshot_max_side
         ),
-        screenshots_kept=_bounded(
+        screenshots_kept=_at_most(
             data.get("screenshots_kept"), MIN_SCREENSHOTS_KEPT, MAX_SCREENSHOTS_KEPT, defaults.screenshots_kept
         ),
         save_runs=bool(data.get("save_runs", True)),

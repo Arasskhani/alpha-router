@@ -709,7 +709,7 @@ function submitVerdict(element: ElementInfo, page: { url: string; host: string }
 
 /** A field's name that says it searches. */
 const SEARCH = /\bsearch\b/;
-const SEARCH_FA = /جستجو|جست و جو/;
+const SEARCH_FA = /جست ?(و ?)?جو/;
 
 /** Roles of fields that hold text a person types. */
 const TEXT_ROLES = new Set(["textbox", "searchbox", "combobox", "spinbutton"]);

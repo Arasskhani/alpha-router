@@ -265,6 +265,8 @@ describe("Enter in a field", () => {
     expect(enter({ role: "searchbox", name: "Search" })).toMatchObject({ class: "act" });
     expect(enter({ role: "combobox", name: "Search mail" })).toMatchObject({ class: "act" });
     expect(enter({ role: "combobox", name: "جستجو در محصولات" })).toMatchObject({ class: "act" });
+    expect(enter({ role: "combobox", name: "جست‌وجو در ویکی‌پدیا" })).toMatchObject({ class: "act" });
+    expect(enter({ role: "combobox", name: "جست و جو" })).toMatchObject({ class: "act" });
   });
 
   it("may send from a message box or a recipient field", () => {

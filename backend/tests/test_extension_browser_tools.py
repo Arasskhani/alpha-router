@@ -376,6 +376,27 @@ class TestASlowStep:
         assert _tool_calls(_frames(resp.text)) == [{"id": "call_1", "name": "click", "arguments": '{"ref":"e12"}'}]
         assert _frames(resp.text)[-1] == "[DONE]"
 
+    async def test_a_silence_after_a_first_empty_chunk_is_kept_alive_too(self, monkeypatch):
+        monkeypatch.setattr(provider_stream, "KEEP_ALIVE_SECONDS", 0.01)
+
+        class _Pauses(_Stream):
+            """A role chunk at once, then a long think before the call."""
+
+            def __init__(self) -> None:
+                super().__init__([_chunk(Delta(role="assistant", content="")), *CLICK_REPLY])
+                self._sent = 0
+
+            async def __anext__(self):
+                self._sent += 1
+                if self._sent == 2:
+                    await asyncio.sleep(0.1)
+                return await super().__anext__()
+
+        got = [chunk async for chunk in chunks_kept_alive(_Attempt(_Pauses()), keep_alive=True)]  # type: ignore[arg-type]
+        first_beat = got.index(KEEP_ALIVE)
+        assert first_beat == 1
+        assert got[-1] is not KEEP_ALIVE
+
     async def test_a_quick_step_has_none(self, client, browser, models, provider, monkeypatch):
         monkeypatch.setattr(provider_stream, "KEEP_ALIVE_SECONDS", 0.5)
         provider.reply(*CLICK_REPLY)

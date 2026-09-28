@@ -69,17 +69,19 @@ const HOST_STYLES: Styles = {
   display: "block",
   visibility: "visible",
   opacity: "1",
+  // A small pill at the top centre, clear of the corners where pages put their Send, Save and chat buttons.
   position: "fixed",
-  right: "16px",
-  bottom: "16px",
-  left: "auto",
-  top: "auto",
+  top: "8px",
+  left: "50%",
+  right: "auto",
+  bottom: "auto",
   width: "auto",
   height: "auto",
-  transform: "none",
+  transform: "translateX(-50%)",
   filter: "none",
   "clip-path": "none",
-  "pointer-events": "auto",
+  // Only its buttons take the pointer: a click anywhere else on it reaches the page beneath.
+  "pointer-events": "none",
   "z-index": "2147483647",
   margin: "0",
   padding: "0",
@@ -124,28 +126,32 @@ export function showOverlay(doc: Document, run: string, label: string, send: Pan
     display: "flex",
     "align-items": "center",
     gap: "10px",
-    padding: "8px 10px 8px 12px",
-    "border-radius": "10px",
-    background: "#1f2430",
+    padding: "4px 6px 4px 12px",
+    "border-radius": "999px",
+    background: "rgba(31, 36, 48, 0.92)",
     color: "#ffffff",
-    font: "13px/1.3 system-ui, -apple-system, 'Segoe UI', sans-serif",
-    "box-shadow": "0 4px 16px rgba(0, 0, 0, 0.3)",
-    "max-width": "360px",
+    font: "12px/1.3 system-ui, -apple-system, 'Segoe UI', sans-serif",
+    "box-shadow": "0 2px 10px rgba(0, 0, 0, 0.25)",
+    "max-width": "320px",
+    "pointer-events": "none",
   });
   box.setAttribute("role", "status");
   const text = styled(doc, "span", { overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" });
   text.textContent = label;
   const buttonStyles: Styles = {
     cursor: "pointer",
-    padding: "4px 10px",
+    padding: "3px 10px",
     border: "0",
-    "border-radius": "6px",
+    "border-radius": "999px",
     color: "#ffffff",
     font: "600 12px/1.3 system-ui, -apple-system, 'Segoe UI', sans-serif",
+    "pointer-events": "auto",
   };
   // Resume: only while the person has taken over; the watch (takeover.ts) shows and hides it.
   const resume = styled(doc, "button", { ...buttonStyles, background: "#2eaadc", display: "none" });
   resume.type = "button";
+  // Out of the page's Tab order: a Tab from the page's last field must not land here, where Enter would act.
+  resume.tabIndex = -1;
   resume.textContent = "Resume";
   resume.addEventListener("click", (event) => {
     event.preventDefault();
@@ -154,6 +160,7 @@ export function showOverlay(doc: Document, run: string, label: string, send: Pan
   });
   const stop = styled(doc, "button", { ...buttonStyles, background: "#e5484d" });
   stop.type = "button";
+  stop.tabIndex = -1;
   stop.textContent = "Stop";
   stop.addEventListener("click", (event) => {
     event.preventDefault();
@@ -190,6 +197,12 @@ export function setOverlayPaused(doc: Document, run: string, paused: boolean): v
   else delete host.dataset.paused;
   if (host.__label) host.__label.textContent = paused ? PAUSED_LABEL : (host.__working ?? "");
   if (host.__resume) setStyles(host.__resume, { display: paused ? "inline-block" : "none" });
+}
+
+/** Veil the banner for a screenshot, as the visual layer is: the model sees the page, not Alpharouter's own controls. */
+export function veilOverlay(doc: Document, veiled: boolean): void {
+  const host = doc.getElementById(OVERLAY_ID);
+  if (host) setStyles(host, { visibility: veiled ? "hidden" : "visible" });
 }
 
 export function hideOverlay(doc: Document, run?: string): void {

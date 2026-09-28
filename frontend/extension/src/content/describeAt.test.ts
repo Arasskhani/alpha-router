@@ -46,10 +46,12 @@ describe("describeAt", () => {
     expect(describeAt(doc, 1, 1, visible)).toMatchObject({ ok: false, error: "not_found" });
   });
 
-  it("never reports the agent's own banner as the target", () => {
+  it("never reports the agent's own banner as the target, and says the banner is in the way", () => {
     const doc = page(`<div id="${OVERLAY_ID}"><button>Stop</button></div>`);
     at(doc.querySelector(`#${OVERLAY_ID} button`));
-    expect(describeAt(doc, 1, 1, visible)).toMatchObject({ ok: false, error: "not_found" });
+    const result = describeAt(doc, 1, 1, visible);
+    expect(result).toMatchObject({ ok: false, error: "covered" });
+    expect(String((result as { message: string }).message)).toMatch(/Alpharouter's banner/);
   });
 
   it("refuses a hidden element", () => {

@@ -1150,7 +1150,11 @@ function describeAtIn(doc: Document, x: number, y: number, isVisible: Visibility
     if (!inner || inner === el) break;
     el = inner;
   }
-  if (!el || el.id === OVERLAY_ID || el.closest(`#${OVERLAY_ID}`) || el === doc.documentElement) {
+  if (el && (el.id === OVERLAY_ID || el.closest(`#${OVERLAY_ID}`))) {
+    // Only the banner's own buttons take the pointer: the point is on Alpharouter's Stop or Resume.
+    return { ok: false, error: "covered", message: "Alpharouter's banner is over that point (its Stop and Resume buttons). Act elsewhere, or scroll the page." };
+  }
+  if (!el || el === doc.documentElement) {
     return { ok: false, error: "not_found", message: "There is nothing to act on at that point." };
   }
   if (!isVisible(el)) return { ok: false, error: "not_visible", message: "What is at that point is not visible." };

@@ -21,7 +21,7 @@ import {
   type Result,
   type Visibility,
 } from "./agent";
-import { hideOverlay, runStopped, showOverlay, type PanelSender } from "./overlay";
+import { hideOverlay, runStopped, showOverlay, veilOverlay, type PanelSender } from "./overlay";
 import { resumeTakeover, runPaused, setDispatching, stopWatching, watchTakeover } from "./takeover";
 import { hideTarget, hideVisuals, moveCursor, pulseClick, setHighlightState, showTarget, showVisuals, veilVisuals, type ClickKind, type HighlightState } from "./visuals";
 
@@ -136,6 +136,7 @@ export async function runAgentCall(
         return { ok: true };
       case "visuals_veil":
         veilVisuals(doc, args.veiled === true);
+        veilOverlay(doc, args.veiled === true);
         return { ok: true };
       // A page the agent reached after the run began has no layer yet: the border, the cursor and the target
       // put it up, so what a person sees does not end at the first page load.

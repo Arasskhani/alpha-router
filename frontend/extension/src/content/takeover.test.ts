@@ -34,6 +34,27 @@ beforeEach(() => {
   document.body.innerHTML = "";
 });
 
+describe("the banner", () => {
+  it("is a pill at the top centre that only takes the pointer on its buttons, which Tab never reaches", () => {
+    showOverlay(document, RUN, "Working", vi.fn());
+    const { host, stop, resume } = banner();
+    expect(host.style.getPropertyValue("top")).toBe("8px");
+    expect(host.style.getPropertyValue("left")).toBe("50%");
+    expect(host.style.getPropertyValue("bottom")).toBe("auto");
+    expect(host.style.getPropertyValue("pointer-events")).toBe("none");
+    expect(stop.style.getPropertyValue("pointer-events")).toBe("auto");
+    expect([stop.tabIndex, resume.tabIndex]).toEqual([-1, -1]);
+  });
+
+  it("is veiled with the visual layer for a screenshot", async () => {
+    await runAgentCall(document, "show_overlay", { run: RUN, label: "Working" }, isRendered, vi.fn());
+    await runAgentCall(document, "visuals_veil", { veiled: true }, isRendered, vi.fn());
+    expect(banner().host.style.getPropertyValue("visibility")).toBe("hidden");
+    await runAgentCall(document, "visuals_veil", { veiled: false }, isRendered, vi.fn());
+    expect(banner().host.style.getPropertyValue("visibility")).toBe("visible");
+  });
+});
+
 describe("a take-over", () => {
   it("pauses the page: the banner says so and offers Resume, the border goes grey, and the panel is told", () => {
     page("<button>Go</button>");

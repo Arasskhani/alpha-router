@@ -407,7 +407,7 @@ export default function AgentView({ me, server, hidden = false, onDisconnected, 
                 },
                 stepSignal,
               );
-              return { text: result.text, toolCalls: result.toolCalls };
+              return { text: result.text, toolCalls: result.toolCalls, ...(result.reasoningDetails ? { reasoningDetails: result.reasoningDetails } : {}) };
             } catch (err) {
               if (err instanceof DisconnectedError) disconnected.current();
               if (err instanceof DOMException && err.name === "AbortError") throw err;

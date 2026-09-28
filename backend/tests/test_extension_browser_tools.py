@@ -547,6 +547,19 @@ class TestAStep:
         [log] = await _logs(session_factory)
         assert log.success is True
 
+    async def test_the_model_s_reasoning_goes_back_to_the_provider_with_its_calls(
+        self, client, browser, models, provider
+    ):
+        # Gemini and others sign their reasoning: the signature must come back with the tool calls it came with.
+        signed = [{"type": "reasoning.encrypted", "data": "c2lnbmVk", "id": "call_1"}]
+        follow_up = [dict(m) for m in FOLLOW_UP]
+        follow_up[2] = {**follow_up[2], "reasoning_details": signed}
+        provider.reply(_text("Done."), _finish("stop"))
+        resp = await client.post("/api/chat/completions", json=_body(models.a, follow_up), headers=browser.headers)
+        assert resp.status_code == 200, resp.text
+        [call] = provider.calls
+        assert call["messages"][2]["reasoning_details"] == signed
+
     async def test_no_memory_or_profile_is_looked_up(self, client, browser, models, provider):
         provider.reply(*CLICK_REPLY)
         profile = AsyncMock(side_effect=lambda db, messages, **_: messages)

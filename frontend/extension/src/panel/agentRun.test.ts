@@ -269,6 +269,21 @@ describe("a run", () => {
     expect(answered.tool_call_id).toBe(second.tool_calls[0].id);
   });
 
+  it("sends the model's reasoning back with its calls, with its latest steps only", async () => {
+    const signed = (n: number) => [{ type: "reasoning.encrypted", data: `sig-${n}`, id: `c${n}` }];
+    const h = harness([
+      { text: "", toolCalls: [call("scroll", { direction: "down" }, "c1")], reasoningDetails: signed(1) },
+      { text: "", toolCalls: [call("scroll", { direction: "down" }, "c2")], reasoningDetails: signed(2) },
+      { text: "", toolCalls: [call("scroll", { direction: "down" }, "c3")], reasoningDetails: signed(3) },
+      { text: "", toolCalls: [call("done", { summary: "ok" })] },
+    ]);
+    await run(h);
+    const assistants = (at: number) => h.sent[at].filter((m) => m.role === "assistant") as Array<{ reasoning_details?: unknown[] }>;
+    expect(assistants(1)[0].reasoning_details).toEqual(signed(1));
+    // Three steps in: the first step's reasoning is no longer sent, the last two are.
+    expect(assistants(3).map((m) => m.reasoning_details)).toEqual([undefined, signed(2), signed(3)]);
+  });
+
   it("keeps no empty reply in the conversation, which a provider would refuse", async () => {
     const h = harness([
       { text: "", toolCalls: [] },

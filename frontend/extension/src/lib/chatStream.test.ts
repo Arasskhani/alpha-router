@@ -20,6 +20,29 @@ function streamOf(chunks: Array<string | Uint8Array>): Response {
 const frame = (value: unknown) => `data: ${JSON.stringify(value)}\n\n`;
 const text = (content: string) => frame({ choices: [{ delta: { content } }] });
 
+describe("the model's reasoning", () => {
+  it("is kept as the provider sent it, for going back with the calls", async () => {
+    const detail = { type: "reasoning.encrypted", data: "c2lnbmVk", id: "tool_1" };
+    const result = await readChatStream(
+      streamOf([
+        frame({ choices: [{ delta: { reasoning_details: [{ type: "reasoning.text", text: "Look at the button." }] } }] }),
+        frame({ choices: [{ delta: { tool_calls: [{ index: 0, id: "tool_1", function: { name: "click", arguments: '{"ref":"e1"}' } }], reasoning_details: [detail] } }] }),
+        frame({ choices: [{ delta: {}, finish_reason: "tool_calls" }] }),
+        "data: [DONE]\n\n",
+      ]),
+      {},
+      { strict: true },
+    );
+    expect(result.reasoningDetails).toEqual([{ type: "reasoning.text", text: "Look at the button." }, detail]);
+    expect(result.toolCalls).toHaveLength(1);
+  });
+
+  it("is not there when the provider sent none", async () => {
+    const result = await readChatStream(streamOf([text("hi"), "data: [DONE]\n\n"]));
+    expect(result.reasoningDetails).toBeUndefined();
+  });
+});
+
 describe("reading a chat stream", () => {
   it("puts the text together across chunk boundaries, even inside a character", async () => {
     const whole = text("سلام") + text(" world");

@@ -62,10 +62,10 @@ type MessagePart = { type: "text"; text: string } | { type: "image_url"; image_u
 export type ApiMessage =
   | { role: "system"; content: string }
   | { role: "user"; content: string | MessagePart[] }
-  | { role: "assistant"; content: string | null; tool_calls?: ToolCall[] }
+  | { role: "assistant"; content: string | null; tool_calls?: ToolCall[]; reasoning_details?: unknown[] }
   | { role: "tool"; tool_call_id: string; content: string };
 
-export type ModelReply = { text: string; toolCalls: Array<{ id: string; name: string; arguments: string }> };
+export type ModelReply = { text: string; toolCalls: Array<{ id: string; name: string; arguments: string }>; reasoningDetails?: unknown[] };
 
 export type ApprovalRequest = {
   tool: string;
@@ -311,6 +311,9 @@ function withRecentScreenshots(messages: ApiMessage[], kept: number = SCREENSHOT
  * the latest screenshots kept, and - when it is still too long - the oldest
  * steps left out whole, a tool call never without its answer.
  */
+/** The model's reasoning goes back with this many of its latest steps. */
+const REASONING_KEPT = 2;
+
 export function conversation(entries: Entry[], screenshotsKept: number = SCREENSHOTS_KEPT): ApiMessage[] {
   const reads = entries.flatMap((entry, index) => (entry.page && entry.read ? [index] : []));
   const whole = new Set(reads.slice(-WHOLE_PAGE_RESULTS));
@@ -325,6 +328,18 @@ export function conversation(entries: Entry[], screenshotsKept: number = SCREENS
     ),
     screenshotsKept,
   );
+  // The model's reasoning goes back with its latest steps only: what a provider checks is the step it goes on from,
+  // and the older blocks would only grow every request.
+  let assistants = 0;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    if (message.role !== "assistant") continue;
+    assistants += 1;
+    if (assistants > REASONING_KEPT && message.reasoning_details) {
+      const { reasoning_details: _dropped, ...kept } = message;
+      messages[i] = kept;
+    }
+  }
   const [system, task, ...rest] = messages;
   // Steps: an assistant message and the tool answers after it.
   const groups: ApiMessage[][] = [];
@@ -1719,7 +1734,11 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
         return { id, type: "function", function: { name: call.name, arguments: call.arguments } };
       });
       // An empty reply - no words, no calls - is not kept: an assistant message with neither is one providers refuse.
-      if (calls.length || reply.text.trim()) entries.push({ message: { role: "assistant", content: reply.text || null, ...(calls.length ? { tool_calls: calls } : {}) } });
+      if (calls.length || reply.text.trim()) {
+        // The model's reasoning goes back with its calls, as providers that sign it (Gemini's thought signatures) require.
+        const reasoning = calls.length && reply.reasoningDetails?.length ? { reasoning_details: reply.reasoningDetails } : {};
+        entries.push({ message: { role: "assistant", content: reply.text || null, ...(calls.length ? { tool_calls: calls } : {}), ...reasoning } });
+      }
       if (!calls.length) {
         // Words alone are not the end: a model that says what it will do, and does not, is reminded once.
         if (!nudged) {

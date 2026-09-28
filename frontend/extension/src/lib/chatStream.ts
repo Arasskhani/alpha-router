@@ -16,6 +16,13 @@ export type StreamResult = {
   text: string;
   toolCalls: ToolCall[];
   meta: Record<string, unknown>;
+  /**
+   * The model's reasoning as the provider hands it back (OpenRouter's
+   * `reasoning_details`: summaries, encrypted blocks, thought signatures):
+   * sent back with the tool calls it came with, as Gemini and others require
+   * to go on from them. Never shown.
+   */
+  reasoningDetails?: unknown[];
 };
 
 export type StreamHandlers = {
@@ -42,12 +49,17 @@ type ToolCallFragment = {
   function?: { name?: string; arguments?: string };
 };
 
+type Part = { content?: unknown; tool_calls?: ToolCallFragment[]; reasoning_details?: unknown };
+
 type Choice = {
-  delta?: { content?: unknown; tool_calls?: ToolCallFragment[] };
+  delta?: Part;
   /** A provider that sends the whole answer at once, not in pieces. */
-  message?: { content?: unknown; tool_calls?: ToolCallFragment[] };
+  message?: Part;
   finish_reason?: unknown;
 };
+
+/** At most this many reasoning entries are kept from one answer. */
+const MAX_REASONING_DETAILS = 64;
 
 export type StreamOptions = {
   /**
@@ -85,6 +97,7 @@ export async function readChatStream(response: Response, handlers: StreamHandler
   const byIndex = new Map<number, ToolCall>();
   let done = false;
   let finish: string | null = null;
+  const reasoning: unknown[] = [];
   const take = (fragment: ToolCallFragment) => {
     let call: ToolCall | undefined;
     if (typeof fragment.index === "number") {
@@ -144,6 +157,9 @@ export async function readChatStream(response: Response, handlers: StreamHandler
       handlers.onText?.(text);
     }
     for (const fragment of part.tool_calls ?? []) take(fragment);
+    if (Array.isArray(part.reasoning_details)) {
+      for (const detail of part.reasoning_details) if (detail && typeof detail === "object" && reasoning.length < MAX_REASONING_DETAILS) reasoning.push(detail);
+    }
   }
   if (options.strict) {
     if (!done && !finish) throw new ChatStreamError("The model's answer was cut short.");
@@ -151,5 +167,5 @@ export async function readChatStream(response: Response, handlers: StreamHandler
       throw new ChatStreamError("The model's answer was cut at its length limit, in the middle of an action.", { retryable: false });
     }
   }
-  return { text, toolCalls: calls, meta };
+  return { text, toolCalls: calls, meta, ...(reasoning.length ? { reasoningDetails: reasoning } : {}) };
 }

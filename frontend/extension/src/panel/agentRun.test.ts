@@ -422,6 +422,24 @@ describe("allowing on a site for the rest of the run", () => {
     expect(h.reports.find((r) => r.action === "type_text")).toMatchObject({ detail: expect.objectContaining({ approval: "user" }) });
   });
 
+  it("never covers what the administrator relaxed: sending, deleting, another site", async () => {
+    const relaxed = { ...RULES, approvals: { send: false, submit: false, delete: false, leave_sites: false, downloads: false, uploads: false, dialogs: false } };
+    const h = harness(
+      [
+        { text: "", toolCalls: [call("click", { ref: "e1" }, "c1")] },
+        { text: "", toolCalls: [call("click", { ref: "e4" }, "c2")] },
+        { text: "", toolCalls: [call("done", { summary: "ok" })] },
+      ],
+      { approve: (request) => (request.offerSite ? "site" : true) },
+    );
+    await run(h, { rules: relaxed });
+    // "Send message" is a plain action with sending relaxed - yet asked about, card and all, after the site-wide allow.
+    expect(h.approvals.map((a) => [a.summary, a.offerSite])).toEqual([
+      ['Click "Next"', "shop.example.com"],
+      ['Click "Send message"', undefined],
+    ]);
+  });
+
   it("is never offered outside Ask mode", async () => {
     const h = harness([{ text: "", toolCalls: [call("click", { ref: "e1" })] }], { review: { decision: "ask", reason: "Unsure." } });
     await run(h, { mode: "auto" });

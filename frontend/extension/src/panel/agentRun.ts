@@ -520,6 +520,8 @@ const AFTERMATH = new Set(["click", "type_text", "select_option", "submit_form",
 const CHANGES = new Set(["click", "type_text", "select_option", "submit_form", "press_key", "scroll", "navigate", "tab_open", "tab_switch"]);
 /** Actions after which a page may be loading. */
 const MAY_LOAD = new Set(["click", "submit_form", "press_key", "navigate", "tab_open", "tab_switch", "computer"]);
+/** The rules' plain actions on the page - no case an administrator relaxed - which "Allow on this site" may cover. */
+const PLAIN_REASONS = new Set(["click", "type", "select", "press_key", "same_site", "drag", "tab_switch"]);
 /** Tools (as the rules know them) that change nothing: they do not break a run of deletion keys. */
 const READ_ONLY = new Set(["tabs_list", "read_page", "find", "get_page_text", "scroll", "wait_for", "screenshot", "zoom", "ask_user"]);
 
@@ -1517,7 +1519,18 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     // A plain action, asked about only because this is Ask mode: the person may allow such actions on this site for
     // the rest of the run. Never an action that always asks, nor one asked about for another reason (a site the
     // page went to, text that reads like instructions, a run of deletion keys, the browser's own permission).
-    const plain = options.mode === "ask" && verdict.class === "act" && approval === "user" && !arrived && !suspect && !access && judged.message === verdict.message;
+    // By the rule that judged it, not by its class: a case the administrator relaxed (sending, deleting, another site)
+    // is an "act" too, and is never allowed site-wide.
+    const plain =
+      options.mode === "ask" &&
+      verdict.class === "act" &&
+      PLAIN_REASONS.has(verdict.reason) &&
+      (!verdict.site || verdict.site === pageNow?.host) &&
+      approval === "user" &&
+      !arrived &&
+      !suspect &&
+      !access &&
+      judged.message === verdict.message;
     const plainSite = plain && pageNow ? pageNow.host : undefined;
     let approvedBy = approval === "none" ? (base.extra.review === "allow" ? "review" : "not_needed") : "user";
     if (plainSite && siteWide.has(plainSite)) approval = "none";

@@ -739,6 +739,8 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     // screenshot, an outline) for the rest of the run. The listener here goes with the answer.
     return new Promise<T>((resolve, reject) => {
       if (signal.aborted) {
+        // Nobody waits for `work` any more: its failure, if it comes, is not left unhandled.
+        work.catch(() => undefined);
         reject(abortError());
         return;
       }

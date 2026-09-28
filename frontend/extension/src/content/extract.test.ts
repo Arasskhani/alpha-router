@@ -282,4 +282,10 @@ describe("the browser's own visibility check", () => {
     expect(isTextRendered(element({ fontSize: "0px" }))).toBe(false);
     expect(isTextRendered(element({ fontSize: "12px" }))).toBe(true);
   });
+
+  it("leaves text drawn as dots unread, as a shown key or account number is", () => {
+    const masking = (value: string) => ({ getPropertyValue: (name: string) => (name === "-webkit-text-security" ? value : "") }) as Partial<CSSStyleDeclaration>;
+    expect(isTextRendered(element(masking("disc")))).toBe(false);
+    expect(isTextRendered(element(masking("none")))).toBe(true);
+  });
 });

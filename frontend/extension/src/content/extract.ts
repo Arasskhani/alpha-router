@@ -347,9 +347,17 @@ export function isBlockDisplayed(el: Element): boolean {
   return BLOCK_DISPLAYS.has(view.getComputedStyle(el).display.split(" ")[0]);
 }
 
-/** Text in a zero font size is there for machines only. */
+/**
+ * Text in a zero font size is there for machines only; text drawn as dots
+ * (-webkit-text-security, as a shown API key or a masked account number
+ * is) is kept from the eye, as a password is, and from a model too.
+ */
 export function isTextRendered(el: Element): boolean {
   const view = el.ownerDocument.defaultView;
   if (!view) return true;
-  return Number.parseFloat(view.getComputedStyle(el).fontSize) !== 0;
+  const style = view.getComputedStyle(el);
+  if (Number.parseFloat(style.fontSize) === 0) return false;
+  const read = (name: string) => (typeof style.getPropertyValue === "function" ? style.getPropertyValue(name) : "");
+  const security = read("-webkit-text-security") || read("text-security");
+  return !security || security.trim() === "none";
 }

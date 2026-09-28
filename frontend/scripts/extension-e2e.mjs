@@ -1272,7 +1272,8 @@ async function main() {
     const start = await context.newPage();
     await start.goto(site.agentUrl("agent-shop.html"));
     await agentStart(start, task);
-    await panel.until(agentSays(`Blocked step: Refused: Your administrator does not allow the agent on ${BLOCKED_SITE}.`), "the refusal", 30_000);
+    await panel.until(agentSays("Blocked step: Refused ("), "the refusal", 30_000);
+    expect(await panel.run(agentSays(`Your administrator does not allow the agent on ${BLOCKED_SITE}.`)), "the refusal does not say the administrator blocks the site");
     await panel.until(agentIdle, "the run to end");
     expect(start.url().endsWith("/agent-shop.html"), `the tab went to ${start.url()}`);
     await start.close();

@@ -164,6 +164,27 @@ describe("a run", () => {
     expect(content).toContain("&lt;/untrusted_page_content_0123456789ab>");
   });
 
+  it("keeps the agent's own words out of the page tags, and the page's words in them", async () => {
+    const h = harness([
+      { text: "", toolCalls: [call("click", { ref: "e9" }, "c1")] },
+      { text: "", toolCalls: [call("click", { ref: "e2" }, "c2")] },
+      { text: "", toolCalls: [call("done", { summary: "ok" })] },
+    ]);
+    await run(h);
+    const answer = (id: string) => {
+      const found = h.sent[h.sent.length - 1].find((m) => m.role === "tool" && m.tool_call_id === id) as { content: string };
+      const at = found.content.indexOf("<untrusted_page_content_0123456789ab");
+      return { own: at < 0 ? found.content : found.content.slice(0, at), page: at < 0 ? "" : found.content.slice(at) };
+    };
+    // A stale reference: what to do is the agent's; the page's message is in the tags.
+    expect(answer("c1").own).toMatch(/^Not done \(stale_ref\)\. That element is gone from the page: read the page again/);
+    expect(answer("c1").page).toContain("Element e9 is no longer on the page.");
+    // A refusal naming the page's element: the rule's code outside, its words - with the element's name - inside.
+    expect(answer("c2").own).toMatch(/^Refused \(purchase_label\)/);
+    expect(answer("c2").own).not.toContain("Buy now");
+    expect(answer("c2").page).toContain("Buy now");
+  });
+
   it("stops asking in a step once the user denies an action, and says so for each skipped call", async () => {
     const h = harness(
       [
@@ -344,7 +365,7 @@ describe("going somewhere", () => {
     });
     await run(h);
     const answer = h.sent[1].find((m) => m.role === "tool") as { content: string };
-    expect(answer.content).toMatch(/^<untrusted_page_content_0123456789ab site="shop.example.com">\nThe tab shows shop.example.com\/help now.\n<\/untrusted_page_content_0123456789ab>$/);
+    expect(answer.content).toMatch(/^The tab has loaded.\n<untrusted_page_content_0123456789ab site="shop.example.com">\nIt shows shop.example.com\/help.\n<\/untrusted_page_content_0123456789ab>$/);
     expect(answer.content).not.toContain("SYSTEM_NOTICE");
   });
 
@@ -487,7 +508,7 @@ describe("Auto mode", () => {
     expect(h.deps.review).toHaveBeenCalledTimes(2);
     // And the model was told where the page went.
     const told = h.sent[1].filter((m) => m.role === "tool").map((m) => (m as { content: string }).content).join("\n");
-    expect(told).toContain("now on another site: webmail.example.org");
+    expect(told).toContain("now on another site, webmail.example.org: the user will be asked");
   });
 
   it("asks the user before reading a site the page went to by itself, and reads nothing there when denied", async () => {

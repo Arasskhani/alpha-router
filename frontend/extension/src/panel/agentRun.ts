@@ -194,6 +194,38 @@ function pageText(page: NonNullable<Entry["page"]>, whole: boolean): string {
   return `${page.open}\n${body}\n${page.close}`;
 }
 
+/**
+ * What the agent is told when the page could not do an action, by the
+ * page's error code - in its own words, outside the page tags: the page's
+ * message goes inside them, as it may name the page's elements.
+ */
+const ADVICE: Record<string, string> = {
+  stale_ref: "That element is gone from the page: read the page again for fresh references.",
+  not_visible: "It is not visible: scroll to it, or look at the page again.",
+  disabled: "It is disabled: something else has to come first.",
+  covered: "Something covers it: deal with that first, or act elsewhere.",
+  not_typable: "It is not a field that takes text.",
+  sensitive_field: "The agent never types there: ask the user to fill it in.",
+  read_only: "It cannot be changed.",
+  not_select: "It is not a menu: click it, then click the option.",
+  no_option: "No option matches: the page lists the options it has.",
+  no_form: "It is not in a form.",
+  invalid_form: "The form is not complete: fill in what is missing first.",
+  bad_key: "That is not a key the agent can press.",
+  bad_request: "The arguments were not right for this tool.",
+  not_found: "Nothing there matches.",
+  moved: "The tab is no longer on the page the action was judged on: look at it again.",
+  no_access: "The extension may not work on this site.",
+  page_busy: "The page did not answer in time: look at it again, or ask the user.",
+  paused: "The user took over the page.",
+  stopped: "The user stopped the agent on this page.",
+};
+
+/** A failure the page reported: the code and what to do, as the agent's words; the page's own message in the tags. */
+function notDone(error: string): string {
+  return `Not done (${error}). ${ADVICE[error] ?? "The action failed."}`;
+}
+
 /** What an image costs the model, counted as if it were this much text. */
 const IMAGE_CHARS = 1500;
 /** How many of the latest screenshots stay in the conversation; older ones are dropped, with a note. */
@@ -246,7 +278,9 @@ export function conversation(entries: Entry[], screenshotsKept: number = SCREENS
   const whole = new Set(pageIndexes.slice(-WHOLE_PAGE_RESULTS));
   const messages = withRecentScreenshots(
     entries.map((entry, index) =>
-      entry.page && entry.message.role === "tool" ? { ...entry.message, content: pageText(entry.page, whole.has(index)) } : entry.message,
+      entry.page && entry.message.role === "tool"
+        ? { ...entry.message, content: [entry.message.content, pageText(entry.page, whole.has(index))].filter(Boolean).join("\n") }
+        : entry.message,
     ),
     screenshotsKept,
   );
@@ -504,6 +538,11 @@ function point(value: unknown): { x: number; y: number } | null {
   return { x, y };
 }
 
+/** The agent's note when the tab went to a site the user has not allowed: a host name, never the page's words. */
+function elsewhere(host: string): string {
+  return `The tab is now on another site, ${host}: the user will be asked before you act there.`;
+}
+
 function originPattern(url: string): { pattern: string; host: string } | null {
   const page = readablePage(url);
   return page ? { pattern: page.pattern, host: page.host } : null;
@@ -691,7 +730,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     const notes = dialogNotes.splice(0);
     if (!notes.length) return answer;
     if (answer.page) return { ...answer, page: { ...answer.page, body: `${answer.page.body}\n${notes.join("\n")}` } };
-    return { ...answer, page: wrapPage(options.nonce, site, [answer.content, ...notes].filter(Boolean).join("\n")) };
+    return { ...answer, page: wrapPage(options.nonce, site, notes.join("\n")) };
   }
 
   /** Full control: screenshots and the real mouse and keyboard, through the run's driver. */
@@ -803,15 +842,12 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       note = `Waited ${seconds} s.`;
     }
     check();
-    let moved = "";
     await race(deps.browser.settle());
     check();
     const after = await deps.browser.current();
     check();
-    if (after?.host && after.host !== site && !allowedSites.has(after.host)) {
-      moved = `\nThe page is now on another site: ${after.host}. The user will be asked before you act there.`;
-    }
-    return { content: "", page: wrapPage(options.nonce, site, `${note}${moved}`), status: "done", detail: note, outcome: "ok" };
+    const moved = after?.host && after.host !== site && !allowedSites.has(after.host) ? `\n${elsewhere(after.host)}` : "";
+    return { content: `${note}${moved}`, status: "done", detail: note, outcome: "ok" };
   }
 
   /** Carry out one allowed action; everything the page says comes back wrapped. */
@@ -826,7 +862,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       });
       const body = lines.join("\n") || "(no tabs)";
       watch(body);
-      return { content: "", page: wrapPage(options.nonce, "browser tabs", body), status: "done", detail: `${tabs.length} tabs`, outcome: "ok" };
+      return { content: "The open tabs of this window, by id:", page: wrapPage(options.nonce, "browser tabs", body), status: "done", detail: `${tabs.length} tabs`, outcome: "ok" };
     }
     if (tool === "tab_open" || tool === "navigate") {
       const url = String(a.url);
@@ -845,11 +881,11 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       const now = await deps.browser.current();
       check();
       const shows = now?.host ? whereTo(now.url) : "a page the agent cannot read";
-      const moved = now?.host && !allowedSites.has(now.host) ? `\nThat is another site than the one allowed: the user will be asked before you act there.` : "";
-      const said = tool === "tab_open" ? `Opened a new tab (id ${next.id}); you work there now. It shows ${shows}.` : `The tab shows ${shows} now.`;
+      const moved = now?.host && !allowedSites.has(now.host) ? `\n${elsewhere(now.host)}` : "";
+      const said = tool === "tab_open" ? `Opened a new tab (id ${next.id}); you work there now.` : "The tab has loaded.";
       return {
-        content: "",
-        page: wrapPage(options.nonce, now?.host ?? "browser tabs", said + moved),
+        content: said + moved,
+        page: wrapPage(options.nonce, now?.host ?? "browser tabs", `It shows ${shows}.`),
         status: "done",
         outcome: "ok",
         site: now?.host ?? next.host ?? undefined,
@@ -859,8 +895,8 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       const next = await deps.browser.switchTab(Number(a.tab_id));
       if (!next) return { content: `There is no tab ${String(a.tab_id)} in this window.`, status: "error", detail: "No such tab", outcome: "error", extra: { error: "no_tab" } };
       return {
-        content: "",
-        page: wrapPage(options.nonce, next.host ?? "browser tabs", `You work in tab ${next.id} now: ${clip(next.title, 100)} (${next.host ?? "no web page"}).`),
+        content: `You work in tab ${next.id} now.`,
+        page: wrapPage(options.nonce, next.host ?? "browser tabs", `${clip(next.title, 100) || "(no title)"} (${next.host ?? "no web page"})`),
         status: "done",
         outcome: "ok",
         site: next.host ?? undefined,
@@ -872,8 +908,8 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     if (!result.ok && result.error === "paused") return tookOver();
     if (!result.ok) {
       return {
-        content: "",
-        page: wrapPage(options.nonce, site, `The action failed (${result.error}): ${result.message}`),
+        content: notDone(result.error),
+        page: wrapPage(options.nonce, site, result.message),
         status: "error",
         detail: result.message,
         outcome: "error",
@@ -886,9 +922,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       check();
       const after = await deps.browser.current();
       check();
-      if (after?.host && after.host !== site && !allowedSites.has(after.host)) {
-        moved = `\nThe page is now on another site: ${after.host}. The user will be asked before you act there.`;
-      }
+      if (after?.host && after.host !== site && !allowedSites.has(after.host)) moved = elsewhere(after.host);
     }
     let body: string;
     let detail: string | undefined;
@@ -902,12 +936,20 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       body = matches.map((m) => `[${m.ref}] ${m.role}${m.name ? ` "${m.name}"` : ""}${m.snippet ? ` - ${m.snippet}` : ""}`).join("\n");
       detail = `${matches.length} found`;
     } else {
-      body = typeof result.note === "string" && result.note ? result.note : "Done.";
+      // What the page said it did (the option it chose, how much the field holds): the page's words.
+      body = typeof result.note === "string" ? result.note : "";
       detail = typeof result.note === "string" ? result.note : undefined;
     }
     // What the page just showed the agent - its outline, its text, a search's matches - may carry instructions aimed at it.
     if (tool === "read_page" || tool === "get_page_text" || tool === "find") watch(body);
-    return { content: "", page: wrapPage(options.nonce, site, body + moved), status: "done", detail, outcome: "ok" };
+    const read = tool === "read_page" || tool === "get_page_text" || tool === "find";
+    return {
+      content: [read ? "" : "Done.", moved].filter(Boolean).join("\n"),
+      ...(read || body ? { page: wrapPage(options.nonce, site, body) } : {}),
+      status: "done",
+      detail,
+      outcome: "ok",
+    };
   }
 
   /** One tool call from the model: through the rules, maybe past the user, then carried out. */
@@ -999,7 +1041,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
           tab,
         );
         if (!described.ok) {
-          return { content: "", page: wrapPage(options.nonce, pageNow.host, `${described.message}`), status: "error", detail: described.message, outcome: "error", site: pageNow.host, extra: { error: described.error } };
+          return { content: notDone(described.error), page: wrapPage(options.nonce, pageNow.host, described.message), status: "error", detail: described.message, outcome: "error", site: pageNow.host, extra: { error: described.error } };
         }
         element = described.element as ElementInfo;
       }
@@ -1025,7 +1067,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
           pressAt = { x: css.x, y: css.y, activates: spec.as === "click" };
           const described = await page("describe_at", pressAt, tab);
           if (!described.ok) {
-            return { content: "", page: wrapPage(options.nonce, pageNow.host, described.message), status: "error", detail: described.message, outcome: "error", site: pageNow.host, extra: { error: described.error } };
+            return { content: notDone(described.error), page: wrapPage(options.nonce, pageNow.host, described.message), status: "error", detail: described.message, outcome: "error", site: pageNow.host, extra: { error: described.error } };
           }
           element = described.element as ElementInfo;
           targetRect = described.rect as PointRect;
@@ -1076,13 +1118,13 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       } as Record<string, unknown>,
     };
     if (verdict.class === "blocked") {
-      const refused = `Refused: ${verdict.message}`;
+      // The rules' words name the page's element, whose name is the page's words: then they go back inside the tags.
+      const wrapped = Boolean(element && pageNow);
       return {
         ...base,
         summary,
-        // An element's name is the page's words: it goes back wrapped like the rest of the page.
-        content: element ? "" : refused,
-        ...(element && pageNow ? { page: wrapPage(options.nonce, pageNow.host, refused) } : {}),
+        content: wrapped ? `Refused (${verdict.reason}): the agent's rules do not allow this. Why, in the rules' words:` : `Refused (${verdict.reason}): ${verdict.message}`,
+        ...(wrapped ? { page: wrapPage(options.nonce, pageNow!.host, verdict.message) } : {}),
         status: "blocked",
         detail: verdict.message,
         outcome: "blocked",
@@ -1211,8 +1253,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
         return {
           ...base,
           summary,
-          content: "",
-          page: wrapPage(options.nonce, pageNow!.host, `Not done: the page changed since this action was judged (${why}). Take a new screenshot and look again.`),
+          content: `Not done: the page changed since this action was judged (${why}). Take a new screenshot and look again.`,
           status: "error",
           detail: "The page changed",
           outcome: "error",

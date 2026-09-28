@@ -466,9 +466,11 @@ function describeComputer(a: Record<string, unknown>, element?: ElementInfo, dro
   const action = String(a.action ?? "");
   const where = element ? ` ${element.role}${element.name ? ` "${clip(element.name, 80)}"` : ""}` : "";
   const onto = drop ? ` ${drop.role}${drop.name ? ` "${clip(drop.name, 80)}"` : ""}` : "";
+  // What is held with a click or a hover, said on the card: shift+click selects a range, ctrl+click adds to one.
+  const held = typeof a.modifiers === "string" && a.modifiers.trim() ? ` with ${clip(a.modifiers.trim(), 30)} held` : "";
   const at = (value: unknown) => {
     const p = point(value);
-    return p ? ` at (${p.x}, ${p.y})` : "";
+    return p ? ` at (${p.x}, ${p.y})${held}` : held;
   };
   switch (action) {
     case "left_click":
@@ -1367,7 +1369,15 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       if (!spec) return invalid("computer needs one of: left_click, right_click, double_click, triple_click, hover, left_click_drag, scroll, type, key, wait.");
       judgedAs = spec.as;
       judgedArgs =
-        spec.as === "type_text" ? { text: a.text } : spec.as === "press_key" ? { key: a.text } : spec.as === "scroll" ? { direction: a.scroll_direction } : {};
+        spec.as === "type_text"
+          ? { text: a.text }
+          : spec.as === "press_key"
+            ? { key: a.text }
+            : spec.as === "scroll"
+              ? { direction: a.scroll_direction }
+              : spec.as === "click" && typeof a.modifiers === "string"
+                ? { modifiers: a.modifiers }
+                : {};
       if (workable && tab && pageNow && deps.driver) {
         if (spec.element === "point" || spec.element === "start") {
           const p = point(spec.element === "start" ? a.start_coordinate : a.coordinate);

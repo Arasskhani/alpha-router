@@ -39,6 +39,7 @@
 
 import type { ElementInfo } from "../content/agent";
 import { sensitiveText } from "./sensitive";
+import { modifierName } from "./input";
 import { KEY_NAMES_SHOWN, parseKeyCombo } from "./keys";
 import { hostMatches, readablePage, siteRefusal, type SitePolicy } from "./sites";
 
@@ -797,6 +798,27 @@ function keyVerdict(rawKey: unknown, element: ElementInfo | undefined, page: { u
   return verdict("act", "press_key", `Pressing ${shown}${element ? ` in ${named(element)}` : ""}.`);
 }
 
+/**
+ * A click with keys held (a computer click's `modifiers`): Alt on a link
+ * downloads what it points at, and Ctrl, Cmd or Shift open it in a new tab
+ * or window the run does not track - the agent opens links with tab_open.
+ * On anything else they select (shift+click a range, ctrl+click one more),
+ * which is judged as the click is. An unknown key held is no click at all.
+ */
+function modifiedClick(raw: unknown, element: ElementInfo, page: { url: string; host: string }, ctx: PolicyContext): Verdict | null {
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  const held = raw.split("+").map((part) => part.trim()).filter(Boolean).map(modifierName);
+  if (held.some((name) => name === null)) return blocked("bad_key", `"${raw.slice(0, 40)}" is not a key the agent can hold: it holds ctrl, shift, alt or meta (cmd).`);
+  const link = Boolean(element.href) || element.role === "link";
+  if (held.includes("alt")) return blocked("browser_shortcut", "The agent does not click with Alt held: on a link it downloads what the link points at.");
+  if (link && held.some((name) => name === "ctrl" || name === "meta" || name === "shift")) {
+    return blocked("modified_link", `A click with ${raw.trim()} held opens ${named(element)} in a tab or window the agent does not keep track of: open it with tab_open and its address instead.`);
+  }
+  // Outside a link, what held keys do is select: the click itself is what the rules judge.
+  const plain = clickVerdict(element, page, ctx);
+  return { ...plain, message: `${plain.message} With ${raw.trim()} held.` };
+}
+
 /** A drag: judged by what it takes and where it drops - a drop on a file input or an upload zone uploads. */
 function dragVerdict(source: ElementInfo, drop: ElementInfo | undefined, page: { url: string; host: string }, ctx: PolicyContext): Verdict {
   const cannot = unjudgeable(source, "The dragged element") ?? (drop ? unjudgeable(drop, "The drop target") : null);
@@ -849,7 +871,7 @@ export function classifyAction(action: ProposedAction, ctx: PolicyContext): Verd
     case "select_option":
     case "submit_form": {
       if (!element) return blocked("no_element", "The element is not on the page any more. Read the page again.");
-      if (tool === "click") return clickVerdict(element, page!, ctx);
+      if (tool === "click") return modifiedClick(args.modifiers, element, page!, ctx) ?? clickVerdict(element, page!, ctx);
       if (tool === "type_text") return typeVerdict(element, page!, args.text);
       if (tool === "submit_form") return submitVerdict(element, page!, ctx);
       // A menu's option can do what a button does ("Delete account", "Pay by card"): judged by the one chosen.

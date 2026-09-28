@@ -361,6 +361,18 @@ describe("the rest", () => {
     expect(classify("press_key", { args: { key: "Tab" }, element: message })).toMatchObject({ class: "act" });
   });
 
+  it("judges a click with keys held: never Alt, and no link opened where the run does not see it", () => {
+    const link = el({ role: "link", name: "Report", tag: "a", href: "https://shop.example.com/report.pdf" });
+    expect(classify("click", { args: { modifiers: "alt" }, element: link })).toMatchObject({ class: "blocked", reason: "browser_shortcut" });
+    expect(classify("click", { args: { modifiers: "ctrl" }, element: link })).toMatchObject({ class: "blocked", reason: "modified_link", message: expect.stringContaining("tab_open") });
+    expect(classify("click", { args: { modifiers: "shift" }, element: link })).toMatchObject({ class: "blocked", reason: "modified_link" });
+    // Selecting a range of rows: the click, judged as clicks are.
+    const row = el({ role: "checkbox", name: "Select message", tag: "div" });
+    expect(classify("click", { args: { modifiers: "shift" }, element: row })).toMatchObject({ class: "act", message: expect.stringContaining("With shift held.") });
+    expect(classify("click", { args: { modifiers: "hyper" }, element: row })).toMatchObject({ class: "blocked", reason: "bad_key" });
+    expect(classify("click", { args: {}, element: link })).toMatchObject({ class: "act" });
+  });
+
   it("never types into a password or identity field one key at a time", () => {
     const password = el({ role: "textbox", name: "Password", tag: "input", type: "password", sensitive: true });
     expect(classify("press_key", { args: { key: "a" }, element: password })).toMatchObject({ class: "blocked", reason: "sensitive_field", message: expect.stringContaining("types it") });

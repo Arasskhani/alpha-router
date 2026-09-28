@@ -268,6 +268,18 @@ describe("computer actions", () => {
     expect(String(h.sent[1].find((m) => m.role === "tool")!.content)).toMatch(/^Not done: the keyboard is somewhere else now/);
   });
 
+  it("says on the card what is held with a click, and never opens a link with a key held", async () => {
+    const h = harness([{ text: "", toolCalls: [call("computer", { action: "left_click", coordinate: [200, 100], modifiers: "shift" })] }]);
+    await h.run();
+    expect(h.approvals[0].summary).toBe('Click button "Next" at (200, 100) with shift held');
+    expect(h.driver!.click).toHaveBeenCalledWith({ x: 200, y: 100 }, { button: "left", clickCount: 1, modifiers: ["shift"] });
+    const link = { ok: true as const, element: { ref: "e9", role: "link", name: "Report", tag: "a", href: "https://shop.example.com/report" }, rect: { x: 190, y: 90, width: 40, height: 20 } };
+    const blocked = harness([{ text: "", toolCalls: [call("computer", { action: "left_click", coordinate: [200, 100], modifiers: "ctrl" })] }], { browser: fakeBrowser(undefined, [link, link]) });
+    await blocked.run();
+    expect(blocked.driver!.click).not.toHaveBeenCalled();
+    expect(String(blocked.sent[1].find((m) => m.role === "tool")!.content)).toContain("tab_open");
+  });
+
   it("presses a lone space as the space bar, as the rules read it", async () => {
     const h = harness([{ text: "", toolCalls: [call("computer", { action: "key", text: " " })] }]);
     await h.run();

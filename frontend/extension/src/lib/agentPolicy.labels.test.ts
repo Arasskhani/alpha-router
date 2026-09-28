@@ -45,6 +45,24 @@ const CASES: Case[] = [
   ["تایید و پرداخت", "blocked"],
   ["تسویه حساب", "blocked"],
   ["پیش‌خرید", "blocked"],
+  ["Order now – $12.99", "blocked"],
+  ["Order · $24", "blocked"],
+  ["Buy for 9,99 €", "blocked"],
+  ["Donate $10", "blocked"],
+  ["Pay ₹500", "blocked"],
+  ["Place an order", "blocked"],
+  ["Confirm order", "blocked"],
+  ["Confirm purchase", "blocked"],
+  ["Buy with 1-Click", "blocked"],
+  ["Pay with card", "blocked"],
+  ["Pay bill", "blocked"],
+  ["بخرید", "blocked"],
+  ["همین حالا بخرید", "blocked"],
+  ["بپردازید", "blocked"],
+  ["سفارش دهید", "blocked"],
+  ["تائید سفارش", "blocked"],
+  ["ثبت نهایی سفارش", "blocked"],
+  ["پرداخت قبض", "blocked"],
   // Buying words inside other labels: they ask, never refused on sight.
   ["Best laptops to buy", "sensitive", LINK],
   ["How to pay your bill", "sensitive", LINK],
@@ -66,6 +84,7 @@ const CASES: Case[] = [
   ["Subscribe now", "sensitive"],
   ["Go Premium", "sensitive"],
   ["Renew plan", "sensitive"],
+  ["Start membership", "sensitive"],
   ["خرید اشتراک", "sensitive"],
   ["تمدید اشتراک", "sensitive"],
   // Trading and moving money: the whole label or its phrases - refused; the word elsewhere asks.
@@ -79,6 +98,12 @@ const CASES: Case[] = [
   ["Wire transfer", "blocked"],
   ["Deposit", "blocked"],
   ["Top up", "blocked"],
+  ["Send $50", "blocked"],
+  ["Send payment", "blocked"],
+  ["Send Payment Now", "blocked"],
+  ["Send funds", "blocked"],
+  ["ارسال وجه", "blocked"],
+  ["بفروشید", "blocked"],
   ["فروش", "blocked"],
   ["فروش سهام", "blocked"],
   ["انتقال وجه", "blocked"],
@@ -179,6 +204,21 @@ describe("real labels", () => {
   it("covers a good hundred of them, in both languages", () => {
     expect(CASES.length).toBeGreaterThanOrEqual(120);
     expect(CASES.filter(([label]) => /[؀-ۿ]/.test(label)).length).toBeGreaterThanOrEqual(35);
+  });
+});
+
+describe("what the administrator relaxed", () => {
+  const RELAXED: PolicyContext = { ...OPEN, approvals: { send: false, submit: false, delete: false, leave_sites: false, downloads: false, uploads: false, dialogs: false } };
+  const relaxedClick = (name: string) =>
+    classifyAction({ tool: "click", args: {}, page: PAGE, element: { ref: "e1", role: "button", name, tag: "button" } }, RELAXED);
+
+  it("never covers money sent with the word send", () => {
+    for (const label of ["Send $50", "Send payment", "ارسال وجه"]) expect(relaxedClick(label).class).toBe("blocked");
+  });
+
+  it("never lets a confirming button through as a mere send", () => {
+    expect(relaxedClick("Confirm and send")).toMatchObject({ class: "sensitive", reason: "sensitive_label" });
+    expect(relaxedClick("Send")).toMatchObject({ class: "act" });
   });
 });
 

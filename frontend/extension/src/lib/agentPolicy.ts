@@ -152,9 +152,9 @@ const PAGE_TOOLS = new Set([
  * anything the agent would click.
  */
 const PURCHASE =
-  /^(buy|buy (it |this )?now|pay|pay now|purchase|purchase now|checkout|check out|order|order now|donate|donate now|pre-?order|pre-?order now)$|\b(buy now|buy it now|pay now|place (your |the |my )?order|complete (your |the |my )?(order|purchase|payment)|(proceed|continue|go) to (checkout|payment)|confirm (and )?pay|confirm (the |your )?payment|make (a )?payment|submit (your |the )?(order|payment)|add funds|bid now|place (a |an )?bid)\b|\bpay [$€£¥\d]/;
+  /^(buy|buy (it |this )?now|pay|pay now|purchase|purchase now|checkout|check out|order|order now|donate|donate now|pre-?order|pre-?order now)$|^pay (the |this |my |your )?(bill|invoice|balance)$|\b(buy now|buy it now|pay now|place (your |the |my |an? )?order|complete (your |the |my )?(order|purchase|payment)|(proceed|continue|go) to (checkout|payment)|confirm (and )?pay|confirm (the |your )?payment|confirm (your |the |my )?(order|purchase)|make (a )?payment|submit (your |the )?(order|payment)|add funds|bid now|place (a |an )?bid)\b|\b(buy|pay|check ?out) with (1-?click|one click|apple pay|google pay|g ?pay|paypal|shop ?pay|card|credit card|debit card)\b|\bpay (\p{Sc}|\d)|^(buy|pay|order|donate|purchase|rent|pre-?order)( it| this)?( now| today)?( for)?[\s\-\u2013\u2014\u00b7:|,]*\p{Sc}?\s?\d[\d.,]*\s?(\p{Sc}|usd|eur|gbp|chf|inr|rub|jpy|aed|irr|تومان|ریال)?$/u;
 const PURCHASE_FA =
-  /^(خرید|پیش ?خرید|پرداخت|سفارش|تسویه|اهدا)$|خرید (کن|کنید|نهایی|آنلاین)|پرداخت (آنلاین|نهایی|کنید|کن|و تکمیل)|ثبت (و پرداخت )?سفارش|تکمیل (سفارش|خرید|پرداخت)|نهایی کردن (سفارش|خرید)|(تایید|تأیید) (و )?پرداخت|تسویه حساب|کمک مالی|پرداخت [\d۰-۹]/;
+  /^(خرید|پیش ?خرید|پرداخت|سفارش|تسویه|اهدا)$|خرید (کن|کنید|نهایی|آنلاین)|(^|\s)(بخر|بخرید|بپرداز|بپردازید)(\s|$)|سفارش (دهید|بدهید|بده)|پرداخت (آنلاین|نهایی|کنید|کن|و تکمیل|قبض)|ثبت (نهایی )?(و پرداخت )?سفارش|تکمیل (سفارش|خرید|پرداخت)|نهایی کردن (سفارش|خرید)|(تایید|تأیید) (و )?(پرداخت|سفارش|خرید)|تسویه حساب|کمک مالی|پرداخت [\d۰-۹]/;
 /**
  * Buying words inside a longer label ("Best laptops to buy", "Pay bills"):
  * a click there may buy - it asks, and a form it sends is refused.
@@ -162,16 +162,16 @@ const PURCHASE_FA =
 const PURCHASE_WORDS = /\b(buy|pay|purchase|checkout|check out|donate|pre-?order)\b/;
 const PURCHASE_WORDS_FA = /(^|\s)(خرید|پرداخت|اهدا)/;
 /** What starts paying later: an upgrade, a trial, a subscription - never relaxed, always asked. */
-const PURCHASE_LIKE = /\b(upgrade( now| (your |the )?plan| to [\p{L}]+)?|start (your |a |the )?(free )?trial|free trial|subscribe( now| today)?|go premium|get premium|renew( now| (your |the )?(plan|subscription))?)\b/u;
+const PURCHASE_LIKE = /\b(upgrade( now| (your |the )?plan| to [\p{L}]+)?|start (your |a |the )?(free )?trial|start (your |a |the )?(membership|subscription)|become a (member|subscriber)|free trial|subscribe( now| today)?|go premium|get premium|renew( now| (your |the )?(plan|subscription))?)\b/u;
 const PURCHASE_LIKE_FA = /ارتقا(ی)? (حساب|اشتراک|به)|خرید اشتراک|تمدید (اشتراک|حساب)|اشتراک (ویژه|طلایی|پریمیوم)|نسخه آزمایشی رایگان/;
 /**
  * Trading and moving money, judged by the whole label or by the phrases
  * that do it: "Sell", "Swap", "Withdraw funds", "Send money". Refused.
  */
 const MONEY =
-  /^(sell|sell now|trade|trade now|swap|swap now|withdraw|withdraw now|withdrawal|deposit|deposit now|exchange now|convert now|top up|top up now|redeem|redeem now)$|\b(sell (all|everything|now|shares|stocks?|crypto|coins?|tokens?|bitcoin|(my |the )?positions?)|place (a |the )?trade|execute (a |the )?trade|transfer (funds|money)|send money|wire transfer|make a deposit|deposit (funds|money)|withdraw (funds|money)|swap (tokens?|coins?|crypto)|convert (funds|currency|crypto))\b/;
+  /^(sell|sell now|trade|trade now|swap|swap now|withdraw|withdraw now|withdrawal|deposit|deposit now|exchange now|convert now|top up|top up now|redeem|redeem now)$|\b(sell (all|everything|now|shares|stocks?|crypto|coins?|tokens?|bitcoin|(my |the )?positions?)|place (a |the )?trade|execute (a |the )?trade|transfer (funds|money)|send (money|funds)|send (a |the |your )?payment|wire transfer|make a deposit|deposit (funds|money)|withdraw (funds|money)|swap (tokens?|coins?|crypto)|convert (funds|currency|crypto))\b|\bsend (\p{Sc}|\d)/u;
 const MONEY_FA =
-  /^(فروش|بفروش|معامله|برداشت|واریز|تبدیل)$|فروش (سهام|ارز|رمزارز|سکه|دارایی)|انتقال وجه|حواله|کارت به کارت|شارژ حساب|برداشت (وجه|از حساب)|واریز (وجه|به حساب)/;
+  /^(فروش|بفروش|بفروشید|معامله|برداشت|واریز|تبدیل)$|(^|\s)بفروشید(\s|$)|فروش (سهام|ارز|رمزارز|سکه|دارایی)|انتقال (وجه|پول)|ارسال (وجه|پول)|حواله|کارت به کارت|شارژ حساب|برداشت (وجه|از حساب)|واریز (وجه|به حساب)/;
 /** Money words inside a longer label ("Sell on Amazon", "Swap languages"): ask, never refused on sight. */
 const MONEY_WORDS = /\b(sell|trade|swap|withdraw)\b/;
 const MONEY_WORDS_FA = /(^|\s)(فروش|معامله|برداشت|واریز)(\s|$)/;
@@ -247,7 +247,8 @@ const CAPTCHA_ON_GOOGLE = { hosts: ["www.google.com", "google.com"], path: /^\/r
 
 /**
  * A label as the word lists read it: compatibility forms folded, in lower
- * case, Persian written with Arabic yeh or kaf read as Persian, without the
+ * case, Persian written with Arabic yeh or kaf read as Persian ("تائید" as
+ * "تایید", its common spelling, while "دائم" keeps its hamza), without the
  * tatweel and diacritics that change how a word is drawn but not what it
  * says, and without the marks around it ("Order now!", "Order now →",
  * "🛒 Buy"). Otherwise "خريد" or "خریـــد" would not be "خرید", and "Order
@@ -260,7 +261,7 @@ const CAPTCHA_ON_GOOGLE = { hosts: ["www.google.com", "google.com"], path: /^\/r
  * without them and once with each as a space.
  */
 function labelForms(text: string): string[] {
-  const folded = text.normalize("NFKC").toLowerCase().replace(/[يى]/g, "ی").replace(/ك/g, "ک").replace(/ـ/g, "");
+  const folded = text.normalize("NFKC").toLowerCase().replace(/[يى]/g, "ی").replace(/ئ(?=ی)/g, "ی").replace(/ك/g, "ک").replace(/ـ/g, "");
   return [folded.replace(/\p{Cf}/gu, ""), folded.replace(/\p{Cf}/gu, " ")].map((form) =>
     form
       .replace(/\p{M}/gu, "")
@@ -428,6 +429,10 @@ function labelVerdict(element: ElementInfo, said: string[], linkish: boolean, pa
   if (consentPage(page.url) || said.some((label) => matches(label, AUTHORIZE, AUTHORIZE_FA) && !matches(label, HARMLESS_CONFIRM))) {
     return verdict("sensitive", "authorization", `${named(element)} may give a program access to an account, or change what keeps one safe.`);
   }
+  // Before the cases the administrator can relax: "Confirm and send" confirms, whatever sending may do.
+  if (said.some((label) => matches(label, CONFIRM, CONFIRM_FA) && !matches(label, HARMLESS_CONFIRM))) {
+    return verdict("sensitive", "sensitive_label", `Clicking ${named(element)} may confirm, transfer or cancel something.`);
+  }
   if (said.some((label) => matches(label, UPLOAD, UPLOAD_FA))) {
     return asks(!relax.uploads, "upload", `Clicking ${named(element)} may upload a file.`);
   }
@@ -442,9 +447,6 @@ function labelVerdict(element: ElementInfo, said: string[], linkish: boolean, pa
   }
   if (said.some((label) => matches(label, SEND, SEND_FA))) {
     return asks(!relax.send, "sensitive_label", `Clicking ${named(element)} may send or publish something.`);
-  }
-  if (said.some((label) => matches(label, CONFIRM, CONFIRM_FA) && !matches(label, HARMLESS_CONFIRM))) {
-    return verdict("sensitive", "sensitive_label", `Clicking ${named(element)} may confirm, transfer or cancel something.`);
   }
   return null;
 }

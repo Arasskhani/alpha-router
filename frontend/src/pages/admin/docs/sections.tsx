@@ -2440,8 +2440,9 @@ export const docSections: DocSection[] = [
           <li>
             <code>agent_step</code> — each action of the agent: the tool, the site, how it ended (<code>ok</code>,{" "}
             <code>blocked</code> by the rules, <code>denied</code> by the person, <code>error</code>,{" "}
-            <code>skipped</code>), who approved it (<code>user</code>, <code>review</code> or{" "}
-            <code>not_needed</code>), the element&apos;s role and label, and for typing the number of characters.
+            <code>skipped</code>), who approved it (<code>user</code> on its card, <code>user_site</code> when the
+            person allowed such actions on the site for the run, <code>review</code> or <code>not_needed</code>), the
+            element&apos;s role and label, and for typing the number of characters.
             Never what was typed.
           </li>
           <li>

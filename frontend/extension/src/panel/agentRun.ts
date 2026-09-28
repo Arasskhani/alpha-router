@@ -1533,7 +1533,11 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       judged.message === verdict.message;
     const plainSite = plain && pageNow ? pageNow.host : undefined;
     let approvedBy = approval === "none" ? (base.extra.review === "allow" ? "review" : "not_needed") : "user";
-    if (plainSite && siteWide.has(plainSite)) approval = "none";
+    if (plainSite && siteWide.has(plainSite)) {
+      approval = "none";
+      // The user's, given once for the site: Admin Logs tells it from an answer to this action's own card.
+      approvedBy = "user_site";
+    }
     if (approval === "user") {
       deps.onStep({ id: call.id, tool: name, summary, status: "waiting" });
       // The card first: the target box and the amber border go up beside it, never before it.

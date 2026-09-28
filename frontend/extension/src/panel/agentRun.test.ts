@@ -419,7 +419,8 @@ describe("allowing on a site for the rest of the run", () => {
       ['Click "Send message"', undefined],
     ]);
     expect(h.browser.page).toHaveBeenCalledWith("type_text", { ref: "e3", text: "SAVE10" }, TAB, expect.anything());
-    expect(h.reports.find((r) => r.action === "type_text")).toMatchObject({ detail: expect.objectContaining({ approval: "user" }) });
+    // Logged as allowed on the site, not as an answer to its own card.
+    expect(h.reports.find((r) => r.action === "type_text")).toMatchObject({ detail: expect.objectContaining({ approval: "user_site" }) });
   });
 
   it("never covers what the administrator relaxed: sending, deleting, another site", async () => {

@@ -179,8 +179,9 @@ _DETAIL_FIELDS: dict[str, Any] = {
     "steps": lambda value: _count(value, 1000),
     "mode": _one_of("ask", "auto"),
     "class": _one_of("read", "act", "sensitive", "blocked"),
-    #: Who let the action go ahead: nobody had to, the user, or the review model.
-    "approval": _one_of("not_needed", "user", "review"),
+    #: Who let the action go ahead: nobody had to, the user (on its card, or once for the site for the rest
+    #: of the run), or the review model.
+    "approval": _one_of("not_needed", "user", "user_site", "review"),
     "review": _one_of("allow", "ask"),
     #: The element acted on: its role and accessible name, never its value.
     "role": lambda value: _text(value, 32),

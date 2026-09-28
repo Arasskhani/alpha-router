@@ -1388,6 +1388,19 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
                                 attempt_index=len(usage_events), status="cancelled", error_message="Request cancelled"
                             )
                         )
+                    elif tools_turn and not retry.content.strip() and not retry.tool_calls():
+                        # Asked again whole, the model said and did nothing: the step failed, as an empty stream does.
+                        usage_events.append(
+                            retry.usage_event(
+                                attempt_index=len(usage_events),
+                                status="failed",
+                                error_message="Upstream model returned an empty completion.",
+                            )
+                        )
+                        success = False
+                        error_code = "empty_completion"
+                        error_message = "The upstream model returned no usable content. Retry the request or select a different model."
+                        yield _sse_error_frame(error_message)
                     else:
                         stream_end_at = time.perf_counter()
                         collected_content = retry.content

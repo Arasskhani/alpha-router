@@ -553,6 +553,17 @@ class TestAStreamTheProviderRefused:
         assert [call.get("stream") for call in provider.calls] == [True, False]
         assert provider.calls[1]["tools"] == TOOLS
 
+    async def test_an_empty_whole_reply_is_a_failed_step(self, client, browser, models, provider, session_factory):
+        provider.reply(fail=UNREAD_STREAM)
+        provider.replies.append(
+            SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="", tool_calls=None))], usage=None)
+        )
+        resp = await client.post("/api/chat/completions", json=_body(models.a), headers=browser.headers)
+        errors = [f["error"]["message"] for f in _frames(resp.text) if isinstance(f, dict) and "error" in f]
+        assert errors and "no usable content" in errors[0]
+        [log] = await _logs(session_factory)
+        assert log.success is False
+
     async def test_says_the_provider_s_own_reason_when_it_refuses_again(self, client, browser, models, provider):
         provider.reply(fail=UNREAD_STREAM)
         provider.replies.append(Exception("No endpoints found that support tool use."))

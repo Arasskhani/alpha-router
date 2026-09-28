@@ -1253,7 +1253,15 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       let tooManyErrors = false;
       const images: NonNullable<Answer["image"]>[] = [];
       for (const call of calls) {
-        const answer = await handle(call, skip);
+        let answer: Answer & { denied?: boolean };
+        try {
+          answer = await handle(call, skip);
+        } catch (err) {
+          // The browser failed at it (a debugger session gone, a tab closed): the model is told, and can go on another way.
+          if (isAbort(err) || signal.aborted) throw err;
+          const message = err instanceof Error && err.message ? clip(err.message, 300) : "The browser could not do it.";
+          answer = { content: `The action failed in the browser: ${message}`, status: "error", detail: message, outcome: "error", extra: { error: "browser_error" } };
+        }
         entries.push({ message: { role: "tool", tool_call_id: call.id, content: answer.content }, ...(answer.page ? { page: answer.page } : {}) });
         if (answer.image) images.push(answer.image);
         const name = call.function.name;

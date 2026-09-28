@@ -216,7 +216,8 @@ describe("the agent's own input", () => {
       throw new Error("the page went away");
     });
     const result = await h.run();
-    expect(result.outcome).toBe("failed");
+    // The model is told the input failed, and the run goes on to its end.
+    expect(result.outcome).toBe("done");
     expect(dispatchCalls(h.browser)).toEqual([true, false]);
   });
 

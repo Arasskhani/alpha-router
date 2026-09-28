@@ -361,6 +361,21 @@ describe("runs of deletion keys", () => {
   });
 });
 
+describe("a browser that fails at an action", () => {
+  it("tells the model and goes on, rather than ending the run", async () => {
+    const h = harness(
+      [{ text: "", toolCalls: [call("computer", { action: "left_click", coordinate: [200, 100] })] }, { text: "", toolCalls: [call("done", { summary: "went another way" })] }],
+      { mode: "auto", review: "allow" },
+    );
+    h.driver!.click = vi.fn(async () => {
+      throw new Error("Input.dispatchMouseEvent: Debugger is not attached to the tab");
+    });
+    const result = await h.run();
+    expect(result).toMatchObject({ outcome: "done", summary: "went another way" });
+    expect(String(h.sent[1].find((m) => m.role === "tool")!.content)).toContain("The action failed in the browser: Input.dispatchMouseEvent: Debugger is not attached");
+  });
+});
+
 describe("full control follows the tab", () => {
   it("works in the tab the agent is on before it sends input or captures there", async () => {
     const h = harness([{ text: "", toolCalls: [call("screenshot")] }, { text: "", toolCalls: [call("done", { summary: "ok" })] }]);

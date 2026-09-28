@@ -366,21 +366,22 @@ class NonStreamRetry:
 
     def tool_calls(self) -> list[dict[str, Any]]:
         """The whole reply's tool calls, in the OpenAI wire shape; none when it made none."""
-        choices = getattr(self._response, "choices", None) or []
-        message = getattr(choices[0], "message", None) if choices else None
-        calls = getattr(message, "tool_calls", None) or []
+        # Objects from LiteLLM, dicts from some providers: read either way.
+        choices = _field(self._response, "choices") or []
+        message = _field(choices[0], "message") if choices else None
+        calls = _field(message, "tool_calls") or []
         out: list[dict[str, Any]] = []
         for index, call in enumerate(calls):
-            function = getattr(call, "function", None)
-            name = getattr(function, "name", None)
+            function = _field(call, "function")
+            name = _field(function, "name")
             if not name:
                 continue
             out.append(
                 {
                     "index": index,
-                    "id": getattr(call, "id", None) or f"call_{index}",
+                    "id": _field(call, "id") or f"call_{index}",
                     "type": "function",
-                    "function": {"name": name, "arguments": getattr(function, "arguments", None) or "{}"},
+                    "function": {"name": name, "arguments": _field(function, "arguments") or "{}"},
                 }
             )
         return out

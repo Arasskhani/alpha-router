@@ -1033,6 +1033,32 @@ class TestTheTurn:
         assert "tools" not in ctx.completion_kwargs
 
 
+class TestTheWholeReply:
+    async def test_its_tool_calls_are_read_when_they_come_as_dicts(self):
+        from app.services.provider_stream import NonStreamRetry
+
+        # A message whose tool calls a provider handed over as plain dicts, not objects.
+        call = {"id": "c1", "type": "function", "function": {"name": "click", "arguments": '{"ref":"e1"}'}}
+        reply = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=None, tool_calls=[call]))], usage=None
+        )
+
+        async def answer(**_kwargs):
+            return reply
+
+        retry = NonStreamRetry(
+            ai_model=SimpleNamespace(),  # type: ignore[arg-type]
+            provider_type="openai",
+            model="gpt-a",
+            completion_kwargs={"messages": TASK, "tools": TOOLS},
+            completion_fn=answer,
+        )
+        await retry.run()
+        assert retry.tool_calls() == [
+            {"index": 0, "id": "c1", "type": "function", "function": {"name": "click", "arguments": '{"ref":"e1"}'}}
+        ]
+
+
 class TestTheAttempt:
     @staticmethod
     def _attempt() -> ProviderAttempt:

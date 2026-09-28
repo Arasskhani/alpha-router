@@ -253,6 +253,22 @@ describe("a run", () => {
     expect(h.reports.at(-1)).toMatchObject({ kind: "agent_task", outcome: "no_action" });
   });
 
+  it("gives a tool-call id a provider repeats at every step an id of its own", async () => {
+    const h = harness([
+      { text: "", toolCalls: [call("scroll", { direction: "down" }, "call_0")] },
+      { text: "", toolCalls: [call("scroll", { direction: "down" }, "call_0")] },
+      { text: "", toolCalls: [call("done", { summary: "ok" })] },
+    ]);
+    await run(h);
+    const rows = vi.mocked(h.deps.onStep).mock.calls.map(([step]) => step.id);
+    expect(new Set(rows).size).toBeGreaterThanOrEqual(3);
+    // The model's second call is answered under the id it was given in the conversation.
+    const second = h.sent[2].filter((m) => m.role === "assistant").at(-1) as { tool_calls: Array<{ id: string }> };
+    const answered = h.sent[2].at(-1) as { tool_call_id: string };
+    expect(second.tool_calls[0].id).not.toBe("call_0");
+    expect(answered.tool_call_id).toBe(second.tool_calls[0].id);
+  });
+
   it("keeps no empty reply in the conversation, which a provider would refuse", async () => {
     const h = harness([
       { text: "", toolCalls: [] },

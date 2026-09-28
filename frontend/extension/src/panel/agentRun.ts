@@ -660,6 +660,8 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
   let planApproved = false;
   /** The model answered in words alone and was reminded to act; a second time in a row ends the run. */
   let nudged = false;
+  /** The tool-call ids of this run so far. */
+  const callIds = new Set<string>();
   let steps = 0;
   let startSite: string | undefined;
   /**
@@ -1686,11 +1688,15 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       }
       check();
       if (reply.text.trim()) deps.onText(reply.text.trim());
-      const calls: ToolCall[] = reply.toolCalls.map((call, index) => ({
-        id: call.id || `call_${steps}_${index}`,
-        type: "function",
-        function: { name: call.name, arguments: call.arguments },
-      }));
+      const calls: ToolCall[] = reply.toolCalls.map((call, index) => {
+        // Each call's id once in a run: a provider may repeat them (call_0 at every step), and the panel's step
+        // rows and the saved run are keyed by it - a repeat would overwrite an earlier step. The model is answered
+        // under the id it is given here.
+        let id = call.id || `call_${steps}_${index}`;
+        if (callIds.has(id)) id = `${id}_s${steps}_${index}`;
+        callIds.add(id);
+        return { id, type: "function", function: { name: call.name, arguments: call.arguments } };
+      });
       // An empty reply - no words, no calls - is not kept: an assistant message with neither is one providers refuse.
       if (calls.length || reply.text.trim()) entries.push({ message: { role: "assistant", content: reply.text || null, ...(calls.length ? { tool_calls: calls } : {}) } });
       if (!calls.length) {

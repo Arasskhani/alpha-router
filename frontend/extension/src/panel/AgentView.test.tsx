@@ -276,6 +276,19 @@ describe("a run", () => {
     await until(() => host.textContent!.includes("Done"), "the run to finish");
   });
 
+  it("stops at once from a card: the card goes, and the step it asked about says it was stopped", async () => {
+    replies = [toolFrame([{ id: "c1", name: "click", args: { ref: "e1" } }])];
+    await render();
+    await start("Click next.");
+    await until(() => Boolean(host.querySelector('[role="alertdialog"]')), "the approval card");
+    await act(async () => button("Stop").click());
+    await until(() => host.textContent!.includes("Stopped"), "the run to stop");
+    expect(host.querySelector('[role="alertdialog"]')).toBeNull();
+    expect(host.querySelector('[data-step-status="waiting"]')).toBeNull();
+    expect(host.querySelector('[data-step-status="stopped"]')).not.toBeNull();
+    expect(button("Start")).toBeTruthy();
+  });
+
   it("stops with the panel's Stop while the model is still answering", async () => {
     let finish: (() => void) | null = null;
     server.routes["POST /api/chat/completions"] = (init) => {

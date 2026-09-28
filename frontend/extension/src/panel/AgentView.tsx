@@ -296,6 +296,17 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
     setLog((items) => [...items, item]);
   }
 
+  function closeOpenSteps(status: "stopped" | "error") {
+    setLog((items) =>
+      items.map((item) =>
+        item.kind === "step" && (item.step.status === "running" || item.step.status === "waiting") ? { ...item, step: { ...item.step, status } } : item,
+      ),
+    );
+    for (const [id, step] of stepsTaken.current) {
+      if (step.status === "running" || step.status === "waiting") stepsTaken.current.set(id, { ...step, status });
+    }
+  }
+
   function showStep(step: StepView) {
     stepsTaken.current.set(step.id, step);
     setLog((items) => {
@@ -369,6 +380,11 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
       driver,
       approve: (request, stepSignal) =>
         new Promise<boolean>((resolve) => {
+          // Stopped just before the card would show: no card, and no waiting on one.
+          if (stepSignal.aborted) {
+            resolve(false);
+            return;
+          }
           let settled = false;
           const settle = (ok: boolean) => {
             if (settled) return;
@@ -384,6 +400,10 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
         }),
       askUser: (text, stepSignal) =>
         new Promise<string>((resolve) => {
+          if (stepSignal.aborted) {
+            resolve("");
+            return;
+          }
           const settle = (value: string) => {
             stepSignal.removeEventListener("abort", onAbort);
             setQuestion(null);
@@ -520,6 +540,8 @@ export default function AgentView({ me, server, hidden = false, onDisconnected }
         deps(modelId, driver, startedAt),
         abort.signal,
       );
+      // A step still shown as working or waiting when the run ended - stopped, or cut short - did not finish.
+      closeOpenSteps(result.outcome === "stopped" ? "stopped" : "error");
       append({ kind: "result", id: `${run}-end`, outcome: result.outcome, summary: result.summary });
       if (savesRuns && !(privateOffered && privateRun)) {
         await atMost(saveRun(run, { task, outcome: result.outcome, summary: result.summary, model: modelId, mode, startedAt }), SAVE_MS);

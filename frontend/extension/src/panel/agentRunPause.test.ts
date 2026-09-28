@@ -33,7 +33,7 @@ function fakeDriver(): ControlDriver {
     type: vi.fn(async () => undefined),
     key: vi.fn(async () => true),
     toCss: vi.fn(async (p: { x: number; y: number }) => ({ x: p.x * 2, y: p.y * 2 })),
-    takeDialog: vi.fn(() => null),
+    onDialog: vi.fn(),
     handleDialog: vi.fn(async () => undefined),
   };
 }

@@ -34,7 +34,7 @@ function driverAnd(atElement: Record<string, unknown>) {
     type: vi.fn(async () => undefined),
     key: vi.fn(async () => true),
     toCss: vi.fn(async (p: { x: number; y: number }) => ({ x: p.x, y: p.y })),
-    takeDialog: vi.fn((): { type: string; message: string } | null => null),
+    onDialog: vi.fn(),
     handleDialog: vi.fn(async () => undefined),
   } satisfies ControlDriver;
   const browser = {

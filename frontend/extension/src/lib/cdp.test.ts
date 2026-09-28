@@ -59,14 +59,24 @@ describe("CdpSession", () => {
     expect(await session.takeDragData()).toBeNull();
   });
 
-  it("captures a JavaScript dialog and can answer it", async () => {
+  it("hands a JavaScript dialog to its owner as it opens, and can answer it", async () => {
     const session = new CdpSession(7);
     await session.attach();
+    const seen: unknown[] = [];
+    session.onDialog((dialog) => seen.push(dialog));
     chrome.debugger.emitEvent(7, "Page.javascriptDialogOpening", { type: "confirm", message: "sure?" });
-    expect(session.takeDialog()).toMatchObject({ type: "confirm", message: "sure?" });
-    expect(session.takeDialog()).toBeNull();
+    expect(seen).toEqual([{ type: "confirm", message: "sure?" }]);
+    expect(session.hasDialog).toBe(true);
     await session.handleDialog(true);
     expect(chrome.debugger.sent.at(-1)).toMatchObject({ method: "Page.handleJavaScriptDialog", params: { accept: true } });
+    expect(session.hasDialog).toBe(false);
+    // Closed by the page or the person: the session knows too.
+    chrome.debugger.emitEvent(7, "Page.javascriptDialogOpening", { type: "alert", message: "hi" });
+    chrome.debugger.emitEvent(7, "Page.javascriptDialogClosed", { result: true });
+    expect(session.hasDialog).toBe(false);
+    session.onDialog(null);
+    chrome.debugger.emitEvent(7, "Page.javascriptDialogOpening", { type: "alert", message: "again" });
+    expect(seen).toHaveLength(2);
   });
 
   it("reports a detach (the user's Cancel on the bar) once", async () => {

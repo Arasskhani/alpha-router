@@ -100,6 +100,7 @@ export const AGENT_TASKS = {
   control: "E2E-AGENT-CONTROL",
   scroll: "E2E-AGENT-SCROLL",
   low: "E2E-AGENT-LOW",
+  dialog: "E2E-AGENT-DIALOG",
 };
 /** Where agent-control.html puts its trusted-only button, in CSS pixels (its centre). */
 export const CONTROL_CLICK = [100, 140];
@@ -187,6 +188,12 @@ async function agentReply(messages, { stealUrl, locate }) {
       () => ({ tool: "screenshot", args: {} }),
       (m) => pointAt(m, "Low step"),
       () => answered("Low step"),
+    ],
+    // Full control, a button that opens a confirm dialog: the click waits until the dialog is answered.
+    [AGENT_TASKS.dialog]: [
+      () => ({ tool: "screenshot", args: {} }),
+      (m) => pointAt(m, "Dialog step"),
+      () => answered("Dialog step"),
     ],
     // Full control on a long page: scroll down with the wheel, look, and click what is there now.
     [AGENT_TASKS.scroll]: [

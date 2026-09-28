@@ -97,7 +97,7 @@ export type AgentEventReport = {
 };
 
 /** The run's driver under full control: input and screenshots (cdpDriver.ts); absent on the dom path. */
-export type ControlDriver = Pick<CdpDriver, "screenshot" | "zoom" | "crop" | "click" | "hover" | "scroll" | "drag" | "type" | "key" | "toCss" | "takeDialog" | "handleDialog">;
+export type ControlDriver = Pick<CdpDriver, "screenshot" | "zoom" | "crop" | "click" | "hover" | "scroll" | "drag" | "type" | "key" | "toCss" | "onDialog" | "handleDialog">;
 
 /** What the run is doing, as the page's border and the toolbar badge show it. */
 export type RunState = "working" | "waiting" | "paused";
@@ -603,42 +603,64 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     if (probe.hit) injected = probe.snippet;
   }
 
+  /** One card at a time: a page's dialog that opens while another card waits for the user waits its turn. */
+  let cards: Promise<unknown> = Promise.resolve();
+  function approve(request: ApprovalRequest): Promise<boolean> {
+    const answer = cards.then(() => (signal.aborted ? false : deps.approve(request, signal)));
+    cards = answer.catch(() => undefined);
+    return answer;
+  }
+
+  /** The page's dialogs answered since the last action's result, told to the model with that result. */
+  const dialogNotes: string[] = [];
+
   /**
-   * A dialog the page opened during an action (alert, confirm, prompt, or
-   * "leave this page?"): the page waits on it. An alert is closed and its
-   * message told to the model; a question is the user's to answer, unless the
-   * administrator lets the agent accept them - a prompt is then dismissed, as
-   * the agent has no answer to type.
+   * A dialog the page opened (alert, confirm, prompt, or "leave this page?"),
+   * answered as it opens: until it is, the page - and the input that opened
+   * it - wait. An alert is closed and its message told to the model; a
+   * question is the user's to answer, unless the administrator lets the agent
+   * accept them - a prompt is then dismissed, as the agent has no answer to
+   * type. The page cannot be reached while the dialog is up, so the border
+   * stays as it is; the badge shows the wait.
    */
-  async function answerDialog(dialog: { type: string; message: string }, tab: WorkTab): Promise<string> {
-    const driver = deps.driver!;
-    const message = clip(dialog.message, 300);
+  async function answerDialog(dialog: { type?: string; message?: string }): Promise<void> {
+    const driver = deps.driver;
+    if (!driver) return;
+    const message = clip(String(dialog.message ?? ""), 300);
     watch(message);
     const shown = message ? ` "${message}"` : "";
     if (dialog.type === "alert") {
       await driver.handleDialog(true).catch(() => undefined);
-      return `\nThe page showed a message:${shown}`;
+      dialogNotes.push(`The page showed a message:${shown}`);
+      return;
     }
     const kind = dialog.type === "beforeunload" ? "asks whether to leave the page" : dialog.type === "prompt" ? "asks for an answer" : "asks to confirm";
+    const asks = (options.rules.approvals ?? DEFAULT_APPROVALS).dialogs;
     let accept: boolean;
-    if ((options.rules.approvals ?? DEFAULT_APPROVALS).dialogs) {
-      await state("waiting", tab);
-      accept = await deps.approve(
-        {
-          tool: "dialog",
-          summary: `The page ${kind}:${shown || " (no message)"} - Allow accepts it, Deny dismisses it`,
-          verdict: { class: "sensitive", reason: "dialog", message: `The page ${kind}.` },
-        },
-        signal,
-      );
-      await state("working", tab);
-      check();
+    if (signal.aborted) {
+      accept = false;
+    } else if (asks) {
+      deps.onState?.("waiting");
+      accept = await approve({
+        tool: "dialog",
+        summary: `The page ${kind}:${shown || " (no message)"} - Allow accepts it, Deny dismisses it`,
+        verdict: { class: "sensitive", reason: "dialog", message: `The page ${kind}.` },
+      }).catch(() => false);
+      deps.onState?.("working");
     } else {
       accept = dialog.type !== "prompt";
     }
     if (accept && dialog.type === "prompt") await driver.handleDialog(true, "").catch(() => undefined);
     else await driver.handleDialog(accept).catch(() => undefined);
-    return `\nThe page ${kind}:${shown} - it was ${accept ? "accepted" : "dismissed"}${(options.rules.approvals ?? DEFAULT_APPROVALS).dialogs ? " by the user" : ""}.`;
+    dialogNotes.push(`The page ${kind}:${shown} - it was ${accept ? "accepted" : "dismissed"}${asks && !signal.aborted ? " by the user" : ""}.`);
+  }
+
+  /** An action's result with the page's dialogs it opened, which are the page's words: inside the page tags. */
+  function withDialogs(answer: Answer, site: string): Answer {
+    const notes = dialogNotes.splice(0);
+    if (!notes.length) return answer;
+    if (answer.page) return { ...answer, page: { ...answer.page, body: `${answer.page.body}\n${notes.join("\n")}` } };
+    return { ...answer, page: wrapPage(options.nonce, site, [answer.content, ...notes].filter(Boolean).join("\n")) };
   }
 
   /** Full control: screenshots and the real mouse and keyboard, through the run's driver. */
@@ -750,9 +772,6 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       note = `Waited ${seconds} s.`;
     }
     check();
-    // A dialog the action opened holds the page: it is answered before anything else is asked of the page.
-    const dialog = driver.takeDialog();
-    if (dialog) note += await answerDialog(dialog, tab);
     let moved = "";
     await race(deps.browser.settle());
     check();
@@ -904,7 +923,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       }
       const shown = `Plan: ${summary}\nSites: ${sites.join(", ")}${refused.length ? `\n(Not allowed, left out: ${refused.join(", ")})` : ""}`;
       deps.onStep({ id: call.id, tool: name, summary: shown, status: "waiting" });
-      const ok = await deps.approve({ tool: "update_plan", summary: shown, verdict: { class: "sensitive", reason: "plan", message: "Approve this plan; the agent then works these sites without asking each action." } }, signal);
+      const ok = await approve({ tool: "update_plan", summary: shown, verdict: { class: "sensitive", reason: "plan", message: "Approve this plan; the agent then works these sites without asking each action." } });
       check();
       if (!ok) {
         return { content: "The user did not approve the plan. Revise the approach or the sites and propose it again, or ask them what they want.", status: "denied", detail: "Plan not approved", outcome: "denied" };
@@ -1106,7 +1125,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       deps.onStep({ id: call.id, tool: name, summary, status: "waiting" });
       if (targetRect) await visual("visuals_target", { rect: targetRect }, tab);
       await state("waiting", tab);
-      const allowed = await deps.approve({ tool: name, summary, verdict: judged, review: reviewNote, access }, signal);
+      const allowed = await approve({ tool: name, summary, verdict: judged, review: reviewNote, access });
       await state("working", tab);
       check();
       if (!allowed) {
@@ -1160,10 +1179,13 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     } finally {
       if (targetRect) await visual("visuals_target", { rect: null }, tab);
     }
+    answer = withDialogs(answer, pageNow?.host ?? tab?.host ?? "");
     return { ...answer, summary, site: answer.site ?? base.site, extra: { ...base.extra, ...(answer.extra ?? {}), ...(name === "computer" ? { action: String(a.action ?? "") } : {}) } };
   }
 
   let lastTab: WorkTab | null = null;
+  // The page's dialogs are answered as they open, whatever the run is doing then.
+  deps.driver?.onDialog(answerDialog);
   try {
     const first = await deps.browser.current();
     startSite = first?.host ?? undefined;
@@ -1265,6 +1287,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     const message = err instanceof Error && err.message ? err.message : "The agent could not go on.";
     return { outcome: "failed", summary: message, steps };
   } finally {
+    deps.driver?.onDialog(null);
     // The layer goes with the run; the panel shows the outcome.
     const tab = lastTab;
     if (tab && deps.driver) {

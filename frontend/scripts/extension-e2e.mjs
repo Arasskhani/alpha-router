@@ -385,6 +385,11 @@ async function startTestSite() {
 <h1 style="margin:20px">At the bottom</h1><button id="btn">Bottom button</button>
 <script>window.__clicks=[];document.getElementById('btn').addEventListener('click',(e)=>{window.__clicks.push(e.isTrusted);});</script>
 </body></html>`,
+    // A button that asks the page's own question: a confirm dialog, which holds the page until it is answered.
+    "/agent-dialog.html": `<!doctype html><html lang="en"><head><title>Dialog ${NONCE}</title>
+<style>body{margin:0}#btn{position:absolute;left:80px;top:120px;width:160px;height:48px;background:${TARGET_COLOR};color:#fff;border:0}</style></head><body>
+<h1 style="margin:20px">A question</h1><button id="btn" onclick="document.title = confirm('Go on with the check?') ? 'CONFIRMED' : 'DISMISSED'">Check it</button>
+</body></html>`,
     // A long page whose button is below the first screen: seen only in a screenshot taken where the page is scrolled to.
     "/agent-scroll.html": `<!doctype html><html lang="en"><head><title>Scroll ${NONCE}</title>
 <style>body{margin:0;height:3000px}#btn{position:absolute;left:80px;top:1600px;width:160px;height:48px;background:${TARGET_COLOR};color:#fff;border:0}</style></head><body>
@@ -1108,6 +1113,27 @@ async function main() {
     const bottom = await page.evaluate(() => Math.round(document.getElementById("btn").getBoundingClientRect().bottom));
     await page.close();
     return `its bottom at ${bottom} CSS pixels`;
+  });
+
+  await step("a page's confirm dialog goes to the user while the click that opened it waits, and the run goes on", async () => {
+    expect(panel, "no side panel");
+    const task = `${AGENT_TASKS.dialog}: press the check button (${NONCE})`;
+    agentTasks.push(task);
+    const page = await context.newPage();
+    // With a listener, Playwright leaves the page's dialogs alone (it would dismiss them itself): they are the extension's.
+    page.on("dialog", () => undefined);
+    await page.goto(site.agentUrl("agent-dialog.html"));
+    await agentStart(page, task);
+    await panel.until(agentCard, "the approval to click", 40_000);
+    await panel.run(agentClick("Allow"));
+    await panel.until(agentSays('The page asks to confirm: "Go on with the check?"'), "the dialog's card", 20_000);
+    // The page is held by its dialog now (nothing runs in it until the dialog is answered): it is asked nothing.
+    await panel.run(agentClick("Allow"));
+    await panel.until(agentSays("Dialog step: Clicked at"), "the agent's summary", 40_000);
+    await panel.until(agentIdle, "the run to end");
+    expect((await page.title()) === "CONFIRMED", `the page's title is ${await page.title()}`);
+    expect(await panel.run(agentSays("accepted by the user")), "the model was not told the user accepted the dialog");
+    await page.close();
   });
 
   await step("under full control a screenshot shows the part of the page scrolled to, and a click there lands", async () => {

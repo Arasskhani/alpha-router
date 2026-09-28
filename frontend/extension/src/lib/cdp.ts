@@ -6,8 +6,10 @@
  * with a real Error. The session:
  *
  * - attaches to a tab and sends CDP commands;
- * - buffers the events full control needs - the data from an intercepted native
- *   drag (Input.dragIntercepted), and JavaScript dialogs (Page.javascriptDialogOpening);
+ * - buffers the data from an intercepted native drag (Input.dragIntercepted);
+ * - hands a JavaScript dialog (Page.javascriptDialogOpening) to its owner as
+ *   it opens: the page - and the input command that opened it - wait until
+ *   it is answered, so it must be answered from the event, not after;
  * - notices when the session ends for any reason (the run finishing, the panel
  *   closing, or the user pressing Cancel on Chrome's "started debugging" bar,
  *   which arrives as onDetach) and tells its owner through onDetached, once.
@@ -36,7 +38,8 @@ export class CdpSession {
   private attached = false;
   private detachedReason: DetachReason | null = null;
   private drag: DragData | null = null;
-  private dialog: DialogInfo | null = null;
+  private dialogOpen = false;
+  private onDialogCb: ((dialog: DialogInfo) => void) | null = null;
   private onDetachedCb: ((reason: DetachReason) => void) | null = null;
   private readonly onEvent: (source: chrome.debugger.Debuggee, method: string, params?: object) => void;
   private readonly onDetach: (source: chrome.debugger.Debuggee, reason: string) => void;
@@ -47,7 +50,10 @@ export class CdpSession {
     this.onEvent = (source, method, params) => {
       if (source.tabId !== this.tabId) return;
       if (method === "Input.dragIntercepted") this.drag = (params as { data?: DragData })?.data ?? {};
-      else if (method === "Page.javascriptDialogOpening") this.dialog = params as DialogInfo;
+      else if (method === "Page.javascriptDialogOpening") {
+        this.dialogOpen = true;
+        this.onDialogCb?.(params as DialogInfo);
+      } else if (method === "Page.javascriptDialogClosed") this.dialogOpen = false;
     };
     this.onDetach = (source, reason) => {
       if (source.tabId !== this.tabId) return;
@@ -102,16 +108,20 @@ export class CdpSession {
     return data;
   }
 
-  /** A JavaScript dialog waiting on the page since the last call, or null. */
-  takeDialog(): DialogInfo | null {
-    const dialog = this.dialog;
-    this.dialog = null;
-    return dialog;
+  /** Who answers the page's JavaScript dialogs, called as each one opens (null: nobody). */
+  onDialog(cb: ((dialog: DialogInfo) => void) | null): void {
+    this.onDialogCb = cb;
+  }
+
+  /** Whether a JavaScript dialog is open on the page now. */
+  get hasDialog(): boolean {
+    return this.dialogOpen;
   }
 
   /** Answer a JavaScript dialog the page opened (accept or dismiss, with optional prompt text). */
   async handleDialog(accept: boolean, promptText?: string): Promise<void> {
     await this.send("Page.handleJavaScriptDialog", promptText === undefined ? { accept } : { accept, promptText });
+    this.dialogOpen = false;
   }
 
   async detach(): Promise<void> {

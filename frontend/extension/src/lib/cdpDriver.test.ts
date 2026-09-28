@@ -87,11 +87,21 @@ describe("CdpDriver", () => {
     expect((drops[0].params as { x: number }).x).toBe(400);
   });
 
-  it("passes a dialog through and answers it", async () => {
+  it("enables the page's events when it starts, so dialogs are seen", async () => {
+    await driver();
+    expect(chrome.debugger.sent.some((c) => c.method === "Page.enable")).toBe(true);
+  });
+
+  it("hands a dialog to its handler as it opens, and answers it", async () => {
     const d = await driver();
+    const seen: unknown[] = [];
+    d.onDialog(async (dialog) => {
+      seen.push(dialog);
+      await d.handleDialog(true);
+    });
     chrome.debugger.emitEvent(7, "Page.javascriptDialogOpening", { type: "alert", message: "hi" });
-    expect(d.takeDialog()).toMatchObject({ type: "alert" });
-    await d.handleDialog(true);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(seen).toMatchObject([{ type: "alert" }]);
     expect(chrome.debugger.sent.at(-1)).toMatchObject({ method: "Page.handleJavaScriptDialog", params: { accept: true } });
   });
 

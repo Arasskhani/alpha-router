@@ -41,6 +41,8 @@ export class CdpDriver {
 
   async start(): Promise<void> {
     await this.session.attach();
+    // The Page domain's events: without them Chrome never says a dialog opened, and the page just waits.
+    await this.session.send("Page.enable");
     // The page may not draw over the debugging attach; the rest is lazy.
     await this.refreshViewport();
   }
@@ -128,8 +130,12 @@ export class CdpDriver {
     return await pressKey(this.session.send.bind(this.session), spec, modifiers);
   }
 
-  takeDialog(): DialogInfo | null {
-    return this.session.takeDialog();
+  /**
+   * Who answers the page's JavaScript dialogs: called as one opens, while the
+   * input that opened it waits for the answer (null: nobody).
+   */
+  onDialog(cb: ((dialog: DialogInfo) => Promise<void>) | null): void {
+    this.session.onDialog(cb ? (dialog) => void cb(dialog).catch(() => undefined) : null);
   }
 
   async handleDialog(accept: boolean, promptText?: string): Promise<void> {

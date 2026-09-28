@@ -626,19 +626,20 @@ describe("the trail", () => {
 });
 
 describe("the conversation the model reads", () => {
-  function entry(message: ApiMessage, page?: string) {
-    return page ? { message, page: { open: "<untrusted_page_content_x>", body: page, close: "</untrusted_page_content_x>" } } : { message };
+  function entry(message: ApiMessage, page?: string, read?: "outline" | "text") {
+    return page ? { message, page: { open: "<untrusted_page_content_x>", body: page, close: "</untrusted_page_content_x>" }, ...(read ? { read } : {}) } : { message };
   }
+  const step = (n: number, tool: string, page: string, read?: "outline" | "text") => [
+    entry({ role: "assistant", content: null, tool_calls: [{ id: `c${n}`, type: "function", function: { name: tool, arguments: "{}" } }] }),
+    entry({ role: "tool", tool_call_id: `c${n}`, content: "" }, page, read),
+  ];
 
   it("cuts older page content short and keeps the latest whole", () => {
     const big = "x".repeat(5000);
     const entries = [
       entry({ role: "system", content: "rules" }),
       entry({ role: "user", content: "task" }),
-      ...[1, 2, 3].flatMap((n) => [
-        entry({ role: "assistant", content: null, tool_calls: [{ id: `c${n}`, type: "function", function: { name: "read_page", arguments: "{}" } }] }),
-        entry({ role: "tool", tool_call_id: `c${n}`, content: "" }, big),
-      ]),
+      ...[1, 2, 3].flatMap((n) => step(n, "get_page_text", big, "text")),
     ];
     const messages = conversation(entries);
     const tools = messages.filter((m) => m.role === "tool") as Array<{ content: string }>;
@@ -646,6 +647,34 @@ describe("the conversation the model reads", () => {
     expect(tools[0].content).toContain("older page content, cut");
     expect(tools[1].content).toContain(big);
     expect(tools[2].content).toContain(big);
+  });
+
+  it("keeps the newest outline whole, and counts only reads of the page against the budget", () => {
+    const outline = `[e1] button "Send"\n${"o".repeat(5000)}`;
+    const text = "t".repeat(5000);
+    const entries = [
+      entry({ role: "system", content: "rules" }),
+      entry({ role: "user", content: "task" }),
+      ...step(1, "read_page", outline, "outline"),
+      // Two reads of the page's text after it, and actions that reported from the page.
+      ...step(2, "get_page_text", text, "text"),
+      ...step(3, "click", "Chose \"Blue\"."),
+      ...step(4, "find", text, "text"),
+      ...step(5, "click", "a note ".repeat(300)),
+    ];
+    const tools = conversation(entries).filter((m) => m.role === "tool") as Array<{ content: string }>;
+    // The outline is older than two reads, and still whole: its references are what the model acts with.
+    expect(tools[0].content).toContain(outline);
+    expect(tools[1].content).toContain(text);
+    expect(tools[3].content).toContain(text);
+    // What actions reported is never cut.
+    expect(tools[2].content).toContain('Chose "Blue".');
+    expect(tools[4].content).not.toContain("cut");
+    // Past the newest outline, an older one is cut like any old read.
+    const later = [...entries, ...step(6, "read_page", "[e9] link \"Next\"", "outline"), ...step(7, "get_page_text", text, "text"), ...step(8, "find", text, "text")];
+    const again = conversation(later).filter((m) => m.role === "tool") as Array<{ content: string }>;
+    expect(again[0].content).toContain("older page content, cut");
+    expect(again[5].content).toContain('[e9] link "Next"');
   });
 
   it("leaves out the oldest steps whole when it is too long, never a call without its answer", () => {

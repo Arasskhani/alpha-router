@@ -157,13 +157,19 @@ const TARGET_TOLERANCE_PX = 8;
 const DELETION_RUN = 8;
 /** Older page content is cut to this, so a long run stays within the model's reach. */
 const OLD_PAGE_CHARS = 1500;
-/** How many of the latest page results stay whole. */
+/** How many of the latest reads of the page (read_page, find, get_page_text) stay whole; the newest outline always does. */
 const WHOLE_PAGE_RESULTS = 2;
 /** Past this much text the oldest steps are left out, each with its answers. */
 const MAX_CONVERSATION_CHARS = 120_000;
 const HISTORY_LINES = 10;
 
-type Entry = { message: ApiMessage; page?: { open: string; body: string; close: string } };
+/**
+ * One message of the conversation, with the page's words it carries kept
+ * apart; `read` marks a read of the page - its outline, or its text or a
+ * search - which is what grows long and is cut when old. What an action
+ * reports from the page is short, and stays whole.
+ */
+type Entry = { message: ApiMessage; page?: { open: string; body: string; close: string }; read?: "outline" | "text" };
 
 function abortError(): DOMException {
   return new DOMException("The run was stopped.", "AbortError");
@@ -274,12 +280,15 @@ function withRecentScreenshots(messages: ApiMessage[], kept: number = SCREENSHOT
  * steps left out whole, a tool call never without its answer.
  */
 export function conversation(entries: Entry[], screenshotsKept: number = SCREENSHOTS_KEPT): ApiMessage[] {
-  const pageIndexes = entries.flatMap((entry, index) => (entry.page ? [index] : []));
-  const whole = new Set(pageIndexes.slice(-WHOLE_PAGE_RESULTS));
+  const reads = entries.flatMap((entry, index) => (entry.page && entry.read ? [index] : []));
+  const whole = new Set(reads.slice(-WHOLE_PAGE_RESULTS));
+  // The newest outline carries the references the model acts with: it is never cut, however many reads came after it.
+  const outline = [...reads].reverse().find((index) => entries[index].read === "outline");
+  if (outline !== undefined) whole.add(outline);
   const messages = withRecentScreenshots(
     entries.map((entry, index) =>
       entry.page && entry.message.role === "tool"
-        ? { ...entry.message, content: [entry.message.content, pageText(entry.page, whole.has(index))].filter(Boolean).join("\n") }
+        ? { ...entry.message, content: [entry.message.content, pageText(entry.page, !entry.read || whole.has(index))].filter(Boolean).join("\n") }
         : entry.message,
     ),
     screenshotsKept,
@@ -529,6 +538,8 @@ type Answer = {
   finish?: string;
   /** A screenshot to show the model after this step's answers, as an inline image. */
   image?: { url: string; caption: string };
+  /** A read of the page, which the conversation cuts short once it is old. */
+  read?: Entry["read"];
 };
 
 function point(value: unknown): { x: number; y: number } | null {
@@ -942,10 +953,11 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     }
     // What the page just showed the agent - its outline, its text, a search's matches - may carry instructions aimed at it.
     if (tool === "read_page" || tool === "get_page_text" || tool === "find") watch(body);
-    const read = tool === "read_page" || tool === "get_page_text" || tool === "find";
+    const read = tool === "read_page" ? "outline" : tool === "get_page_text" || tool === "find" ? "text" : undefined;
     return {
       content: [read ? "" : "Done.", moved].filter(Boolean).join("\n"),
       ...(read || body ? { page: wrapPage(options.nonce, site, body) } : {}),
+      ...(read ? { read } : {}),
       status: "done",
       detail,
       outcome: "ok",
@@ -1334,7 +1346,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
           const message = err instanceof Error && err.message ? clip(err.message, 300) : "The browser could not do it.";
           answer = { content: `The action failed in the browser: ${message}`, status: "error", detail: message, outcome: "error", extra: { error: "browser_error" } };
         }
-        entries.push({ message: { role: "tool", tool_call_id: call.id, content: answer.content }, ...(answer.page ? { page: answer.page } : {}) });
+        entries.push({ message: { role: "tool", tool_call_id: call.id, content: answer.content }, ...(answer.page ? { page: answer.page } : {}), ...(answer.read ? { read: answer.read } : {}) });
         if (answer.image) images.push(answer.image);
         const name = call.function.name;
         const said = answer.summary ?? describeAction(name, args(call.function.arguments) ?? {});

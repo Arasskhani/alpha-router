@@ -166,6 +166,10 @@ export function cleanPageResult(method: PageMethod, raw: unknown): PageResult {
       });
       return { ok: true, matches };
     }
+    case "find_ref": {
+      const refs = (Array.isArray(v.refs) ? v.refs : []).slice(0, 3).filter((ref): ref is string => typeof ref === "string" && REF.test(ref));
+      return { ok: true, refs };
+    }
     case "describe": {
       const element = cleanElement(v.element);
       return element ? { ok: true, element } : failure("failed", "The element could not be read.");

@@ -25,6 +25,7 @@
  */
 
 import { keyDefFor, KEY_NAMES_SHOWN, parseKeyCombo, type KeyCombo } from "../lib/keys";
+import { looseName } from "../lib/refs";
 import { isSensitiveField } from "../lib/sensitive";
 import { extractPage, isBlockDisplayed, isTextRendered } from "./extract";
 import { OVERLAY_ID } from "./overlay";
@@ -777,6 +778,28 @@ export function find(doc: Document, query: unknown, isVisible: Visibility): Resu
   const matches = [...usable, ...text].slice(0, MAX_FIND_RESULTS);
   if (!matches.length) return { ok: false, error: "not_found", message: `Nothing visible on the page matches "${clip(q, 60)}".` };
   return { ok: true, matches };
+}
+
+/**
+ * The references of the elements now on the page with this role and name
+ * (loosely: counts aside) - to find again what a reference used to name,
+ * when the page has put something else under it. The first three.
+ */
+export function findRef(doc: Document, role: unknown, name: unknown, isVisible: Visibility): Result<{ refs: string[] }> {
+  if (typeof role !== "string" || typeof name !== "string" || !role || name.length > 200) {
+    return { ok: false, error: "bad_request", message: "Give the role and the name to look for." };
+  }
+  const wanted = looseName(name);
+  const refs: string[] = [];
+  for (const el of visibleElements(doc.body ?? doc.documentElement, isVisible)) {
+    const proxy = labelProxy(el, isVisible);
+    const found = proxy ? proxy.role : roleOf(el);
+    if (found !== role) continue;
+    const info = proxy ? describeProxy(el, proxy, isVisible) : describeElement(el, found, isVisible);
+    if (looseName(info.name) === wanted) refs.push(info.ref);
+    if (refs.length >= 3) break;
+  }
+  return { ok: true, refs };
 }
 
 // --- what the agent does -------------------------------------------------------------------

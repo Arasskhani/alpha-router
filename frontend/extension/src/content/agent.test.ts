@@ -3,7 +3,7 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { click, describe as describeRef, describeFocus, find, pressKey, scroll, selectOption, snapshot, submitForm, typeText, waitFor, type ElementInfo } from "./agent";
+import { click, describe as describeRef, describeFocus, find, findRef, pressKey, scroll, selectOption, snapshot, submitForm, typeText, waitFor, type ElementInfo } from "./agent";
 import { hideOverlay, OVERLAY_ID, showOverlay } from "./overlay";
 import { runAgentCall } from "./runtime";
 
@@ -300,6 +300,15 @@ describe("acting", () => {
     expect((document.getElementById("n") as HTMLInputElement).checked).toBe(true);
     // Read again, the state shows.
     expect(snapshot(document, { isVisible: hidden }).outline).toContain('checkbox "Remember me" (checked)');
+  });
+
+  it("finds an element again by its role and name, counts aside", () => {
+    page(`<button>Archive B</button><button>Archive A</button><a href="/in">Inbox (4)</a>`);
+    const found = findRef(document, "link", "Inbox (3)", visible);
+    expect(found).toMatchObject({ ok: true, refs: [expect.stringMatching(/^e\d+$/)] });
+    expect(findRef(document, "button", "Archive B", visible)).toMatchObject({ ok: true, refs: [expect.any(String)] });
+    expect(findRef(document, "button", "Archive C", visible)).toEqual({ ok: true, refs: [] });
+    expect(findRef(document, 3, "x", visible)).toMatchObject({ ok: false, error: "bad_request" });
   });
 
   it("tells a submit button as the browser does, and records where any link goes", () => {

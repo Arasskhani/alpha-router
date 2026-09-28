@@ -22,6 +22,7 @@
 
 import { approvalFor, classifyAction, DEFAULT_APPROVALS, type AgentMode, type PolicyContext, type Verdict } from "../lib/agentPolicy";
 import { KEY_NAMES_SHOWN, parseKeyCombo } from "../lib/keys";
+import { looseName } from "../lib/refs";
 import type { CdpDriver } from "../lib/cdpDriver";
 import { probeInjection } from "../lib/injection";
 import type { ElementInfo, PageMethod, PageResult } from "../lib/pageAgent";
@@ -690,6 +691,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     const seen = await Promise.race([deps.browser.page("observe", scrolledAt ? { at: scrolledAt } : {}, after, signal, OBSERVE_MS).catch(() => null), stopped.catch(() => null)]);
     if (!seen?.ok) return lines;
     const focus = seen.focus as ElementInfo | undefined;
+    if (focus) remember(after.id, [focus]);
     lines.push(focus ? `The keyboard is in: ${focusLine(focus)}.` : "Nothing has the keyboard focus.");
     const said = Array.isArray(seen.said) ? (seen.said as Array<{ kind: string; text: string }>) : [];
     for (const item of said) lines.push(item.kind === "dialog" ? `A dialog shows: "${item.text}"` : `The page announced: "${item.text}"`);
@@ -806,6 +808,23 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     const answer = cards.then(() => (signal.aborted ? false : deps.approve(request, signal)));
     cards = answer.catch(() => undefined);
     return answer;
+  }
+
+  /**
+   * What each reference named when the model was told it, per tab: an
+   * element's role and name from an outline, a search or the focus. A page
+   * can put something else under a reference - a list that re-rendered, the
+   * next page reusing e12 - and then the model would act on what it did not
+   * mean. Text and headings are not recorded: a click on words works the
+   * control around them, whose role is another.
+   */
+  const told = new Map<string, { role: string; name: string }>();
+  function remember(tabId: number, elements: Array<{ ref?: unknown; role?: unknown; name?: unknown }>): void {
+    for (const e of elements) {
+      if (typeof e.ref !== "string" || typeof e.role !== "string" || typeof e.name !== "string") continue;
+      if (e.role === "text" || e.role === "heading") continue;
+      told.set(`${tabId}:${e.ref}`, { role: e.role, name: e.name });
+    }
   }
 
   /** The page's dialogs answered since the last action's result, told to the model with that result. */
@@ -1067,10 +1086,12 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     if (tool === "read_page") {
       body = String(result.outline ?? "");
       detail = `${Array.isArray(result.elements) ? result.elements.length : 0} elements`;
+      if (Array.isArray(result.elements)) remember(tab.id, result.elements as ElementInfo[]);
     } else if (tool === "get_page_text") {
       body = String(result.text ?? "") + (result.truncated ? "\n(The text was cut here.)" : "");
     } else if (tool === "find") {
       const matches = Array.isArray(result.matches) ? (result.matches as Array<{ ref: string; role: string; name: string; snippet?: string }>) : [];
+      remember(tab.id, matches);
       body = matches.map((m) => `[${m.ref}] ${m.role}${m.name ? ` "${m.name}"` : ""}${m.snippet ? ` - ${m.snippet}` : ""}`).join("\n");
       detail = `${matches.length} found`;
     } else {
@@ -1097,7 +1118,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
   /** One tool call from the model: through the rules, maybe past the user, then carried out. */
   async function handle(call: ToolCall, skip: string | null): Promise<Answer & { denied?: boolean }> {
     const name = call.function.name;
-    const a = args(call.function.arguments);
+    let a = args(call.function.arguments);
     if (skip) return { content: skip, status: "skipped", outcome: "skipped" };
     if (!a) return { content: "The arguments were not valid JSON for this tool. Send them again.", status: "error", detail: "Invalid arguments", outcome: "error", extra: { error: "invalid_arguments" } };
     if (name === "done") {
@@ -1168,6 +1189,8 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     // Nothing is asked of a page the agent may not work on, not even a description: the rules refuse the action below.
     const workable = Boolean(tab && pageNow && classifyAction({ tool: "read_page", args: {}, page: pageNow }, options.rules).class !== "blocked");
     let element: ElementInfo | undefined;
+    /** When the reference named something else by now and the element meant was found again: said with the result. */
+    let refNote: string | undefined;
     if (name === "press_key" && workable && tab) {
       // A key goes to the focused element, which decides what it does: Enter in a message box sends it.
       const focus = await page("describe_focus", {}, tab);
@@ -1177,15 +1200,38 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
         // The rules refuse it below, with the reason.
       } else {
         // For a click, the control it works on: the button around the words, the field of a label.
-        const described = await page(
-          "describe",
-          { ref: a.ref, ...(name === "click" ? { activates: true } : {}), ...(name === "select_option" ? { choose: a.value } : {}) },
-          tab,
-        );
+        const describeRef = (ref: unknown) =>
+          page("describe", { ref, ...(name === "click" ? { activates: true } : {}), ...(name === "select_option" ? { choose: a!.value } : {}) }, tab);
+        let described = await describeRef(a.ref);
         if (!described.ok) {
           return { content: notDone(described.error), page: wrapPage(options.nonce, pageNow.host, described.message), status: "error", detail: described.message, outcome: "error", site: pageNow.host, extra: { error: described.error } };
         }
         element = described.element as ElementInfo;
+        // What the model was told this reference names: if the page put something else under it, that is not acted on.
+        const was = typeof a.ref === "string" ? told.get(`${tab.id}:${a.ref}`) : undefined;
+        if (was && (was.role !== element.role || looseName(was.name) !== looseName(element.name))) {
+          const then = `${a.ref as string} was ${was.role} "${clip(was.name, 60)}" when you were told it, and is ${element.role} "${clip(element.name, 60)}" now`;
+          // The same element may still be there under another reference: when exactly one matches, that is the one meant.
+          const again = await page("find_ref", { role: was.role, name: was.name }, tab);
+          const refs = again.ok && Array.isArray(again.refs) ? (again.refs as string[]) : [];
+          const found = refs.length === 1 ? await describeRef(refs[0]) : null;
+          if (!found?.ok) {
+            return {
+              content: "Not done (changed): that reference names something else on the page now. Read the page again for fresh references.",
+              page: wrapPage(options.nonce, pageNow.host, `${then}.${refs.length > 1 ? ` ${refs.length} elements match what it was.` : ""}`),
+              status: "error",
+              detail: "The reference changed",
+              outcome: "error",
+              site: pageNow.host,
+              extra: { error: "ref_changed" },
+            };
+          }
+          described = found;
+          element = described.element as ElementInfo;
+          refNote = `${then}: the action went to ${refs[0]}, which is what ${a.ref as string} was.`;
+          a = { ...a, ref: refs[0] };
+          remember(tab.id, [element]);
+        }
       }
     }
     // A computer action is judged as the action it amounts to, on what a click there (or the focus) would touch.
@@ -1425,6 +1471,10 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       if (targetRect) await visual("visuals_target", { rect: null }, tab);
     }
     answer = withDialogs(answer, pageNow?.host ?? tab?.host ?? "");
+    if (refNote) {
+      // The names are the page's words: inside the tags, first.
+      answer = { ...answer, page: answer.page ? { ...answer.page, body: [refNote, answer.page.body].filter(Boolean).join("\n") } : wrapPage(options.nonce, pageNow?.host ?? "", refNote) };
+    }
     return { ...answer, summary, site: answer.site ?? base.site, extra: { ...base.extra, ...(answer.extra ?? {}), ...(name === "computer" ? { action: String(a.action ?? "") } : {}) } };
   }
 

@@ -10,6 +10,7 @@ import {
   describeAt,
   describeFocus,
   find,
+  findRef,
   pageText,
   pressKey,
   scroll,
@@ -31,6 +32,7 @@ export type PageMethod =
   | "read_page"
   | "get_page_text"
   | "find"
+  | "find_ref"
   | "describe"
   | "describe_at"
   | "describe_focus"
@@ -90,6 +92,8 @@ export async function runAgentCall(
         return { ok: true, ...pageText(doc, { maxChars: count(args.max_chars), isVisible }) };
       case "find":
         return find(doc, args.query, isVisible);
+      case "find_ref":
+        return findRef(doc, args.role, args.name, isVisible);
       case "describe":
         return describe(args.ref, isVisible, args.activates === true, args.choose);
       case "describe_at":

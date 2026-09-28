@@ -367,6 +367,47 @@ describe("a run", () => {
   });
 });
 
+describe("a reference that changed meaning", () => {
+  const reading = { ok: true as const, outline: OUTLINE, elements: [{ ref: "e1", role: "button", name: "Archive B", tag: "button" }, { ref: "e3", role: "link", name: "Inbox (3)", tag: "a" }], truncated: false, url: TAB.url, title: TAB.title };
+
+  it("is not acted on when nothing on the page is what it named", async () => {
+    const browser = fakeBrowser({
+      read_page: () => reading,
+      describe: (a) => ({ ok: true, element: a.ref === "e1" ? { ref: "e1", role: "button", name: "Archive A", tag: "button" } : ELEMENTS.e3 }),
+      find_ref: () => ({ ok: true, refs: [] }),
+    });
+    const h = harness([{ text: "", toolCalls: [call("read_page", {}, "c1")] }, { text: "", toolCalls: [call("click", { ref: "e1" }, "c2")] }, { text: "", toolCalls: [call("done", { summary: "ok" })] }], { browser });
+    await run(h);
+    expect(h.approvals).toHaveLength(0);
+    expect(browser.page).not.toHaveBeenCalledWith("click", expect.anything(), expect.anything(), expect.anything());
+    const answer = h.sent[2].find((m) => m.role === "tool" && m.tool_call_id === "c2") as { content: string };
+    expect(answer.content).toMatch(/^Not done \(changed\): that reference names something else/);
+    expect(answer.content).toContain('e1 was button "Archive B" when you were told it, and is button "Archive A" now.');
+  });
+
+  it("goes to the element it named when the page moved it under another reference, and says so", async () => {
+    const browser = fakeBrowser({
+      read_page: () => reading,
+      describe: (a) => ({ ok: true, element: a.ref === "e1" ? { ref: "e1", role: "button", name: "Archive A", tag: "button" } : { ref: "e7", role: "button", name: "Archive B", tag: "button" } }),
+      find_ref: (a) => ({ ok: true, refs: a.role === "button" && a.name === "Archive B" ? ["e7"] : [] }),
+    });
+    const h = harness([{ text: "", toolCalls: [call("read_page", {}, "c1")] }, { text: "", toolCalls: [call("click", { ref: "e1" }, "c2")] }, { text: "", toolCalls: [call("done", { summary: "ok" })] }], { browser });
+    await run(h);
+    // The user was asked about the element meant, and it was clicked.
+    expect(h.approvals.map((x) => x.summary)).toEqual(['Click "Archive B"']);
+    expect(browser.page).toHaveBeenCalledWith("click", { ref: "e7" }, TAB, expect.anything());
+    const answer = h.sent[2].find((m) => m.role === "tool" && m.tool_call_id === "c2") as { content: string };
+    expect(answer.content).toContain("the action went to e7, which is what e1 was.");
+  });
+
+  it("is the same element when only a count in its name moved", async () => {
+    const browser = fakeBrowser({ read_page: () => reading, describe: () => ({ ok: true, element: { ref: "e3", role: "link", name: "Inbox (4)", tag: "a" } }) });
+    const h = harness([{ text: "", toolCalls: [call("read_page", {}, "c1")] }, { text: "", toolCalls: [call("click", { ref: "e3" }, "c2")] }, { text: "", toolCalls: [call("done", { summary: "ok" })] }], { browser });
+    await run(h);
+    expect(browser.page).toHaveBeenCalledWith("click", { ref: "e3" }, TAB, expect.anything());
+  });
+});
+
 describe("going somewhere", () => {
   it("asks before another site, and has the browser allow it in the same click", async () => {
     const browser = fakeBrowser();

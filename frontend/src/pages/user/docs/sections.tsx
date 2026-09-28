@@ -1161,7 +1161,9 @@ export const userManualSections: DocSection[] = [
           </li>
           <li>
             Screenshots and clicks work at any display scaling (a laptop at 125 % or 150 %), any window size, and
-            on a page scrolled down; when the agent opens or switches to another tab, full control goes with it.
+            on a page scrolled down; when the agent opens or switches to another tab, full control goes with it. On a
+            page Chrome does not let it control (a New Tab page, the Web Store) it works without it, and takes it
+            again on the next page that allows it.
           </li>
           <li>
             Its clicks and typing by the page&apos;s own names use the real mouse and keyboard too: it clicks a field,

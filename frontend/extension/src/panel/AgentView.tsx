@@ -565,23 +565,24 @@ export default function AgentView({ me, server, hidden = false, onDisconnected, 
           append({ kind: "text", id: `${run}-driver`, text: "Working without full control: this model does not read images. Choose a vision model for a real mouse and screenshots." });
         } else {
           const choice = await chooseDriver(activePage.tabId, { fullControl: true, maxSide });
-          if (choice.mode === "cdp") {
-            // Each tab the agent works in gets its own session; Cancel on Chrome's bar, on any of them, stops the run.
-            const drivers = new TabDrivers(
-              { tabId: activePage.tabId, driver: choice.driver },
-              {
-                maxSide,
-                onDetached: (reason) => {
-                  if (reason === "canceled_by_user") abort.abort();
-                },
-              },
-            );
-            driver = drivers;
-            stopDriver = () => drivers.stop();
-            append({ kind: "text", id: `${run}-driver`, text: "Full control is on: a real mouse and keyboard, and screenshots. Chrome shows its debugging bar while this runs." });
-          } else {
-            append({ kind: "text", id: `${run}-driver`, text: `Working without full control: ${choice.reason}.` });
-          }
+          // Each tab the agent works in gets its own session; Cancel on Chrome's bar, on any of them, stops the run.
+          // A tab Chrome would not attach to now (a New Tab page) is tried again on the next page it shows.
+          const drivers = new TabDrivers(choice.mode === "cdp" ? { tabId: activePage.tabId, driver: choice.driver } : null, {
+            maxSide,
+            onDetached: (reason) => {
+              if (reason === "canceled_by_user") abort.abort();
+            },
+          });
+          driver = drivers;
+          stopDriver = () => drivers.stop();
+          append({
+            kind: "text",
+            id: `${run}-driver`,
+            text:
+              choice.mode === "cdp"
+                ? "Full control is on: a real mouse and keyboard, and screenshots. Chrome shows its debugging bar while this runs."
+                : `Full control is not on this page (${choice.reason}); the agent takes it on the first page Chrome lets it control.`,
+          });
         }
       }
       const result = await runAgent(

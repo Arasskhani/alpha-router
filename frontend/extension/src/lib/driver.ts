@@ -56,21 +56,44 @@ export async function chooseDriver(
  */
 export class TabDrivers {
   private readonly drivers = new Map<number, CdpDriver>();
-  private readonly refused = new Set<number>();
+  /** Tabs Chrome would not attach to, with the page each showed then: another page of the tab is tried again. */
+  private readonly refused = new Map<number, string>();
   /** The run is over: an attach still under way is undone as it finishes. */
   private stopped = false;
-  private current: CdpDriver;
+  private current: CdpDriver | null = null;
   /** The session a dialog last opened in: its answer goes there, whichever tab the agent is on. */
   private dialogIn: CdpDriver | null = null;
   private dialogCb: ((dialog: DialogInfo, answer: DialogAnswer) => Promise<void>) | null = null;
   private readonly maxSide: number;
   private readonly onDetached: (reason: string) => void;
 
-  constructor(first: { tabId: number; driver: CdpDriver }, options: { maxSide: number; onDetached: (reason: string) => void }) {
+  /**
+   * `first`: the tab the run starts on, attached already - or null when
+   * Chrome would not attach there (a New Tab page, the Web Store): the
+   * agent gets full control on the first page it reaches that Chrome allows.
+   */
+  constructor(first: { tabId: number; driver: CdpDriver } | null, options: { maxSide: number; onDetached: (reason: string) => void }) {
     this.maxSide = options.maxSide;
     this.onDetached = options.onDetached;
-    this.current = first.driver;
-    this.adopt(first.tabId, first.driver);
+    if (first) {
+      this.current = first.driver;
+      this.adopt(first.tabId, first.driver);
+    }
+  }
+
+  /** The session of the tab the agent works in; there is none before use() first succeeds. */
+  private live(): CdpDriver {
+    if (!this.current) throw new Error("Full control is not on in this tab.");
+    return this.current;
+  }
+
+  /** `work` on that session - a rejected promise, never a throw, when there is none. */
+  private onLive<T>(work: (driver: CdpDriver) => Promise<T>): Promise<T> {
+    try {
+      return work(this.live());
+    } catch (err) {
+      return Promise.reject(err instanceof Error ? err : new Error(String(err)));
+    }
   }
 
   private adopt(tabId: number, driver: CdpDriver): void {
@@ -95,14 +118,15 @@ export class TabDrivers {
    * Work in this tab from now on: its session, attached now if it is not
    * yet (or no longer). False when Chrome will not attach to it.
    */
-  async use(tabId: number): Promise<boolean> {
+  async use(tabId: number, url = ""): Promise<boolean> {
     if (this.stopped) return false;
     const known = this.drivers.get(tabId);
     if (known?.attached) {
       this.current = known;
       return true;
     }
-    if (this.refused.has(tabId)) return false;
+    // Refused on this page before: not tried again until the tab shows another (a policy may block one site only).
+    if (this.refused.get(tabId) === url) return false;
     // A session Chrome ended keeps no say in this tab: its dialogs callback goes with it.
     known?.onDialog(null);
     const driver = new CdpDriver(new CdpSession(tabId), { maxSide: this.maxSide });
@@ -110,7 +134,7 @@ export class TabDrivers {
       await driver.start();
     } catch {
       await driver.stop().catch(() => undefined);
-      this.refused.add(tabId);
+      this.refused.set(tabId, url);
       return false;
     }
     // The run ended while Chrome attached: nothing stays attached after it (the debugging bar, the focus emulation).
@@ -129,51 +153,51 @@ export class TabDrivers {
   }
 
   async handleDialog(accept: boolean, promptText?: string): Promise<void> {
-    await (this.dialogIn ?? this.current).handleDialog(accept, promptText);
+    await (this.dialogIn ?? this.live()).handleDialog(accept, promptText);
   }
 
   screenshot(): Promise<Shot> {
-    return this.current.screenshot();
+    return this.onLive((driver) => driver.screenshot());
   }
 
   zoom(region: Region): Promise<Shot> {
-    return this.current.zoom(region);
+    return this.onLive((driver) => driver.zoom(region));
   }
 
   crop(rect: Region, options?: { padding?: number; side?: number }): Promise<Shot> {
-    return this.current.crop(rect, options);
+    return this.onLive((driver) => driver.crop(rect, options));
   }
 
   toCss(point: Point): Promise<Point> {
-    return this.current.toCss(point);
+    return this.onLive((driver) => driver.toCss(point));
   }
 
   click(point: Point, options?: { button?: MouseButton; clickCount?: number; modifiers?: readonly string[] }): Promise<void> {
-    return this.current.click(point, options);
+    return this.onLive((driver) => driver.click(point, options));
   }
 
   clickAt(css: Point, options?: { button?: MouseButton; clickCount?: number; modifiers?: readonly string[] }): Promise<void> {
-    return this.current.clickAt(css, options);
+    return this.onLive((driver) => driver.clickAt(css, options));
   }
 
   hover(point: Point, modifiers?: readonly string[]): Promise<void> {
-    return this.current.hover(point, modifiers);
+    return this.onLive((driver) => driver.hover(point, modifiers));
   }
 
   scroll(point: Point, delta: { x?: number; y?: number }): Promise<void> {
-    return this.current.scroll(point, delta);
+    return this.onLive((driver) => driver.scroll(point, delta));
   }
 
   drag(from: Point, to: Point): Promise<{ intercepted: boolean }> {
-    return this.current.drag(from, to);
+    return this.onLive((driver) => driver.drag(from, to));
   }
 
   type(text: string): Promise<void> {
-    return this.current.type(text);
+    return this.onLive((driver) => driver.type(text));
   }
 
   key(spec: string, modifiers?: readonly string[]): Promise<boolean> {
-    return this.current.key(spec, modifiers);
+    return this.onLive((driver) => driver.key(spec, modifiers));
   }
 
   /** Detach from every tab the run attached to, and attach to none from now on. */

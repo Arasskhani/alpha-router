@@ -664,8 +664,9 @@ describe("full control", () => {
     await render({ ...ME, features: { ...ME.features, full_control: true } });
     await start("Look at the page.");
     await until(() => host.textContent!.includes("Done."), "the run to finish");
-    expect(host.textContent).toContain("Working without full control");
-    expect(host.textContent).toContain("blocked by policy");
+    // Not for the run: on the first page Chrome lets it control, the agent takes it.
+    expect(host.textContent).toContain("Full control is not on this page (attach: blocked by policy)");
+    expect(host.textContent).toContain("the agent takes it on the first page Chrome lets it control");
   });
 
   it("does nothing different when the feature is off", async () => {

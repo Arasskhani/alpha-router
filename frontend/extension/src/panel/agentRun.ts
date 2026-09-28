@@ -110,8 +110,8 @@ export type AgentEventReport = {
 
 /** The run's driver under full control: input and screenshots (cdpDriver.ts); absent on the dom path. */
 export type ControlDriver = Pick<CdpDriver, "screenshot" | "zoom" | "crop" | "click" | "clickAt" | "hover" | "scroll" | "drag" | "type" | "key" | "toCss" | "onDialog" | "handleDialog"> & {
-  /** Work in this tab from now on (lib/driver.ts TabDrivers); false when Chrome will not attach to it. */
-  use?(tabId: number): Promise<boolean>;
+  /** Work in this tab, on this page, from now on (lib/driver.ts TabDrivers); false when Chrome will not attach to it. */
+  use?(tabId: number, url?: string): Promise<boolean>;
 };
 
 /** What the run is doing, as the page's border and the toolbar badge show it. */
@@ -794,7 +794,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     check();
     if (!tab?.host || !allowedSites.has(tab.host)) return undefined;
     if (classifyAction({ tool: "screenshot", args: {}, page: { url: tab.url, host: tab.host } }, options.rules).class === "blocked") return undefined;
-    if (driver.use && !(await raced(driver.use(tab.id)))) return undefined;
+    if (driver.use && !(await raced(driver.use(tab.id, tab.url)))) return undefined;
     check();
     await visual("visuals_veil", { veiled: true }, tab);
     try {
@@ -1275,7 +1275,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     /** Whether this tab is under full control: then reference actions use the real mouse and keyboard too. */
     let controlled = Boolean(deps.driver && tab);
     if (deps.driver?.use && tab && PAGE_TOOLS.has(name)) {
-      controlled = await raced(deps.driver.use(tab.id));
+      controlled = await raced(deps.driver.use(tab.id, tab.url));
       check();
       if (!controlled && CONTROL_TOOL_NAMES.has(name)) {
         return {

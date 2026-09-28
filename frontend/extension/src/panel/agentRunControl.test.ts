@@ -573,7 +573,7 @@ describe("full control follows the tab", () => {
     const use = vi.fn(async () => true);
     (h.driver as ControlDriver).use = use;
     await h.run();
-    expect(use).toHaveBeenCalledWith(TAB.id);
+    expect(use).toHaveBeenCalledWith(TAB.id, TAB.url);
     expect(h.driver!.screenshot).toHaveBeenCalled();
   });
 

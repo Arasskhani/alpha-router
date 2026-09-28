@@ -104,6 +104,20 @@ describe("TabDrivers", () => {
     expect(sentTo("Page.handleJavaScriptDialog")).toEqual([9]);
   });
 
+  it("takes full control on the first page Chrome allows when the run began on one it does not", async () => {
+    const d = new TabDrivers(null, { maxSide: 1280, onDetached: () => undefined });
+    await expect(d.screenshot()).rejects.toThrow(/not on in this tab/);
+    chrome.debugger.attachError = "Cannot access a chrome:// URL";
+    await expect(d.use(5, "chrome://newtab/")).resolves.toBe(false);
+    chrome.debugger.attachError = null;
+    // The same page is not tried again; another page of the tab is.
+    chrome.debugger.attach.mockClear();
+    await expect(d.use(5, "chrome://newtab/")).resolves.toBe(false);
+    expect(chrome.debugger.attach).not.toHaveBeenCalled();
+    await expect(d.use(5, "https://shop.example.com/")).resolves.toBe(true);
+    expect(chrome.debugger.attached.has(5)).toBe(true);
+  });
+
   it("leaves nothing attached when the run stops while a tab is being attached", async () => {
     const d = await drivers();
     let release: () => void = () => undefined;

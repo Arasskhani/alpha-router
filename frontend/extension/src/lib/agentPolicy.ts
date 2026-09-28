@@ -217,8 +217,19 @@ const CONFIRM =
  * (فعال‌سازی), never inside "فعالیت‌ها".
  */
 const CONFIRM_FA = /(تایید|تأیید) [\p{L}]|انتقال|قبول|موافق|رزرو|لغو [\p{L}]|فعال ?(سازی|کردن|کنید|شود)|غیرفعال|بازنشانی/u;
-/** Confirm-like words that do nothing to keep: the cookie banner's accept, a reset of filters or a search. */
-const HARMLESS_CONFIRM = /^(accept|accept all|accept (all )?cookies|accept (&|and) (close|continue)|allow (all )?cookies|i accept( all)?( cookies)?|agree (&|and) (close|continue))$|\breset (the |all )?(filters?|search|form|zoom|view|selection|sorting)\b/;
+/** Confirm-like words that do nothing to keep: accepting cookies by name, a reset of filters or a search. */
+const HARMLESS_CONFIRM = /^(accept (all )?cookies|allow (all )?cookies|i accept( all)? cookies)$|\breset (the |all )?(filters?|search|form|zoom|view|selection|sorting)\b/;
+/**
+ * A cookie notice's own answers, harmless there only: a bare "Accept" in a
+ * loan's terms or a trade offer accepts those.
+ */
+const ACCEPT_ON_NOTICE = /^(accept|accept all|accept (&|and) (close|continue)|allow all|i accept( all)?|agree (&|and) (close|continue)|قبول|قبول همه|پذیرش|پذیرش همه)$/;
+const COOKIE_NOTICE = /cookie|consent|gdpr|کوکی/;
+/** A dialog's bare yes: judged by what the dialog asks. */
+const BARE_YES = /^(ok|okay|yes|continue|done|تایید|تأیید|بله|باشه|ادامه)$/;
+/** What a dialog may ask to be confirmed that is not the agent's to take lightly. */
+const WEIGHTY = /\b(transfer|delete|remove|erase|send|pay|payment|purchase|order|sell|withdraw)\b/;
+const WEIGHTY_FA = /انتقال|حذف|پاک|ارسال|پرداخت|خرید|سفارش|فروش|برداشت|واریز/;
 /** Words that give a program access to an account, or change what keeps it safe: always ask. */
 const AUTHORIZE =
   /\b(allow access|grant access|authorize|authorise|allow|continue as|connect (to|with|your)|link (account|your)|give access|api key|access token|generate (a )?(token|key)|two-?factor|2fa|change (my |your |the )?(password|email|phone)|recovery (email|phone|codes)|trusted devices?|sign out (of )?(all|everywhere)|security (settings|key))\b/;
@@ -389,6 +400,12 @@ function named(element: ElementInfo): string {
   return element.name ? `"${element.name}"` : element.text ? `"${element.text}"` : `element ${element.ref}`;
 }
 
+/** Whether a confirm-like label does nothing to keep: named cookies or a reset of filters, or a cookie notice's accept. */
+function harmless(label: string, element: ElementInfo): boolean {
+  if (matches(label, HARMLESS_CONFIRM)) return true;
+  return matches(label, ACCEPT_ON_NOTICE) && Boolean(element.context && matches(element.context, COOKIE_NOTICE));
+}
+
 /** What a control says of itself: its name, and the words it shows when they differ (a label can hide them). */
 function labels(element: ElementInfo): string[] {
   return [element.name, element.text ?? ""].map((label) => label.trim()).filter(Boolean);
@@ -435,11 +452,11 @@ function labelVerdict(element: ElementInfo, said: string[], linkish: boolean, pa
   }
   if (trading) return verdict("sensitive", "money_like", `Clicking ${named(element)} may trade or move money.`);
   if (joining) return verdict("sensitive", "registration", `Clicking ${named(element)} may sign you up for something.`);
-  if (consentPage(page.url) || said.some((label) => matches(label, AUTHORIZE, AUTHORIZE_FA) && !matches(label, HARMLESS_CONFIRM))) {
+  if (consentPage(page.url) || said.some((label) => matches(label, AUTHORIZE, AUTHORIZE_FA) && !harmless(label, element))) {
     return verdict("sensitive", "authorization", `${named(element)} may give a program access to an account, or change what keeps one safe.`);
   }
   // Before the cases the administrator can relax: "Confirm and send" confirms, whatever sending may do.
-  if (said.some((label) => matches(label, CONFIRM, CONFIRM_FA) && !matches(label, HARMLESS_CONFIRM))) {
+  if (said.some((label) => matches(label, CONFIRM, CONFIRM_FA) && !harmless(label, element))) {
     return verdict("sensitive", "sensitive_label", `Clicking ${named(element)} may confirm, transfer or cancel something.`);
   }
   if (said.some((label) => matches(label, UPLOAD, UPLOAD_FA))) {
@@ -456,6 +473,10 @@ function labelVerdict(element: ElementInfo, said: string[], linkish: boolean, pa
   }
   if (said.some((label) => matches(label, SEND, SEND_FA))) {
     return asks(!relax.send, "sensitive_label", `Clicking ${named(element)} may send or publish something.`);
+  }
+  // "OK" in a dialog that asks to transfer, pay or delete does what the dialog asks.
+  if (said.length && said.every((label) => matches(label, BARE_YES)) && element.context && matches(element.context, WEIGHTY, WEIGHTY_FA)) {
+    return verdict("sensitive", "dialog_confirm", `Clicking ${named(element)} answers a dialog that asks to pay, move money, delete or send something.`);
   }
   return null;
 }
@@ -674,7 +695,7 @@ function submitVerdict(element: ElementInfo, page: { url: string; host: string }
   if (said.some((label) => matches(label, PURCHASE_LIKE, PURCHASE_LIKE_FA))) {
     return verdict("sensitive", "purchase_like", `Sending this form may start paying for something${dest}.`);
   }
-  if (said.some((label) => matches(label, CONFIRM, CONFIRM_FA) && !matches(label, HARMLESS_CONFIRM))) {
+  if (said.some((label) => matches(label, CONFIRM, CONFIRM_FA) && !harmless(label, element))) {
     return verdict("sensitive", "sensitive_label", `Sending this form may confirm, transfer or cancel something${dest}.`);
   }
   if (said.some((label) => matches(label, DELETE, DELETE_FA))) {

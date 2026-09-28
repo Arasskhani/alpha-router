@@ -884,3 +884,19 @@ describe("one call from the panel", () => {
     await expect(runAgentCall(document, "get_page_text", { max_chars: 1000 }, visible, send)).resolves.toMatchObject({ ok: true, text: expect.any(String) });
   });
 });
+
+describe("the notice a control sits in", () => {
+  it("is given to the rules for a dialog or a cookie banner, and for nothing else", () => {
+    document.body.innerHTML = `
+      <div class="cc-cookie-banner"><p>We use cookies to improve your experience.</p><button id="accept">Accept all</button></div>
+      <div role="dialog" aria-label="Transfer money"><p>Send 500 to Bob?</p><button id="ok">OK</button></div>
+      <main><button id="plain">Accept all</button></main>`;
+    const shot = snapshot(document, { isVisible: visible });
+    const [banner, main] = shot.elements.filter((e) => e.name === "Accept all");
+    const ok = shot.elements.find((e) => e.name === "OK")!;
+    expect(describeRef(banner.ref, visible)).toMatchObject({ ok: true, element: { context: expect.stringContaining("We use cookies") } });
+    expect(describeRef(ok.ref, visible)).toMatchObject({ ok: true, element: { context: expect.stringMatching(/^Transfer money Send 500 to Bob\?/) } });
+    const plain = describeRef(main.ref, visible);
+    expect(plain.ok && plain.element.context).toBeFalsy();
+  });
+});

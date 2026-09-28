@@ -212,7 +212,7 @@ describe("clicking", () => {
     expect(classify("click", { element: el({ name: "پاك كردن" }) })).toMatchObject({ class: "sensitive", reason: "delete_label" });
   });
 
-  it.each(["Order history", "Booking history", "Shared files", "Accepted payments", "Cancel", "Sort order", "Payroll", "Accept all", "Accept all cookies", "Reset filters", "تایید", "تاييد", "لغو"])("a button labelled %s acts", (name) => {
+  it.each(["Order history", "Booking history", "Shared files", "Accepted payments", "Cancel", "Sort order", "Payroll", "Accept all cookies", "Reset filters", "تایید", "تاييد", "لغو"])("a button labelled %s acts", (name) => {
     expect(classify("click", { element: el({ name }) })).toMatchObject({ class: "act" });
   });
 

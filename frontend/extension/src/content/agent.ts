@@ -87,6 +87,12 @@ export type ElementInfo = {
   required?: boolean;
   /** It has the keyboard (an outline's mark). */
   focused?: boolean;
+  /**
+   * For the rules only, never shown to the model: the words of the dialog or
+   * notice it sits in ("We use cookies…", "Transfer 5,000,000 Rials?"), by
+   * which a bare "Accept" or "OK" is judged.
+   */
+  context?: string;
 };
 
 type AgentError =
@@ -627,6 +633,23 @@ function defaultButton(form: HTMLFormElement): Element | null {
   return Array.from(form.elements).find((field) => submits(field)) ?? null;
 }
 
+/** What holds a control that answers something: a dialog, or a notice that says it is about cookies. */
+const NOTICES = '[role="dialog"], [role="alertdialog"], dialog, [aria-modal="true"]';
+const COOKIE_NOTICE = /cookie|consent|gdpr/i;
+const CONTEXT_CHARS = 200;
+
+/** The words of the dialog or cookie notice `el` sits in, for the rules; none when it sits in neither. */
+function contextOf(el: Element, isVisible: Visibility): string | undefined {
+  let node = parentAcrossShadow(el);
+  for (let depth = 0; node && depth < 25; node = parentAcrossShadow(node), depth += 1) {
+    const hint = `${node.id} ${node.getAttribute("class") ?? ""} ${node.getAttribute("aria-label") ?? ""}`;
+    if (!node.matches(NOTICES) && !COOKIE_NOTICE.test(hint)) continue;
+    const words = squash(`${node.getAttribute("aria-label") ?? ""} ${visibleText(node, isVisible, CONTEXT_CHARS)}`);
+    return words ? clip(words, CONTEXT_CHARS) : undefined;
+  }
+  return undefined;
+}
+
 /**
  * Everything the panel's rules and the model need to know about one element;
  * `forRules` adds what only the rules need about a single element (its
@@ -669,6 +692,10 @@ function describeElement(el: Element, role: string, isVisible: Visibility, forRu
     const buttonRole = roleOf(button) ?? "button";
     const said = [accessibleName(button, buttonRole), ownWords(button, buttonRole, isVisible)].filter(Boolean);
     if (said.length) info.formButton = [...new Set(said)];
+  }
+  if (forRules) {
+    const context = contextOf(el, isVisible);
+    if (context) info.context = context;
   }
   if (el.tagName.toUpperCase() === "SELECT") {
     info.options = Array.from((el as HTMLSelectElement).options)

@@ -100,6 +100,8 @@ export class TabDrivers {
       return true;
     }
     if (this.refused.has(tabId)) return false;
+    // A session Chrome ended keeps no say in this tab: its dialogs callback goes with it.
+    known?.onDialog(null);
     const driver = new CdpDriver(new CdpSession(tabId), { maxSide: this.maxSide });
     try {
       await driver.start();

@@ -92,6 +92,20 @@ describe("CdpSession", () => {
     expect(reasons).toEqual(["canceled_by_user"]);
   });
 
+  it("hears nothing more once Chrome ended it: the tab's next session answers its dialogs, alone", async () => {
+    const first = new CdpSession(7);
+    const heard: string[] = [];
+    first.onDialog(() => heard.push("first"));
+    await first.attach();
+    chrome.debugger.emitDetach(7, "target_closed");
+    const second = new CdpSession(7);
+    second.onDialog(() => heard.push("second"));
+    await second.attach();
+    chrome.debugger.emitEvent(7, "Page.javascriptDialogOpening", { type: "confirm", message: "Leave?" });
+    expect(heard).toEqual(["second"]);
+    expect(chrome.debugger.onEvent.listeners.size).toBe(1);
+  });
+
   it("gives up on a command the browser does not answer, but not while a dialog holds the page", async () => {
     const session = new CdpSession(7);
     await session.attach();

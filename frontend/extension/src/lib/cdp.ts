@@ -63,6 +63,12 @@ export class CdpSession {
       if (source.tabId !== this.tabId) return;
       this.attached = false;
       this.detachedReason = reason || "target_closed";
+      // An ended session hears nothing more: a new session of the same tab gets the tab's events from now on,
+      // and a dialog there must not be answered twice (or by a run that is over).
+      this.api.onEvent.removeListener(this.onEvent);
+      this.api.onDetach.removeListener(this.onDetach);
+      this.onDialogCb = null;
+      this.dialogOpen = false;
       this.onDetachedCb?.(this.detachedReason);
     };
   }

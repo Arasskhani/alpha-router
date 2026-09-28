@@ -120,33 +120,14 @@ export function stopAnnouncements(doc: Document): void {
   watches().delete(doc);
 }
 
-/** The window and the page, in CSS pixels: how much of the page the window shows, and where it is scrolled to. */
-type View = { width: number; height: number; scrollX: number; scrollY: number; pageWidth: number; pageHeight: number };
+export type Observation = { focus?: ElementInfo; said: Announcement[] };
 
-export type Observation = { focus?: ElementInfo; said: Announcement[]; view?: View };
-
-function viewOf(doc: Document): View | undefined {
-  const win = doc.defaultView;
-  const scroller = doc.scrollingElement ?? doc.documentElement;
-  if (!win || !scroller) return undefined;
-  const round = (value: number) => Math.max(0, Math.round(Number.isFinite(value) ? value : 0));
-  return {
-    width: round(win.innerWidth),
-    height: round(win.innerHeight),
-    scrollX: round(win.scrollX),
-    scrollY: round(win.scrollY),
-    pageWidth: round(Math.max(scroller.scrollWidth, win.innerWidth)),
-    pageHeight: round(Math.max(scroller.scrollHeight, win.innerHeight)),
-  };
-}
-
-/** The page now: the element with the keyboard, what the page announced since the last look (collected, so said once), and the window's view of it. */
+/** The page now: the element with the keyboard, and what the page announced since the last look (collected, so said once). */
 export function observe(doc: Document, isVisible: Visibility): Observation {
   watchAnnouncements(doc, isVisible);
   const watch = watches().get(doc)!;
   scan(doc, watch, true);
   const said = watch.kept.splice(0);
   const focus = describeFocus(doc, isVisible);
-  const view = viewOf(doc);
-  return { ...(focus.ok && focus.element ? { focus: focus.element } : {}), said, ...(view ? { view } : {}) };
+  return focus.ok && focus.element ? { focus: focus.element, said } : { said };
 }

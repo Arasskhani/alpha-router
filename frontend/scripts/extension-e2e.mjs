@@ -1032,9 +1032,7 @@ async function main() {
   }
 
   /** The agent's requests to the model for a task. */
-  // The run's first message is the task, then where it starts.
-  const agentRequests = (task) =>
-    mock.requests.filter((r) => Array.isArray(r.tools) && r.messages.some((m) => m.role === "user" && typeof m.content === "string" && m.content.startsWith(task)));
+  const agentRequests = (task) => mock.requests.filter((r) => Array.isArray(r.tools) && r.messages.some((m) => m.role === "user" && m.content === task));
   const agentTasks = [];
 
   await step("the agent fills in a form and sends it once the user allows each action", async () => {

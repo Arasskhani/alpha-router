@@ -350,9 +350,7 @@ describe("what an action reports", () => {
     });
     const h = harness([{ text: "", toolCalls: [call("computer", { action: "left_click", coordinate: [200, 100] })] }], { browser });
     await h.run();
-    // The start tab was looked at; the other site the click went to, never.
-    expect((browser.page.mock.calls as unknown[][]).filter(([method, , judged]) => method === "observe" && (judged as { host?: string } | undefined)?.host !== TAB.host)).toEqual([]);
-    expect(browser.page.mock.calls.filter(([method]) => method === "observe")).toHaveLength(1);
+    expect(browser.page.mock.calls.some(([method]) => method === "observe")).toBe(false);
     const answer = String(h.sent[1].find((m) => m.role === "tool")!.content);
     expect(answer).toContain("The tab is now on another site, elsewhere.example: the user will be asked before you act there.");
   });

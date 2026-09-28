@@ -569,16 +569,23 @@ function luhn(digits: string): boolean {
 
 /**
  * A card number in the text: 13 to 19 digits that pass the Luhn check,
- * written whole or in groups (spaces, dashes or dots between). Any run of
- * whole groups counts, so the expiry after a number ("4111 1111 1111 1111
- * 12/27") does not hide it.
+ * written whole, or in the groups of a card - starting with four digits,
+ * each group of three to six (4-4-4-4, Amex's 4-6-5) - with spaces, dashes
+ * or dots between. Such a run of groups is a card number wherever it ends,
+ * so the expiry after one ("4111 1111 1111 1111 12/27") does not hide it;
+ * a date, a phone number or a version (groups of one or two) is none.
  */
 function cardNumberIn(text: string): boolean {
   for (const match of scanned(text).matchAll(/\d+(?:[ .-]\d+)*/g)) {
     const groups = match[0].split(/[ .-]/);
     for (let first = 0; first < groups.length; first += 1) {
-      let digits = "";
-      for (let last = first; last < groups.length && digits.length <= 19; last += 1) {
+      if (groups.length > 1 && groups[first].length !== 4 && !(groups[first].length >= 13 && groups[first].length <= 19)) continue;
+      if (groups[first].length >= 13) {
+        if (groups[first].length <= 19 && luhn(groups[first])) return true;
+        continue;
+      }
+      let digits = groups[first];
+      for (let last = first + 1; last < groups.length && groups[last].length >= 3 && groups[last].length <= 6 && digits.length < 19; last += 1) {
         digits += groups[last];
         if (digits.length >= 13 && digits.length <= 19 && luhn(digits)) return true;
       }
@@ -596,17 +603,25 @@ function mod97(alnum: string): number {
 
 /**
  * An IBAN - Sheba in Iran - in the text: two letters, two check digits and
- * the rest, 15 to 34 characters in all, whose mod 97 is 1. Written in groups,
- * any number of the groups that follow may be its end, so the words after
- * it ("… 00 is mine") do not hide it.
+ * the rest, 15 to 34 characters in all, whose mod 97 is 1; written whole, or
+ * in groups of four with a shorter last one. The group that is not of an
+ * IBAN ends it, so the words after one ("… 00 is mine") do not hide it,
+ * and words that follow two letters and two digits ("EK12 departs") are
+ * no IBAN.
  */
 function ibanIn(text: string): boolean {
   for (const match of scanned(text).toUpperCase().matchAll(/(?<![A-Z0-9])[A-Z]{2}\d{2}[A-Z0-9]*(?: [A-Z0-9]+)*/g)) {
-    let iban = "";
-    for (const group of match[0].split(" ")) {
+    const groups = match[0].split(" ");
+    if (groups[0].length > 4) {
+      if (groups[0].length >= 15 && groups[0].length <= 34 && mod97(groups[0]) === 1) return true;
+      continue;
+    }
+    let iban = groups[0];
+    for (const group of groups.slice(1)) {
+      if (group.length > 4) break;
       iban += group;
-      if (iban.length > 34) break;
-      if (iban.length >= 15 && /^[A-Z]{2}\d{2}[A-Z0-9]+$/.test(iban) && mod97(iban) === 1) return true;
+      if (iban.length >= 15 && iban.length <= 34 && mod97(iban) === 1) return true;
+      if (group.length < 4 || iban.length > 34) break;
     }
   }
   return false;

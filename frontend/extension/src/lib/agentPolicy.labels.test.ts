@@ -313,6 +313,9 @@ describe("what is typed", () => {
     ["a phone number", "Call 415-555-0123"],
     ["a date", "2026-09-28"],
     ["a word that starts like an IBAN", "DE89 is my postcode prefix"],
+    ["a flight and its time", "Flight EK12 departs at 10 am from Dubai"],
+    ["a version number", "Update to 1.2.3.4.5.6.7.8.9.10.11.12.13"],
+    ["an address of a machine", "Connect to 192.168.100.200"],
   ])("types %s", (_what, text) => {
     expect(typing(text).class).toBe("act");
   });

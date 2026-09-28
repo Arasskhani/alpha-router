@@ -472,6 +472,8 @@ export default function AgentView({ me, server, hidden = false, onDisconnected, 
         }
         // A crop too large for the server's limit is left out; the reviewer then judges without it.
         const crop = input.crop && input.crop.length <= MAX_CROP_CHARS ? input.crop : undefined;
+        // A Stop that came before the review: none is asked for (a listener on a signal already aborted never fires).
+        if (stepSignal.aborted) throw new DOMException("The run was stopped.", "AbortError");
         // A review that takes too long is not waited for: the user decides, as when the reviewer is unsure.
         const limit = new AbortController();
         const onStop = () => limit.abort();

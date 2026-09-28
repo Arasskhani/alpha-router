@@ -1584,7 +1584,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
         const shot = await visualCapture(() => deps.driver!.crop(targetRect!), tab);
         if (shot) crop = shot;
       }
-      const verdictFromReview = await deps.review(
+      const verdictFromReview = await raced(deps.review(
         {
           task: options.task,
           tool: name,
@@ -1595,7 +1595,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
           crop,
         },
         signal,
-      );
+      ));
       check();
       if (verdictFromReview.decision === "allow") approval = "none";
       else {

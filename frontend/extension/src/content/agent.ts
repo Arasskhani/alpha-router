@@ -1303,31 +1303,110 @@ export function pressKey(doc: Document, key: unknown, isVisible: Visibility = ()
   return { ok: true, note: `Pressed ${shown}.${did ? ` ${did}` : ""}` };
 }
 
-export function scroll(doc: Document, direction: unknown, ref: unknown, isVisible: Visibility): Result<{ note: string }> {
-  if (ref !== undefined && ref !== null) {
-    const el = usable(ref, isVisible);
-    if (isFailure(el)) return el;
-    el.scrollIntoView?.({ block: "center" });
-    return { ok: true, note: `Element ${ref as string} is in view.` };
-  }
-  const view = doc.defaultView;
+type Axis = "x" | "y";
+
+/** The document's own scroller, when the page scrolls as a whole (a page that set overflow: hidden on it does not). */
+function documentScroller(doc: Document, axis: Axis): Element | null {
   const scroller = doc.scrollingElement ?? doc.documentElement;
-  const page = view?.innerHeight || 800;
-  const wide = view?.innerWidth || 1200;
-  const moves: Record<string, [number, number] | "top" | "bottom"> = {
-    down: [0, page * 0.8],
-    up: [0, -page * 0.8],
-    right: [wide * 0.8, 0],
-    left: [-wide * 0.8, 0],
+  const view = doc.defaultView;
+  if (!scroller || !view) return null;
+  for (const el of [doc.documentElement, doc.body]) {
+    if (!el) continue;
+    const style = view.getComputedStyle(el);
+    if ((axis === "y" ? style.overflowY : style.overflowX) === "hidden") return null;
+  }
+  const room = axis === "y" ? scroller.scrollHeight - (view.innerHeight || scroller.clientHeight) : scroller.scrollWidth - (view.innerWidth || scroller.clientWidth);
+  return room > 1 ? scroller : null;
+}
+
+/** Whether an element scrolls its own content along the axis: overflow auto or scroll, with more than it shows. */
+function scrollsItself(el: Element, axis: Axis): boolean {
+  const view = el.ownerDocument.defaultView;
+  if (!view || el === el.ownerDocument.documentElement || el === el.ownerDocument.body) return false;
+  const style = view.getComputedStyle(el);
+  const overflow = axis === "y" ? style.overflowY : style.overflowX;
+  const room = axis === "y" ? el.scrollHeight - el.clientHeight : el.scrollWidth - el.clientWidth;
+  return room > 1 && (overflow === "auto" || overflow === "scroll" || overflow === "overlay");
+}
+
+/**
+ * What scrolls when a person turns the wheel over `start`: its nearest
+ * ancestor (itself included, across shadow roots) that scrolls - a message
+ * list, a side panel - or else the page itself; null when nothing does.
+ */
+export function scrollerFor(doc: Document, start: Element | null, axis: Axis): Element | null {
+  for (let node: Element | null = start, depth = 0; node && depth < 100; node = parentAcrossShadow(node), depth += 1) {
+    if (node.id === OVERLAY_ID) break;
+    if (scrollsItself(node, axis)) return node;
+  }
+  return documentScroller(doc, axis);
+}
+
+/** What a scroller is, for the result: the page, or the list or area by its role and name. */
+export function scrollerName(doc: Document, scroller: Element): string {
+  if (scroller === (doc.scrollingElement ?? doc.documentElement)) return "the page";
+  const role = roleOf(scroller) ?? ((scroller.getAttribute("role") ?? "").trim().split(/\s+/)[0].toLowerCase() || "area");
+  const name = accessibleName(scroller, role);
+  return `the ${role}${name ? ` ${quoted(clip(name, 60))}` : ""} [${refFor(scroller)}]`;
+}
+
+/** Where a scroller is now, and how much is left, in CSS pixels. */
+export function scrolledTo(doc: Document, scroller: Element, axis: Axis): string {
+  const isPage = scroller === (doc.scrollingElement ?? doc.documentElement);
+  const view = doc.defaultView;
+  const shown = axis === "y" ? (isPage ? view?.innerHeight : undefined) ?? scroller.clientHeight : (isPage ? view?.innerWidth : undefined) ?? scroller.clientWidth;
+  const at = Math.round(axis === "y" ? scroller.scrollTop : scroller.scrollLeft);
+  const size = Math.round(axis === "y" ? scroller.scrollHeight : scroller.scrollWidth);
+  const left = Math.max(0, size - at - Math.round(shown));
+  const edge = axis === "y" ? ["from the top", "below"] : ["from the left", "to the right"];
+  return `${at} of ${size} pixels ${edge[0]}, ${left ? `${left} more ${edge[1]}` : "at the end"}`;
+}
+
+export function scroll(doc: Document, direction: unknown, ref: unknown, isVisible: Visibility): Result<{ note: string }> {
+  const moves: Record<string, { axis: Axis; sign: number } | "top" | "bottom"> = {
+    down: { axis: "y", sign: 1 },
+    up: { axis: "y", sign: -1 },
+    right: { axis: "x", sign: 1 },
+    left: { axis: "x", sign: -1 },
     top: "top",
     bottom: "bottom",
   };
   const move = typeof direction === "string" ? moves[direction] : undefined;
-  if (!move) return { ok: false, error: "bad_request", message: "Scroll up, down, left, right, top or bottom, or to an element." };
-  if (move === "top") scroller.scrollTo?.({ top: 0 });
-  else if (move === "bottom") scroller.scrollTo?.({ top: scroller.scrollHeight });
-  else scroller.scrollBy?.({ left: move[0], top: move[1] });
-  return { ok: true, note: `Scrolled ${direction as string}: ${Math.round(scroller.scrollTop)} of ${Math.round(scroller.scrollHeight)} pixels from the top.` };
+  if (direction !== undefined && direction !== null && !move) return { ok: false, error: "bad_request", message: "Scroll up, down, left, right, top or bottom, or to an element." };
+  let from: Element | null = null;
+  if (ref !== undefined && ref !== null) {
+    const el = usable(ref, isVisible);
+    if (isFailure(el)) return el;
+    if (!move) {
+      el.scrollIntoView?.({ block: "center" });
+      return { ok: true, note: `Element ${ref as string} is in view.` };
+    }
+    // With a direction: the list or area the element is in (or is) scrolls.
+    from = el;
+  } else {
+    if (!move) return { ok: false, error: "bad_request", message: "Scroll up, down, left, right, top or bottom, or to an element." };
+    // What a wheel in the middle of the window would scroll: the list under it, or the page.
+    const view = doc.defaultView;
+    const found = typeof doc.elementFromPoint === "function" ? doc.elementFromPoint((view?.innerWidth || 1200) / 2, (view?.innerHeight || 800) / 2) : null;
+    from = found && !(found.id === OVERLAY_ID || found.closest(`#${OVERLAY_ID}`)) ? found : null;
+  }
+  const axis: Axis = move === "top" || move === "bottom" ? "y" : move!.axis;
+  const scroller = scrollerFor(doc, from, axis);
+  if (!scroller) return { ok: false, error: "not_found", message: "Nothing here scrolls: all of it is in view already." };
+  const isPage = scroller === (doc.scrollingElement ?? doc.documentElement);
+  const view = doc.defaultView;
+  const step = Math.round((axis === "y" ? (isPage ? view?.innerHeight : scroller.clientHeight) || 800 : (isPage ? view?.innerWidth : scroller.clientWidth) || 1200) * 0.8);
+  const before = axis === "y" ? scroller.scrollTop : scroller.scrollLeft;
+  // Instant: a page's smooth scrolling would still be under way when the result is read.
+  if (move === "top") scroller.scrollTo?.({ top: 0, behavior: "instant" as ScrollBehavior });
+  else if (move === "bottom") scroller.scrollTo?.({ top: scroller.scrollHeight, behavior: "instant" as ScrollBehavior });
+  else scroller.scrollBy?.({ [axis === "y" ? "top" : "left"]: move!.sign * step, behavior: "instant" as ScrollBehavior });
+  const after = axis === "y" ? scroller.scrollTop : scroller.scrollLeft;
+  const what = scrollerName(doc, scroller);
+  const where = scrolledTo(doc, scroller, axis);
+  const moved = Math.round(Math.abs(after - before));
+  if (!moved) return { ok: true, note: `${what.replace(/^./, (c) => c.toUpperCase())} did not move: it is at its ${move === "top" || (move !== "bottom" && move!.sign < 0) ? "start" : "end"} (${where}).` };
+  return { ok: true, note: `Scrolled ${String(direction)} ${moved} pixels in ${what}: ${where}.` };
 }
 
 export async function waitFor(doc: Document, text: unknown, seconds: unknown): Promise<Result<{ note: string }>> {

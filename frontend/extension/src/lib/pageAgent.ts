@@ -195,7 +195,8 @@ export function cleanPageResult(method: PageMethod, raw: unknown): PageResult {
       const raw = v.view && typeof v.view === "object" ? (v.view as Record<string, unknown>) : null;
       const n = (value: unknown) => (typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.round(Math.min(value, 1e7)) : 0);
       const view = raw ? { width: n(raw.width), height: n(raw.height), scrollX: n(raw.scrollX), scrollY: n(raw.scrollY), pageWidth: n(raw.pageWidth), pageHeight: n(raw.pageHeight) } : null;
-      return { ok: true, said, ...(focus ? { focus } : {}), ...(view && view.width && view.height ? { view } : {}) };
+      const scrolled = str(v.scrolled, 300);
+      return { ok: true, said, ...(focus ? { focus } : {}), ...(view && view.width && view.height ? { view } : {}), ...(scrolled ? { scrolled } : {}) };
     }
     case "takeover_dispatch":
       return { ok: true, paused: v.paused === true };

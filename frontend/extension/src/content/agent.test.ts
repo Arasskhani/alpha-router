@@ -601,6 +601,20 @@ describe("acting", () => {
     expect(describeFocus(document, visible)).toMatchObject({ ok: true, element: { role: "frame", name: "Sign in", frame: { host: "id.example" } } });
   });
 
+  /** Layout happy-dom does not do: an element's scrolled size, the space it shows, and a scroll position that moves. */
+  function scrollable(el: Element, size: { height: number; client: number }) {
+    let top = 0;
+    Object.defineProperty(el, "scrollHeight", { value: size.height, configurable: true });
+    Object.defineProperty(el, "clientHeight", { value: size.client, configurable: true });
+    Object.defineProperty(el, "scrollTop", { get: () => top, set: (v: number) => (top = v), configurable: true });
+    (el as HTMLElement).scrollBy = ((options: ScrollToOptions) => {
+      top = Math.max(0, Math.min(size.height - size.client, top + (options.top ?? 0)));
+    }) as HTMLElement["scrollBy"];
+    (el as HTMLElement).scrollTo = ((options: ScrollToOptions) => {
+      top = Math.max(0, Math.min(size.height - size.client, options.top ?? 0));
+    }) as HTMLElement["scrollTo"];
+  }
+
   it("scrolls the page, or to an element", () => {
     page(`<button>Far away</button>`);
     const button = document.querySelector("button")!;
@@ -609,8 +623,29 @@ describe("acting", () => {
     const ref = snapshot(document, { isVisible: visible }).elements[0].ref;
     expect(scroll(document, undefined, ref, visible)).toMatchObject({ ok: true });
     expect(intoView).toHaveBeenCalled();
-    expect(scroll(document, "down", undefined, visible)).toMatchObject({ ok: true });
+    scrollable(document.documentElement, { height: 3000, client: window.innerHeight });
+    expect(scroll(document, "down", undefined, visible)).toMatchObject({ ok: true, note: expect.stringMatching(/^Scrolled down \d+ pixels in the page: \d+ of 3000 pixels from the top/) });
     expect(scroll(document, "sideways", undefined, visible)).toMatchObject({ ok: false, error: "bad_request" });
+  });
+
+  it("scrolls the list under the middle of the window, not a page that does not scroll", () => {
+    page(`<div id="list" role="list" aria-label="Inbox" style="overflow-y: auto"><div id="row">Row</div></div>`);
+    document.documentElement.style.overflow = "hidden";
+    const list = document.getElementById("list")!;
+    scrollable(list, { height: 5000, client: 500 });
+    scrollable(document.documentElement, { height: 5000, client: window.innerHeight });
+    vi.spyOn(document, "elementFromPoint").mockReturnValue(document.getElementById("row"));
+    expect(scroll(document, "down", undefined, visible)).toMatchObject({ ok: true, note: expect.stringMatching(/^Scrolled down 400 pixels in the list "Inbox" \[e\d+\]: 400 of 5000 pixels from the top, 4100 more below\.$/) });
+    expect(document.documentElement.scrollTop).toBe(0);
+    // With a reference and a direction, the list that element is in - wherever the window's middle is.
+    vi.spyOn(document, "elementFromPoint").mockReturnValue(null);
+    const row = find(document, "Row", visible);
+    if (!row.ok) throw new Error(row.message);
+    const ref = row.matches[0].ref;
+    expect(scroll(document, "bottom", ref, visible)).toMatchObject({ ok: true, note: expect.stringContaining("at the end") });
+    expect(list.scrollTop).toBe(4500);
+    expect(scroll(document, "down", ref, visible)).toMatchObject({ ok: true, note: expect.stringContaining("did not move") });
+    document.documentElement.style.overflow = "";
   });
 
   it("waits for text to appear, and gives up after the time it was given", async () => {

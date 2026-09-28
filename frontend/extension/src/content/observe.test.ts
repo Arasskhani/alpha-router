@@ -1,7 +1,7 @@
 /**
  * @vitest-environment happy-dom
  */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { observe, stopAnnouncements, watchAnnouncements } from "./observe";
 import { runAgentCall } from "./runtime";
@@ -64,6 +64,20 @@ describe("the window's view of the page", () => {
     expect(view).toEqual({ width: expect.any(Number), height: expect.any(Number), scrollX: 0, scrollY: 0, pageWidth: expect.any(Number), pageHeight: expect.any(Number) });
     expect(view!.width).toBeGreaterThan(0);
     expect(view!.pageHeight).toBeGreaterThanOrEqual(view!.height);
+  });
+});
+
+describe("what scrolled under a point", () => {
+  it("names the list the wheel turned in, and where it is now", () => {
+    document.body.innerHTML = `<div id="list" role="listbox" aria-label="Inbox" style="overflow-y: auto"><div id="row">Row</div></div>`;
+    const list = document.getElementById("list")!;
+    Object.defineProperty(list, "scrollHeight", { value: 5000, configurable: true });
+    Object.defineProperty(list, "clientHeight", { value: 500, configurable: true });
+    Object.defineProperty(list, "scrollTop", { value: 400, configurable: true });
+    const at = vi.spyOn(document, "elementFromPoint").mockReturnValue(document.getElementById("row"));
+    expect(observe(document, visible, { x: 10, y: 10 }).scrolled).toMatch(/^the listbox "Inbox" \[e\d+\] is 400 of 5000 pixels from the top, 4100 more below$/);
+    expect(observe(document, visible).scrolled).toBeUndefined();
+    at.mockRestore();
   });
 });
 

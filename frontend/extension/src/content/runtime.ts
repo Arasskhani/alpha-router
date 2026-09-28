@@ -97,7 +97,7 @@ export async function runAgentCall(
       case "describe_focus":
         return describeFocus(doc, isVisible);
       case "observe":
-        return { ok: true, ...observe(doc, isVisible) };
+        return { ok: true, ...observe(doc, isVisible, args.at) };
       case "click":
         return click(args.ref, isVisible);
       case "type_text":

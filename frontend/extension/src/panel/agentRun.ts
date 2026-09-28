@@ -682,19 +682,19 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
    * announced. Best-effort, and only while the tab is on the site the action
    * was judged on: another site is read only once the user has allowed it.
    */
-  async function aftermath(before: WorkTab, after: WorkTab | null, hit?: ElementInfo, scrolled = false): Promise<string[]> {
+  async function aftermath(before: WorkTab, after: WorkTab | null, hit?: ElementInfo, scrolledAt?: { x: number; y: number }): Promise<string[]> {
     const lines: string[] = [];
     if (hit) lines.push(`It hit: ${hitLine(hit)}.`);
     if (!after || !after.host || after.host !== before.host) return lines;
     if (after.url !== before.url) lines.push(`The page is now "${clip(after.title, 100) || "(untitled)"}" at ${whereTo(after.url)}.`);
-    const seen = await Promise.race([deps.browser.page("observe", {}, after, signal, OBSERVE_MS).catch(() => null), stopped.catch(() => null)]);
+    const seen = await Promise.race([deps.browser.page("observe", scrolledAt ? { at: scrolledAt } : {}, after, signal, OBSERVE_MS).catch(() => null), stopped.catch(() => null)]);
     if (!seen?.ok) return lines;
     const focus = seen.focus as ElementInfo | undefined;
     lines.push(focus ? `The keyboard is in: ${focusLine(focus)}.` : "Nothing has the keyboard focus.");
     const said = Array.isArray(seen.said) ? (seen.said as Array<{ kind: string; text: string }>) : [];
     for (const item of said) lines.push(item.kind === "dialog" ? `A dialog shows: "${item.text}"` : `The page announced: "${item.text}"`);
-    const view = seen.view as View | undefined;
-    if (scrolled && view) lines.push(`The window is ${view.scrollY} of ${view.pageHeight} CSS pixels down the page, and shows ${view.height} of them.`);
+    // After the wheel: what scrolled under the point - a list, or the page - and how much of it is left.
+    if (scrolledAt && typeof seen.scrolled === "string") lines.push(`${seen.scrolled.replace(/^./, (c) => c.toUpperCase())}.`);
     return lines;
   }
 
@@ -924,10 +924,13 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     if (!spec) return invalid("computer needs one of: left_click, right_click, double_click, triple_click, hover, left_click_drag, scroll, type, key, wait.");
     const modifiers = typeof a.modifiers === "string" ? a.modifiers.split("+").map((m) => m.trim()).filter(Boolean) : [];
     let note: string;
+    /** Where the wheel turned, in CSS pixels: what scrolled there is reported after. */
+    let wheelAt: { x: number; y: number } | undefined;
     if (spec.element === "point" || action === "scroll") {
       const p = point(a.coordinate);
       if (!p) return invalid(`${action} needs coordinate [x, y].`);
       const css = await raced(driver.toCss(p));
+      if (action === "scroll") wheelAt = css;
       if (action === "scroll") {
         const ticks = Math.min(10, Math.max(1, Number(a.scroll_amount) || 3));
         const px = ticks * 100;
@@ -979,7 +982,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     check();
     const moved = after?.host && after.host !== site && !allowedSites.has(after.host) ? `\n${elsewhere(after.host)}` : "";
     // What was pressed, and where the keyboard went: the model checks this before it types.
-    const saw = await aftermath(tab, after, spec.element === "point" || spec.element === "start" ? hit : undefined, action === "scroll");
+    const saw = await aftermath(tab, after, spec.element === "point" || spec.element === "start" ? hit : undefined, action === "scroll" ? wheelAt : undefined);
     check();
     return { content: `${note}${moved}`, ...(saw.length ? { page: wrapPage(options.nonce, site, saw.join("\n")) } : {}), status: "done", detail: note, outcome: "ok" };
   }

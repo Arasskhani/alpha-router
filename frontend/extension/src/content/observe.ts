@@ -11,7 +11,7 @@
  * already said before the agent came is not news.
  */
 
-import { describeFocus, type ElementInfo, type Visibility } from "./agent";
+import { describeFocus, scrolledTo, scrollerFor, scrollerName, type ElementInfo, type Visibility } from "./agent";
 import { OVERLAY_ID } from "./overlay";
 
 /** Where a page announces things, and the dialogs it opens. */
@@ -123,7 +123,7 @@ export function stopAnnouncements(doc: Document): void {
 /** The window and the page, in CSS pixels: how much of the page the window shows, and where it is scrolled to. */
 type View = { width: number; height: number; scrollX: number; scrollY: number; pageWidth: number; pageHeight: number };
 
-export type Observation = { focus?: ElementInfo; said: Announcement[]; view?: View };
+export type Observation = { focus?: ElementInfo; said: Announcement[]; view?: View; scrolled?: string };
 
 function viewOf(doc: Document): View | undefined {
   const win = doc.defaultView;
@@ -140,13 +140,26 @@ function viewOf(doc: Document): View | undefined {
   };
 }
 
-/** The page now: the element with the keyboard, what the page announced since the last look (collected, so said once), and the window's view of it. */
-export function observe(doc: Document, isVisible: Visibility): Observation {
+/** What scrolls under a point (a list, or the page), and where it is now: after the wheel turned there. */
+function scrolledAt(doc: Document, at: unknown): string | undefined {
+  const p = at && typeof at === "object" ? (at as Record<string, unknown>) : null;
+  if (!p || typeof p.x !== "number" || typeof p.y !== "number" || typeof doc.elementFromPoint !== "function") return undefined;
+  const scroller = scrollerFor(doc, doc.elementFromPoint(p.x, p.y), "y");
+  return scroller ? `${scrollerName(doc, scroller)} is ${scrolledTo(doc, scroller, "y")}` : undefined;
+}
+
+/**
+ * The page now: the element with the keyboard, what the page announced since
+ * the last look (collected, so said once), the window's view of it - and,
+ * given a point, where what scrolls under it is.
+ */
+export function observe(doc: Document, isVisible: Visibility, at?: unknown): Observation {
   watchAnnouncements(doc, isVisible);
   const watch = watches().get(doc)!;
   scan(doc, watch, true);
   const said = watch.kept.splice(0);
   const focus = describeFocus(doc, isVisible);
   const view = viewOf(doc);
-  return { ...(focus.ok && focus.element ? { focus: focus.element } : {}), said, ...(view ? { view } : {}) };
+  const scrolled = scrolledAt(doc, at);
+  return { ...(focus.ok && focus.element ? { focus: focus.element } : {}), said, ...(view ? { view } : {}), ...(scrolled ? { scrolled } : {}) };
 }

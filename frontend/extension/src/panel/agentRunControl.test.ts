@@ -341,6 +341,18 @@ describe("what an action reports", () => {
     expect(answers[1]).toContain("Nothing has the keyboard focus.");
   });
 
+  it("after the wheel, says what scrolled under the point and how much of it is left", async () => {
+    const browser = fakeBrowser();
+    const plain = browser.page.getMockImplementation()!;
+    browser.page.mockImplementation(async (method: string, args: Record<string, unknown> = {}) =>
+      method === "observe" && args.at ? { ok: true, said: [], scrolled: 'the list "Inbox" [e5] is 400 of 5000 pixels from the top, 4100 more below' } : plain(method, args),
+    );
+    const h = harness([{ text: "", toolCalls: [call("computer", { action: "scroll", coordinate: [200, 100], scroll_direction: "down" })] }], { browser });
+    await h.run();
+    expect(browser.page).toHaveBeenCalledWith("observe", { at: { x: 400, y: 200 } }, TAB, expect.anything(), expect.any(Number));
+    expect(String(h.sent[1].find((m) => m.role === "tool")!.content)).toContain('The list "Inbox" [e5] is 400 of 5000 pixels from the top, 4100 more below.');
+  });
+
   it("does not look at a page of another site the click went to", async () => {
     const browser = fakeBrowser();
     let where = TAB;

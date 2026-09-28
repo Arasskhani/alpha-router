@@ -370,10 +370,19 @@ function money(label: string): Reading {
   return reading(label, [MONEY, MONEY_FA], [MONEY_WORDS, MONEY_WORDS_FA]);
 }
 
-/** Making an account - unless the label is a way in as well ("ورود | ثبت‌نام"): that is signing in. */
-function signUp(label: string): Reading {
+/** Two ways offered side by side: "ورود | ثبت‌نام", "Sign in / Register", "Log in or sign up". */
+const EITHER = /\||\/|\bor\b|(^|\s)یا(\s|$)/;
+
+/**
+ * Making an account - unless the label offers signing in as the other way
+ * in ("ورود | ثبت‌نام", "Log in or sign up"): that is a way to either page.
+ * A control that sends a form does one thing, so "Create account and sign
+ * in" or «ثبت نام و ورود» still makes the account.
+ */
+function signUp(label: string, submits = false): Reading {
   const found = reading(label, [SIGN_UP, SIGN_UP_FA], [SIGN_UP_WORDS, SIGN_UP_WORDS_FA]);
-  return found && matches(label, LOGIN, LOGIN_FA) ? null : found;
+  if (!found || submits) return found;
+  return matches(label, LOGIN, LOGIN_FA) && matches(label, EITHER) ? null : found;
 }
 
 function named(element: ElementInfo): string {
@@ -419,7 +428,7 @@ function labelVerdict(element: ElementInfo, said: string[], linkish: boolean, pa
   if (said.some((label) => matches(label, DELETE_FOREVER, DELETE_FOREVER_FA))) {
     return blocked("permanent_deletion", `The agent never deletes for good or closes an account: ${named(element)} is for the user to click.`);
   }
-  const joining = strongest(signUp);
+  const joining = strongest((label) => signUp(label, Boolean(element.submits) && !linkish));
   if (refuses(joining)) return blocked("account_creation", `The agent never creates accounts: ${named(element)} is for the user to click.`);
   if (buying || said.some((label) => matches(label, PURCHASE_LIKE, PURCHASE_LIKE_FA))) {
     return verdict("sensitive", "purchase_like", `Clicking ${named(element)} may buy something, or start paying for one.`);
@@ -606,7 +615,7 @@ function submitVerdict(element: ElementInfo, page: { url: string; host: string }
   if (said.some((label) => money(label))) {
     return blocked("money_label", `The agent never trades or moves money: sending this form (its button says "${button}") is for the user.`);
   }
-  if (said.some((label) => signUp(label))) {
+  if (said.some((label) => signUp(label, true))) {
     return blocked("account_creation", `The agent never creates accounts: sending this form (its button says "${button}") is for the user.`);
   }
   if (said.some((label) => matches(label, DELETE_FOREVER, DELETE_FOREVER_FA))) {

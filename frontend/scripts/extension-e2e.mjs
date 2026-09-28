@@ -75,6 +75,10 @@
  *                      laptop at 150 % (default: 1, with an emulated window)
  *   EXT_E2E_WINDOW     the browser window, e.g. 900x1150 (default: an
  *                      emulated 1100x800 viewport)
+ *   EXT_E2E_ONLY       a pattern (a regular expression): only the steps whose
+ *                      names match it run, after the four that set up the
+ *                      browser and the panel - for working on one part; a
+ *                      step that reads what skipped ones left may then fail
  *
  * Full control is checked for real only at more than one size and scale: run
  * it at least twice, once as is and once with EXT_E2E_SCALE=1.5
@@ -120,6 +124,8 @@ const POLICY_DIR = "/etc/chromium/policies/managed";
 /** The display scale and window size to run at (see the header); unset, an emulated 1100x800 viewport at scale 1. */
 const SCALE = Number(process.env.EXT_E2E_SCALE || "") || null;
 const WINDOW = /^(\d{3,4})x(\d{3,4})$/.exec(process.env.EXT_E2E_WINDOW || "");
+/** Only the steps matching this run (see the header); the setup ones always do. */
+const ONLY = process.env.EXT_E2E_ONLY ? new RegExp(process.env.EXT_E2E_ONLY, "i") : null;
 if (process.env.EXT_E2E_WINDOW && !WINDOW) {
   console.error("extension-e2e: EXT_E2E_WINDOW is WIDTHxHEIGHT, e.g. 900x1150");
   process.exit(2);
@@ -184,8 +190,20 @@ function withTimeout(promise, ms, what) {
   ]).finally(() => clearTimeout(timer));
 }
 
+/** The steps every run needs, whatever EXT_E2E_ONLY says: the browser, the extension, the connection and the panel. */
+const SETUP_STEPS = new Set([
+  "the admin API sets up a mock provider and the extension settings",
+  "the downloaded extension loads in Chromium",
+  "connecting goes through the consent page",
+  "the side panel opens next to a page",
+]);
+
 /** Run one step; a failure is recorded and later steps that depend on it fail on their own. */
 async function step(name, fn) {
+  if (ONLY && !SETUP_STEPS.has(name) && !ONLY.test(name)) {
+    console.log(`  skip  ${name}`);
+    return true;
+  }
   try {
     const note = await fn();
     results.push({ name, ok: true });

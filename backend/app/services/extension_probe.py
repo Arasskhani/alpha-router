@@ -368,6 +368,33 @@ async def load_results(db: AsyncSession) -> dict[str, dict[str, Any]]:
     return {str(k): v for k, v in data.items() if isinstance(v, dict)} if isinstance(data, dict) else {}
 
 
+def _probe_ref(ref: str) -> bool:
+    return ref.startswith("model::") and ref[len("model::") :].isdigit()
+
+
+async def effective_agent_models(
+    db: AsyncSession, agent_models: tuple[str, ...], recommended: str | None
+) -> tuple[tuple[str, ...], str | None]:
+    """The models the browser agent may use, and the one its tab starts with.
+
+    The administrator's list when there is one; otherwise every model that
+    passed the ``browser_control`` probe - a model that sees images and lands
+    its clicks; and while none has, any model (an empty tuple), as before the
+    probe existed. The one to start with is the administrator's choice when
+    it is on the list, else the model that did best in the probe.
+    """
+    probes = await load_results(db)
+    passed = {ref: r for ref, r in probes.items() if r.get("passed") is True and _probe_ref(ref)}
+    listed = agent_models or tuple(sorted(passed, key=lambda ref: int(ref.split("::")[1])))
+    if recommended and (not listed or recommended in listed):
+        return listed, recommended
+    best = sorted(
+        (ref for ref in passed if not listed or ref in listed),
+        key=lambda ref: (-int(passed[ref].get("hits") or 0), int(ref.split("::")[1])),
+    )
+    return listed, best[0] if best else None
+
+
 async def keep_result(db: AsyncSession, result: ProbeResult) -> ProbeResult:
     """Store the result under its model; the page shows the last one. The caller commits."""
     results = await load_results(db)

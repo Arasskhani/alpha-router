@@ -280,3 +280,44 @@ class TestTheEndpoint:
         headers = _sign_in(client, user)
         resp = await client.post("/api/admin/extension/probe/model::1", headers=headers)
         assert resp.status_code in (401, 403)
+
+
+class TestTheAgentsModels:
+    async def _probes(self, db, results: dict) -> None:
+        from app.models.system import SystemSetting
+        from app.services.extension_probe import PROBES_KEY
+
+        db.add(SystemSetting(key=PROBES_KEY, value=json.dumps(results)))
+        await db.commit()
+
+    async def test_the_administrators_list_first(self, db_session):
+        from app.services.extension_probe import effective_agent_models
+
+        await self._probes(db_session, {"model::2": {"passed": True, "hits": 3}})
+        assert await effective_agent_models(db_session, ("model::7",), None) == (("model::7",), None)
+        assert await effective_agent_models(db_session, ("model::7", "model::2"), "model::7") == (
+            ("model::7", "model::2"),
+            "model::7",
+        )
+
+    async def test_else_the_models_that_passed_the_probe_the_best_first(self, db_session):
+        from app.services.extension_probe import effective_agent_models
+
+        await self._probes(
+            db_session,
+            {
+                "model::3": {"passed": True, "hits": 2},
+                "model::9": {"passed": True, "hits": 3},
+                "model::4": {"passed": False, "hits": 1},
+                "junk": {"passed": True},
+            },
+        )
+        assert await effective_agent_models(db_session, (), None) == (("model::3", "model::9"), "model::9")
+        # A recommendation that is not among them is not followed.
+        assert await effective_agent_models(db_session, (), "model::4") == (("model::3", "model::9"), "model::9")
+
+    async def test_while_none_has_passed_any_model(self, db_session):
+        from app.services.extension_probe import effective_agent_models
+
+        assert await effective_agent_models(db_session, (), None) == ((), None)
+        assert await effective_agent_models(db_session, (), "model::5") == ((), "model::5")

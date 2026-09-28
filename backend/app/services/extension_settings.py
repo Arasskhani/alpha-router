@@ -114,6 +114,8 @@ class ExtensionSettings:
     blocked_sites: tuple[str, ...] = field(default_factory=tuple)
     page_content_models: tuple[str, ...] = field(default_factory=tuple)
     agent_models: tuple[str, ...] = field(default_factory=tuple)
+    #: The model the Agent tab starts with (``model::<id>``); None: the best that passed the probe.
+    agent_recommended_model: str | None = None
     agent_max_steps: int = DEFAULT_MAX_STEPS
     agent_auto_mode: bool = False
     agent_review_model: str | None = None
@@ -430,12 +432,16 @@ def parse_settings(raw: str | None) -> ExtensionSettings:
     site_access = data.get("site_access")
     max_steps = data.get("agent_max_steps")
     review = data.get("agent_review_model")
+    recommended = data.get("agent_recommended_model")
     return ExtensionSettings(
         site_access=site_access if site_access in SITE_ACCESS_MODES else defaults.site_access,
         allowed_sites=_strings(data.get("allowed_sites")),
         blocked_sites=_strings(data.get("blocked_sites")),
         page_content_models=_strings(data.get("page_content_models")),
         agent_models=_strings(data.get("agent_models")),
+        agent_recommended_model=(
+            recommended if isinstance(recommended, str) and _MODEL_REF_RE.match(recommended) else None
+        ),
         agent_max_steps=(
             max_steps
             if isinstance(max_steps, int) and MIN_MAX_STEPS <= max_steps <= MAX_MAX_STEPS
@@ -591,6 +597,7 @@ def _named_model_ids(settings: ExtensionSettings) -> set[int]:
     refs = (
         *settings.page_content_models,
         *settings.agent_models,
+        settings.agent_recommended_model or "",
         *settings.internal_models,
         *settings.screenshot_models,
         settings.agent_review_model or "",
@@ -734,6 +741,7 @@ async def validated_update(
     agent_max_steps: int,
     agent_auto_mode: bool,
     agent_review_model: str | None,
+    agent_recommended_model: str | None = None,
     full_control: bool = False,
     enabled: bool = True,
     read_only_sites: list[str] | None = None,
@@ -786,6 +794,13 @@ async def validated_update(
         raise ExtensionSettingsError("Plan cannot be the default mode while Plan mode is turned off.")
     if agent_default_mode == "auto" and not agent_auto_mode:
         raise ExtensionSettingsError("Auto cannot be the default mode while Auto mode is turned off.")
+    recommended = (agent_recommended_model or "").strip() or None
+    recommended_list = await _model_list(
+        db, "Recommended agent model", [recommended] if recommended else [], enabled_only=True
+    )
+    agent_list = await _model_list(db, "Agent models", agent_models)
+    if recommended_list and agent_list and recommended_list[0] not in agent_list:
+        raise ExtensionSettingsError("The recommended agent model must be one of the agent models.")
     review = (agent_review_model or "").strip() or None
     # The review model has to answer for every action in Auto mode: it must work today.
     review_list = await _model_list(db, "Review model", [review] if review else [], enabled_only=True)
@@ -800,7 +815,8 @@ async def validated_update(
         allowed_sites=_site_list("Allowed sites", allowed_sites),
         blocked_sites=_site_list("Blocked sites", blocked_sites),
         page_content_models=await _model_list(db, "Models for page content", page_content_models),
-        agent_models=await _model_list(db, "Agent models", agent_models),
+        agent_models=agent_list,
+        agent_recommended_model=recommended_list[0] if recommended_list else None,
         agent_max_steps=int(agent_max_steps),
         agent_auto_mode=bool(agent_auto_mode),
         agent_review_model=review_list[0] if review_list else None,

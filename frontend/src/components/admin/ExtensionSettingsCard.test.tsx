@@ -29,6 +29,7 @@ const SETTINGS = {
   agent_max_steps: 25,
   agent_auto_mode: false,
   agent_review_model: null,
+  agent_recommended_model: null,
   full_control: false,
   enabled: true,
   relaxed_approvals: [],

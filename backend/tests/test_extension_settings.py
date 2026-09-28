@@ -525,6 +525,33 @@ class TestTheRunLimits:
         assert again.to_json()["internal_connections"] == [model.connection_id]
 
 
+class TestTheRecommendedAgentModel:
+    async def test_it_must_be_one_of_the_agent_models(self, db_session):
+        a = await _model(db_session, "gpt-rec-a")
+        b = await _model(db_session, "gpt-rec-b")
+        updated = await validated_update(
+            db_session,
+            ExtensionSettings(),
+            **_update(agent_models=[f"model::{a.id}", f"model::{b.id}"], agent_recommended_model=f"model::{b.id}"),
+        )
+        assert updated.agent_recommended_model == f"model::{b.id}"
+        with pytest.raises(ExtensionSettingsError, match="must be one of the agent models"):
+            await validated_update(
+                db_session,
+                ExtensionSettings(),
+                **_update(agent_models=[f"model::{a.id}"], agent_recommended_model=f"model::{b.id}"),
+            )
+
+    async def test_stored_as_it_was_and_read_back(self, db_session):
+        a = await _model(db_session, "gpt-rec-c")
+        updated = await validated_update(
+            db_session, ExtensionSettings(), **_update(agent_recommended_model=f"model::{a.id}")
+        )
+        await save_extension_settings(db_session, updated)
+        await db_session.commit()
+        assert (await load_extension_settings(db_session)).agent_recommended_model == f"model::{a.id}"
+
+
 class TestInsideTheOrganisation:
     def test_any_model_when_nothing_is_marked_internal(self):
         from app.services.extension_settings import inside_organisation

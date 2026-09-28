@@ -34,6 +34,7 @@ from app.services.extension_access import extension_features, extension_permitte
 from app.services.extension_distribution import ExtensionUnavailable, current_build
 from app.services.extension_keys import ExtensionKeyUnavailable, get_signing_key
 from app.services.extension_package import CONNECTED_PAGE, MIN_SUPPORTED_VERSION, normalize_origin
+from app.services.extension_probe import effective_agent_models
 from app.services.extension_settings import data_policy, load_extension_settings
 from app.services.extension_tokens import (
     AUDIT_CONNECTED,
@@ -265,6 +266,9 @@ async def extension_me(
         latest = None
     policy = None
     if features["chat"]:
+        agent_models, agent_recommended = await effective_agent_models(
+            db, settings.agent_models, settings.agent_recommended_model
+        )
         policy = {
             "site_access": settings.site_access,
             "allowed_sites": list(settings.allowed_sites),
@@ -272,7 +276,9 @@ async def extension_me(
             "read_only_sites": list(settings.read_only_sites),
             "protected_sites": list(settings.protected_sites),
             "page_content_models": list(settings.page_content_models),
-            "agent_models": list(settings.agent_models),
+            # The agent's models, and the one its tab starts with: the administrator's list, or the probe's passes.
+            "agent_models": list(agent_models),
+            "agent_recommended_model": agent_recommended,
             "agent_max_steps": settings.agent_max_steps,
             # The run's other limits, and the modes on offer with the one a run starts in.
             "agent_max_minutes": settings.agent_max_minutes,

@@ -45,6 +45,7 @@ type ExtensionSettings = {
   agent_max_steps: number;
   agent_auto_mode: boolean;
   agent_review_model: string | null;
+  agent_recommended_model: string | null;
   full_control: boolean;
   enabled: boolean;
   relaxed_approvals: string[];
@@ -483,6 +484,7 @@ export default function ExtensionSettingsCard() {
           internal_sites: siteLines(form.internal_sites),
           ...numbers,
           agent_review_model: form.agent_review_model || null,
+          agent_recommended_model: form.agent_recommended_model || null,
         }),
       });
       if (!isOverview(saved)) throw new Error("The browser extension settings could not be read back.");
@@ -501,6 +503,10 @@ export default function ExtensionSettingsCard() {
   const offered = models.filter((m) => m.state === "ok");
   const review = form?.agent_review_model ? choiceFor(form.agent_review_model, models) : null;
   const reviewNote = review ? unavailableNote(review) : null;
+  // The model the Agent tab starts with: one of the agent's models when they are listed.
+  const recommendedOptions = offered
+    .filter((m) => !form?.agent_models.length || form.agent_models.includes(m.ref))
+    .map((m) => ({ value: m.ref, label: choiceLabel(m) }));
   const reviewOptions = [
     // A review model that is no longer on offer is still shown by name, so the
     // administrator sees what is set and why it has to change.
@@ -690,9 +696,24 @@ export default function ExtensionSettingsCard() {
               onChange={(next) => patch({ agent_models: next })}
             />
             <span className="settings-row__hint">
-              None selected: any model the person may use. The agent sends what it reads on pages to its model, so the
-              model must also be one that may receive page content.
+              None selected: the models that passed the browser control check below - models that see the page and
+              land their clicks - and, until one has, any model the person may use. The agent sends what it reads on
+              pages to its model, so the model must also be one that may receive page content.
             </span>
+          </div>
+          <div className="extension-admin__field">
+            <span className="settings-row__title">Recommended agent model</span>
+            <SearchableModelSelect
+              id="extension-recommended-model"
+              ariaLabel="Recommended agent model"
+              value={form.agent_recommended_model ?? ""}
+              disabled={locked}
+              emptyLabel="The best in the check"
+              placeholder="Search models…"
+              options={recommendedOptions}
+              onChange={(next) => patch({ agent_recommended_model: next || null })}
+            />
+            <span className="settings-row__hint">What the Agent tab starts with, unless the person chose another.</span>
           </div>
           <label className="extension-admin__field extension-admin__field--inline">
             <span className="settings-row__title">Most steps per task</span>

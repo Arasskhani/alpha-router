@@ -556,9 +556,28 @@ class TestRefused:
         resp = await client.post("/api/chat/completions", json=_body(model), headers=browser.headers)
         assert resp.status_code == 403
         detail = resp.json()["detail"]
-        assert detail["code"] == "model_not_allowed"
+        assert detail["code"] == "agent_model_not_allowed"
         assert "browser agent" in detail["message"]
         assert provider.calls == []
+
+    @pytest.mark.usefixtures("agent_on")
+    async def test_without_a_list_the_models_that_passed_the_probe(self, client, browser, models, provider, db_session):
+        # No list of the administrator's, and a probe that passed one model: the agent uses that one only.
+        from app.services.extension_probe import PROBES_KEY
+        from app.models.system import SystemSetting
+
+        passed = {f"model::{models.a.id}": {"passed": True, "hits": 3, "trials": 3, "vision": True}}
+        db_session.add(SystemSetting(key=PROBES_KEY, value=json.dumps(passed)))
+        await db_session.commit()
+        resp = await client.post("/api/chat/completions", json=_body(models.b), headers=browser.headers)
+        assert resp.status_code == 403
+        assert resp.json()["detail"]["code"] == "agent_model_not_allowed"
+        assert provider.calls == []
+
+    @pytest.mark.usefixtures("agent_on")
+    async def test_with_no_list_and_no_probe_any_model(self, client, browser, models, provider):
+        resp = await client.post("/api/chat/completions", json=_body(models.b), headers=browser.headers)
+        assert resp.status_code == 200, resp.text
 
     @pytest.mark.usefixtures("agent_on")
     async def test_a_model_outside_the_page_content_list(self, client, browser, models, provider, db_session):

@@ -60,6 +60,7 @@ class ExtensionSettingsIn(BaseModel):
     agent_max_steps: int
     agent_auto_mode: bool = False
     agent_review_model: str | None = Field(default=None, max_length=64)
+    agent_recommended_model: str | None = Field(default=None, max_length=64)
     full_control: bool = False
     enabled: bool = True
     read_only_sites: list[str] = Field(default_factory=list, max_length=_BODY_LIST_CAP)

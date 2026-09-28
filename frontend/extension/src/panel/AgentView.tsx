@@ -264,7 +264,12 @@ export default function AgentView({ me, server, hidden = false, onDisconnected, 
         const usable = agentModels(all, me);
         setModels(usable);
         setModelsFailed(false);
-        setModelId(pickModel(usable, typeof stored[MODEL_KEY] === "string" ? stored[MODEL_KEY] : null)?.id ?? "");
+        // The person's last choice while it is on offer; else the model the administrator recommends for the agent.
+        const remembered = typeof stored[MODEL_KEY] === "string" ? stored[MODEL_KEY] : null;
+        const recommended = me.policy?.agent_recommended_model ?? null;
+        setModelId(
+          (usable.find((m) => m.id === remembered) ?? usable.find((m) => m.id === recommended) ?? pickModel(usable, null))?.id ?? "",
+        );
         // The person's last choice, when it is still on offer; else what the administrator set.
         const saved = stored[MODE_KEY];
         setMode(typeof saved === "string" && (modes as string[]).includes(saved) ? (saved as AgentMode) : defaultMode);
@@ -684,6 +689,7 @@ export default function AgentView({ me, server, hidden = false, onDisconnected, 
           {models?.map((model) => (
             <option key={model.id} value={model.id}>
               {model.name}
+              {model.id === me.policy?.agent_recommended_model ? " (recommended)" : ""}
             </option>
           ))}
         </select>

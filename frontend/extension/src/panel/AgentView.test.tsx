@@ -154,6 +154,16 @@ describe("the agent's models", () => {
   });
 });
 
+describe("the agent's model", () => {
+  it("starts with the one the administrator recommends, marked so, unless the person chose another", async () => {
+    await render({ ...ME, policy: { ...ME.policy!, agent_recommended_model: "model::2" } });
+    const select = host.querySelector("select") as HTMLSelectElement;
+    expect([...select.options].map((o) => o.value)).toEqual(["model::1", "model::2"]);
+    expect(select.value).toBe("model::2");
+    expect([...select.options].find((o) => o.value === "model::2")?.textContent).toMatch(/\(recommended\)$/);
+  });
+});
+
 describe("a run", () => {
   it("lets the person allow plain actions on the site for the rest of the run, with Allow focused", async () => {
     replies = [

@@ -16,6 +16,8 @@ export type Me = {
     protected_sites?: string[];
     page_content_models: string[];
     agent_models: string[];
+    /** The model the Agent tab starts with (the administrator's, or the best in the browser control check). */
+    agent_recommended_model?: string | null;
     agent_max_steps: number;
     /** A run's other limits: minutes, and tabs it may open. */
     agent_max_minutes?: number;

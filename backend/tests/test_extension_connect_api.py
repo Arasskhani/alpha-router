@@ -596,6 +596,7 @@ class TestMe:
             "protected_sites": [],
             "page_content_models": [],
             "agent_models": [],
+            "agent_recommended_model": None,
             "agent_max_steps": 25,
             "agent_max_minutes": 20,
             "agent_max_tabs": 10,

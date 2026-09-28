@@ -45,6 +45,7 @@ from app.services.extension_settings import (
     page_content_allowed,
     site_refusal,
 )
+from app.services.extension_probe import effective_agent_models
 from app.services.model_capabilities import model_media_flags, supports_vision
 from app.services.model_resolution_service import resolve_model_row
 
@@ -174,20 +175,24 @@ async def check_page_shares(
 
 
 async def check_agent_model(db: AsyncSession, *, model_ref: str, settings: ExtensionSettings) -> AIModel | None:
-    """Refuse a model the administrator keeps from the browser agent; otherwise the model.
+    """Refuse a model the browser agent may not use; otherwise the model.
 
-    The agent reads pages through its tools and sends what it reads to the
-    model, so the page-content list binds it as well as its own list. Resolved
-    as the chat turn will resolve ``model_ref``, like ``check_page_shares``.
+    The agent's models are the administrator's list, or else those that
+    passed the ``browser_control`` probe (``effective_agent_models``). The
+    agent reads pages through its tools and sends what it reads to the model,
+    so the page-content list binds it as well. Resolved as the chat turn will
+    resolve ``model_ref``, like ``check_page_shares``.
     """
     found = await resolve_model_row(db, model_ref)
     model = found[0] if found is not None else None
     ref = f"model::{model.id}" if model is not None else None
-    if settings.agent_models and ref not in settings.agent_models:
+    allowed, _ = await effective_agent_models(db, settings.agent_models, settings.agent_recommended_model)
+    if allowed and ref not in allowed:
         raise PageContextRefused(
             403,
-            "model_not_allowed",
-            "Your administrator does not allow the browser agent to use this model. Choose another model.",
+            "agent_model_not_allowed",
+            "This model is not one of the browser agent's: your administrator chooses them, or they are the ones "
+            "that passed the browser control check. Choose another model in the Agent tab.",
         )
     if not page_content_allowed(settings, ref):
         raise PageContextRefused(403, "model_not_allowed", PAGES_NOT_FOR_MODEL)

@@ -46,6 +46,7 @@ from app.models.system import SystemSetting
 from app.services.extension_package import SITE_ACCESS_MODES, SITE_ACCESS_PER_SITE
 from app.services.list_bounds import ADMIN_LIST_HARD_CAP
 from app.services.model_capabilities import model_media_flags, supports_vision
+from app.services.model_tool_compatibility_service import is_auto_router_model_id
 from app.services.system_default_models import model_supports_text_chat
 
 logger = logging.getLogger(__name__)
@@ -549,6 +550,15 @@ async def _model_list(
     return tuple(f"model::{i}" for i in sorted(ids))
 
 
+async def _auto_router_ids(db: AsyncSession, refs: tuple[str, ...]) -> list[int]:
+    """The ids, among model::<id> refs, of models that are Auto Router."""
+    ids = {int(ref.split("::")[1]) for ref in refs}
+    if not ids:
+        return []
+    rows = (await db.execute(select(AIModel.id, AIModel.external_id).where(AIModel.id.in_(ids)))).all()
+    return sorted(int(row.id) for row in rows if is_auto_router_model_id(str(row.external_id or "")))
+
+
 async def _connection_list(db: AsyncSession, values: list[int]) -> tuple[int, ...]:
     """Connection ids, each of which must exist; raises ExtensionSettingsError."""
     if len(values) > MAX_INTERNAL_CONNECTIONS:
@@ -801,6 +811,17 @@ async def validated_update(
     agent_list = await _model_list(db, "Agent models", agent_models)
     if recommended_list and agent_list and recommended_list[0] not in agent_list:
         raise ExtensionSettingsError("The recommended agent model must be one of the agent models.")
+    # Every agent step on Auto Router is refused (it would change models between steps): it is not listed either.
+    routed = await _auto_router_ids(db, (*agent_list, *recommended_list))
+    if routed:
+        raise ExtensionSettingsError(
+            f"Agent models: model {routed[0]} is Auto Router, which picks another model at each step and is never "
+            "the browser agent's. Choose a model that passed the browser control probe."
+        )
+    content_list = await _model_list(db, "Models for page content", page_content_models)
+    # The agent sends what it reads to its model: a recommendation the page-content list refuses would never run.
+    if recommended_list and content_list and recommended_list[0] not in content_list:
+        raise ExtensionSettingsError("The recommended agent model must also be one of the models for page content.")
     review = (agent_review_model or "").strip() or None
     # The review model has to answer for every action in Auto mode: it must work today.
     review_list = await _model_list(db, "Review model", [review] if review else [], enabled_only=True)
@@ -814,7 +835,7 @@ async def validated_update(
         site_access=site_access,
         allowed_sites=_site_list("Allowed sites", allowed_sites),
         blocked_sites=_site_list("Blocked sites", blocked_sites),
-        page_content_models=await _model_list(db, "Models for page content", page_content_models),
+        page_content_models=content_list,
         agent_models=agent_list,
         agent_recommended_model=recommended_list[0] if recommended_list else None,
         agent_max_steps=int(agent_max_steps),

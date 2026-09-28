@@ -542,6 +542,25 @@ class TestTheRecommendedAgentModel:
                 **_update(agent_models=[f"model::{a.id}"], agent_recommended_model=f"model::{b.id}"),
             )
 
+    async def test_never_auto_router_among_the_agent_models(self, db_session):
+        router = await _model(db_session, "openrouter/auto")
+        with pytest.raises(ExtensionSettingsError, match="is Auto Router"):
+            await validated_update(db_session, ExtensionSettings(), **_update(agent_models=[f"model::{router.id}"]))
+        with pytest.raises(ExtensionSettingsError, match="is Auto Router"):
+            await validated_update(
+                db_session, ExtensionSettings(), **_update(agent_recommended_model=f"model::{router.id}")
+            )
+
+    async def test_it_must_be_allowed_page_content(self, db_session):
+        a = await _model(db_session, "gpt-rec-d")
+        b = await _model(db_session, "gpt-rec-e")
+        with pytest.raises(ExtensionSettingsError, match="models for page content"):
+            await validated_update(
+                db_session,
+                ExtensionSettings(),
+                **_update(page_content_models=[f"model::{a.id}"], agent_recommended_model=f"model::{b.id}"),
+            )
+
     async def test_stored_as_it_was_and_read_back(self, db_session):
         a = await _model(db_session, "gpt-rec-c")
         updated = await validated_update(

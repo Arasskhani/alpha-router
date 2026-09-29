@@ -21,6 +21,7 @@ import { normalizeVoiceLang, type VoiceLang } from "./voiceInput";
 import { isCachedTheme, loadCachedTheme, saveCachedTheme, type CachedTheme } from "./themeCache";
 import type { AgentCitation } from "./agentChat";
 import { readSharedPages, type SharedPages } from "./sharedPages";
+import { readContextFit, type ContextFit } from "./contextFit";
 import {
   anyChatToolEnabled,
   copyFreshChatTools,
@@ -125,6 +126,8 @@ export type ChatMessage = {
   citations?: AgentCitation[];
   /** Server-owned: this answer was built from pages shared from the browser extension. */
   pageContext?: SharedPages;
+  /** Server-owned: the chat was longer than the model's window; what was left out of it for this answer. */
+  contextFit?: ContextFit;
   feedback?: {
     rating: -1 | 1;
     reason?: string | null;
@@ -748,6 +751,7 @@ function mapApiMessage(raw: Record<string, unknown>): ChatMessage {
       ? (raw.citations as AgentCitation[])
       : undefined,
     pageContext: readSharedPages(raw.pageContext),
+    contextFit: readContextFit(raw.contextFit),
     feedback:
       raw.feedback &&
       typeof raw.feedback === "object" &&

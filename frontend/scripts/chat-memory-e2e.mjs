@@ -7,7 +7,8 @@
  *
  *   - a chat reopened from the list goes to the model whole, however long it
  *     is (the app loads a chat's latest page only, and used to send just that);
- *   - after a Stop, the next turn still carries the whole chat.
+ *   - after a Stop, the next turn still carries the whole chat;
+ *   - an answer the server fitted into the model's window says so under its label.
  *
  * Run it from frontend/ against a development stack:
  *
@@ -107,6 +108,8 @@ async function seedChat(count) {
 const sent = [];
 let holdNext = false;
 let release = null;
+/** The server's trailing metadata for the next answer, when a step wants one. */
+let nextTrailer = null;
 await page.route("**/api/chat/completions", async (route) => {
   sent.push(JSON.parse(route.request().postData() || "{}"));
   if (holdNext) {
@@ -117,10 +120,12 @@ await page.route("**/api/chat/completions", async (route) => {
     await route.abort().catch(() => undefined);
     return;
   }
+  const trailer = nextTrailer ? `data: ${JSON.stringify({ alpha_router: nextTrailer })}\n\n` : "";
+  nextTrailer = null;
   await route.fulfill({
     status: 200,
     headers: { "Content-Type": "text/event-stream" },
-    body: 'data: {"choices":[{"delta":{"content":"Noted."}}]}\n\ndata: [DONE]\n\n',
+    body: `data: {"choices":[{"delta":{"content":"Noted."}}]}\n\n${trailer}data: [DONE]\n\n`,
   });
 });
 
@@ -174,6 +179,18 @@ await step("after a Stop, the next turn still carries the whole chat", async () 
   // The stopped prompt never reached the server here (the request is answered in this script), so it may be gone.
   expect(messages.length >= 61, `after the Stop the model got ${messages.length} messages for a chat of 60 and 1 new`);
   return `${messages.length} messages`;
+});
+
+await step("an answer fitted into the model's window says so under its label", async () => {
+  const title = await seedChat(40);
+  await openChat(title);
+  nextTrailer = { context_fit: { dropped: 12, summarized: 10 } };
+  await send("And now?");
+  const label = page.locator(".alpha-router-msg-context-label").last();
+  await label.waitFor({ timeout: 10_000 });
+  const text = (await label.textContent()) || "";
+  expect(text.includes("read as a summary; 2 more left out"), `the label reads ${JSON.stringify(text)}`);
+  return text;
 });
 
 for (const id of created) {

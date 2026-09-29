@@ -319,6 +319,7 @@ import {
   sharedPagesNote,
   withSharedPageMarks,
 } from "../lib/sharedPages";
+import { contextFitLabel, contextFitNote, readContextFit, type ContextFit } from "../lib/contextFit";
 import {
   shortModelName,
   readAudioMessage,
@@ -3777,6 +3778,7 @@ export default function ChatPanel({
     content: string;
     requestLogId?: number;
     agentMetadata?: AgentCompletionMetadata;
+    contextFit?: ContextFit;
   }> {
     const res = await authFetch("/api/chat/completions", {
       method: "POST",
@@ -3807,6 +3809,7 @@ export default function ChatPanel({
     let assistant = "";
     let requestLogId: number | undefined;
     let agentMetadata: AgentCompletionMetadata | undefined;
+    let contextFit: ContextFit | undefined;
 
     // readSseEvents also delivers a trailing `data:` line without a newline
     // and cancels the reader if this loop exits early (error / Stop).
@@ -3829,6 +3832,7 @@ export default function ChatPanel({
         if (typeof metaLogId === "number" && Number.isFinite(metaLogId)) {
           requestLogId = metaLogId;
         }
+        contextFit = readContextFit(json?.alpha_router?.context_fit) ?? contextFit;
         const nextAgentMetadata = agentCompletionMetadataFromSse(
           json?.alpha_router,
         );
@@ -3852,6 +3856,7 @@ export default function ChatPanel({
       content: assistant,
       ...(requestLogId != null ? { requestLogId } : {}),
       ...(agentMetadata ? { agentMetadata } : {}),
+      ...(contextFit ? { contextFit } : {}),
     };
   }
 
@@ -4314,6 +4319,7 @@ export default function ChatPanel({
       receivedAt?: number,
       requestLogId?: number,
       agentMetadata?: AgentCompletionMetadata,
+      contextFit?: ContextFit,
     ) => {
       const current = getSessionMessages(sid);
       const idx = current.findIndex((m) => m.clientMessageId === assistantClientMessageId);
@@ -4326,6 +4332,7 @@ export default function ChatPanel({
         ...(receivedAt != null ? { receivedAt } : {}),
         ...(requestLogId != null ? { requestLogId } : {}),
         ...(agentMetadata || {}),
+        ...(contextFit ? { contextFit } : {}),
       };
       if (idx >= 0) {
         const next = [...current];
@@ -4365,6 +4372,7 @@ export default function ChatPanel({
       receivedAt,
       streamed.requestLogId,
       streamed.agentMetadata,
+      streamed.contextFit,
     );
     applyMessages(sid, finalMsgs);
     applyAgentMetadataToSession(sid, streamed.agentMetadata);
@@ -6705,6 +6713,11 @@ export default function ChatPanel({
               {m.role === "assistant" && m.pageContext ? (
                 <div className="alpha-router-msg-page-label" title={sharedPagesNote(m.pageContext)}>
                   {sharedPagesLabel(m.pageContext)}
+                </div>
+              ) : null}
+              {m.role === "assistant" && m.contextFit ? (
+                <div className="alpha-router-msg-context-label" title={contextFitNote(m.contextFit)}>
+                  {contextFitLabel(m.contextFit)}
                 </div>
               ) : null}
               {m.role === "assistant" && m.modelName ? (

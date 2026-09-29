@@ -6854,7 +6854,8 @@ table.data-table--api-logs {
 }
 
 /* An answer built from a page shared from the browser extension. */
-.alpha-router-msg-page-label {
+.alpha-router-msg-page-label,
+.alpha-router-msg-context-label {
   font-size: 0.72rem;
   font-weight: 600;
   color: var(--muted);

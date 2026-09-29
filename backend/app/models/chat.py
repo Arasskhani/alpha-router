@@ -19,9 +19,11 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import validates
 from sqlalchemy.types import JSON
 
 from app.database import Base
+from app.utils.text_normalize import fold_for_search
 
 JsonDocument = JSON().with_variant(JSONB(), "postgresql")
 
@@ -245,8 +247,16 @@ class UserMemory(Base):
     indexed_at = Column(DateTime, nullable=True)
     deleted_at = Column(DateTime, nullable=True)
     content_hash = Column(String(64), nullable=False)
+    # The text folded for lexical search (fold_for_search); kept in step with content.
+    content_search = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+
+    @validates("content")
+    def _fold_content(self, _key: str, value: str | None) -> str | None:
+        # An instance attribute the Column annotation does not describe.
+        self.content_search = fold_for_search(value) if value is not None else None  # type: ignore[assignment]
+        return value
 
     __table_args__ = (
         UniqueConstraint("user_id", "content_hash", name="ux_user_memories_user_hash"),

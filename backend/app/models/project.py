@@ -21,10 +21,11 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import Mapper
+from sqlalchemy.orm import Mapper, validates
 from sqlalchemy.types import JSON
 
 from app.database import Base
+from app.utils.text_normalize import fold_for_search
 
 JsonDocument = JSON().with_variant(JSONB(), "postgresql")
 
@@ -320,6 +321,8 @@ class ProjectMemory(Base):
     )
     content = Column(Text, nullable=False)
     content_hash = Column(String(64), nullable=False)
+    # The text folded for lexical search (fold_for_search); kept in step with content.
+    content_search = Column(Text, nullable=True)
     # "manual" for owner-authored facts, "auto_chat" for extracted facts.
     source_type = Column(String(32), nullable=False, default="manual")
     source_id = Column(String(128), nullable=True)
@@ -364,6 +367,12 @@ class ProjectMemory(Base):
         default=datetime.datetime.utcnow,
         onupdate=datetime.datetime.utcnow,
     )
+
+    @validates("content")
+    def _fold_content(self, _key: str, value: str | None) -> str | None:
+        # An instance attribute the Column annotation does not describe.
+        self.content_search = fold_for_search(value) if value is not None else None  # type: ignore[assignment]
+        return value
 
 
 class ProjectMemoryJob(Base):

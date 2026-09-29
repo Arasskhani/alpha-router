@@ -33,7 +33,7 @@ from app.services.memory_settings_service import (
     parse_embedding_spec,
 )
 from app.services.user_chat_storage_service import load_user_prefs
-from app.utils.text_normalize import normalize_memory_text
+from app.utils.text_normalize import fold_for_search, normalize_memory_text, searchable_memory_text
 
 logger = logging.getLogger(__name__)
 
@@ -749,7 +749,7 @@ async def _core_rows(db: AsyncSession, user_id: int, *, limit: int) -> list[User
 async def _lexical_rows(db: AsyncSession, user_id: int, query: str, *, limit: int) -> list[UserMemory]:
     if limit <= 0 or not query.strip():
         return []
-    tokens = [token for token in re.findall(r"[\w\u0600-\u06FF]{3,}", normalize_memory_text(query)) if token][:8]
+    tokens = [token for token in re.findall(r"[\w\u0600-\u06FF]{3,}", fold_for_search(query)) if token][:8]
     if not tokens:
         return []
     now = dt.datetime.utcnow()
@@ -758,7 +758,7 @@ async def _lexical_rows(db: AsyncSession, user_id: int, query: str, *, limit: in
         UserMemory.enabled.is_(True),
         _alive_filter(),
         _not_expired(now),
-        or_(*[UserMemory.content.ilike(f"%{token}%") for token in tokens]),
+        or_(*[searchable_memory_text(UserMemory).ilike(f"%{token}%") for token in tokens]),
     ]
     return (
         (

@@ -257,8 +257,8 @@ class TestPersonal:
 
     def test_each_part_is_billed_under_its_own_key(self):
         job = UserMemoryJob(id="j1", user_id=7, attempt_count=1)
-        first = ExtractionBilling.for_user(job, "u", part=1).key_prefix
-        second = ExtractionBilling.for_user(job, "u", part=24).key_prefix
+        first = ExtractionBilling.for_user(job, "u", part="1-23").key_prefix
+        second = ExtractionBilling.for_user(job, "u", part="24-51").key_prefix
         assert first != second
         assert ExtractionBilling.for_user(job, "u").key_prefix == "memory-extract:j1:1"
 

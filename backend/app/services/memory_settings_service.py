@@ -57,6 +57,7 @@ SETTING_KEYS = {
     "memory_extract_debounce_seconds": "30",
     "memory_extract_max_wait_seconds": "600",
     "memory_extract_min_new_messages": "2",
+    "memory_extract_max_tokens": "2000",
     "memory_max_per_user": "200",
     "memory_inject_max_items": "12",
     "memory_inject_max_chars": "2500",
@@ -204,6 +205,8 @@ def parse_memory_settings(raw: dict[str, str]) -> dict[str, Any]:
         "extract_debounce_seconds": _as_int(raw.get("memory_extract_debounce_seconds"), 30, minimum=5, maximum=3600),
         "extract_max_wait_seconds": _as_int(raw.get("memory_extract_max_wait_seconds"), 600, minimum=30, maximum=7200),
         "extract_min_new_messages": _as_int(raw.get("memory_extract_min_new_messages"), 2, minimum=1, maximum=20),
+        # The most tokens the extractor may answer with, its thinking included; both scopes.
+        "extract_max_tokens": _as_int(raw.get("memory_extract_max_tokens"), 2000, minimum=256, maximum=16_000),
         # 0 = uncapped. Covers both scopes: it is one line item on the bill.
         "extract_monthly_budget_usd": _as_float(
             raw.get("memory_extract_monthly_budget_usd"), 0.0, minimum=0.0, maximum=1_000_000.0
@@ -325,6 +328,7 @@ def _raw_from_values(values: dict[str, Any]) -> dict[str, str]:
         "memory_extract_debounce_seconds": str(values["extract_debounce_seconds"]),
         "memory_extract_max_wait_seconds": str(values["extract_max_wait_seconds"]),
         "memory_extract_min_new_messages": str(values["extract_min_new_messages"]),
+        "memory_extract_max_tokens": str(values["extract_max_tokens"]),
         "memory_extract_monthly_budget_usd": str(values["extract_monthly_budget_usd"]),
         "memory_max_per_user": str(values["max_per_user"]),
         "memory_inject_max_items": str(values["inject_max_items"]),
@@ -365,6 +369,7 @@ async def update_memory_settings(db: AsyncSession, updates: dict[str, Any]) -> d
         "extract_debounce_seconds": "memory_extract_debounce_seconds",
         "extract_max_wait_seconds": "memory_extract_max_wait_seconds",
         "extract_min_new_messages": "memory_extract_min_new_messages",
+        "extract_max_tokens": "memory_extract_max_tokens",
         "extract_monthly_budget_usd": "memory_extract_monthly_budget_usd",
         "max_per_user": "memory_max_per_user",
         "inject_max_items": "memory_inject_max_items",

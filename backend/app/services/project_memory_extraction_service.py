@@ -20,24 +20,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.chat import ChatMessage, ChatSession
 from app.models.project import ProjectMemory, ProjectMemoryJob
 from app.services.memory_extraction_service import (
-    EXTRACT_MAX_TOKENS,
-    EXTRACT_TIMEOUT,
     MAX_MESSAGE_CHARS,
     MAX_OPS,
     MAX_PARTS_PER_RUN,
+    MAX_WINDOW_CHARS,
     MAX_WINDOW_TURNS,
     PRE_WINDOW_MESSAGES,
     ExtractionBilling,
     ExtractionParseError,
-    _completion_text,
+    ExtractionTruncated,
     _first_json_object,
     _watermark_moved,
+    ask_extractor,
     contains_secret,
     extraction_budget_exhausted,
     fit_extraction_window,
     looks_like_injection,
-    record_extraction_usage,
     restates_a_shared_page,
+    smaller_part,
 )
 from app.services.memory_settings_service import (
     PROJECT_DENIED_CATEGORIES,
@@ -148,6 +148,7 @@ async def build_project_extraction_window(
     session_id: str,
     from_sequence: int,
     to_sequence: int,
+    max_chars: int = MAX_WINDOW_CHARS,
 ) -> ProjectExtractionWindow:
     start = max(0, int(from_sequence))
     end = max(start, int(to_sequence))
@@ -187,7 +188,7 @@ async def build_project_extraction_window(
                 author_user_id=row.user_id,
             )
         )
-    kept, covered = fit_extraction_window(turns, start=start, covered_to=covered_to)
+    kept, covered = fit_extraction_window(turns, start=start, covered_to=covered_to, max_chars=max_chars)
     existing_rows = (
         (
             await db.execute(
@@ -570,60 +571,6 @@ async def extract_project_memory_operations(
     completer: Any | None = None,
     billing: ExtractionBilling | None = None,
 ) -> tuple[list[ProjectMemoryOperation], int]:
-    settings = await get_memory_settings(db)
-    model_id = settings.get("extraction_model_id")
-    user_content = _window_prompt(window)
-    repair_nudge = "Your previous reply was not valid JSON. Reply with a JSON object only."
-    if completer is not None:
-
-        async def _completer_once(*, repair: bool) -> str:
-            messages = [{"role": "user", "content": user_content}]
-            if repair:
-                messages.append({"role": "user", "content": repair_nudge})
-            response = await completer({"messages": messages})
-            return _completion_text(response)
-
-        try:
-            return parse_project_operations(await _completer_once(repair=False))
-        except ExtractionParseError:
-            try:
-                return parse_project_operations(await _completer_once(repair=True))
-            except Exception as exc:
-                raise ExtractionParseError(str(exc)) from exc
-    if not model_id:
-        return [], 0
-    from litellm import acompletion
-
-    from app.services.llm_providers import (
-        litellm_model_for_provider,
-        resolve_litellm_provider,
-    )
-    from app.services.model_resolution_service import resolve_model_and_key
-
-    ai_model, api_key, base_url, provider_type = await resolve_model_and_key(db, f"model::{int(model_id)}")
-    if not ai_model or not api_key:
-        raise RuntimeError("Memory extraction model is unavailable")
-
-    messages = [
-        {"role": "system", "content": _SYSTEM_PROMPT},
-        {"role": "user", "content": user_content},
-    ]
-    kwargs: dict[str, Any] = {
-        "model": litellm_model_for_provider(ai_model.external_id, provider_type or ai_model.provider_type),
-        "messages": messages,
-        "max_tokens": EXTRACT_MAX_TOKENS,
-        "temperature": 0,
-        "timeout": EXTRACT_TIMEOUT,
-        "api_key": api_key,
-        "caching": False,
-        "response_format": {"type": "json_object"},
-    }
-    if base_url:
-        kwargs["base_url"] = base_url
-    llm_provider = resolve_litellm_provider(provider_type or ai_model.provider_type)
-    if llm_provider:
-        kwargs["custom_llm_provider"] = llm_provider
-
     # System cost: never billed to the member who happened to post last.
     scope = billing or ExtractionBilling(
         user_id=None,
@@ -633,32 +580,15 @@ async def extract_project_memory_operations(
         key_prefix=f"project-memory-extract:adhoc:{uuid.uuid4()}",
         operation_type="project_memory_extract",
     )
-
-    async def _call(call_kwargs: dict[str, Any], *, phase: str) -> str:
-        started_at = dt.datetime.utcnow()
-        response = await acompletion(**call_kwargs)
-        text = _completion_text(response)
-        await record_extraction_usage(
-            billing=scope,
-            ai_model=ai_model,
-            provider_type=provider_type or ai_model.provider_type,
-            response=response,
-            prompt=call_kwargs.get("messages"),
-            completion=text,
-            started_at=started_at,
-            phase=phase,
-        )
-        return text
-
-    try:
-        return parse_project_operations(await _call(kwargs, phase="primary"))
-    except ExtractionParseError:
-        repair_kwargs = dict(kwargs)
-        repair_kwargs["messages"] = [*messages, {"role": "user", "content": repair_nudge}]
-        try:
-            return parse_project_operations(await _call(repair_kwargs, phase="repair"))
-        except Exception as exc:
-            raise ExtractionParseError(str(exc)) from exc
+    answer = await ask_extractor(
+        db,
+        system_prompt=_SYSTEM_PROMPT,
+        user_content=_window_prompt(window),
+        parse=parse_project_operations,
+        billing=scope,
+        completer=completer,
+    )
+    return answer if answer is not None else ([], 0)
 
 
 async def handle_project_memory_extraction(db: AsyncSession, job, *, completer: Any | None = None) -> None:
@@ -731,23 +661,30 @@ async def _mine_next_project_part(db: AsyncSession, job, *, completer: Any | Non
     need = int(settings.get("project_extract_min_new_messages") or 2) if first else 1
     if int(job.watermark_sequence or 0) - window_from < need:
         return False
-    window = await build_project_extraction_window(
-        db,
-        project_id=job.project_id,
-        session_id=job.session_id,
-        from_sequence=window_from + 1,
-        to_sequence=int(job.watermark_sequence or 0),
-    )
-    if not window.new_turns():
-        job.extracted_sequence = window.to_sequence
-        return True
+    max_chars = MAX_WINDOW_CHARS
+    while True:
+        window = await build_project_extraction_window(
+            db,
+            project_id=job.project_id,
+            session_id=job.session_id,
+            from_sequence=window_from + 1,
+            to_sequence=int(job.watermark_sequence or 0),
+            max_chars=max_chars,
+        )
+        if not window.new_turns():
+            job.extracted_sequence = window.to_sequence
+            return True
+        try:
+            operations, dropped = await extract_project_memory_operations(
+                db,
+                window=window,
+                completer=completer,
+                billing=ExtractionBilling.for_project(job, part=f"{window.from_sequence}-{window.to_sequence}"),
+            )
+            break
+        except ExtractionTruncated as exc:
+            max_chars = smaller_part(window, max_chars, exc)
     last_member_turn = next((turn for turn in reversed(window.turns) if turn.role == "user"), None)
-    operations, dropped = await extract_project_memory_operations(
-        db,
-        window=window,
-        completer=completer,
-        billing=ExtractionBilling.for_project(job, part=window.from_sequence),
-    )
     if await _watermark_moved(db, job, window_from=window_from):
         # A project reset ran while the extraction model was thinking; the same
         # race as the personal scope, and the same answer.

@@ -34,6 +34,7 @@ class MemorySettingsPatch(BaseModel):
     extract_debounce_seconds: int | None = Field(default=None, ge=5, le=3600)
     extract_max_wait_seconds: int | None = Field(default=None, ge=30, le=7200)
     extract_min_new_messages: int | None = Field(default=None, ge=1, le=20)
+    extract_max_tokens: int | None = Field(default=None, ge=256, le=16_000)
     extract_monthly_budget_usd: float | None = Field(default=None, ge=0, le=1_000_000)
     max_per_user: int | None = Field(default=None, ge=10, le=500)
     inject_max_items: int | None = Field(default=None, ge=1, le=50)

@@ -7,7 +7,7 @@ import json
 import logging
 import re
 import uuid
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -45,9 +45,13 @@ PRE_WINDOW_MESSAGES = 4
 MAX_WINDOW_TURNS = 200
 #: The most parts one job run mines; the rest goes on in a follow-up job.
 MAX_PARTS_PER_RUN = 4
+#: A part cut down after the extractor ran out of room is never read in less than this.
+MIN_WINDOW_CHARS = 3_000
 MAX_OPS = 5
-EXTRACT_MAX_TOKENS = 600
+#: The extractor's answer length when the setting is missing; Admin -> Memory sets it.
+EXTRACT_MAX_TOKENS = 2_000
 EXTRACT_TIMEOUT = 30
+REPAIR_NUDGE = "Your previous reply was not valid JSON. Reply with a JSON object only."
 
 _SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("api_key", re.compile(r"\b(?:sk|rk|pk|api)[-_]?[A-Za-z0-9]{16,}\b")),
@@ -151,6 +155,10 @@ class ExtractionParseError(ValueError):
     """Extractor returned unusable JSON."""
 
 
+class ExtractionTruncated(Exception):
+    """The extractor's answer was cut off before one whole operation: the part is to be read in less."""
+
+
 def contains_secret(text: str) -> bool:
     blob = text or ""
     return any(pattern.search(blob) for _rule, pattern in _SECRET_PATTERNS)
@@ -178,14 +186,14 @@ class _TurnLike(Protocol):
 
 
 def fit_extraction_window[Turn: _TurnLike](
-    turns: Sequence[Turn], *, start: int, covered_to: int
+    turns: Sequence[Turn], *, start: int, covered_to: int, max_chars: int = MAX_WINDOW_CHARS
 ) -> tuple[list[Turn], int]:
     """The turns one extraction call reads, oldest first, and the last sequence the call covers.
 
     The turns before ``start`` were mined already and are there for context:
-    the newest of them are kept, up to ``CONTEXT_CHARS``. The new turns follow
-    from the oldest while the whole fits in ``MAX_WINDOW_CHARS``; the first
-    new turn always does. The call covers up to the turn before the first one
+    the newest of them are kept, up to ``CONTEXT_CHARS`` (a quarter of a
+    smaller part). The new turns follow from the oldest while the whole fits
+    in ``max_chars``; the first new turn always does. The call covers up to the turn before the first one
     that did not fit, or ``covered_to`` when all did; the rest is the next
     part's.
 
@@ -196,7 +204,7 @@ def fit_extraction_window[Turn: _TurnLike](
     context = [turn for turn in turns if turn.sequence < start]
     fresh = [turn for turn in turns if turn.sequence >= start]
     kept_context: list[Turn] = []
-    room = CONTEXT_CHARS
+    room = min(CONTEXT_CHARS, max_chars // 4)
     for turn in reversed(context):
         if len(turn.text) > room:
             break
@@ -206,7 +214,7 @@ def fit_extraction_window[Turn: _TurnLike](
     kept: list[Turn] = []
     covered = covered_to
     for turn in fresh:
-        if kept and total + len(turn.text) > MAX_WINDOW_CHARS:
+        if kept and total + len(turn.text) > max_chars:
             covered = turn.sequence - 1
             break
         kept.append(turn)
@@ -221,6 +229,7 @@ async def build_extraction_window(
     session_id: str,
     from_sequence: int,
     to_sequence: int,
+    max_chars: int = MAX_WINDOW_CHARS,
 ) -> ExtractionWindow:
     start = max(0, int(from_sequence))
     end = max(start, int(to_sequence))
@@ -259,7 +268,7 @@ async def build_extraction_window(
                 message_id=row.id,
             )
         )
-    kept, covered = fit_extraction_window(turns, start=start, covered_to=covered_to)
+    kept, covered = fit_extraction_window(turns, start=start, covered_to=covered_to, max_chars=max_chars)
     existing_rows = (
         (
             await db.execute(
@@ -687,35 +696,132 @@ def _completion_text(response: Any) -> str:
     return str(response or "")
 
 
-async def extract_memory_operations(
+def _finish_reason(response: Any) -> str:
+    """Why the model stopped ("length": it ran out of room); "" when the answer does not say."""
+    if hasattr(response, "choices") and response.choices:
+        return str(getattr(response.choices[0], "finish_reason", "") or "")
+    if isinstance(response, dict):
+        choices = response.get("choices") or []
+        if choices and isinstance(choices[0], dict):
+            return str(choices[0].get("finish_reason") or "")
+    return ""
+
+
+def salvage_operations(text: str) -> dict[str, Any] | None:
+    """The whole operations at the start of an answer that was cut off; None when there is not one.
+
+    ``{"operations":[{...},{...},{"op":"add","con`` gives the first two.
+    """
+    raw = text or ""
+    match = re.search(r'"operations"\s*:\s*\[', raw)
+    if match is None:
+        return None
+    decoder = json.JSONDecoder()
+    position = match.end()
+    operations: list[Any] = []
+    while True:
+        while position < len(raw) and raw[position] in " \t\r\n,":
+            position += 1
+        if position >= len(raw) or raw[position] != "{":
+            break
+        try:
+            item, position = decoder.raw_decode(raw, position)
+        except json.JSONDecodeError:
+            break
+        operations.append(item)
+    return {"operations": operations} if operations else None
+
+
+def reasoning_hint(model: str, provider: str | None) -> dict[str, Any]:
+    """``reasoning_effort: low`` for a model that thinks unless told otherwise; nothing for any other.
+
+    Such a model spends its answer's tokens thinking before it writes the
+    JSON, and with a small allowance ran out before the first brace. What it
+    does not take (OpenAI's reasoning models refuse ``temperature: 0``) is
+    dropped rather than failing the call. Anthropic's models think only when
+    asked, so they are not asked; and a model litellm has no provider for,
+    or a litellm too old to know which models reason, is sent nothing, as
+    before.
+    """
+    if not provider:
+        return {}
+    try:
+        from litellm import supports_reasoning
+
+        if not supports_reasoning(model=model, custom_llm_provider=provider):
+            return {}
+    except Exception:  # noqa: BLE001 -- an unknown model or an older litellm: send the call as it was
+        return {}
+    if "anthropic" in str(provider or "").lower() or "claude" in model.lower():
+        return {}
+    return {"reasoning_effort": "low", "drop_params": True}
+
+
+type _Call = Callable[[list[dict[str, Any]]], Awaitable[tuple[str, str]]]
+
+
+async def _parsed_answer[T](call: _Call, messages: list[dict[str, Any]], parse: Callable[[str], T]) -> T:
+    """``parse`` of the model's answer: once more with a nudge when it is not JSON; what was whole when cut off."""
+
+    def _cut(text: str) -> T:
+        try:
+            return parse(text)
+        except ValueError:  # ExtractionParseError, or braces that do not decode
+            pass
+        salvaged = salvage_operations(text)
+        if salvaged is None:
+            raise ExtractionTruncated("The extraction model ran out of room before its first operation")
+        logger.warning(
+            "memory extraction answer was cut off; kept its %s whole operations", len(salvaged["operations"])
+        )
+        return parse(json.dumps(salvaged))
+
+    text, finish = await call(messages)
+    if finish == "length":
+        return _cut(text)
+    try:
+        return parse(text)
+    except ValueError:
+        pass
+    text, finish = await call([*messages, {"role": "user", "content": REPAIR_NUDGE}])
+    if finish == "length":
+        return _cut(text)
+    try:
+        return parse(text)
+    except Exception as exc:
+        raise ExtractionParseError(str(exc)) from exc
+
+
+async def ask_extractor[T](
     db: AsyncSession,
     *,
-    window: ExtractionWindow,
+    system_prompt: str,
+    user_content: str,
+    parse: Callable[[str], T],
+    billing: ExtractionBilling,
     completer: Any | None = None,
-    billing: ExtractionBilling | None = None,
-) -> list[MemoryOperation]:
+) -> T | None:
+    """The extraction model's answer to one part, parsed; None when no extraction model is set.
+
+    The answer may be as long as ``extract_max_tokens`` (Admin -> Memory). It
+    was 600 tokens, fixed: a model that thinks before it answers used them up
+    and the part failed for good as "not JSON". An answer cut off at that
+    length keeps the operations it finished; one cut off before the first
+    raises ``ExtractionTruncated``, and the part is read again in less.
+    ``completer`` stands in for the model in tests: it sees the user turns only.
+    """
     settings = await get_memory_settings(db)
-    model_id = settings.get("extraction_model_id")
-    user_content = _window_prompt(window)
-    repair_nudge = "Your previous reply was not valid JSON. Reply with a JSON object only."
+    max_tokens = int(settings.get("extract_max_tokens") or EXTRACT_MAX_TOKENS)
     if completer is not None:
 
-        async def _completer_once(*, repair: bool) -> str:
-            messages = [{"role": "user", "content": user_content}]
-            if repair:
-                messages.append({"role": "user", "content": repair_nudge})
-            response = await completer({"messages": messages})
-            return _completion_text(response)
+        async def _stub(messages: list[dict[str, Any]]) -> tuple[str, str]:
+            response = await completer({"messages": messages, "max_tokens": max_tokens})
+            return _completion_text(response), _finish_reason(response)
 
-        try:
-            return parse_operations(await _completer_once(repair=False))
-        except ExtractionParseError:
-            try:
-                return parse_operations(await _completer_once(repair=True))
-            except Exception as exc:
-                raise ExtractionParseError(str(exc)) from exc
+        return await _parsed_answer(_stub, [{"role": "user", "content": user_content}], parse)
+    model_id = settings.get("extraction_model_id")
     if not model_id:
-        return []
+        return None
     from litellm import acompletion
 
     from app.services.llm_providers import (
@@ -727,15 +833,10 @@ async def extract_memory_operations(
     ai_model, api_key, base_url, provider_type = await resolve_model_and_key(db, f"model::{int(model_id)}")
     if not ai_model or not api_key:
         raise RuntimeError("Memory extraction model is unavailable")
-
-    messages = [
-        {"role": "system", "content": _SYSTEM_PROMPT},
-        {"role": "user", "content": user_content},
-    ]
+    model = litellm_model_for_provider(ai_model.external_id, provider_type or ai_model.provider_type)
     kwargs: dict[str, Any] = {
-        "model": litellm_model_for_provider(ai_model.external_id, provider_type or ai_model.provider_type),
-        "messages": messages,
-        "max_tokens": EXTRACT_MAX_TOKENS,
+        "model": model,
+        "max_tokens": max_tokens,
         "temperature": 0,
         "timeout": EXTRACT_TIMEOUT,
         "api_key": api_key,
@@ -747,7 +848,38 @@ async def extract_memory_operations(
     llm_provider = resolve_litellm_provider(provider_type or ai_model.provider_type)
     if llm_provider:
         kwargs["custom_llm_provider"] = llm_provider
+    kwargs.update(reasoning_hint(model, llm_provider))
 
+    async def _call(messages: list[dict[str, Any]]) -> tuple[str, str]:
+        started_at = dt.datetime.utcnow()
+        response = await acompletion(**{**kwargs, "messages": messages})
+        text = _completion_text(response)
+        await record_extraction_usage(
+            billing=billing,
+            ai_model=ai_model,
+            provider_type=provider_type or ai_model.provider_type,
+            response=response,
+            prompt=messages,
+            completion=text,
+            started_at=started_at,
+            phase="repair" if len(messages) > 2 else "primary",
+        )
+        return text, _finish_reason(response)
+
+    return await _parsed_answer(
+        _call,
+        [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_content}],
+        parse,
+    )
+
+
+async def extract_memory_operations(
+    db: AsyncSession,
+    *,
+    window: ExtractionWindow,
+    completer: Any | None = None,
+    billing: ExtractionBilling | None = None,
+) -> list[MemoryOperation]:
     scope = billing or ExtractionBilling(
         user_id=window.user_id,
         username="",
@@ -756,38 +888,15 @@ async def extract_memory_operations(
         key_prefix=f"memory-extract:adhoc:{uuid.uuid4()}",
         operation_type="memory_extract",
     )
-
-    async def _call(call_kwargs: dict[str, Any], *, phase: str) -> str:
-        started_at = dt.datetime.utcnow()
-        response = await acompletion(**call_kwargs)
-        text = _completion_text(response)
-        await record_extraction_usage(
-            billing=scope,
-            ai_model=ai_model,
-            provider_type=provider_type or ai_model.provider_type,
-            response=response,
-            prompt=call_kwargs.get("messages"),
-            completion=text,
-            started_at=started_at,
-            phase=phase,
-        )
-        return text
-
-    try:
-        return parse_operations(await _call(kwargs, phase="primary"))
-    except ExtractionParseError:
-        repair_kwargs = dict(kwargs)
-        repair_kwargs["messages"] = [
-            *messages,
-            {
-                "role": "user",
-                "content": repair_nudge,
-            },
-        ]
-        try:
-            return parse_operations(await _call(repair_kwargs, phase="repair"))
-        except Exception as exc:
-            raise ExtractionParseError(str(exc)) from exc
+    operations = await ask_extractor(
+        db,
+        system_prompt=_SYSTEM_PROMPT,
+        user_content=_window_prompt(window),
+        parse=parse_operations,
+        billing=scope,
+        completer=completer,
+    )
+    return operations if operations is not None else []
 
 
 MONTHLY_BUDGET_OPERATION_TYPES = ("memory_extract", "project_memory_extract")
@@ -833,8 +942,8 @@ async def extraction_spend_this_month(db: AsyncSession) -> float:
     return float(total or 0.0)
 
 
-def _part_key(part: int | None) -> str:
-    return f":from-{int(part)}" if part is not None else ""
+def _part_key(part: str | None) -> str:
+    return f":part-{part}" if part else ""
 
 
 @dataclass(frozen=True)
@@ -847,8 +956,9 @@ class ExtractionBilling:
 
     ``key_prefix`` carries the job id and attempt so a retry — a real second
     call to a real provider — is recorded as a second row rather than being
-    swallowed as a duplicate of the first. A job mined in parts adds where
-    each part starts, for the same reason.
+    swallowed as a duplicate of the first. A job mined in parts adds the
+    part's range (``"1-40"``), for the same reason: each part, and a part read
+    again in less, is a call of its own.
     """
 
     user_id: int | None
@@ -860,7 +970,7 @@ class ExtractionBilling:
     client_app: str = "Memory"
 
     @staticmethod
-    def for_user(job: Any, username: str, *, part: int | None = None) -> ExtractionBilling:
+    def for_user(job: Any, username: str, *, part: str | None = None) -> ExtractionBilling:
         return ExtractionBilling(
             user_id=int(job.user_id),
             username=username,
@@ -871,7 +981,7 @@ class ExtractionBilling:
         )
 
     @staticmethod
-    def for_project(job: Any, *, part: int | None = None) -> ExtractionBilling:
+    def for_project(job: Any, *, part: str | None = None) -> ExtractionBilling:
         from app.services.metered_usage_service import PLATFORM_USERNAME
         from app.services.usage_accounting_service import SUBJECT_PLATFORM
 
@@ -955,6 +1065,30 @@ async def _watermark_moved(db: AsyncSession, job: Any, *, window_from: int) -> b
     model = type(job)
     live = (await db.execute(select(model.extracted_sequence).where(model.id == job.id))).scalar_one_or_none()
     return live is None or int(live) != window_from
+
+
+def smaller_part(window: ExtractionWindow | Any, max_chars: int, cause: ExtractionTruncated) -> int:
+    """The size to read a part in again after the extractor ran out of room answering it: half of it.
+
+    A part that would come out under ``MIN_WINDOW_CHARS``, or that is down to
+    its one first turn, is not made smaller; that is a failure the
+    administrator has to see (raise the extractor's answer length, or choose
+    another model).
+    """
+    size = sum(len(turn.text) for turn in window.turns)
+    smaller = min(max_chars, size) // 2
+    if smaller < MIN_WINDOW_CHARS or len(window.new_turns()) <= 1:
+        raise ExtractionParseError(
+            "The extraction model ran out of room even for a small part of the chat; "
+            "raise its answer length in Admin -> Memory or choose another model"
+        ) from cause
+    logger.info(
+        "memory extraction part %s-%s cut off; reading it again in %s characters",
+        window.from_sequence,
+        window.to_sequence,
+        smaller,
+    )
+    return smaller
 
 
 async def handle_memory_extraction(db: AsyncSession, job, *, completer: Any | None = None) -> None:
@@ -1052,27 +1186,36 @@ async def _mine_next_part(db: AsyncSession, job, *, completer: Any | None, first
     need = int(settings.get("extract_min_new_messages") or 2) if first else 1
     if int(job.watermark_sequence or 0) - window_from < need:
         return False
-    window = await build_extraction_window(
-        db,
-        user_id=job.user_id,
-        session_id=job.session_id,
-        from_sequence=window_from + 1,
-        to_sequence=int(job.watermark_sequence or 0),
-    )
-    if not window.new_turns():
-        # Nothing here the model may read (answers built from shared pages, empty turns).
-        job.extracted_sequence = window.to_sequence
-        return True
+    username = (await db.execute(select(User.username).where(User.id == job.user_id))).scalar_one_or_none() or ""
+    max_chars = MAX_WINDOW_CHARS
+    while True:
+        window = await build_extraction_window(
+            db,
+            user_id=job.user_id,
+            session_id=job.session_id,
+            from_sequence=window_from + 1,
+            to_sequence=int(job.watermark_sequence or 0),
+            max_chars=max_chars,
+        )
+        if not window.new_turns():
+            # Nothing here the model may read (answers built from shared pages, empty turns).
+            job.extracted_sequence = window.to_sequence
+            return True
+        try:
+            operations = await extract_memory_operations(
+                db,
+                window=window,
+                completer=completer,
+                billing=ExtractionBilling.for_user(
+                    job, str(username), part=f"{window.from_sequence}-{window.to_sequence}"
+                ),
+            )
+            break
+        except ExtractionTruncated as exc:
+            max_chars = smaller_part(window, max_chars, exc)
     source_message_id = next(
         (turn.message_id for turn in reversed(window.turns) if turn.role == "user"),
         None,
-    )
-    username = (await db.execute(select(User.username).where(User.id == job.user_id))).scalar_one_or_none() or ""
-    operations = await extract_memory_operations(
-        db,
-        window=window,
-        completer=completer,
-        billing=ExtractionBilling.for_user(job, str(username), part=window.from_sequence),
     )
     if await _watermark_moved(db, job, window_from=window_from):
         # "Delete all my memories" ran while the extraction model was thinking.

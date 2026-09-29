@@ -151,6 +151,9 @@ async def purge_user_account_data(
         .all()
     )
     if personal_session_ids:
+        from app.services.chat_summary_service import forget_summaries
+
+        await forget_summaries(db, personal_session_ids)
         await db.execute(delete(ChatMessage).where(ChatMessage.session_id.in_(personal_session_ids)))
         await db.execute(delete(ChatSession).where(ChatSession.id.in_(personal_session_ids)))
 

@@ -22,6 +22,7 @@ is sent as it came: dropping half of a call and its result breaks the turn.
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -131,13 +132,15 @@ async def fit_turn_to_context(
     tools: Any = None,
     reply_tokens: int | None = None,
     summary: Any = None,
+    summary_loader: Callable[[], Awaitable[Any]] | None = None,
 ) -> ContextFit:
     """``messages`` made to fit the model's window, and what was done to them.
 
     ``summary`` is the chat's summary when it has a usable one
     (``chat_summary_service.summary_for_turn``): its ``covered`` oldest
     history messages are what it stands in for, and ``text`` is what is sent.
-    Fitting never stops a turn: when it fails, the turn goes as it came.
+    ``summary_loader`` fetches it only when the turn does not fit. Fitting
+    never stops a turn: when it fails, the turn goes as it came.
     """
     try:
         return await _fit(
@@ -149,6 +152,7 @@ async def fit_turn_to_context(
             tools=tools,
             reply_tokens=reply_tokens,
             summary=summary,
+            summary_loader=summary_loader,
         )
     except Exception:
         logger.exception("fitting a chat turn into the model window failed; it is sent as it came")
@@ -165,6 +169,7 @@ async def _fit(
     tools: Any,
     reply_tokens: int | None,
     summary: Any,
+    summary_loader: Callable[[], Awaitable[Any]] | None,
 ) -> ContextFit:
     settings = await get_memory_settings(db)
     fit = ContextFit(messages=messages)
@@ -187,6 +192,8 @@ async def _fit(
     fit.tokens_before = fit.tokens_after = tokens
     if tokens <= budget:
         return fit
+    if summary is None and summary_loader is not None:
+        summary = await summary_loader()
 
     # Tokens per character of this prompt, to size each message without counting it again.
     per_char = tokens / total_chars

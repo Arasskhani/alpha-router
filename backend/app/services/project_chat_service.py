@@ -503,6 +503,9 @@ async def append_project_chat_message(
                     messages=[{"role": msg.role}],
                     watermark_sequence=seq,
                 )
+                from app.services.chat_summary_service import maybe_schedule_summary
+
+                await maybe_schedule_summary(db, session=row, latest_sequence=seq)
             return _project_message_to_client(msg)
         except (IntegrityError, OperationalError):
             await db.rollback()

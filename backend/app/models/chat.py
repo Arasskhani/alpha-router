@@ -311,6 +311,41 @@ class UserMemoryJob(Base):
     )
 
 
+class ChatSummary(Base):
+    """A chat's rolling summary: what its older messages said, for a turn too long for the model.
+
+    One row per chat, kept by a background job (``chat_summary_service``): the
+    summary itself, how far it reaches, and the job's own state, which is
+    small enough to live beside what it produces. It goes with the chat, and
+    whenever the chat's stored messages are rewritten, purged or made private.
+    """
+
+    __tablename__ = "chat_summaries"
+
+    session_id = Column(String(36), ForeignKey("chat_sessions.id", ondelete="CASCADE"), primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    project_id = Column(String(36), nullable=True, index=True)
+    content = Column(Text, nullable=False, default="")
+    #: The last message sequence the summary covers.
+    up_to_sequence = Column(Integer, nullable=False, default=0)
+    #: How many of the chat's messages, from its first, the summary stands in for.
+    covered_count = Column(Integer, nullable=False, default=0)
+    #: sha256 of the chat's first message as the model reads it: a turn whose history starts elsewhere cannot use it.
+    first_message_hash = Column(String(64), nullable=True)
+    model_id = Column(Integer, nullable=True)
+    #: idle | pending | running | failed
+    status = Column(String(16), nullable=False, default="idle")
+    run_after = Column(DateTime, nullable=True)
+    attempt_count = Column(Integer, nullable=False, default=0)
+    lease_expires_at = Column(DateTime, nullable=True)
+    worker_id = Column(String(64), nullable=True)
+    last_error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+
+    __table_args__ = (Index("ix_chat_summaries_status_run", "status", "run_after"),)
+
+
 class UserMemoryEvent(Base):
     """Append-only audit trail for memory mutations (no memory text)."""
 

@@ -43,6 +43,7 @@ from app.services.code_interpreter_capacity_service import (
     heartbeat_code_interpreter_turn,
     release_code_interpreter_turn,
 )
+from app.services.chat_summary_service import summary_for_turn
 from app.services.context_fit_service import ContextFit, fit_turn_to_context
 from app.services.code_interpreter_service import (
     WorkspaceFiles,
@@ -552,6 +553,18 @@ async def build_turn_context(  # noqa: C901 -- straight-line preparation moved o
                 await lease.abandon("memory setup error")
                 raise
         try:
+            turn_messages = messages
+
+            async def _summary():
+                if private_mode or agent_turn is not None:
+                    return None
+                return await summary_for_turn(
+                    db,
+                    chat_session_id=str(body.get("chat_session_id") or "").strip() or None,
+                    user_id=user_id,
+                    messages=turn_messages,
+                )
+
             fitted: ContextFit = await fit_turn_to_context(
                 db,
                 messages,
@@ -560,6 +573,7 @@ async def build_turn_context(  # noqa: C901 -- straight-line preparation moved o
                 model=model,
                 tools=completion_kwargs.get("tools"),
                 reply_tokens=completion_kwargs.get("max_tokens"),
+                summary_loader=_summary,
             )
         except BaseException:
             await lease.abandon("context fitting error")

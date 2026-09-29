@@ -93,6 +93,8 @@ class KnowledgeWorker:
             return await self._process_memory_job(message, scope="user")
         if message.event_type == "project_memory.job.ready":
             return await self._process_memory_job(message, scope="project")
+        if message.event_type == "chat_summary.job.ready":
+            return await self._process_summary_job(message)
         if message.event_type != "knowledge.job.ready":
             error = f"Unsupported Knowledge event type: {message.event_type}"
             await publish_dead_letter(self.redis, message, error=error)
@@ -234,6 +236,72 @@ class KnowledgeWorker:
         await acknowledge_message(self.redis, message.stream_id)
         observe_memory_extract_job(outcome="succeeded", duration_seconds=duration, scope=scope)
         return JobProcessResult(outcome="succeeded", job_id=job.id)
+
+    async def _process_summary_job(self, message: QueueMessage) -> JobProcessResult:
+        """Bring one chat's rolling summary up to date (``chat_summary_service``)."""
+        from app.models.chat import ChatSummary
+        from app.services.chat_summary_service import (
+            LEASE_SECONDS,
+            claim_summary,
+            finish_summary,
+            handle_chat_summary,
+            heartbeat_summary,
+        )
+
+        session_id = str(message.payload.get("session_id") or message.aggregate_id or "")
+        async with self.session_factory() as db:
+            row = await claim_summary(db, session_id=session_id, worker_id=self.consumer_name) if session_id else None
+            await db.commit()
+        if row is None:
+            await acknowledge_message(self.redis, message.stream_id)
+            return JobProcessResult(outcome="duplicate", job_id=session_id or None)
+
+        stop = asyncio.Event()
+
+        async def _heartbeat() -> None:
+            while not stop.is_set():
+                try:
+                    await asyncio.wait_for(stop.wait(), timeout=max(1, LEASE_SECONDS // 3))
+                    break
+                except TimeoutError:
+                    pass
+                try:
+                    async with self.session_factory() as db:
+                        current = await db.get(ChatSummary, session_id)
+                        if current is None or not await heartbeat_summary(db, current, worker_id=self.consumer_name):
+                            await db.rollback()
+                            return
+                        await db.commit()
+                except Exception:
+                    logger.exception("Chat summary heartbeat failed for %s", session_id)
+
+        heartbeat = asyncio.create_task(_heartbeat())
+        failure: Exception | None = None
+        more = False
+        try:
+            async with self.session_factory() as db:
+                current = await db.get(ChatSummary, session_id)
+                if current is not None:
+                    more = await handle_chat_summary(db, current)
+                    await db.commit()
+        except Exception as exc:  # noqa: BLE001 -- the run is closed below with the error recorded on the row
+            failure = exc
+        stop.set()
+        await heartbeat
+        outcome = "succeeded"
+        async with self.session_factory() as db:
+            current = await db.get(ChatSummary, session_id)
+            if current is not None and current.worker_id == self.consumer_name:
+                outcome = await finish_summary(db, current, error=failure, more=more)
+                await db.commit()
+        if outcome == "failed" and failure is not None:
+            await publish_dead_letter(self.redis, message, error=str(failure))
+        await acknowledge_message(self.redis, message.stream_id)
+        if failure is not None:
+            return JobProcessResult(
+                outcome="dead" if outcome == "failed" else "retry", job_id=session_id, error=str(failure)
+            )
+        return JobProcessResult(outcome="succeeded", job_id=session_id)
 
     async def _process_knowledge_job(self, message: QueueMessage) -> JobProcessResult:
         job_id = str(message.payload.get("job_id") or message.aggregate_id or "")

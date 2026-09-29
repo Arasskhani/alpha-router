@@ -1264,6 +1264,12 @@ async def append_session_messages(
                 user_id,
                 session_id,
             )
+        if any(str(msg.get("role") or "") == "assistant" for msg in messages):
+            from app.services.chat_summary_service import maybe_schedule_summary
+
+            await maybe_schedule_summary(
+                db, session=session, latest_sequence=int(max((row.sequence for row in inserted), default=0))
+            )
     return [_message_to_client(r) for r in inserted]
 
 
@@ -1297,6 +1303,9 @@ async def purge_session_messages_for_private_mode(
         (await db.execute(select(ChatMessage.id).where(ChatMessage.session_id == session_id))).scalars().all()
     )
     await db.execute(delete(ChatMessage).where(ChatMessage.session_id == session_id))
+    from app.services.chat_summary_service import forget_summaries
+
+    await forget_summaries(db, [session_id])
     session.message_count = 0
     session.last_message_at = None
     session.private_mode = True
@@ -1324,6 +1333,10 @@ async def replace_session_messages(
     existing_by_client_id = {row.client_message_id: row for row in existing_rows if row.client_message_id}
     existing_by_id = {row.id: row for row in existing_rows}
     await db.execute(delete(ChatMessage).where(ChatMessage.session_id == session_id))
+    # The stored chat is rewritten: its summary may describe messages it no longer has.
+    from app.services.chat_summary_service import forget_summaries
+
+    await forget_summaries(db, [session_id])
     await db.flush()
 
     if not messages:

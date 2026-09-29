@@ -280,6 +280,10 @@ async def purge_expired_chat_messages(
 
     if affected:
         await _sync_affected_session_stats(db, affected)
+        # A summary may still hold what the purged messages said.
+        from app.services.chat_summary_service import forget_summaries
+
+        await forget_summaries(db, affected)
     removed_empty = await cleanup_empty_sessions_after_purge(db, affected)
     if removed or removed_empty:
         await append_governance_audit_event(

@@ -76,6 +76,10 @@ SETTING_KEYS = {
     "memory_context_fit_enabled": "true",
     "memory_context_share_percent": "75",
     "memory_context_default_tokens": "0",
+    "memory_summary_enabled": "true",
+    "memory_summary_model_id": "",
+    "memory_summary_keep_recent": "20",
+    "memory_summary_monthly_budget_usd": "0",
     "project_memory_feature_enabled": "true",
     "project_memory_max_per_project": "500",
     "project_memory_inject_max_items": "60",
@@ -199,6 +203,13 @@ def parse_memory_settings(raw: dict[str, str]) -> dict[str, Any]:
         extraction_id = None
     if extraction_id is not None and extraction_id <= 0:
         extraction_id = None
+    summary_raw = (raw.get("memory_summary_model_id") or "").strip()
+    try:
+        summary_id = int(summary_raw) if summary_raw else None
+    except (TypeError, ValueError):
+        summary_id = None
+    if summary_id is not None and summary_id <= 0:
+        summary_id = None
     dims_raw = (raw.get("memory_embedding_dimensions") or "").strip()
     embedding_dimensions = _as_int(dims_raw, 0, minimum=0, maximum=65_536) if dims_raw else 0
     return {
@@ -241,6 +252,15 @@ def parse_memory_settings(raw: dict[str, str]) -> dict[str, Any]:
         "context_share_percent": _as_int(raw.get("memory_context_share_percent"), 75, minimum=30, maximum=95),
         # The window of a model neither the catalog nor LiteLLM knows; 0 = send such a turn as it is.
         "context_default_tokens": _as_int(raw.get("memory_context_default_tokens"), 0, minimum=0, maximum=10_000_000),
+        # A long chat's older messages summarized for the turns that cannot take them all; needs a model.
+        "summary_enabled": _as_bool(raw.get("memory_summary_enabled"), True),
+        "summary_model_id": summary_id,
+        # The newest messages sent word for word however long the chat.
+        "summary_keep_recent": _as_int(raw.get("memory_summary_keep_recent"), 20, minimum=4, maximum=200),
+        # 0 = uncapped.
+        "summary_monthly_budget_usd": _as_float(
+            raw.get("memory_summary_monthly_budget_usd"), 0.0, minimum=0.0, maximum=1_000_000.0
+        ),
         "project_feature_enabled": _as_bool(raw.get("project_memory_feature_enabled"), True),
         "project_max_per_project": _as_int(raw.get("project_memory_max_per_project"), 500, minimum=10, maximum=2000),
         "project_inject_max_items": _as_int(raw.get("project_memory_inject_max_items"), 60, minimum=1, maximum=200),
@@ -360,6 +380,10 @@ def _raw_from_values(values: dict[str, Any]) -> dict[str, str]:
         "memory_context_fit_enabled": "true" if values["context_fit_enabled"] else "false",
         "memory_context_share_percent": str(values["context_share_percent"]),
         "memory_context_default_tokens": str(values["context_default_tokens"]),
+        "memory_summary_enabled": "true" if values["summary_enabled"] else "false",
+        "memory_summary_model_id": "" if not values.get("summary_model_id") else str(values["summary_model_id"]),
+        "memory_summary_keep_recent": str(values["summary_keep_recent"]),
+        "memory_summary_monthly_budget_usd": str(values["summary_monthly_budget_usd"]),
         "project_memory_feature_enabled": ("true" if values["project_feature_enabled"] else "false"),
         "project_memory_max_per_project": str(values["project_max_per_project"]),
         "project_memory_inject_max_items": str(values["project_inject_max_items"]),
@@ -405,6 +429,10 @@ async def update_memory_settings(db: AsyncSession, updates: dict[str, Any]) -> d
         "context_fit_enabled": "memory_context_fit_enabled",
         "context_share_percent": "memory_context_share_percent",
         "context_default_tokens": "memory_context_default_tokens",
+        "summary_enabled": "memory_summary_enabled",
+        "summary_model_id": "memory_summary_model_id",
+        "summary_keep_recent": "memory_summary_keep_recent",
+        "summary_monthly_budget_usd": "memory_summary_monthly_budget_usd",
         "project_feature_enabled": "project_memory_feature_enabled",
         "project_max_per_project": "project_memory_max_per_project",
         "project_inject_max_items": "project_memory_inject_max_items",
@@ -421,7 +449,12 @@ async def update_memory_settings(db: AsyncSession, updates: dict[str, Any]) -> d
     if unknown:
         raise MemorySettingsError(f"Unknown setting: {unknown[0]}")
     for field, value in updates.items():
-        if value is None and field in ("extraction_model_id", "embedding_model", "embedding_dimensions"):
+        if value is None and field in (
+            "extraction_model_id",
+            "summary_model_id",
+            "embedding_model",
+            "embedding_dimensions",
+        ):
             merged[field] = None if field != "embedding_model" else ""
             continue
         merged[field] = value
@@ -429,6 +462,11 @@ async def update_memory_settings(db: AsyncSession, updates: dict[str, Any]) -> d
     parsed = parse_memory_settings(_raw_from_values(merged))
     if parsed["extraction_model_id"] is not None:
         await _assert_extraction_model(db, int(parsed["extraction_model_id"]))
+    if parsed["summary_model_id"] is not None and parsed["summary_model_id"] != current.get("summary_model_id"):
+        try:
+            await _assert_extraction_model(db, int(parsed["summary_model_id"]))
+        except MemorySettingsError as exc:
+            raise MemorySettingsError(str(exc).replace("Extraction model", "Summary model")) from exc
     if parsed["embedding_model"]:
         provider, external_id, dims = await _assert_embedding_model(
             db, parsed["embedding_model"], parsed["embedding_dimensions"]

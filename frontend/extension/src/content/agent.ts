@@ -1562,8 +1562,10 @@ function keyDefault(target: Element, combo: KeyCombo, isVisible: Visibility): st
     const name = accessibleName(next, role);
     return `The focus moved to ${role}${name ? ` ${quoted(clip(name, 60))}` : ""}.`;
   }
-  // A character key in a text field types its character (a space too), where the caret is.
+  // A character key in a text field types its character (a space too), where the caret is - but not into a number
+  // or a date, whose value the browser drops while it is half written ("12." is no number): type_text sets those whole.
   if (!combo.ctrl && !combo.meta && !combo.alt && [...key].length === 1 && inText) {
+    if (tag === "INPUT" && WHOLE_VALUE_INPUTS.has(inputType(target))) return "";
     const char = keyDefFor(combo).text ?? key;
     if (field) {
       const typed = editField(field, "insertText", (value, at) => ({ value: `${value.slice(0, at.start)}${char}${value.slice(at.end)}`, caret: at.start + char.length }), char);

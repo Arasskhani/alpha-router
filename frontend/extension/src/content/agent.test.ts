@@ -774,6 +774,14 @@ describe("acting", () => {
     expect(input.value).toBe("TehrXan");
   });
 
+  it("leaves a number field to type_text: a character key does not half-write it", () => {
+    page(`<input type="number" aria-label="Amount" value="12">`);
+    const input = document.querySelector("input")!;
+    input.focus();
+    expect(pressKey(document, ".", visible)).toMatchObject({ note: "Pressed .." });
+    expect(input.value).toBe("12");
+  });
+
   it("does nothing more when the page cancels the keypress", () => {
     page(`<form><input aria-label="Search"><button id="go">Go</button></form>`);
     const input = document.querySelector("input")!;

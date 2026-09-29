@@ -802,7 +802,8 @@ export const userManualSections: DocSection[] = [
           </li>
           <li>
             <strong>Automatically learn new things about me</strong> (on by default) — extract new facts after a
-            conversation. Turn this off to stop learning while still using existing memories.
+            conversation. Turn this off to stop learning while still using existing memories. Plans and routines you
+            follow (a workout plan, a diet, a current project) are remembered too, while you keep mentioning them.
           </li>
           <li>
             <strong>Use my memories in apps with my API key</strong> (off by default) — your personal API key can be

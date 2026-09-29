@@ -141,6 +141,10 @@ describe("the docs", () => {
       "Index earlier chats",
       "Use my earlier chats",
       "memory_recall_backfill_started",
+      "Setup",
+      "Remember ongoing plans and routines",
+      "Plans last",
+      "last three questions",
     ]) {
       expect(html).toContain(term);
     }
@@ -161,6 +165,8 @@ describe("the docs", () => {
       "Characters per turn",
       "Minimum similarity",
       "Index earlier chats",
+      "Remember ongoing plans and routines",
+      "Plans last",
     ]) {
       expect(page).toContain(label);
     }

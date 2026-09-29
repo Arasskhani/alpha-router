@@ -2604,6 +2604,22 @@ export const docSections: DocSection[] = [
             Empty list means sensitive facts are dropped.
           </li>
           <li>
+            <strong>Setup</strong> — the two models memory needs, as steps: the extraction model learns facts; the
+            embedding model finds them by what they mean and lets new chats read from earlier ones. Without an
+            embedding model, memories are found only by their words and earlier chats are never recalled.
+          </li>
+          <li>
+            <strong>Remember ongoing plans and routines</strong> (on by default) — a workout plan, a diet, a current
+            project is kept as a <code>plan</code> for <strong>Plans last</strong> days (90), counted again each
+            time the person mentions it; switched off, no plan is kept.
+          </li>
+          <li>
+            A turn looks memories up with the chat&rsquo;s title and its last three questions (newest first, without
+            words too common to mean anything), and receives up to <strong>Inject max items</strong> (20) in{" "}
+            <strong>Inject max chars</strong> (4,000). A deployment that saved its settings before keeps the figures
+            it saved (12 and 2,500 were the defaults); raise them here.
+          </li>
+          <li>
             <strong>Rebuild index</strong> — create a new Qdrant collection, re-embed every memory, swap the alias.
             Use after changing the embedding model or if Qdrant was wiped.
           </li>

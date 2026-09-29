@@ -24,6 +24,7 @@ MEMORY_CATEGORIES = (
     "constraint",
     "schedule",
     "financial",
+    "plan",
     "other",
 )
 CORE_CATEGORIES = frozenset({"identity", "constraint", "health"})
@@ -81,6 +82,8 @@ SETTING_KEYS = {
     "memory_summary_keep_recent": "20",
     "memory_summary_monthly_budget_usd": "0",
     "memory_recall_enabled": "true",
+    "memory_plan_enabled": "true",
+    "memory_plan_ttl_days": "90",
     "memory_recall_max_items": "4",
     "memory_recall_max_chars": "3000",
     "memory_recall_min_similarity": "0.35",
@@ -267,6 +270,9 @@ def parse_memory_settings(raw: dict[str, str]) -> dict[str, Any]:
         ),
         # A new turn reads the related parts of the person's earlier chats; needs an embedding model.
         "recall_enabled": _as_bool(raw.get("memory_recall_enabled"), True),
+        # Ongoing plans and routines (a workout plan, a diet, a current project), kept while they are mentioned.
+        "plan_memory_enabled": _as_bool(raw.get("memory_plan_enabled"), True),
+        "plan_ttl_days": _as_int(raw.get("memory_plan_ttl_days"), 90, minimum=7, maximum=365),
         "recall_max_items": _as_int(raw.get("memory_recall_max_items"), 4, minimum=1, maximum=10),
         "recall_max_chars": _as_int(raw.get("memory_recall_max_chars"), 3000, minimum=500, maximum=12_000),
         "recall_min_similarity": _as_float(raw.get("memory_recall_min_similarity"), 0.35, minimum=0.0, maximum=1.0),
@@ -394,6 +400,8 @@ def _raw_from_values(values: dict[str, Any]) -> dict[str, str]:
         "memory_summary_keep_recent": str(values["summary_keep_recent"]),
         "memory_summary_monthly_budget_usd": str(values["summary_monthly_budget_usd"]),
         "memory_recall_enabled": "true" if values["recall_enabled"] else "false",
+        "memory_plan_enabled": "true" if values["plan_memory_enabled"] else "false",
+        "memory_plan_ttl_days": str(values["plan_ttl_days"]),
         "memory_recall_max_items": str(values["recall_max_items"]),
         "memory_recall_max_chars": str(values["recall_max_chars"]),
         "memory_recall_min_similarity": str(values["recall_min_similarity"]),
@@ -447,6 +455,8 @@ async def update_memory_settings(db: AsyncSession, updates: dict[str, Any]) -> d
         "summary_keep_recent": "memory_summary_keep_recent",
         "summary_monthly_budget_usd": "memory_summary_monthly_budget_usd",
         "recall_enabled": "memory_recall_enabled",
+        "plan_memory_enabled": "memory_plan_enabled",
+        "plan_ttl_days": "memory_plan_ttl_days",
         "recall_max_items": "memory_recall_max_items",
         "recall_max_chars": "memory_recall_max_chars",
         "recall_min_similarity": "memory_recall_min_similarity",

@@ -60,6 +60,8 @@ class MemorySettingsPatch(BaseModel):
     summary_keep_recent: int | None = Field(default=None, ge=4, le=200)
     summary_monthly_budget_usd: float | None = Field(default=None, ge=0, le=1_000_000)
     recall_enabled: bool | None = None
+    plan_memory_enabled: bool | None = None
+    plan_ttl_days: int | None = Field(default=None, ge=7, le=365)
     recall_max_items: int | None = Field(default=None, ge=1, le=10)
     recall_max_chars: int | None = Field(default=None, ge=500, le=12_000)
     recall_min_similarity: float | None = Field(default=None, ge=0, le=1)

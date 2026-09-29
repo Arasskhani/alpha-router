@@ -2621,6 +2621,27 @@ export const docSections: DocSection[] = [
             chat, and only in a chat the person may write in.
           </li>
           <li>
+            <strong>Fit each turn into the model&rsquo;s window</strong> (on by default) — before a turn is sent, its
+            prompt is measured with LiteLLM&rsquo;s local tokenizer against the model&rsquo;s window: the catalog&rsquo;s
+            context length, else LiteLLM&rsquo;s own figure, else <strong>Window of an unknown model</strong> (0 sends
+            such a model&rsquo;s turns as they are). A prompt over its <strong>Share of the window for the chat</strong>{" "}
+            (75% by default, less when the turn asks for a longer answer) is fitted: the system messages stay, the{" "}
+            <strong>Newest messages kept word for word</strong> (20) stay, and the oldest give way to the chat&rsquo;s
+            summary, or are left out with a note to the model. A turn with tools or tool calls is never cut, and on
+            OpenRouter the provider&rsquo;s own middle-out cutting is turned off for a measured turn. The answer says
+            under its label what was summarized or left out.
+          </li>
+          <li>
+            <strong>Summarize long chats</strong> — with a <strong>Summary model</strong> chosen (a cheap, fast one),
+            each long chat keeps a summary of its older messages, brought up to date in the background by the
+            Knowledge worker whenever the chat has grown by about 24,000 characters past it. It keeps facts, numbers,
+            names, decisions and plans in the chat&rsquo;s language. It is used only for the person who may read the
+            chat, never for private chats or rooms, and goes when the chat&rsquo;s messages are rewritten, purged by
+            retention, made private or deleted. Cost is the system operation <code>chat_summary</code> (the
+            project&rsquo;s, for a project chat), never against a budget, capped by{" "}
+            <strong>Monthly summary budget</strong> (0, no limit).
+          </li>
+          <li>
             <strong>Reading a long chat in parts</strong> — the extractor reads a stretch of chat oldest first, one part
             of up to 24,000 characters per call, and marks as mined only what a call has read. A run reads at most four
             parts; a longer stretch goes on in a follow-up job. A part that fails leaves the parts before it done.

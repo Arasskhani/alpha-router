@@ -410,6 +410,12 @@ export const userManualSections: DocSection[] = [
             first, and the older ones are still sent with your next message (after a Stop, or an image, too).
           </li>
           <li>
+            A chat longer than the model can read at once keeps its newest messages word for word; the oldest are
+            read as a summary of the chat, or left out. The answer says so under its name (&ldquo;Older messages read
+            as a summary, to fit the model&rdquo;). A model with a larger window reads more of the chat word for
+            word.
+          </li>
+          <li>
             On a phone the sidebar is a drawer: the menu button at the top left opens it, and it closes when you pick
             a chat, start a new one, tap outside it or press Escape. The ☰ inside it opens the other menus (Projects,
             Media, Activity, Administration).

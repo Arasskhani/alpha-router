@@ -115,6 +115,14 @@ describe("the docs", () => {
     const html = sectionHtml(docSections, "admin-memory");
     for (const term of [
       "Complete history on the server",
+      "Fit each turn into the model’s window",
+      "Share of the window for the chat",
+      "Window of an unknown model",
+      "Summarize long chats",
+      "Summary model",
+      "Newest messages kept word for word",
+      "Monthly summary budget",
+      "chat_summary",
       "Extractor answer length",
       "256–16,000",
       "Failed jobs",
@@ -130,7 +138,18 @@ describe("the docs", () => {
       expect(html).toContain(term);
     }
     const page = readFileSync(join(__dirname, "..", "src/pages/admin/Memory.tsx"), "utf8");
-    for (const label of ["Complete history on the server", "Extractor answer length", "Allow relearning", "Run again"]) {
+    for (const label of [
+      "Complete history on the server",
+      "Fit each turn into the model's window",
+      "Share of the window for the chat",
+      "Window of an unknown model",
+      "Summarize long chats",
+      "Newest messages kept word for word",
+      "Monthly summary budget",
+      "Extractor answer length",
+      "Allow relearning",
+      "Run again",
+    ]) {
       expect(page).toContain(label);
     }
   });

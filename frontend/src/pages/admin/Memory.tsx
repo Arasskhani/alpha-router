@@ -230,7 +230,6 @@ export default function MemoryAdmin() {
     setSettings(cfg);
     setStats(st);
     setModels(Array.isArray(catalog) ? catalog : []);
-    void loadFailed();
   }
 
   /** Why jobs failed: read on its own, so the page still opens if this read does not. */
@@ -264,7 +263,7 @@ export default function MemoryAdmin() {
       setFlash(
         `Queued ${result.requeued} again. ${result.merged} handed to a newer job of the same chat, ${result.covered} already mined.`,
       );
-      await load();
+      await Promise.all([load(), loadFailed()]);
     } catch (err) {
       setError(String(err));
     } finally {
@@ -274,6 +273,7 @@ export default function MemoryAdmin() {
 
   useEffect(() => {
     void load().catch((err) => setError(String(err)));
+    void loadFailed();
   }, []);
 
   const textModels = models.filter((m) => m.enabled && (m.kinds || []).includes("text"));

@@ -965,6 +965,14 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
                 provider_type=provider_type,
             )
 
+        def _book_retry_cut_short(retry: NonStreamRetry) -> None:
+            """Book a whole-reply retry the client left before it answered: cancelled, never a success."""
+            usage_events.append(
+                retry.usage_event(
+                    attempt_index=len(usage_events), status="cancelled", error_message="Request cancelled"
+                )
+            )
+
         def _absorb_cut_short(error_message: str) -> None:
             """Book the attempt in flight, if any, when the reply is cut short, billing what it streamed.
 
@@ -1368,6 +1376,23 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
                             await waiting
                     else:
                         await retry.run()
+                except GeneratorExit:
+                    # The client went while the model was asked again: this handler is not the try's own GeneratorExit
+                    # one, so it books the stop itself - or the turn would settle as a success.
+                    _book_retry_cut_short(retry)
+                    was_cancelled = True
+                    client_disconnected = True
+                    success = False
+                    error_code = "client_disconnected"
+                    error_message = "Request cancelled"
+                    raise
+                except asyncio.CancelledError:
+                    _book_retry_cut_short(retry)
+                    was_cancelled = True
+                    success = False
+                    error_code = "cancelled"
+                    error_message = "Request cancelled"
+                    raise
                 except Exception as retry_exc:  # noqa: BLE001 -- error text is surfaced to the caller
                     usage_events.append(
                         retry.usage_event(

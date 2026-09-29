@@ -311,6 +311,63 @@ async def test_detected_disconnect_stops_consuming_upstream() -> None:
     assert "[DONE]" not in result["output"]
 
 
+class _UnreadStream:
+    """A stream whose body the provider never lets be read: the turn is asked again whole."""
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        raise Exception("Attempted to access streaming response content, without having called read()")
+
+    async def aclose(self) -> None:
+        return None
+
+
+async def test_a_stop_while_the_reply_is_asked_again_whole_settles_as_cancelled() -> None:
+    """The retry runs inside the first attempt's error handler: a cancel there must still book the turn cancelled."""
+    persister = _FakePersister()
+    log_usage = AsyncMock(return_value=42)
+    release = AsyncMock(return_value=True)
+    calls = {"n": 0}
+
+    async def fake_acompletion(**kwargs):
+        calls["n"] += 1
+        if kwargs.get("stream") is False:
+            await asyncio.sleep(60)  # the whole reply, thought over for a long while
+        return _UnreadStream()
+
+    patches = list(_patches(_SlowProvider(), persister, log_usage, release))
+    patches = [p for p in patches if getattr(p, "attribute", None) != "acompletion"]
+    patches.append(patch.object(proxy_service, "acompletion", side_effect=fake_acompletion))
+
+    async def consume() -> None:
+        async for _chunk_bytes in proxy_service.stream_chat(
+            _request(),
+            _body(),
+            user_id=1,
+            username="admin",
+            source="alpha_router_chat",
+            skip_budget=False,
+            resolved=_resolved(),
+        ):
+            pass
+
+    with _enter_all(patches):
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(consume)
+            while calls["n"] < 2:
+                await asyncio.sleep(0.005)
+            await asyncio.sleep(0.02)
+            tg.cancel_scope.cancel()
+        await asyncio.sleep(0.05)
+
+    assert log_usage.await_count == 1
+    kwargs = log_usage.await_args.kwargs
+    assert kwargs["success"] is False
+    assert persister.finalized == {"success": False, "error_message": "Request cancelled"}
+
+
 @pytest.mark.parametrize("attr", ["aclose"])
 async def test_close_upstream_stream_is_best_effort(attr: str) -> None:
     class Broken:

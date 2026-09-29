@@ -73,6 +73,9 @@ SETTING_KEYS = {
     "memory_qdrant_collection_version": "1",
     "memory_history_completion_enabled": "true",
     "memory_relearn_enabled": "false",
+    "memory_context_fit_enabled": "true",
+    "memory_context_share_percent": "75",
+    "memory_context_default_tokens": "0",
     "project_memory_feature_enabled": "true",
     "project_memory_max_per_project": "500",
     "project_memory_inject_max_items": "60",
@@ -232,6 +235,12 @@ def parse_memory_settings(raw: dict[str, str]) -> dict[str, Any]:
         "history_completion_enabled": _as_bool(raw.get("memory_history_completion_enabled"), True),
         # Reading the last days of chats again, by hand, from Admin -> Memory; off unless turned on.
         "relearn_enabled": _as_bool(raw.get("memory_relearn_enabled"), False),
+        # Each chat turn fitted into the model's window before it is sent.
+        "context_fit_enabled": _as_bool(raw.get("memory_context_fit_enabled"), True),
+        # The share of the window the prompt may take; the rest is the answer's.
+        "context_share_percent": _as_int(raw.get("memory_context_share_percent"), 75, minimum=30, maximum=95),
+        # The window of a model neither the catalog nor LiteLLM knows; 0 = send such a turn as it is.
+        "context_default_tokens": _as_int(raw.get("memory_context_default_tokens"), 0, minimum=0, maximum=10_000_000),
         "project_feature_enabled": _as_bool(raw.get("project_memory_feature_enabled"), True),
         "project_max_per_project": _as_int(raw.get("project_memory_max_per_project"), 500, minimum=10, maximum=2000),
         "project_inject_max_items": _as_int(raw.get("project_memory_inject_max_items"), 60, minimum=1, maximum=200),
@@ -348,6 +357,9 @@ def _raw_from_values(values: dict[str, Any]) -> dict[str, str]:
         "memory_qdrant_collection_version": str(values["qdrant_collection_version"]),
         "memory_history_completion_enabled": "true" if values["history_completion_enabled"] else "false",
         "memory_relearn_enabled": "true" if values["relearn_enabled"] else "false",
+        "memory_context_fit_enabled": "true" if values["context_fit_enabled"] else "false",
+        "memory_context_share_percent": str(values["context_share_percent"]),
+        "memory_context_default_tokens": str(values["context_default_tokens"]),
         "project_memory_feature_enabled": ("true" if values["project_feature_enabled"] else "false"),
         "project_memory_max_per_project": str(values["project_max_per_project"]),
         "project_memory_inject_max_items": str(values["project_inject_max_items"]),
@@ -390,6 +402,9 @@ async def update_memory_settings(db: AsyncSession, updates: dict[str, Any]) -> d
         "qdrant_collection_version": "memory_qdrant_collection_version",
         "history_completion_enabled": "memory_history_completion_enabled",
         "relearn_enabled": "memory_relearn_enabled",
+        "context_fit_enabled": "memory_context_fit_enabled",
+        "context_share_percent": "memory_context_share_percent",
+        "context_default_tokens": "memory_context_default_tokens",
         "project_feature_enabled": "project_memory_feature_enabled",
         "project_max_per_project": "project_memory_max_per_project",
         "project_inject_max_items": "project_memory_inject_max_items",

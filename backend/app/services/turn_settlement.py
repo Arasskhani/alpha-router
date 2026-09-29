@@ -78,6 +78,8 @@ class TurnIdentity:
     injected_memory_ids: list[str] = field(default_factory=list)
     project_memory_project_id: str | None = None
     injected_project_memory_ids: list[str] = field(default_factory=list)
+    #: What fitting the turn into the model's window left out; None when nothing.
+    context_fit: dict | None = None
 
 
 def agent_identity_metadata(agent_turn: PreparedAgentTurn) -> dict[str, object]:
@@ -320,6 +322,9 @@ async def settle_turn(
     # request_log_id applies. Reading here does not consume the notice: it is
     # marked shown only when the browser acknowledges it, which is what makes a
     # dropped trailing frame harmless.
+    if not outcome.was_cancelled and identity.source == "alpha_router_chat" and identity.context_fit:
+        response_metadata["context_fit"] = identity.context_fit
+
     if not outcome.was_cancelled and identity.source == "alpha_router_chat":
         budget_notice = await budget_notice_after_settlement(identity.user_id)
         if budget_notice:

@@ -52,6 +52,9 @@ class MemorySettingsPatch(BaseModel):
     suppression_days: int | None = Field(default=None, ge=1, le=3650)
     history_completion_enabled: bool | None = None
     relearn_enabled: bool | None = None
+    context_fit_enabled: bool | None = None
+    context_share_percent: int | None = Field(default=None, ge=30, le=95)
+    context_default_tokens: int | None = Field(default=None, ge=0, le=10_000_000)
     project_feature_enabled: bool | None = None
     project_max_per_project: int | None = Field(default=None, ge=10, le=2000)
     project_inject_max_items: int | None = Field(default=None, ge=1, le=200)

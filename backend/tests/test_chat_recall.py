@@ -526,3 +526,53 @@ async def test_the_knowledge_worker_indexes_a_chat(db_session, session_factory, 
     async with session_factory() as other:
         row = await other.get(ChatRecallIndex, chat.id)
         assert (row.status, row.indexed_up_to, row.chunk_count) == ("idle", 4, 2)
+
+
+async def test_the_trailer_and_the_stored_answer_name_the_chats_read_from(monkeypatch, db_session, user):
+    from app.services import turn_settlement
+    from app.services.turn_settlement import TurnIdentity, TurnOutcome, settle_turn
+    from app.services.user_chat_storage_service import list_session_messages
+
+    async def _nothing(*_args, **_kwargs):
+        return None
+
+    for name in ("_record_memory_usage", "_persist_stream_usage", "budget_notice_after_settlement"):
+        monkeypatch.setattr(turn_settlement, name, _nothing)
+    chats = [{"id": "s-1", "title": "Workout"}]
+    trailer = await settle_turn(
+        TurnIdentity(
+            request=None,
+            body={},
+            user_id=user.id,
+            username=user.username,
+            model="m",
+            prompt_lang="en",
+            source="alpha_router_chat",
+            alpha_router_api_key_id=None,
+            user_api_key_id=None,
+            client_app=None,
+            project_id_for_billing=None,
+            stream_reservation_id=None,
+            recalled_chats=chats,
+        ),
+        TurnOutcome(
+            success=True,
+            error_message=None,
+            was_cancelled=False,
+            client_disconnected=False,
+            prompt_tokens=1,
+            completion_tokens=1,
+            cached_tokens=0,
+            total_cost=0.0,
+            usage_events=[],
+            elapsed_ms=1.0,
+        ),
+        db=db_session,
+        persister=None,
+        capacity_permit=None,
+        capacity_heartbeat_task=None,
+    )
+    assert trailer["recalled_chats"] == chats
+    chat = await _chat(db_session, user, "New", ["Q", "A"], meta={"recalledChats": chats})
+    listed, _more = await list_session_messages(db_session, user.id, chat.id)
+    assert listed[1]["recalledChats"] == chats

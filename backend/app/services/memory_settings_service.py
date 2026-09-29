@@ -60,8 +60,8 @@ SETTING_KEYS = {
     "memory_extract_min_new_messages": "2",
     "memory_extract_max_tokens": "2000",
     "memory_max_per_user": "200",
-    "memory_inject_max_items": "12",
-    "memory_inject_max_chars": "2500",
+    "memory_inject_max_items": "20",
+    "memory_inject_max_chars": "4000",
     "memory_core_items": "6",
     "memory_semantic_top_k": "8",
     "memory_lexical_top_k": "6",
@@ -234,8 +234,10 @@ def parse_memory_settings(raw: dict[str, str]) -> dict[str, Any]:
             raw.get("memory_extract_monthly_budget_usd"), 0.0, minimum=0.0, maximum=1_000_000.0
         ),
         "max_per_user": _as_int(raw.get("memory_max_per_user"), 200, minimum=10, maximum=500),
-        "inject_max_items": _as_int(raw.get("memory_inject_max_items"), 12, minimum=1, maximum=50),
-        "inject_max_chars": _as_int(raw.get("memory_inject_max_chars"), 2500, minimum=200, maximum=8000),
+        # 12 and 2,500 until the memory work of September 2026: a person with a few months of memories had
+        # most of them left out of every turn. A deployment that saved its settings keeps what it saved.
+        "inject_max_items": _as_int(raw.get("memory_inject_max_items"), 20, minimum=1, maximum=50),
+        "inject_max_chars": _as_int(raw.get("memory_inject_max_chars"), 4000, minimum=200, maximum=8000),
         "core_items": _as_int(raw.get("memory_core_items"), 6, minimum=0, maximum=20),
         "semantic_top_k": _as_int(raw.get("memory_semantic_top_k"), 8, minimum=0, maximum=40),
         "lexical_top_k": _as_int(raw.get("memory_lexical_top_k"), 6, minimum=0, maximum=40),

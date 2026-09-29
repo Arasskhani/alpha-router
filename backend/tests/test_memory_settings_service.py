@@ -33,7 +33,10 @@ def test_parse_defaults() -> None:
     assert parsed["extraction_model_id"] is None
     assert parsed["max_per_user"] == 200
     assert parsed["allowed_sensitive_categories"] == ["health", "financial"]
-    assert parsed["inject_max_items"] == 12
+    assert parsed["inject_max_items"] == 20
+    assert parsed["inject_max_chars"] == 4000
+    # A deployment that saved the old figures keeps them.
+    assert parse_memory_settings({"memory_inject_max_items": "12"})["inject_max_items"] == 12
 
 
 def test_project_defaults_match_the_previous_manual_caps() -> None:

@@ -52,6 +52,10 @@ const SETTINGS = {
   summary_model_id: null as number | null,
   summary_keep_recent: 20,
   summary_monthly_budget_usd: 0,
+  recall_enabled: true,
+  recall_max_items: 4,
+  recall_max_chars: 3000,
+  recall_min_similarity: 0.35,
   project_feature_enabled: true,
   project_max_per_project: 500,
   project_inject_max_items: 60,
@@ -373,6 +377,56 @@ describe("long chats", () => {
     answerWith({ extraction_model_id: 7, summary_model_id: 7 });
     await render();
     expect(section()?.textContent).toContain("Keeps a summary of each long chat's older messages");
+  });
+});
+
+describe("earlier chats", () => {
+  function section() {
+    return host.querySelector('section[aria-label="Earlier chats"]');
+  }
+
+  function answerWithRecall(overrides: Record<string, unknown>, estimate: Record<string, unknown>) {
+    vi.mocked(api).mockImplementation(async (path: string) => {
+      if (path.includes("/memory/recall/status")) {
+        return { embedding_model_configured: true, enabled: true, indexed_chats: 12, chunks: 340, pending: 2, running: 0, failed: 1 };
+      }
+      if (path.includes("/memory/recall/backfill/estimate")) return estimate;
+      if (path.endsWith("/memory/recall/backfill")) return { queued: 30 };
+      if (path.includes("/memory/failed-jobs")) return { scope: "user", total: 0, reasons: [], jobs: [] };
+      if (path.includes("/memory/settings")) return { ...SETTINGS, extraction_model_id: 7, ...overrides };
+      if (path.includes("/memory/stats")) return STATS;
+      if (path.includes("/admin/models")) return [];
+      throw new Error(`unexpected ${path}`);
+    });
+  }
+
+  function button(label: string) {
+    return Array.from(section()?.querySelectorAll<HTMLButtonElement>("button") ?? []).find((b) => b.textContent === label);
+  }
+
+  it("is locked, and says why, without an embedding model", async () => {
+    answerWithRecall({ embedding_model: "" }, {});
+    await render();
+    expect(section()?.textContent).toContain("Recall needs an embedding model");
+    const toggle = section()?.querySelector<HTMLButtonElement>('button[aria-label="Recall earlier chats"]');
+    expect(toggle?.disabled).toBe(true);
+    expect(toggle?.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("shows the index's progress, estimates the backfill and queues it", async () => {
+    answerWithRecall(
+      { embedding_model: "openai:text-embedding-3-small", embedding_dimensions: 1536 },
+      { chats: 30, messages: 900, characters: 400000, estimated_cost_usd: 0.0021, enabled: true },
+    );
+    await render();
+    await act(async () => undefined);
+    expect(section()?.textContent).toContain("12 chats indexed (340 exchanges); 2 queued, 1 failed.");
+    expect(button("Index")?.disabled).toBe(true);
+    await act(async () => button("Estimate")?.click());
+    expect(section()?.textContent).toContain("30 chats, 900 messages not indexed yet: about $0.0021.");
+    await act(async () => button("Index")?.click());
+    expect(vi.mocked(api).mock.calls.some(([path, init]) => String(path).endsWith("/memory/recall/backfill") && (init as RequestInit)?.method === "POST")).toBe(true);
+    expect(host.querySelector(".alert-success")?.textContent).toContain("Queued 30 chats to be indexed.");
   });
 });
 

@@ -43,6 +43,10 @@ type MemorySettings = {
   summary_model_id: number | null;
   summary_keep_recent: number;
   summary_monthly_budget_usd: number;
+  recall_enabled: boolean;
+  recall_max_items: number;
+  recall_max_chars: number;
+  recall_min_similarity: number;
   project_feature_enabled: boolean;
   project_max_per_project: number;
   project_inject_max_items: number;
@@ -85,6 +89,39 @@ type RelearnEstimate = {
   spent_this_month_usd: number;
   monthly_cap_usd: number;
 };
+
+type RecallStatus = {
+  embedding_model_configured: boolean;
+  enabled: boolean;
+  indexed_chats: number;
+  chunks: number;
+  pending: number;
+  running: number;
+  failed: number;
+};
+
+type BackfillEstimate = {
+  chats: number;
+  messages: number;
+  characters: number;
+  estimated_cost_usd: number | null;
+  enabled: boolean;
+};
+
+function describeRecallStatus(s: RecallStatus): string {
+  const jobs = [
+    s.pending ? `${s.pending.toLocaleString()} queued` : "",
+    s.running ? `${s.running.toLocaleString()} running` : "",
+    s.failed ? `${s.failed.toLocaleString()} failed` : "",
+  ].filter(Boolean);
+  return `${s.indexed_chats.toLocaleString()} chats indexed (${s.chunks.toLocaleString()} exchanges)${jobs.length ? `; ${jobs.join(", ")}` : ""}.`;
+}
+
+function describeBackfill(e: BackfillEstimate): string {
+  if (!e.chats) return "Every chat is indexed already.";
+  const cost = e.estimated_cost_usd == null ? "the embedding model has no price" : `about ${formatUsd(e.estimated_cost_usd)}`;
+  return `${e.chats.toLocaleString()} chats, ${e.messages.toLocaleString()} messages not indexed yet: ${cost}.`;
+}
 
 function describeEstimate(e: RelearnEstimate): string {
   const chats = e.chats.user + e.chats.project;
@@ -251,6 +288,9 @@ export default function MemoryAdmin() {
   const [relearnDays, setRelearnDays] = useState(30);
   const [estimate, setEstimate] = useState<RelearnEstimate | null>(null);
   const [relearning, setRelearning] = useState(false);
+  const [recallStatus, setRecallStatus] = useState<RecallStatus | null>(null);
+  const [backfill, setBackfill] = useState<BackfillEstimate | null>(null);
+  const [backfilling, setBackfilling] = useState(false);
 
   async function load() {
     setError("");
@@ -303,6 +343,43 @@ export default function MemoryAdmin() {
     }
   }
 
+  /** The recall index's progress: read on its own, so the page opens whatever it says. */
+  async function loadRecallStatus() {
+    setRecallStatus(await api<RecallStatus>("/api/admin/memory/recall/status").catch(() => null));
+  }
+
+  async function onBackfillEstimate() {
+    setError("");
+    try {
+      setBackfill(await api<BackfillEstimate>("/api/admin/memory/recall/backfill/estimate"));
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
+  async function onBackfill() {
+    if (!backfill) return;
+    const ok = await confirm({
+      title: "Index earlier chats",
+      message: `Index the chats from before recall was on, so new chats can read from them. ${describeBackfill(backfill)}`,
+      confirmLabel: "Index",
+    });
+    if (!ok) return;
+    setBackfilling(true);
+    setError("");
+    setFlash("");
+    try {
+      const result = await api<{ queued: number }>("/api/admin/memory/recall/backfill", { method: "POST" });
+      setFlash(`Queued ${result.queued} chats to be indexed.`);
+      setBackfill(null);
+      await loadRecallStatus();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBackfilling(false);
+    }
+  }
+
   async function onEstimate() {
     setError("");
     try {
@@ -340,6 +417,7 @@ export default function MemoryAdmin() {
   useEffect(() => {
     void load().catch((err) => setError(String(err)));
     void loadFailed();
+    void loadRecallStatus();
   }, []);
 
   const textModels = models.filter((m) => m.enabled && (m.kinds || []).includes("text"));
@@ -868,6 +946,79 @@ export default function MemoryAdmin() {
                   disabled={readOnly}
                   onChange={(n) => patch({ summary_monthly_budget_usd: n })}
                 />
+              </FieldRow>
+            </div>
+          </section>
+
+          <section className="settings-section" aria-label="Earlier chats">
+            <h2>Earlier chats</h2>
+            <p className="settings-section-desc">
+              A new turn reads the related parts of the person&rsquo;s other chats: a personal chat from their personal
+              chats, a project chat from the same project&rsquo;s. Never private chats or rooms. Each person can turn it
+              off for themselves.
+            </p>
+            {settings.embedding_model ? null : (
+              <p className="alert alert-info" role="status">
+                Recall needs an embedding model (Pipeline, below). Until one is chosen, nothing is indexed or recalled.
+              </p>
+            )}
+            <div className="settings-list">
+              <FieldRow
+                title="Recall earlier chats"
+                hint={recallStatus ? describeRecallStatus(recallStatus) : "On by default once an embedding model is chosen."}
+              >
+                <Toggle
+                  label="Recall earlier chats"
+                  on={settings.recall_enabled && Boolean(settings.embedding_model)}
+                  disabled={readOnly || !settings.embedding_model}
+                  onToggle={() => patch({ recall_enabled: !settings.recall_enabled })}
+                />
+              </FieldRow>
+              <FieldRow title="Pieces per turn" hint="1–10 exchanges or chat digests, the most similar first.">
+                <NumberInput
+                  id="memory-recall-items"
+                  value={settings.recall_max_items}
+                  min={1}
+                  disabled={readOnly}
+                  onChange={(n) => patch({ recall_max_items: n })}
+                />
+              </FieldRow>
+              <FieldRow title="Characters per turn" hint="500–12,000, all pieces together.">
+                <NumberInput
+                  id="memory-recall-chars"
+                  value={settings.recall_max_chars}
+                  min={500}
+                  step="500"
+                  disabled={readOnly}
+                  onChange={(n) => patch({ recall_max_chars: n })}
+                />
+              </FieldRow>
+              <FieldRow title="Minimum similarity" hint="0–1. Higher recalls less, and only what is closer.">
+                <NumberInput
+                  id="memory-recall-similarity"
+                  value={settings.recall_min_similarity}
+                  step="0.05"
+                  min={0}
+                  disabled={readOnly}
+                  onChange={(n) => patch({ recall_min_similarity: n })}
+                />
+              </FieldRow>
+              <FieldRow
+                title="Index earlier chats"
+                hint="Chats are indexed as they go on. The ones from before recall was on are indexed only from here."
+                detail={backfill ? <p className="memory-admin__estimate">{describeBackfill(backfill)}</p> : null}
+              >
+                <button type="button" className="btn btn-ghost" onClick={() => void onBackfillEstimate()}>
+                  Estimate
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={readOnly || backfilling || !backfill?.enabled || !backfill.chats}
+                  onClick={() => void onBackfill()}
+                >
+                  {backfilling ? "Queuing…" : "Index"}
+                </button>
               </FieldRow>
             </div>
           </section>

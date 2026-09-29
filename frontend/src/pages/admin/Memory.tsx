@@ -47,6 +47,8 @@ type MemorySettings = {
   recall_max_items: number;
   recall_max_chars: number;
   recall_min_similarity: number;
+  plan_memory_enabled: boolean;
+  plan_ttl_days: number;
   project_feature_enabled: boolean;
   project_max_per_project: number;
   project_inject_max_items: number;
@@ -1106,6 +1108,26 @@ export default function MemoryAdmin() {
                   value={settings.extract_min_new_messages}
                   disabled={readOnly}
                   onChange={(n) => patch({ extract_min_new_messages: n })}
+                />
+              </FieldRow>
+              <FieldRow
+                title="Remember ongoing plans and routines"
+                hint="A workout plan, a diet, a current project: kept while the person keeps mentioning it."
+              >
+                <Toggle
+                  label="Remember ongoing plans and routines"
+                  on={settings.plan_memory_enabled}
+                  disabled={readOnly}
+                  onToggle={() => patch({ plan_memory_enabled: !settings.plan_memory_enabled })}
+                />
+              </FieldRow>
+              <FieldRow title="Plans last" hint="Days, 7–365, counted again each time a plan is mentioned.">
+                <NumberInput
+                  id="memory-plan-days"
+                  value={settings.plan_ttl_days}
+                  min={7}
+                  disabled={readOnly || !settings.plan_memory_enabled}
+                  onChange={(n) => patch({ plan_ttl_days: n })}
                 />
               </FieldRow>
               <FieldRow

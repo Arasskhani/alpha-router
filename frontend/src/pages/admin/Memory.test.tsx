@@ -56,6 +56,8 @@ const SETTINGS = {
   recall_max_items: 4,
   recall_max_chars: 3000,
   recall_min_similarity: 0.35,
+  plan_memory_enabled: true,
+  plan_ttl_days: 90,
   project_feature_enabled: true,
   project_max_per_project: 500,
   project_inject_max_items: 60,
@@ -427,6 +429,24 @@ describe("earlier chats", () => {
     await act(async () => button("Index")?.click());
     expect(vi.mocked(api).mock.calls.some(([path, init]) => String(path).endsWith("/memory/recall/backfill") && (init as RequestInit)?.method === "POST")).toBe(true);
     expect(host.querySelector(".alert-success")?.textContent).toContain("Queued 30 chats to be indexed.");
+  });
+});
+
+describe("plans and routines", () => {
+  it("has a switch, and a time that cannot be changed while it is off", async () => {
+    answerWith({ extraction_model_id: 7 });
+    await render();
+    const toggle = host.querySelector<HTMLButtonElement>('button[aria-label="Remember ongoing plans and routines"]');
+    expect(toggle?.getAttribute("aria-pressed")).toBe("true");
+    expect(host.querySelector<HTMLInputElement>("#memory-plan-days")?.value).toBe("90");
+    await act(async () => toggle?.click());
+    expect(host.querySelector<HTMLInputElement>("#memory-plan-days")?.disabled).toBe(true);
+    const form = host.querySelector<HTMLFormElement>("#memory-settings-form");
+    await act(async () => {
+      form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    const patchCall = vi.mocked(api).mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === "PATCH");
+    expect(JSON.parse(String((patchCall?.[1] as RequestInit).body)).plan_memory_enabled).toBe(false);
   });
 });
 

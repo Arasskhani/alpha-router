@@ -576,3 +576,25 @@ async def test_the_trailer_and_the_stored_answer_name_the_chats_read_from(monkey
     chat = await _chat(db_session, user, "New", ["Q", "A"], meta={"recalledChats": chats})
     listed, _more = await list_session_messages(db_session, user.id, chat.id)
     assert listed[1]["recalledChats"] == chats
+
+
+async def test_the_person_s_switch_is_saved_and_read_back(client, db_session, session_factory, user, monkeypatch):
+    from app.config import get_settings
+    from app.core.security import create_access_token
+    from app.database import get_read_db
+    from app.main import app as fastapi_app
+
+    async def _read_db():
+        async with session_factory() as session:
+            yield session
+
+    monkeypatch.setitem(fastapi_app.dependency_overrides, get_read_db, _read_db)
+
+    settings = get_settings()
+    client.cookies.set(settings.session_cookie_name, create_access_token(user.username, "user"))
+    client.cookies.set(settings.csrf_cookie_name, "csrf-token")
+    headers = {settings.csrf_header_name: "csrf-token"}
+    assert (await client.get("/api/user/chats/prefs", headers=headers)).json()["memory_recall_chats"] is True
+    saved = await client.patch("/api/user/chats/prefs", json={"memory_recall_chats": False}, headers=headers)
+    assert saved.status_code == 200, saved.text
+    assert (await client.get("/api/user/chats/prefs", headers=headers)).json()["memory_recall_chats"] is False

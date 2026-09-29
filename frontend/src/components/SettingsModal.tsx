@@ -555,6 +555,7 @@ function MemoryPanel() {
   const [memoryEnabled, setMemoryEnabled] = useState(true);
   const [autoCapture, setAutoCapture] = useState(true);
   const [outsideChat, setOutsideChat] = useState(false);
+  const [recallChats, setRecallChats] = useState(true);
   const [memories, setMemories] = useState<UserMemory[]>([]);
   const [featureEnabled, setFeatureEnabled] = useState(true);
   const [extractionConfigured, setExtractionConfigured] = useState(true);
@@ -571,6 +572,7 @@ function MemoryPanel() {
     setMemoryEnabled(prefs.memory_enabled !== false);
     setAutoCapture(prefs.memory_auto_capture !== false);
     setOutsideChat(prefs.memory_outside_chat === true);
+    setRecallChats(prefs.memory_recall_chats !== false);
     setMemories(bundle.memories);
     setFeatureEnabled(bundle.feature_enabled);
     setExtractionConfigured(bundle.extraction_configured);
@@ -617,6 +619,22 @@ function MemoryPanel() {
       setAutoCapture(checked);
       window.dispatchEvent(new CustomEvent(BROWSER_EVENT_NAMES.userPrefsSaved));
       setMessage(checked ? "New memories can be learned from chat." : "Automatic learning is off.");
+    } catch (err) {
+      setError(formatApiError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onToggleRecallChats(checked: boolean) {
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      await saveUserPrefs({ memory_recall_chats: checked });
+      setRecallChats(checked);
+      window.dispatchEvent(new CustomEvent(BROWSER_EVENT_NAMES.userPrefsSaved));
+      setMessage(checked ? "New chats can read from your earlier ones." : "Each chat keeps to itself.");
     } catch (err) {
       setError(formatApiError(err));
     } finally {
@@ -786,6 +804,17 @@ function MemoryPanel() {
             disabled={busy}
             label="Automatically learn new things about me"
             onToggle={() => void onToggleCapture(!autoCapture)}
+          />
+        </SettingsRow>
+        <SettingsRow
+          title="Use my earlier chats"
+          hint="A new chat can read the related parts of your other chats, and says which it read from. Never private chats."
+        >
+          <SettingsToggle
+            on={recallChats}
+            disabled={busy}
+            label="Use my earlier chats"
+            onToggle={() => void onToggleRecallChats(!recallChats)}
           />
         </SettingsRow>
         <SettingsRow

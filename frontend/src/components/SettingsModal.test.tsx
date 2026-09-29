@@ -125,3 +125,26 @@ describe("the settings tabs", () => {
     expect(occurrences).toBe(1);
   });
 });
+
+describe("the Memory tab", () => {
+  it("has the person's own switch for recalling their earlier chats", async () => {
+    const saved: unknown[] = [];
+    vi.mocked(api).mockImplementation(async (path: string, init?: RequestInit) => {
+      if (path === "/api/user/chats/prefs" && init?.method === "PATCH") {
+        saved.push(JSON.parse(String(init.body)));
+        return { memory_recall_chats: false } as never;
+      }
+      if (path === "/api/user/chats/prefs") return { memory_recall_chats: true } as never;
+      if (path.startsWith("/api/user/memories")) return { memories: [], total: 0 } as never;
+      return {} as never;
+    });
+    await openSettings();
+    await clickTab("Memory");
+    const toggle = document.querySelector<HTMLButtonElement>('button[aria-label="Use my earlier chats"]');
+    expect(toggle?.getAttribute("aria-pressed")).toBe("true");
+    await act(async () => toggle?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(saved).toEqual([{ memory_recall_chats: false }]);
+    expect(toggle?.getAttribute("aria-pressed")).toBe("false");
+  });
+});
+

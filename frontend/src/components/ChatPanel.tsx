@@ -48,6 +48,7 @@ import {
   loadSessionMessagesIfNeeded,
   loadOlderSessionMessages,
   loadWholeSessionHistory,
+  overlayLatestPage,
   sessionHasOlderMessages,
   mergeSessionAfterMessageLoad,
   resolveNewChatModel,
@@ -4244,13 +4245,9 @@ export default function ChatPanel({
         } else {
           const session = await fetchSessionWithMessages(sid);
           if (session) {
-            const local = sessionsRef.current.find((s) => s.id === sid);
-            const msgs =
-              session.messages.length > 0
-                ? session.messages
-                : local?.messages.length
-                  ? local.messages
-                  : session.messages;
+            const local = getSessionMessages(sid);
+            // The server's latest page for what it covers; the older messages here stay.
+            const msgs = session.messages.length > 0 ? overlayLatestPage(local, session.messages) : local;
             flushSync(() => updateSessionMessages(sid, msgs));
             deferSessionTitle(sid, titleModelId, msgs);
           }
@@ -5089,7 +5086,7 @@ export default function ChatPanel({
             void cancelStreamingReplyOnServer(sessionId).catch(() => {});
             void fetchSessionWithMessages(sessionId).then((remote) => {
               if (remote?.messages.length && activeIdRef.current === sessionId) {
-                applyMessages(sessionId, remote.messages);
+                applyMessages(sessionId, overlayLatestPage(getSessionMessages(sessionId), remote.messages));
               }
             });
           }
@@ -5231,7 +5228,7 @@ export default function ChatPanel({
           void cancelStreamingReplyOnServer(sessionId).catch(() => {});
           void fetchSessionWithMessages(sessionId).then((remote) => {
             if (remote?.messages.length && activeIdRef.current === sessionId) {
-              applyMessages(sessionId, remote.messages);
+              applyMessages(sessionId, overlayLatestPage(getSessionMessages(sessionId), remote.messages));
             }
           });
         }

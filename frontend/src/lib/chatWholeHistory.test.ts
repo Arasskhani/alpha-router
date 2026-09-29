@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("../api", () => ({ api: vi.fn() }));
 
 import { api } from "../api";
-import { loadWholeSessionHistory, sessionHasOlderMessages, setCachedSessionMessages, type ChatMessage, type ChatSession } from "./chatStorage";
+import { loadWholeSessionHistory, overlayLatestPage, sessionHasOlderMessages, setCachedSessionMessages, type ChatMessage, type ChatSession } from "./chatStorage";
 
 const mockedApi = vi.mocked(api);
 
@@ -83,5 +83,23 @@ describe("loadWholeSessionHistory", () => {
     expect(sessionHasOlderMessages(chat(messages, 40, "s-cached"))).toBe(true);
     setCachedSessionMessages("s-cached", { revision: 3, messages, hasMoreOlder: false, oldestSequence: 11 });
     expect(sessionHasOlderMessages(chat(messages, 200, "s-cached"))).toBe(false);
+  });
+});
+
+describe("overlayLatestPage", () => {
+  it("keeps the messages older than the server's page and takes the page for the rest", () => {
+    const here = [...local(1, 58), { role: "assistant" as const, content: "half a rep", streaming: true }];
+    const page = [...local(10, 58), { role: "assistant" as const, content: "Stopped.", sequence: 59, clientMessageId: "m59" }];
+    const merged = overlayLatestPage(here, page);
+    expect(merged).toHaveLength(59);
+    expect(merged[0].content).toBe("message 1");
+    expect(merged.at(-1)?.content).toBe("Stopped.");
+  });
+
+  it("is the page when nothing here is older, and what is here when the page has no rows", () => {
+    const page = local(1, 20);
+    expect(overlayLatestPage(local(5, 20), page)).toBe(page);
+    const here = local(1, 3);
+    expect(overlayLatestPage(here, [])).toBe(here);
   });
 });

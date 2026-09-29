@@ -1442,6 +1442,20 @@ export async function loadOlderSessionMessages(session: ChatSession): Promise<{
   return { session: next, hasMore };
 }
 
+/**
+ * The server's latest page laid over the messages here: the page is the
+ * truth for what it covers (a reply the server finished or stopped), and the
+ * messages older than it stay. Taking the page alone cut a long chat back to
+ * its last 50 messages after an image or a Stop, and the next turn sent the
+ * model only those.
+ */
+export function overlayLatestPage(local: ChatMessage[], page: ChatMessage[]): ChatMessage[] {
+  const oldest = page.find((m) => m.sequence != null)?.sequence;
+  if (oldest == null) return page.length ? page : local;
+  const older = local.filter((m) => m.sequence != null && m.sequence < oldest);
+  return older.length ? [...older, ...page] : page;
+}
+
 /** A page of the whole-history walk: the server's own cap on one page. */
 const WHOLE_HISTORY_PAGE = 500;
 

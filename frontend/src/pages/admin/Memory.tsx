@@ -20,6 +20,7 @@ type MemorySettings = {
   extract_debounce_seconds: number;
   extract_max_wait_seconds: number;
   extract_min_new_messages: number;
+  extract_max_tokens: number;
   extract_monthly_budget_usd: number;
   max_per_user: number;
   inject_max_items: number;
@@ -453,6 +454,19 @@ export default function MemoryAdmin() {
                   onChange={(next) =>
                     patch({ extraction_model_id: next ? Number(next) : null })
                   }
+                />
+              </FieldRow>
+              <FieldRow
+                title="Extractor answer length"
+                hint="Tokens, 256–16,000, the model's thinking included. An answer cut off keeps what it finished; one cut off before its first fact is asked again of a smaller part of the chat."
+              >
+                <NumberInput
+                  id="memory-extract-max-tokens"
+                  value={settings.extract_max_tokens}
+                  step="100"
+                  min={256}
+                  disabled={readOnly}
+                  onChange={(n) => patch({ extract_max_tokens: n })}
                 />
               </FieldRow>
               <FieldRow title="Embedding model" hint="Empty = Postgres-only retrieval">

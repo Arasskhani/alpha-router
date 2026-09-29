@@ -29,6 +29,7 @@ const SETTINGS = {
   extract_debounce_seconds: 30,
   extract_max_wait_seconds: 600,
   extract_min_new_messages: 2,
+  extract_max_tokens: 2000,
   extract_monthly_budget_usd: 0,
   max_per_user: 200,
   inject_max_items: 12,
@@ -201,5 +202,25 @@ describe("the chat history switch", () => {
     });
     const patchCall = vi.mocked(api).mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === "PATCH");
     expect(JSON.parse(String((patchCall?.[1] as RequestInit).body)).history_completion_enabled).toBe(false);
+  });
+});
+
+describe("the extractor's answer length", () => {
+  it("shows the server's figure and sends a new one on Save", async () => {
+    answerWith({ extraction_model_id: 7 });
+    await render();
+    const input = host.querySelector<HTMLInputElement>("#memory-extract-max-tokens");
+    expect(input?.value).toBe("2000");
+    await act(async () => {
+      const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setValue?.call(input, "3000");
+      input?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const form = host.querySelector<HTMLFormElement>("#memory-settings-form");
+    await act(async () => {
+      form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    const patchCall = vi.mocked(api).mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === "PATCH");
+    expect(JSON.parse(String((patchCall?.[1] as RequestInit).body)).extract_max_tokens).toBe(3000);
   });
 });

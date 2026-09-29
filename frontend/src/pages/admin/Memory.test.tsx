@@ -450,3 +450,27 @@ describe("plans and routines", () => {
   });
 });
 
+describe("the setup steps", () => {
+  function section() {
+    return host.querySelector('section[aria-label="Setup"]');
+  }
+
+  it("say what is missing without each model", async () => {
+    answerWith();
+    await render();
+    const steps = [...(section()?.querySelectorAll("li") ?? [])];
+    expect(steps.map((li) => li.getAttribute("data-done"))).toEqual(["false", "false"]);
+    expect(section()?.textContent).toContain("Not chosen: nothing is learned.");
+    expect(section()?.textContent).toContain("earlier chats are not recalled");
+  });
+
+  it("say which models are chosen", async () => {
+    answerWith({ extraction_model_id: 7, embedding_model: "openai:text-embedding-3-small", embedding_dimensions: 1536 });
+    await render();
+    const done = [...(section()?.querySelectorAll("li") ?? [])];
+    expect(done.map((li) => li.getAttribute("data-done"))).toEqual(["true", "true"]);
+    expect(section()?.textContent).toContain("Chosen: GPT X.");
+    expect(section()?.textContent).toContain("After changing it, Rebuild index.");
+  });
+});
+

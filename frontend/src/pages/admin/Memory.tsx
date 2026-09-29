@@ -541,6 +541,18 @@ export default function MemoryAdmin() {
     );
   }
 
+  function modelLabel(id: number): string {
+    const model = models.find((m) => m.id === id);
+    return model ? model.display_name || model.external_id : `model ${id}`;
+  }
+
+  /** Bring a field below into view and give it the focus. */
+  function focusField(id: string) {
+    const field = document.getElementById(id);
+    field?.scrollIntoView({ block: "center", behavior: "smooth" });
+    field?.focus();
+  }
+
   /** Switched on, but with no model to extract with: on paper, not in fact. */
   const inert = settings.feature_enabled && !settings.extraction_model_id;
   const cap = settings.extract_monthly_budget_usd || 0;
@@ -606,6 +618,34 @@ export default function MemoryAdmin() {
               either scope until the 1st, or until you raise the figure above.
             </p>
           ) : null}
+        </section>
+
+        <section className="settings-section" aria-label="Setup">
+          <h2>Setup</h2>
+          <p className="settings-section-desc">Two models make memory work. Both are chosen under Pipeline, below.</p>
+          <ol className="memory-admin__steps">
+            <li data-done={settings.extraction_model_id ? "true" : "false"}>
+              <span>
+                <strong>Extraction model</strong> — learns facts from chats.{" "}
+                {settings.extraction_model_id ? `Chosen: ${modelLabel(settings.extraction_model_id)}.` : "Not chosen: nothing is learned."}
+              </span>
+              <button type="button" className="btn btn-ghost" onClick={() => focusField("memory-extraction-model")}>
+                {settings.extraction_model_id ? "Change" : "Choose"}
+              </button>
+            </li>
+            <li data-done={settings.embedding_model ? "true" : "false"}>
+              <span>
+                <strong>Embedding model</strong> — finds memories by what they mean, not only by their words, and lets
+                new chats read from earlier ones.{" "}
+                {settings.embedding_model
+                  ? `Chosen: ${settings.embedding_model}. After changing it, Rebuild index.`
+                  : "Not chosen: memories are found only by their words, and earlier chats are not recalled."}
+              </span>
+              <button type="button" className="btn btn-ghost" onClick={() => focusField("memory-embedding-model")}>
+                {settings.embedding_model ? "Change" : "Choose"}
+              </button>
+            </li>
+          </ol>
         </section>
 
         <section className="memory-admin__status" aria-label="Memory health">

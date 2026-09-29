@@ -8534,6 +8534,56 @@ table.data-table--api-logs {
   margin-bottom: 1.05rem;
 }
 
+/* The two models memory needs, as steps: each says whether it is chosen. */
+.memory-admin__steps {
+  margin: 0.2rem 0 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: memory-step;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.memory-admin__steps li {
+  counter-increment: memory-step;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 0.85rem;
+}
+
+.memory-admin__steps li::before {
+  content: counter(memory-step);
+  flex: none;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 650;
+  font-size: 0.78rem;
+  background: var(--surface-muted);
+  color: var(--text);
+}
+
+.memory-admin__steps li[data-done="true"]::before {
+  content: "✓";
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.memory-admin__steps li > span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 /* Why extraction jobs failed: one line per reason, its count first. */
 .memory-admin__reasons {
   margin: 0;

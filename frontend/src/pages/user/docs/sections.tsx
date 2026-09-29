@@ -406,6 +406,10 @@ export const userManualSections: DocSection[] = [
             to the latest reply.
           </li>
           <li>
+            However long a chat is, the model reads all of it: a chat reopened from the list shows its latest messages
+            first, and the older ones are still sent with your next message (after a Stop, or an image, too).
+          </li>
+          <li>
             On a phone the sidebar is a drawer: the menu button at the top left opens it, and it closes when you pick
             a chat, start a new one, tap outside it or press Escape. The ☰ inside it opens the other menus (Projects,
             Media, Activity, Administration).
@@ -803,6 +807,11 @@ export const userManualSections: DocSection[] = [
           <li>
             You can disable, delete, or export memories. Deleting a fact also prevents it from being learned again
             from old chats, and that block survives a later delete-all.
+          </li>
+          <li>
+            An administrator can have the last days of chats read again, to learn what was missed in long chats. That
+            never reads a private chat, anything from before your last <strong>Delete all</strong>, or anything while
+            automatic learning is off.
           </li>
         </ul>
         <Note>

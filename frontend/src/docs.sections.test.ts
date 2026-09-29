@@ -111,6 +111,30 @@ describe("the docs", () => {
     );
   });
 
+  it("the Admin Guide says what the memory page decides and records", () => {
+    const html = sectionHtml(docSections, "admin-memory");
+    for (const term of [
+      "Complete history on the server",
+      "Extractor answer length",
+      "256–16,000",
+      "Failed jobs",
+      "Run again",
+      "Relearn recent chats",
+      "Allow relearning",
+      "memory_settings_changed",
+      "memory_index_rebuilt",
+      "memory_user_purged",
+      "memory_jobs_retried",
+      "memory_relearn_started",
+    ]) {
+      expect(html).toContain(term);
+    }
+    const page = readFileSync(join(__dirname, "..", "src/pages/admin/Memory.tsx"), "utf8");
+    for (const label of ["Complete history on the server", "Extractor answer length", "Allow relearning", "Run again"]) {
+      expect(page).toContain(label);
+    }
+  });
+
   it("the Admin Guide says what an administrator decides about the extension", () => {
     const html = sectionHtml(docSections, "admin-browser-extension");
     for (const term of [

@@ -2612,6 +2612,65 @@ export const docSections: DocSection[] = [
             already-soft-deleted rows after 30 days (configurable). Users can delete or export their memories.
           </li>
         </ul>
+        <h3>Long chats</h3>
+        <ul>
+          <li>
+            <strong>Complete history on the server</strong> (on by default) — a chat opened from the list holds only
+            its latest page in the browser. Each turn says where its history starts, and the server puts the chat&rsquo;s
+            older messages in front before the model answers, so the model reads the whole chat. Never for a private
+            chat, and only in a chat the person may write in.
+          </li>
+          <li>
+            <strong>Reading a long chat in parts</strong> — the extractor reads a stretch of chat oldest first, one part
+            of up to 24,000 characters per call, and marks as mined only what a call has read. A run reads at most four
+            parts; a longer stretch goes on in a follow-up job. A part that fails leaves the parts before it done.
+            (Before, it kept the newest 24,000 characters and dropped the rest while marking all of it mined.)
+          </li>
+          <li>
+            <strong>Extractor answer length</strong> — tokens the extractor may answer with, its thinking included
+            (256–16,000; 2,000 by default). A model that thinks before it answers is asked to think little. An answer
+            cut off keeps the facts it finished; one cut off before its first is asked again of half the part, and a
+            part that cannot be made smaller fails with a reason naming this setting.
+          </li>
+          <li>
+            <strong>Search by words</strong> compares both sides folded alike: Arabic and Persian letter forms
+            (ي/ی, ك/ک), Persian and Arabic digits, the zero-width non-joiner, diacritics and case.
+          </li>
+        </ul>
+        <h3>Failed jobs and catching up</h3>
+        <ul>
+          <li>
+            <strong>Failed jobs</strong> — extraction jobs that failed for good, for personal and project memory,
+            grouped by reason (the error&rsquo;s first line, with anything that looks like a key taken out; never a
+            chat&rsquo;s words). Fix the cause, then <strong>Run again</strong>: each job goes on from where its chat
+            was mined to, so nothing is mined twice.
+          </li>
+          <li>
+            <strong>Relearn recent chats</strong> — by hand only, while <strong>Allow relearning</strong> is on (off
+            by default). Reads the chats of the last 1–90 days again, through the ordinary extraction jobs (same cap,
+            same suppressions), to catch what extraction dropped before it read long chats in parts.{" "}
+            <strong>Estimate</strong> first: chats, messages, parts and roughly what they cost beside this
+            month&rsquo;s spend and cap. It reads only chats of people and projects with automatic learning on now,
+            never private chats or rooms, and nothing said before a person&rsquo;s last <em>Delete all</em> or last
+            settings change (their learning switch keeps no history), or before a project last cleared what it
+            learned or last turned learning back on.
+          </li>
+        </ul>
+        <h3>Admin Logs</h3>
+        <p>Every change made on this page is recorded:</p>
+        <ul>
+          <li>
+            <code>memory_settings_changed</code> — each changed setting, before and after (a save that changes
+            nothing is not recorded);
+          </li>
+          <li>
+            <code>memory_index_rebuilt</code>, <code>memory_user_purged</code> (whose, and how many);
+          </li>
+          <li>
+            <code>memory_jobs_retried</code> (what each failed job came to) and <code>memory_relearn_started</code>{" "}
+            (days, chats, messages, parts).
+          </li>
+        </ul>
         <h2>Automatic project memory</h2>
         <p>
           The same pipeline mines the <strong>Chat</strong> tab of projects into shared team memory. Facts belong to the

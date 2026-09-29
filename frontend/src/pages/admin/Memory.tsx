@@ -36,6 +36,13 @@ type MemorySettings = {
   suppression_days: number;
   history_completion_enabled: boolean;
   relearn_enabled: boolean;
+  context_fit_enabled: boolean;
+  context_share_percent: number;
+  context_default_tokens: number;
+  summary_enabled: boolean;
+  summary_model_id: number | null;
+  summary_keep_recent: number;
+  summary_monthly_budget_usd: number;
   project_feature_enabled: boolean;
   project_max_per_project: number;
   project_inject_max_items: number;
@@ -768,6 +775,98 @@ export default function MemoryAdmin() {
                   on={settings.history_completion_enabled}
                   disabled={readOnly}
                   onToggle={() => patch({ history_completion_enabled: !settings.history_completion_enabled })}
+                />
+              </FieldRow>
+            </div>
+          </section>
+
+          <section className="settings-section" aria-label="Long chats">
+            <h2>Long chats</h2>
+            <p className="settings-section-desc">
+              What happens when a chat is longer than the model&rsquo;s context window. The newest messages always go
+              word for word; the oldest give way to a summary, or are left out with a note to the model.
+            </p>
+            <div className="settings-list">
+              <FieldRow
+                title="Fit each turn into the model's window"
+                hint="Measured before sending, so a long chat never ends in a context-length error. A turn with tools is never cut."
+              >
+                <Toggle
+                  label="Fit each turn into the model's window"
+                  on={settings.context_fit_enabled}
+                  disabled={readOnly}
+                  onToggle={() => patch({ context_fit_enabled: !settings.context_fit_enabled })}
+                />
+              </FieldRow>
+              <FieldRow title="Share of the window for the chat" hint="Percent, 30–95. The rest is room for the answer.">
+                <NumberInput
+                  id="memory-context-share"
+                  value={settings.context_share_percent}
+                  min={30}
+                  disabled={readOnly || !settings.context_fit_enabled}
+                  onChange={(n) => patch({ context_share_percent: n })}
+                />
+              </FieldRow>
+              <FieldRow
+                title="Window of an unknown model"
+                hint="Tokens, for a model neither the catalog nor LiteLLM knows. 0 sends its turns as they are."
+              >
+                <NumberInput
+                  id="memory-context-default"
+                  value={settings.context_default_tokens}
+                  min={0}
+                  step="1000"
+                  disabled={readOnly || !settings.context_fit_enabled}
+                  onChange={(n) => patch({ context_default_tokens: n })}
+                />
+              </FieldRow>
+              <FieldRow
+                title="Summarize long chats"
+                hint={
+                  settings.summary_model_id
+                    ? "Keeps a summary of each long chat's older messages, in the background, for the turns that cannot take them all. Never for private chats."
+                    : "Needs a summary model. Without one, the oldest messages are left out with a note."
+                }
+              >
+                <Toggle
+                  label="Summarize long chats"
+                  on={settings.summary_enabled}
+                  disabled={readOnly || !settings.context_fit_enabled}
+                  onToggle={() => patch({ summary_enabled: !settings.summary_enabled })}
+                />
+              </FieldRow>
+              <FieldRow title="Summary model" hint="A cheap, fast text model. Cost is billed as chat_summary, never against a budget.">
+                <SearchableModelSelect
+                  id="memory-summary-model"
+                  ariaLabel="Summary model"
+                  value={settings.summary_model_id ? String(settings.summary_model_id) : ""}
+                  disabled={readOnly}
+                  emptyLabel="Not configured"
+                  placeholder="Search summary models…"
+                  options={textModels.map((m) => ({
+                    value: String(m.id),
+                    label: `${m.display_name || m.external_id} · ${m.provider}`,
+                  }))}
+                  onChange={(next) => patch({ summary_model_id: next ? Number(next) : null })}
+                />
+              </FieldRow>
+              <FieldRow title="Newest messages kept word for word" hint="4–200. Also what fitting keeps without a summary.">
+                <NumberInput
+                  id="memory-summary-keep"
+                  value={settings.summary_keep_recent}
+                  min={4}
+                  disabled={readOnly}
+                  onChange={(n) => patch({ summary_keep_recent: n })}
+                />
+              </FieldRow>
+              <FieldRow title="Monthly summary budget" hint="US dollars. 0 means no limit; at the cap, summaries wait for the 1st.">
+                <NumberInput
+                  id="memory-summary-budget"
+                  value={settings.summary_monthly_budget_usd}
+                  step="1"
+                  min={0}
+                  disabled={readOnly}
+                  onChange={(n) => patch({ summary_monthly_budget_usd: n })}
                 />
               </FieldRow>
             </div>

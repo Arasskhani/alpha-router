@@ -45,6 +45,13 @@ const SETTINGS = {
   suppression_days: 180,
   history_completion_enabled: true,
   relearn_enabled: false,
+  context_fit_enabled: true,
+  context_share_percent: 75,
+  context_default_tokens: 0,
+  summary_enabled: true,
+  summary_model_id: null as number | null,
+  summary_keep_recent: 20,
+  summary_monthly_budget_usd: 0,
   project_feature_enabled: true,
   project_max_per_project: 500,
   project_inject_max_items: 60,
@@ -330,6 +337,42 @@ describe("relearning recent chats", () => {
     await render();
     await act(async () => button("Estimate")?.click());
     expect(button("Relearn")?.disabled).toBe(true);
+  });
+});
+
+describe("long chats", () => {
+  function section() {
+    return host.querySelector('section[aria-label="Long chats"]');
+  }
+
+  it("says a summary needs a model, and sends the section's settings on Save", async () => {
+    answerWith({ extraction_model_id: 7 });
+    await render();
+    expect(section()?.textContent).toContain("Needs a summary model.");
+    const toggle = section()?.querySelector<HTMLButtonElement>('button[aria-label="Fit each turn into the model\'s window"]');
+    expect(toggle?.getAttribute("aria-pressed")).toBe("true");
+    await act(async () => toggle?.click());
+    const keep = host.querySelector<HTMLInputElement>("#memory-summary-keep");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(keep, "30");
+      keep?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    // With fitting off, its own numbers cannot be changed.
+    expect(host.querySelector<HTMLInputElement>("#memory-context-share")?.disabled).toBe(true);
+    const form = host.querySelector<HTMLFormElement>("#memory-settings-form");
+    await act(async () => {
+      form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    const patchCall = vi.mocked(api).mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === "PATCH");
+    const body = JSON.parse(String((patchCall?.[1] as RequestInit).body));
+    expect(body.context_fit_enabled).toBe(false);
+    expect(body.summary_keep_recent).toBe(30);
+  });
+
+  it("describes what a summary does once a model is chosen", async () => {
+    answerWith({ extraction_model_id: 7, summary_model_id: 7 });
+    await render();
+    expect(section()?.textContent).toContain("Keeps a summary of each long chat's older messages");
   });
 });
 

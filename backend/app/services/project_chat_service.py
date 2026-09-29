@@ -503,9 +503,11 @@ async def append_project_chat_message(
                     messages=[{"role": msg.role}],
                     watermark_sequence=seq,
                 )
+                from app.services.chat_recall_service import maybe_schedule_chat_index
                 from app.services.chat_summary_service import maybe_schedule_summary
 
                 await maybe_schedule_summary(db, session=row, latest_sequence=seq)
+                await maybe_schedule_chat_index(db, session=row, latest_sequence=seq)
             return _project_message_to_client(msg)
         except (IntegrityError, OperationalError):
             await db.rollback()
@@ -527,6 +529,9 @@ async def delete_project_chat_session(
         return None
     await db.delete(row)
     await db.flush()
+    from app.services.chat_recall_service import drop_chat_vectors
+
+    await drop_chat_vectors([session_id])
     return True
 
 

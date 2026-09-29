@@ -17,6 +17,10 @@ from app.services.qdrant_service import (
 
 KIND_MEMORY = "memory"
 KIND_SUPPRESSION = "suppression"
+#: One exchange of a chat (a question and its answer), for recall in its owner's other chats.
+KIND_CHAT_CHUNK = "chat_chunk"
+#: A chat as a whole: its title and what it was about.
+KIND_CHAT_DIGEST = "chat_digest"
 
 SCOPE_USER = "user"
 SCOPE_PROJECT = "project"
@@ -111,6 +115,7 @@ class MemoryVectorService:
             ("project_id", models.PayloadSchemaType.KEYWORD),
             ("scope", models.PayloadSchemaType.KEYWORD),
             ("kind", models.PayloadSchemaType.KEYWORD),
+            ("session_id", models.PayloadSchemaType.KEYWORD),
             ("category", models.PayloadSchemaType.KEYWORD),
             ("sensitivity", models.PayloadSchemaType.KEYWORD),
             ("enabled", models.PayloadSchemaType.BOOL),
@@ -220,6 +225,26 @@ class MemoryVectorService:
         await self.client.delete(
             validate_collection_name(collection_name),
             models.PointIdsList(points=list(ids)),
+            wait=True,
+        )
+
+    async def delete_sessions(self, *, collection_name: str, session_ids: Sequence[str]) -> None:
+        """Every chat point (exchanges and digest) of these chats."""
+        ids = [str(item) for item in session_ids if item]
+        if not ids:
+            return
+        await self.client.delete(
+            validate_collection_name(collection_name),
+            models.FilterSelector(
+                filter=models.Filter(
+                    must=[
+                        models.FieldCondition(key="session_id", match=models.MatchAny(any=ids)),
+                        models.FieldCondition(
+                            key="kind", match=models.MatchAny(any=[KIND_CHAT_CHUNK, KIND_CHAT_DIGEST])
+                        ),
+                    ]
+                )
+            ),
             wait=True,
         )
 

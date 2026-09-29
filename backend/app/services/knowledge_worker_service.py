@@ -96,6 +96,8 @@ class KnowledgeWorker:
             return await self._process_memory_job(message, scope="project")
         if message.event_type == "chat_summary.job.ready":
             return await self._process_summary_job(message)
+        if message.event_type == "chat_index.job.ready":
+            return await self._process_chat_index_job(message)
         if message.event_type != "knowledge.job.ready":
             error = f"Unsupported Knowledge event type: {message.event_type}"
             await publish_dead_letter(self.redis, message, error=error)
@@ -252,6 +254,22 @@ class KnowledgeWorker:
             handle=summaries.handle_chat_summary,
             finish=summaries.finish_summary,
             lease_seconds=summaries.LEASE_SECONDS,
+        )
+
+    async def _process_chat_index_job(self, message: QueueMessage) -> JobProcessResult:
+        """Index one chat's new exchanges for recall in its owner's other chats (``chat_recall_service``)."""
+        from app.models.chat import ChatRecallIndex
+        from app.services import chat_recall_service as recall
+
+        return await self._process_row_job(
+            message,
+            model=ChatRecallIndex,
+            key=str(message.payload.get("session_id") or message.aggregate_id or ""),
+            claim=recall.claim_chat_index,
+            heartbeat=recall.heartbeat_chat_index,
+            handle=recall.handle_chat_index,
+            finish=recall.finish_chat_index,
+            lease_seconds=recall.LEASE_SECONDS,
         )
 
     async def _process_row_job(

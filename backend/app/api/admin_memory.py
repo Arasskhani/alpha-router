@@ -59,6 +59,10 @@ class MemorySettingsPatch(BaseModel):
     summary_model_id: int | None = Field(default=None)
     summary_keep_recent: int | None = Field(default=None, ge=4, le=200)
     summary_monthly_budget_usd: float | None = Field(default=None, ge=0, le=1_000_000)
+    recall_enabled: bool | None = None
+    recall_max_items: int | None = Field(default=None, ge=1, le=10)
+    recall_max_chars: int | None = Field(default=None, ge=500, le=12_000)
+    recall_min_similarity: float | None = Field(default=None, ge=0, le=1)
     project_feature_enabled: bool | None = None
     project_max_per_project: int | None = Field(default=None, ge=10, le=2000)
     project_inject_max_items: int | None = Field(default=None, ge=1, le=200)

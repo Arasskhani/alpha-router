@@ -407,6 +407,10 @@ async def reindex_all_memories(db: AsyncSession) -> dict[str, int]:
             indexed += 1
     await service.activate_alias(collection_name=new_name)
     await update_memory_settings(db, {"qdrant_collection_version": nxt})
+    # The new collection has no chat vectors: every chat is indexed again as it goes on.
+    from app.services.chat_recall_service import reset_after_reindex
+
+    await reset_after_reindex(db)
     # Suppression content is never stored, so those vectors cannot be rebuilt.
     # Hash suppression still blocks re-learning; drop the stale indexed claim.
     await db.execute(

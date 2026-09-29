@@ -174,6 +174,8 @@ def _default_prefs() -> dict[str, Any]:
         # facts there is a different decision from using them in their own
         # browser chat, so it is made separately and opted into.
         "memory_outside_chat": False,
+        # On by default: a new chat may use what the person said in their earlier ones.
+        "memory_recall_chats": True,
     }
 
 
@@ -276,6 +278,8 @@ def _normalize_prefs(raw: dict[str, Any] | None) -> dict[str, Any]:
         base["memory_auto_capture"] = _coerce_bool(raw.get("memory_auto_capture"), default=True)
     if "memory_outside_chat" in raw:
         base["memory_outside_chat"] = _coerce_bool(raw.get("memory_outside_chat"), default=False)
+    if "memory_recall_chats" in raw:
+        base["memory_recall_chats"] = _coerce_bool(raw.get("memory_recall_chats"), default=True)
     return base
 
 
@@ -1017,6 +1021,9 @@ async def delete_chat_session(db: AsyncSession, user_id: int, session_id: str) -
         return False
     await db.delete(row)
     await db.flush()
+    from app.services.chat_recall_service import drop_chat_vectors
+
+    await drop_chat_vectors([session_id])
     return True
 
 
@@ -1268,11 +1275,12 @@ async def append_session_messages(
                 session_id,
             )
         if any(str(msg.get("role") or "") == "assistant" for msg in messages):
+            from app.services.chat_recall_service import maybe_schedule_chat_index
             from app.services.chat_summary_service import maybe_schedule_summary
 
-            await maybe_schedule_summary(
-                db, session=session, latest_sequence=int(max((row.sequence for row in inserted), default=0))
-            )
+            latest = int(max((row.sequence for row in inserted), default=0))
+            await maybe_schedule_summary(db, session=session, latest_sequence=latest)
+            await maybe_schedule_chat_index(db, session=session, latest_sequence=latest)
     return [_message_to_client(r) for r in inserted]
 
 
@@ -1306,9 +1314,11 @@ async def purge_session_messages_for_private_mode(
         (await db.execute(select(ChatMessage.id).where(ChatMessage.session_id == session_id))).scalars().all()
     )
     await db.execute(delete(ChatMessage).where(ChatMessage.session_id == session_id))
+    from app.services.chat_recall_service import forget_chats
     from app.services.chat_summary_service import forget_summaries
 
     await forget_summaries(db, [session_id])
+    await forget_chats(db, [session_id])
     session.message_count = 0
     session.last_message_at = None
     session.private_mode = True
@@ -1336,10 +1346,12 @@ async def replace_session_messages(
     existing_by_client_id = {row.client_message_id: row for row in existing_rows if row.client_message_id}
     existing_by_id = {row.id: row for row in existing_rows}
     await db.execute(delete(ChatMessage).where(ChatMessage.session_id == session_id))
-    # The stored chat is rewritten: its summary may describe messages it no longer has.
+    # The stored chat is rewritten: its summary and its recall vectors may describe messages it no longer has.
+    from app.services.chat_recall_service import forget_chats
     from app.services.chat_summary_service import forget_summaries
 
     await forget_summaries(db, [session_id])
+    await forget_chats(db, [session_id])
     await db.flush()
 
     if not messages:

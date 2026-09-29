@@ -52,6 +52,7 @@ class UserPrefsPatchIn(BaseModel):
     memory_enabled: bool | None = None
     memory_auto_capture: bool | None = None
     memory_outside_chat: bool | None = None
+    memory_recall_chats: bool | None = None
 
 
 class ChatSessionCreateIn(BaseModel):

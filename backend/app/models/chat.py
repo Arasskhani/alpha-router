@@ -346,6 +346,41 @@ class ChatSummary(Base):
     __table_args__ = (Index("ix_chat_summaries_status_run", "status", "run_after"),)
 
 
+class ChatRecallIndex(Base):
+    """What of a chat is indexed for recall in its owner's other chats, and the indexing job's state.
+
+    The vectors live in the memory collection in Qdrant (kinds ``chat_chunk``
+    and ``chat_digest``, ids only in their payload); the words stay in the
+    chat's own messages. One row per chat; it goes with the chat.
+    """
+
+    __tablename__ = "chat_recall_index"
+
+    session_id = Column(String(36), ForeignKey("chat_sessions.id", ondelete="CASCADE"), primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    project_id = Column(String(36), nullable=True, index=True)
+    #: The last message sequence whose exchanges are indexed.
+    indexed_up_to = Column(Integer, nullable=False, default=0)
+    #: Nothing at or before this sequence is ever indexed: what the person said before their last delete-all.
+    not_before = Column(Integer, nullable=False, default=0)
+    chunk_count = Column(Integer, nullable=False, default=0)
+    #: sha256 of the text the chat's digest was embedded from, so an unchanged digest is not embedded again.
+    digest_hash = Column(String(64), nullable=True)
+    embedding_model = Column(String(255), nullable=True)
+    #: idle | pending | running | failed
+    status = Column(String(16), nullable=False, default="idle")
+    run_after = Column(DateTime, nullable=True)
+    attempt_count = Column(Integer, nullable=False, default=0)
+    lease_expires_at = Column(DateTime, nullable=True)
+    worker_id = Column(String(64), nullable=True)
+    last_error = Column(Text, nullable=True)
+    indexed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+
+    __table_args__ = (Index("ix_chat_recall_index_status_run", "status", "run_after"),)
+
+
 class UserMemoryEvent(Base):
     """Append-only audit trail for memory mutations (no memory text)."""
 

@@ -545,6 +545,13 @@ async def delete_all_memories(db: AsyncSession, user_id: int, *, actor: str = "u
     except Exception:
         logger.exception("Failed to reset memory watermarks user_id=%s", user_id)
     try:
+        # Earlier chats are recalled into new ones too: "delete all" takes them out of that, for good.
+        from app.services.chat_recall_service import forget_user_chats
+
+        await forget_user_chats(db, user_id)
+    except Exception:
+        logger.exception("Failed to take chats out of recall user_id=%s", user_id)
+    try:
         from app.services.memory_vector_service import MemoryVectorService
 
         service = MemoryVectorService()

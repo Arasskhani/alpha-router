@@ -73,23 +73,54 @@ async def get_settings(
     return await get_memory_settings(db)
 
 
+async def _audit(db: AsyncSession, request: Request, admin: User, action: str, resource_id: str, detail: dict) -> None:
+    """One Admin Logs row for a change made on Admin -> Memory."""
+    from app.services.client_ip import resolve_client_ip
+    from app.services.security_audit import log_security_event
+
+    await log_security_event(
+        db,
+        actor=admin,
+        actor_ip=resolve_client_ip(request),
+        action=action,
+        resource_type="memory",
+        resource_id=resource_id,
+        detail=detail,
+    )
+
+
 @router.patch("/settings")
 async def patch_settings(
     body: MemorySettingsPatch,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    _user: User = Depends(require_memory_write),
+    admin: User = Depends(require_memory_write),
 ) -> dict[str, Any]:
+    """Save the settings; a save that changes something is recorded as memory_settings_changed.
+
+    The record has each changed setting before and after. These decide what
+    is learned about people, with which model, at what cost and for how long:
+    exactly what an auditor looks for. Nothing in them is secret.
+    """
     updates = body.model_dump(exclude_unset=True)
     if not updates:
         return await get_memory_settings(db)
+    before = await get_memory_settings(db)
     try:
         result = await update_memory_settings(db, updates)
-        await db.commit()
-        return result
     except MemorySettingsError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    changes = {
+        name: {"from": before.get(name), "to": result.get(name)}
+        for name in sorted(result)
+        if before.get(name) != result.get(name)
+    }
+    if changes:
+        await _audit(db, request, admin, "memory_settings_changed", "settings", {"changes": changes})
+    await db.commit()
+    return result
 
 
 @router.get("/stats")
@@ -248,18 +279,10 @@ async def post_retry_failed_jobs(
     admin: User = Depends(require_memory_write),
 ) -> dict[str, Any]:
     """Run failed jobs again from where their chats were mined to; audited."""
-    from app.services.client_ip import resolve_client_ip
-    from app.services.security_audit import log_security_event
-
     counts = await retry_failed_jobs(db, body.scope, job_ids=body.job_ids)
-    await log_security_event(
-        db,
-        actor=admin,
-        actor_ip=resolve_client_ip(request),
-        action="memory_jobs_retried",
-        resource_type="memory",
-        resource_id=body.scope,
-        detail={"scope": body.scope, "selected": len(body.job_ids) if body.job_ids is not None else "all", **counts},
+    selected = len(body.job_ids) if body.job_ids is not None else "all"
+    await _audit(
+        db, request, admin, "memory_jobs_retried", body.scope, {"scope": body.scope, "selected": selected, **counts}
     )
     await db.commit()
     return {"ok": True, "scope": body.scope, **counts}
@@ -287,42 +310,35 @@ async def post_relearn(
     admin: User = Depends(require_memory_write),
 ) -> dict[str, Any]:
     """Queue the last ``days`` of chats to be read again for memory; audited."""
-    from app.services.client_ip import resolve_client_ip
-    from app.services.security_audit import log_security_event
-
     try:
         result = await start_relearn(db, days=body.days)
     except RelearnUnavailable as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    await log_security_event(
-        db,
-        actor=admin,
-        actor_ip=resolve_client_ip(request),
-        action="memory_relearn_started",
-        resource_type="memory",
-        resource_id="relearn",
-        detail={key: result[key] for key in ("days", "chats", "messages", "parts", "queued", "merged")},
-    )
+    detail = {key: result[key] for key in ("days", "chats", "messages", "parts", "queued", "merged")}
+    await _audit(db, request, admin, "memory_relearn_started", "relearn", detail)
     await db.commit()
     return {"ok": True, **result}
 
 
 @router.post("/reindex")
 async def post_reindex(
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    _user: User = Depends(require_memory_write),
+    admin: User = Depends(require_memory_write),
 ) -> dict[str, Any]:
     try:
         result = await reindex_all_memories(db)
-        await db.commit()
-        return {"ok": True, **result}
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await _audit(db, request, admin, "memory_index_rebuilt", "index", dict(result))
+    await db.commit()
+    return {"ok": True, **result}
 
 
 @router.post("/purge-user/{user_id}")
 async def post_purge_user(
     user_id: int,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_memory_write),
 ) -> dict[str, Any]:
@@ -330,5 +346,6 @@ async def post_purge_user(
     if target is None:
         raise HTTPException(status_code=404, detail="User not found")
     deleted = await delete_all_memories(db, user_id, actor="admin")
+    await _audit(db, request, admin, "memory_user_purged", str(user_id), {"user_id": user_id, "deleted": deleted})
     await db.commit()
     return {"ok": True, "deleted": deleted, "user_id": user_id, "purged_by": admin.id}

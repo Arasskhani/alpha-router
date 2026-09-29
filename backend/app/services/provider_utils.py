@@ -170,8 +170,15 @@ def usage_from_stream_wrapper(stream) -> tuple[int, int, int]:
     return 0, 0, 0
 
 
+def _part(value: Any, name: str) -> Any:
+    """``value.name`` or ``value[name]``: LiteLLM hands its replies over as objects, some providers as dicts."""
+    if isinstance(value, dict):
+        return value.get(name)
+    return getattr(value, name, None)
+
+
 def usage_from_response(response) -> tuple[int, int, int]:
-    return usage_from_usage_obj(getattr(response, "usage", None))
+    return usage_from_usage_obj(_part(response, "usage"))
 
 
 def sse_delta_chunk(content: str) -> bytes:
@@ -237,9 +244,10 @@ def usage_event_model_id(event: PendingUsageEvent | None) -> str | None:
 
 def extract_non_stream_content(response) -> tuple[str, tuple[int, int, int]]:
     content = ""
-    if response.choices:
-        message = response.choices[0].message
-        content = getattr(message, "content", None) or ""
+    choices = _part(response, "choices")
+    if choices:
+        message = _part(choices[0], "message")
+        content = _part(message, "content") or ""
     return content, usage_from_response(response)
 
 

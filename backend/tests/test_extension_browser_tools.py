@@ -1045,6 +1045,29 @@ class TestTheTurn:
 
 
 class TestTheWholeReply:
+    async def test_a_reply_that_comes_as_a_dict_is_read_whole(self):
+        from app.services.provider_stream import NonStreamRetry
+
+        call = {"id": "c1", "type": "function", "function": {"name": "click", "arguments": "{}"}}
+        reply = {
+            "choices": [{"message": {"role": "assistant", "content": "On it.", "tool_calls": [call]}}],
+            "usage": {"prompt_tokens": 12, "completion_tokens": 3},
+        }
+
+        async def answer(**_kwargs):
+            return reply
+
+        retry = NonStreamRetry(
+            ai_model=SimpleNamespace(),  # type: ignore[arg-type]
+            provider_type="openai",
+            model="gpt-a",
+            completion_kwargs={"messages": TASK, "tools": TOOLS},
+            completion_fn=answer,
+        )
+        await retry.run()
+        assert (retry.content, retry.prompt_tokens, retry.completion_tokens) == ("On it.", 12, 3)
+        assert [c["function"]["name"] for c in retry.tool_calls()] == ["click"]
+
     async def test_its_tool_calls_are_read_when_they_come_as_dicts(self):
         from app.services.provider_stream import NonStreamRetry
 

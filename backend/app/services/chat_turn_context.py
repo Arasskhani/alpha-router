@@ -321,6 +321,19 @@ async def agent_request_in_page_chat(
     return None
 
 
+async def own_session_title(db: AsyncSession, chat_session_id: str | None, user_id: int | None) -> str | None:
+    """The chat's title when it is the person's own chat: part of what memory is looked up with."""
+    sid = (chat_session_id or "").strip()
+    if not sid or user_id is None:
+        return None
+    from app.models.chat import ChatSession
+
+    session = await db.get(ChatSession, sid)
+    if session is None or session.user_id != user_id:
+        return None
+    return str(session.title or "") or None
+
+
 async def resolve_session_project_id(db: AsyncSession, chat_session_id: str | None) -> str | None:
     """Server-side project of a chat session; the client value is never trusted."""
     sid = (chat_session_id or "").strip()
@@ -527,6 +540,7 @@ async def build_turn_context(  # noqa: C901 -- straight-line preparation moved o
             try:
                 chat_session_id = str(body.get("chat_session_id") or "").strip() or None
                 session_project_id = await resolve_session_project_id(db, chat_session_id)
+                memory_query = extract_query_text(messages, title=await own_session_title(db, chat_session_id, user_id))
                 project_memory_project_id = session_project_id
                 messages = await augment_messages_with_profile(
                     db,
@@ -543,7 +557,7 @@ async def build_turn_context(  # noqa: C901 -- straight-line preparation moved o
                         user_id=user_id,
                         private_mode=private_mode,
                         via_api_key=alpha_router_api_key_id is not None,
-                        query=extract_query_text(messages),
+                        query=memory_query,
                         injected_ids=injected_memory_ids,
                     )
                 messages = await augment_messages_with_project_context(
@@ -552,7 +566,7 @@ async def build_turn_context(  # noqa: C901 -- straight-line preparation moved o
                     user_id=user_id,
                     chat_session_id=chat_session_id,
                     client_project_id=str(body.get("project_id") or body.get("projectId") or "").strip() or None,
-                    query=extract_query_text(messages),
+                    query=memory_query,
                     injected_memory_ids=injected_project_memory_ids,
                 )
                 messages = await augment_messages_with_recall(

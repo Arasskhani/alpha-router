@@ -88,3 +88,35 @@ def searchable_memory_text(model: Any) -> Any:
     from sqlalchemy import func
 
     return func.coalesce(model.content_search, func.lower(model.content))
+
+
+_STOPWORDS_TEXT = """
+the and for with that this what was were are you your have has had not but from they them their there
+will would can could should about which when where how who whom why into than then also just like some
+any all more most other such only very does did done been being our out get got its please tell know
+want need make let yes okay thanks thank hello
+برای این اون آن است بود هست هستم هستید نیست شد شود کرد کنم کنی کنید کنیم کردم میکنم میخواهم میخوام
+من تو ما شما او اونها آنها هم یا اما ولی چه چی چرا کجا چطور چگونه یک هر همه بعد قبل اگر خیلی دیگه
+دیگر باید نه بله آره روی زیر بین پیش پس حالا فقط هنوز های ها رو را که از به با در تا
+میشه بشه دارم داری داره دارید داشتم بگو بگید لطفا ممنون سلام الان چیه کدوم کدام
+"""
+#: Words too common to find a memory by (English and Persian, folded as ``fold_for_search`` folds them).
+SEARCH_STOPWORDS = frozenset(fold_for_search(word) for word in _STOPWORDS_TEXT.split())
+
+
+def search_terms(query: str | None, *, limit: int = 12) -> list[str]:
+    """The words a lexical memory search looks for: folded, three letters or more, not stop words.
+
+    ``query`` is read line by line from the last: its newest question comes
+    first, so it is not crowded out by the older ones or the chat's title.
+    """
+    terms: list[str] = []
+    for line in reversed((query or "").splitlines()):
+        # Letters and digits only: Persian punctuation (؟ ، ؛) sits in the Arabic block but is not a word.
+        for token in re.findall(r"\w{3,}", fold_for_search(line)):
+            if token in SEARCH_STOPWORDS or token in terms:
+                continue
+            terms.append(token)
+            if len(terms) >= limit:
+                return terms
+    return terms

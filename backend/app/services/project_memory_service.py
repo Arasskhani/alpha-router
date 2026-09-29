@@ -47,7 +47,7 @@ from app.services.project_access_service import (
     is_project_owner_role,
     require_capability,
 )
-from app.utils.text_normalize import fold_for_search, searchable_memory_text
+from app.utils.text_normalize import search_terms, searchable_memory_text
 
 logger = logging.getLogger(__name__)
 
@@ -1189,7 +1189,7 @@ async def _auto_recency_rows(db: AsyncSession, project_id: str, *, limit: int) -
 async def _auto_lexical_rows(db: AsyncSession, project_id: str, query: str, *, limit: int) -> list[ProjectMemory]:
     if limit <= 0 or not query.strip():
         return []
-    tokens = [token for token in re.findall(r"[\w\u0600-\u06FF]{3,}", fold_for_search(query)) if token][:8]
+    tokens = search_terms(query)
     if not tokens:
         return []
     now = datetime.datetime.utcnow()

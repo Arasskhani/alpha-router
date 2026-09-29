@@ -33,7 +33,7 @@ from app.services.memory_settings_service import (
     parse_embedding_spec,
 )
 from app.services.user_chat_storage_service import load_user_prefs
-from app.utils.text_normalize import fold_for_search, normalize_memory_text, searchable_memory_text
+from app.utils.text_normalize import normalize_memory_text, search_terms, searchable_memory_text
 
 logger = logging.getLogger(__name__)
 
@@ -689,11 +689,21 @@ def extract_message_text(content: Any) -> str:
     return raw
 
 
-def extract_query_text(messages: list[dict] | None) -> str:
-    for message in reversed(messages or []):
-        if str(message.get("role") or "") == "user":
-            return extract_message_text(message.get("content"))[:1000]
-    return ""
+def extract_query_text(messages: list[dict] | None, *, title: str | None = None, questions: int = 3) -> str:
+    """What memory is looked up with: the chat's title and its last few questions, one per line, newest last.
+
+    It used to be the last message alone, so "and on Wednesday?" found
+    nothing about the workout plan the question before it was about.
+    """
+    asked = [
+        text
+        for message in messages or []
+        if str(message.get("role") or "") == "user"
+        for text in [extract_message_text(message.get("content")).strip()]
+        if text
+    ]
+    lines = [str(title or "").strip(), *(line[:600] for line in asked[-max(1, questions) :])]
+    return "\n".join(line for line in lines if line)[-1500:]
 
 
 def _not_expired(now: dt.datetime):
@@ -756,7 +766,7 @@ async def _core_rows(db: AsyncSession, user_id: int, *, limit: int) -> list[User
 async def _lexical_rows(db: AsyncSession, user_id: int, query: str, *, limit: int) -> list[UserMemory]:
     if limit <= 0 or not query.strip():
         return []
-    tokens = [token for token in re.findall(r"[\w\u0600-\u06FF]{3,}", fold_for_search(query)) if token][:8]
+    tokens = search_terms(query)
     if not tokens:
         return []
     now = dt.datetime.utcnow()

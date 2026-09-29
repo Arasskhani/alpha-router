@@ -21,6 +21,9 @@ PAGE_CONTEXT_META_KEY = "pageContext"
 #: longer than the model's window, and its ``n`` oldest messages were not sent
 #: word for word (``m`` of them stood in for by the chat's summary).
 CONTEXT_FIT_META_KEY = "contextFit"
+#: Assistant message meta, ``[{"id": session_id, "title": ...}]``: the person's
+#: earlier chats this answer read from (recall).
+RECALLED_CHATS_META_KEY = "recalledChats"
 #: Server-owned body keys: the function tools the browser extension's agent
 #: offers the model for one step, and the tool choice. The turn hands them to
 #: the provider as ``tools`` / ``tool_choice`` and streams the model's tool

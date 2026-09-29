@@ -451,6 +451,58 @@ class TestForgetting:
         assert await self._found(db_session, user)
 
 
+async def test_a_turn_goes_to_the_model_with_what_it_recalled_and_says_where_from(db_session, user, store, monkeypatch):
+    from app.services.chat_turn_context import build_turn_context
+
+    async def _same(_db, messages, **_kwargs):
+        return messages
+
+    for name in (
+        "augment_messages_with_profile",
+        "augment_messages_with_memory",
+        "augment_messages_with_project_context",
+    ):
+        monkeypatch.setattr(f"app.services.chat_turn_context.{name}", _same)
+    workout = await _chat(db_session, user, "Workout", WORKOUT)
+    await _indexed(db_session, workout)
+    new = await _chat(db_session, user, "New chat", [])
+    resolved = SimpleNamespace(
+        ai_model=SimpleNamespace(
+            provider_type="openai",
+            external_id="gpt-4o-mini",
+            display_name="GPT",
+            connection_id=7,
+            context_length=128_000,
+        ),
+        api_key="sk-test",
+        base_url="https://example.com/v1",
+        provider_type="openai",
+        model_id="gpt-4o-mini",
+        budget_reservation_id=None,
+        code_interpreter_capacity_permit=None,
+        code_interpreter_workspace_files=None,
+        agent_turn=None,
+    )
+    ctx = await build_turn_context(
+        db_session,
+        {
+            "model": "model::1",
+            "messages": [{"role": "user", "content": "What was my workout plan on Monday?"}],
+            "chat_session_id": new.id,
+        },
+        resolved,
+        user_id=user.id,
+        username=user.username,
+        source="alpha_router_chat",
+        skip_budget=True,
+        alpha_router_api_key_id=None,
+    )
+    await ctx.lease.abandon("test over")
+    sent = ctx.completion_kwargs["messages"]
+    assert sent[0]["role"] == "system" and sent[0]["content"].startswith(RECALL_HEADER)
+    assert ctx.recalled_chats == [{"id": workout.id, "title": "Workout"}]
+
+
 async def test_the_knowledge_worker_indexes_a_chat(db_session, session_factory, user, store):
     from app.services.knowledge_job_handlers import KnowledgeJobContext
     from app.services.knowledge_queue import ensure_consumer_group, read_new_messages

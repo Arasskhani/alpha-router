@@ -80,6 +80,8 @@ class TurnIdentity:
     injected_project_memory_ids: list[str] = field(default_factory=list)
     #: What fitting the turn into the model's window left out; None when nothing.
     context_fit: dict | None = None
+    #: The earlier chats the turn read from; None when none.
+    recalled_chats: list[dict] | None = None
 
 
 def agent_identity_metadata(agent_turn: PreparedAgentTurn) -> dict[str, object]:
@@ -324,6 +326,8 @@ async def settle_turn(
     # dropped trailing frame harmless.
     if not outcome.was_cancelled and identity.source == "alpha_router_chat" and identity.context_fit:
         response_metadata["context_fit"] = identity.context_fit
+    if not outcome.was_cancelled and identity.source == "alpha_router_chat" and identity.recalled_chats:
+        response_metadata["recalled_chats"] = identity.recalled_chats
 
     if not outcome.was_cancelled and identity.source == "alpha_router_chat":
         budget_notice = await budget_notice_after_settlement(identity.user_id)

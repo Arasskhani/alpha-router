@@ -36,6 +36,7 @@ from app.services.chat_markers import (
     BROWSER_TOOLS_BODY_KEY,
     CONTEXT_FIT_META_KEY,
     PAGE_CONTEXT_BODY_KEY,
+    RECALLED_CHATS_META_KEY,
     PAGE_CONTEXT_META_KEY,
 )
 from app.services.chat_tools_service import ChatToolsConfig, augment_messages_with_tools, parse_tools_config
@@ -44,6 +45,7 @@ from app.services.code_interpreter_capacity_service import (
     heartbeat_code_interpreter_turn,
     release_code_interpreter_turn,
 )
+from app.services.chat_recall_service import augment_messages_with_recall
 from app.services.chat_summary_service import summary_for_turn
 from app.services.context_fit_service import ContextFit, fit_turn_to_context
 from app.services.code_interpreter_service import (
@@ -169,6 +171,8 @@ class TurnContext:
     budget_hold_usd: float | None = None
     #: What fitting the turn into the model's window left out (``ContextFit.metadata``); None when nothing.
     context_fit: dict | None = None
+    #: The earlier chats this turn read from (``[{"id", "title"}]``); None when none.
+    recalled_chats: list[dict] | None = None
 
 
 async def adaptive_openrouter_extra_body(ai_model: AIModel) -> dict | None:
@@ -347,6 +351,7 @@ async def build_turn_context(  # noqa: C901 -- straight-line preparation moved o
 ) -> TurnContext | NonGeneratingReply:
     messages = list(body.get("messages", []))
     injected_memory_ids: list[str] = []
+    recalled_chats: list[dict] = []
     injected_project_memory_ids: list[str] = []
     project_memory_project_id: str | None = None
     chat_session_id_for_billing = str(body.get("chat_session_id") or "").strip()
@@ -550,6 +555,15 @@ async def build_turn_context(  # noqa: C901 -- straight-line preparation moved o
                     query=extract_query_text(messages),
                     injected_memory_ids=injected_project_memory_ids,
                 )
+                messages = await augment_messages_with_recall(
+                    db,
+                    messages,
+                    user_id=user_id,
+                    chat_session_id=chat_session_id,
+                    private_mode=private_mode,
+                    via_api_key=alpha_router_api_key_id is not None,
+                    recalled=recalled_chats,
+                )
             except BaseException:
                 await lease.abandon("memory setup error")
                 raise
@@ -631,6 +645,8 @@ async def build_turn_context(  # noqa: C901 -- straight-line preparation moved o
                 try:
                     if fitted.metadata():
                         persister.set_message_metadata({CONTEXT_FIT_META_KEY: fitted.metadata()})
+                    if recalled_chats:
+                        persister.set_message_metadata({RECALLED_CHATS_META_KEY: recalled_chats})
                     if page_sites:
                         persister.set_message_metadata({PAGE_CONTEXT_META_KEY: {"sites": page_sites}})
                     elif earlier:
@@ -676,6 +692,7 @@ async def build_turn_context(  # noqa: C901 -- straight-line preparation moved o
             injected_project_memory_ids=injected_project_memory_ids,
             budget_hold_usd=budget_hold_usd,
             context_fit=fitted.metadata(),
+            recalled_chats=recalled_chats or None,
         )
     except BaseException:
         await lease.abandon("turn preparation error")

@@ -7,6 +7,7 @@ import contextlib
 import datetime
 import logging
 from dataclasses import dataclass
+from typing import Any
 
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -240,68 +241,90 @@ class KnowledgeWorker:
     async def _process_summary_job(self, message: QueueMessage) -> JobProcessResult:
         """Bring one chat's rolling summary up to date (``chat_summary_service``)."""
         from app.models.chat import ChatSummary
-        from app.services.chat_summary_service import (
-            LEASE_SECONDS,
-            claim_summary,
-            finish_summary,
-            handle_chat_summary,
-            heartbeat_summary,
+        from app.services import chat_summary_service as summaries
+
+        return await self._process_row_job(
+            message,
+            model=ChatSummary,
+            key=str(message.payload.get("session_id") or message.aggregate_id or ""),
+            claim=summaries.claim_summary,
+            heartbeat=summaries.heartbeat_summary,
+            handle=summaries.handle_chat_summary,
+            finish=summaries.finish_summary,
+            lease_seconds=summaries.LEASE_SECONDS,
         )
 
-        session_id = str(message.payload.get("session_id") or message.aggregate_id or "")
+    async def _process_row_job(
+        self,
+        message: QueueMessage,
+        *,
+        model: Any,
+        key: str,
+        claim: Any,
+        heartbeat: Any,
+        handle: Any,
+        finish: Any,
+        lease_seconds: int,
+    ) -> JobProcessResult:
+        """Run a job whose state lives on the row it works on (a chat's summary, a chat's recall index).
+
+        ``claim(db, session_id=, worker_id=)`` takes the row or answers None;
+        ``handle(db, row)`` does the work, committing as it goes, and answers
+        whether more is left; ``finish(db, row, error=, more=)`` closes the run
+        and answers "failed" when the job gives up. The lease is kept alive
+        while the work runs.
+        """
         async with self.session_factory() as db:
-            row = await claim_summary(db, session_id=session_id, worker_id=self.consumer_name) if session_id else None
+            row = await claim(db, session_id=key, worker_id=self.consumer_name) if key else None
             await db.commit()
         if row is None:
             await acknowledge_message(self.redis, message.stream_id)
-            return JobProcessResult(outcome="duplicate", job_id=session_id or None)
+            return JobProcessResult(outcome="duplicate", job_id=key or None)
 
         stop = asyncio.Event()
 
         async def _heartbeat() -> None:
             while not stop.is_set():
                 try:
-                    await asyncio.wait_for(stop.wait(), timeout=max(1, LEASE_SECONDS // 3))
+                    await asyncio.wait_for(stop.wait(), timeout=max(1, lease_seconds // 3))
                     break
                 except TimeoutError:
                     pass
                 try:
                     async with self.session_factory() as db:
-                        current = await db.get(ChatSummary, session_id)
-                        if current is None or not await heartbeat_summary(db, current, worker_id=self.consumer_name):
+                        current = await db.get(model, key)
+                        if current is None or not await heartbeat(db, current, worker_id=self.consumer_name):
                             await db.rollback()
                             return
                         await db.commit()
                 except Exception:
-                    logger.exception("Chat summary heartbeat failed for %s", session_id)
+                    logger.exception("Heartbeat failed for %s %s", model.__tablename__, key)
 
-        heartbeat = asyncio.create_task(_heartbeat())
+        beating = asyncio.create_task(_heartbeat())
         failure: Exception | None = None
         more = False
         try:
             async with self.session_factory() as db:
-                current = await db.get(ChatSummary, session_id)
+                current = await db.get(model, key)
                 if current is not None:
-                    more = await handle_chat_summary(db, current)
+                    more = await handle(db, current)
                     await db.commit()
         except Exception as exc:  # noqa: BLE001 -- the run is closed below with the error recorded on the row
             failure = exc
         stop.set()
-        await heartbeat
+        await beating
         outcome = "succeeded"
         async with self.session_factory() as db:
-            current = await db.get(ChatSummary, session_id)
+            current = await db.get(model, key)
             if current is not None and current.worker_id == self.consumer_name:
-                outcome = await finish_summary(db, current, error=failure, more=more)
+                outcome = await finish(db, current, error=failure, more=more)
                 await db.commit()
         if outcome == "failed" and failure is not None:
             await publish_dead_letter(self.redis, message, error=str(failure))
         await acknowledge_message(self.redis, message.stream_id)
         if failure is not None:
-            return JobProcessResult(
-                outcome="dead" if outcome == "failed" else "retry", job_id=session_id, error=str(failure)
-            )
-        return JobProcessResult(outcome="succeeded", job_id=session_id)
+            return JobProcessResult(outcome="dead" if outcome == "failed" else "retry", job_id=key, error=str(failure))
+        return JobProcessResult(outcome="succeeded", job_id=key)
 
     async def _process_knowledge_job(self, message: QueueMessage) -> JobProcessResult:
         job_id = str(message.payload.get("job_id") or message.aggregate_id or "")

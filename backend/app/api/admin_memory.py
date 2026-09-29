@@ -17,6 +17,7 @@ from app.models.project import ProjectMemory, ProjectMemoryJob
 from app.models.user import User
 from app.services.memory_job_admin_service import list_failed_jobs, retry_failed_jobs
 from app.services.memory_maintenance_service import reindex_all_memories
+from app.services.memory_relearn_service import MAX_DAYS, RelearnUnavailable, estimate_relearn, start_relearn
 from app.services.memory_settings_service import (
     MemorySettingsError,
     get_memory_settings,
@@ -50,6 +51,7 @@ class MemorySettingsPatch(BaseModel):
     soft_delete_purge_days: int | None = Field(default=None, ge=1, le=365)
     suppression_days: int | None = Field(default=None, ge=1, le=3650)
     history_completion_enabled: bool | None = None
+    relearn_enabled: bool | None = None
     project_feature_enabled: bool | None = None
     project_max_per_project: int | None = Field(default=None, ge=10, le=2000)
     project_inject_max_items: int | None = Field(default=None, ge=1, le=200)
@@ -261,6 +263,48 @@ async def post_retry_failed_jobs(
     )
     await db.commit()
     return {"ok": True, "scope": body.scope, **counts}
+
+
+@router.get("/relearn/estimate")
+async def get_relearn_estimate(
+    days: int = Query(30, ge=1, le=MAX_DAYS),
+    db: AsyncSession = Depends(get_read_db),
+    _user: User = Depends(require_memory),
+) -> dict[str, Any]:
+    """What reading the last ``days`` of chats again would take, before anything is run."""
+    return await estimate_relearn(db, days=days)
+
+
+class StartRelearn(BaseModel):
+    days: int = Field(ge=1, le=MAX_DAYS)
+
+
+@router.post("/relearn")
+async def post_relearn(
+    body: StartRelearn,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_memory_write),
+) -> dict[str, Any]:
+    """Queue the last ``days`` of chats to be read again for memory; audited."""
+    from app.services.client_ip import resolve_client_ip
+    from app.services.security_audit import log_security_event
+
+    try:
+        result = await start_relearn(db, days=body.days)
+    except RelearnUnavailable as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    await log_security_event(
+        db,
+        actor=admin,
+        actor_ip=resolve_client_ip(request),
+        action="memory_relearn_started",
+        resource_type="memory",
+        resource_id="relearn",
+        detail={key: result[key] for key in ("days", "chats", "messages", "parts", "queued", "merged")},
+    )
+    await db.commit()
+    return {"ok": True, **result}
 
 
 @router.post("/reindex")

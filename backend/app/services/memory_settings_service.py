@@ -72,6 +72,7 @@ SETTING_KEYS = {
     "memory_suppression_days": "180",
     "memory_qdrant_collection_version": "1",
     "memory_history_completion_enabled": "true",
+    "memory_relearn_enabled": "false",
     "project_memory_feature_enabled": "true",
     "project_memory_max_per_project": "500",
     "project_memory_inject_max_items": "60",
@@ -229,6 +230,8 @@ def parse_memory_settings(raw: dict[str, str]) -> dict[str, Any]:
         "qdrant_collection_version": _as_int(raw.get("memory_qdrant_collection_version"), 1, minimum=1, maximum=10_000),
         # A turn's history made whole on the server when the client sent only its latest part.
         "history_completion_enabled": _as_bool(raw.get("memory_history_completion_enabled"), True),
+        # Reading the last days of chats again, by hand, from Admin -> Memory; off unless turned on.
+        "relearn_enabled": _as_bool(raw.get("memory_relearn_enabled"), False),
         "project_feature_enabled": _as_bool(raw.get("project_memory_feature_enabled"), True),
         "project_max_per_project": _as_int(raw.get("project_memory_max_per_project"), 500, minimum=10, maximum=2000),
         "project_inject_max_items": _as_int(raw.get("project_memory_inject_max_items"), 60, minimum=1, maximum=200),
@@ -344,6 +347,7 @@ def _raw_from_values(values: dict[str, Any]) -> dict[str, str]:
         "memory_suppression_days": str(values["suppression_days"]),
         "memory_qdrant_collection_version": str(values["qdrant_collection_version"]),
         "memory_history_completion_enabled": "true" if values["history_completion_enabled"] else "false",
+        "memory_relearn_enabled": "true" if values["relearn_enabled"] else "false",
         "project_memory_feature_enabled": ("true" if values["project_feature_enabled"] else "false"),
         "project_memory_max_per_project": str(values["project_max_per_project"]),
         "project_memory_inject_max_items": str(values["project_inject_max_items"]),
@@ -385,6 +389,7 @@ async def update_memory_settings(db: AsyncSession, updates: dict[str, Any]) -> d
         "suppression_days": "memory_suppression_days",
         "qdrant_collection_version": "memory_qdrant_collection_version",
         "history_completion_enabled": "memory_history_completion_enabled",
+        "relearn_enabled": "memory_relearn_enabled",
         "project_feature_enabled": "project_memory_feature_enabled",
         "project_max_per_project": "project_memory_max_per_project",
         "project_inject_max_items": "project_memory_inject_max_items",

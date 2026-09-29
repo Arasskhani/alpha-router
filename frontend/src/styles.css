@@ -8528,6 +8528,12 @@ table.data-table--api-logs {
   overflow-wrap: anywhere;
 }
 
+.memory-admin__estimate {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
 .memory-admin__reasons strong {
   color: var(--text);
   font-variant-numeric: tabular-nums;

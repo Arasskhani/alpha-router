@@ -44,6 +44,7 @@ const SETTINGS = {
   soft_delete_purge_days: 30,
   suppression_days: 180,
   history_completion_enabled: true,
+  relearn_enabled: false,
   project_feature_enabled: true,
   project_max_per_project: 500,
   project_inject_max_items: 60,
@@ -273,6 +274,62 @@ describe("the failed jobs", () => {
     await render();
     expect(section()?.textContent).toContain("Failed jobs");
     expect(host.querySelector(".alert-error")).toBeNull();
+  });
+});
+
+describe("relearning recent chats", () => {
+  const ESTIMATE = {
+    enabled: true,
+    model_configured: true,
+    days: 30,
+    chats: { user: 2, project: 1 },
+    messages: 40,
+    characters: 52000,
+    parts: 5,
+    estimated_cost_usd: 0.0123,
+    spent_this_month_usd: 1.5,
+    monthly_cap_usd: 10,
+  };
+
+  function answerWithEstimate(estimate: Record<string, unknown>) {
+    vi.mocked(api).mockImplementation(async (path: string) => {
+      if (path.includes("/memory/relearn/estimate")) return estimate;
+      if (path.endsWith("/memory/relearn")) return { queued: 3, merged: 0 };
+      if (path.includes("/memory/failed-jobs")) return { scope: "user", total: 0, reasons: [], jobs: [] };
+      if (path.includes("/memory/settings")) return { ...SETTINGS, extraction_model_id: 7, relearn_enabled: true };
+      if (path.includes("/memory/stats")) return STATS;
+      if (path.includes("/admin/models")) return [];
+      throw new Error(`unexpected ${path}`);
+    });
+  }
+
+  function section() {
+    return host.querySelector('section[aria-label="Relearn recent chats"]');
+  }
+
+  function button(label: string) {
+    return Array.from(section()?.querySelectorAll<HTMLButtonElement>("button") ?? []).find((b) => b.textContent === label);
+  }
+
+  it("estimates first, then queues the chats after a confirmation", async () => {
+    answerWithEstimate(ESTIMATE);
+    await render();
+    expect(button("Relearn")?.disabled).toBe(true);
+    await act(async () => button("Estimate")?.click());
+    expect(section()?.textContent).toContain("3 chats (2 personal, 1 project), 40 messages in 5 parts: about $0.0123.");
+    expect(section()?.textContent).toContain("This month: $1.50 of $10.00");
+    expect(button("Relearn")?.disabled).toBe(false);
+    await act(async () => button("Relearn")?.click());
+    const start = vi.mocked(api).mock.calls.find(([path]) => String(path).endsWith("/memory/relearn"));
+    expect(JSON.parse(String((start?.[1] as RequestInit).body))).toEqual({ days: 30 });
+    expect(host.querySelector(".alert-success")?.textContent).toContain("Queued 3 chats");
+  });
+
+  it("cannot start while the switch is off on the server", async () => {
+    answerWithEstimate({ ...ESTIMATE, enabled: false });
+    await render();
+    await act(async () => button("Estimate")?.click());
+    expect(button("Relearn")?.disabled).toBe(true);
   });
 });
 

@@ -35,6 +35,7 @@ type MemorySettings = {
   soft_delete_purge_days: number;
   suppression_days: number;
   history_completion_enabled: boolean;
+  relearn_enabled: boolean;
   project_feature_enabled: boolean;
   project_max_per_project: number;
   project_inject_max_items: number;
@@ -64,6 +65,27 @@ type FailedJobs = {
 };
 
 type RetryResult = { requeued: number; merged: number; covered: number };
+
+type RelearnEstimate = {
+  enabled: boolean;
+  model_configured: boolean;
+  days: number;
+  chats: { user: number; project: number };
+  messages: number;
+  characters: number;
+  parts: number;
+  estimated_cost_usd: number | null;
+  spent_this_month_usd: number;
+  monthly_cap_usd: number;
+};
+
+function describeEstimate(e: RelearnEstimate): string {
+  const chats = e.chats.user + e.chats.project;
+  if (!chats) return `Nothing to read again in the last ${e.days} days.`;
+  const cost = e.estimated_cost_usd == null ? "the extraction model has no price" : `about ${formatUsd(e.estimated_cost_usd)}`;
+  const cap = e.monthly_cap_usd > 0 ? ` This month: ${formatUsd(e.spent_this_month_usd)} of ${formatUsd(e.monthly_cap_usd)}; extraction pauses at the cap.` : "";
+  return `${chats.toLocaleString()} chats (${e.chats.user.toLocaleString()} personal, ${e.chats.project.toLocaleString()} project), ${e.messages.toLocaleString()} messages in ${e.parts.toLocaleString()} parts: ${cost}.${cap}`;
+}
 
 const FAILED_SCOPES: { scope: FailedJobs["scope"]; label: string }[] = [
   { scope: "user", label: "Personal" },
@@ -219,6 +241,9 @@ export default function MemoryAdmin() {
   const [purgeUserId, setPurgeUserId] = useState("");
   const [failed, setFailed] = useState<Partial<Record<FailedJobs["scope"], FailedJobs>>>({});
   const [retrying, setRetrying] = useState<FailedJobs["scope"] | null>(null);
+  const [relearnDays, setRelearnDays] = useState(30);
+  const [estimate, setEstimate] = useState<RelearnEstimate | null>(null);
+  const [relearning, setRelearning] = useState(false);
 
   async function load() {
     setError("");
@@ -268,6 +293,40 @@ export default function MemoryAdmin() {
       setError(String(err));
     } finally {
       setRetrying(null);
+    }
+  }
+
+  async function onEstimate() {
+    setError("");
+    try {
+      setEstimate(await api<RelearnEstimate>(`/api/admin/memory/relearn/estimate?days=${relearnDays}`));
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
+  async function onRelearn() {
+    if (!estimate) return;
+    const ok = await confirm({
+      title: "Relearn recent chats",
+      message: `Read the last ${estimate.days} days of chats again for memory. ${describeEstimate(estimate)}`,
+      confirmLabel: "Relearn",
+    });
+    if (!ok) return;
+    setRelearning(true);
+    setError("");
+    setFlash("");
+    try {
+      const result = await api<{ queued: number; merged: number }>("/api/admin/memory/relearn", {
+        method: "POST",
+        body: JSON.stringify({ days: estimate.days }),
+      });
+      setFlash(`Queued ${result.queued} chats to be read again; ${result.merged} more join jobs already waiting.`);
+      setEstimate(null);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setRelearning(false);
     }
   }
 
@@ -526,6 +585,57 @@ export default function MemoryAdmin() {
                 </FieldRow>
               );
             })}
+          </div>
+        </section>
+
+        <section className="settings-section" aria-label="Relearn recent chats">
+          <h2>Relearn recent chats</h2>
+          <p className="settings-section-desc">
+            Read the last days of chats again, for what extraction dropped before it read long chats in parts. Only
+            chats of people and projects with automatic learning on, never private ones, and nothing said before a
+            person&rsquo;s last &ldquo;Delete all&rdquo; or settings change. By hand only, billed as extraction.
+          </p>
+          <div className="settings-list">
+            <FieldRow title="Allow relearning" hint="Off by default. Takes effect when the settings are saved.">
+              <Toggle
+                label="Allow relearning"
+                on={settings.relearn_enabled}
+                disabled={readOnly}
+                onToggle={() => patch({ relearn_enabled: !settings.relearn_enabled })}
+              />
+            </FieldRow>
+            <FieldRow
+              title="Days to read again"
+              hint="1–90"
+              detail={estimate ? <p className="memory-admin__estimate">{describeEstimate(estimate)}</p> : null}
+            >
+              <NumberInput
+                id="memory-relearn-days"
+                value={relearnDays}
+                min={1}
+                onChange={(n) => {
+                  setRelearnDays(Math.max(1, Math.min(90, Math.round(n) || 1)));
+                  setEstimate(null);
+                }}
+              />
+              <button type="button" className="btn btn-ghost" onClick={() => void onEstimate()}>
+                Estimate
+              </button>
+              <button
+                type="button"
+                className="btn"
+                disabled={
+                  readOnly ||
+                  relearning ||
+                  !estimate?.enabled ||
+                  !estimate.model_configured ||
+                  !(estimate.chats.user + estimate.chats.project)
+                }
+                onClick={() => void onRelearn()}
+              >
+                {relearning ? "Queuing…" : "Relearn"}
+              </button>
+            </FieldRow>
           </div>
         </section>
 

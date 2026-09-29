@@ -662,6 +662,7 @@ class TestTheAdminCard:
                 "state": "not_chat",
                 "connection_id": embedder.connection_id,
                 "vision": False,
+                "auto_router": False,
             },
             {
                 "ref": f"model::{chat.id}",
@@ -670,6 +671,7 @@ class TestTheAdminCard:
                 "state": "ok",
                 "connection_id": chat.connection_id,
                 "vision": False,
+                "auto_router": False,
             },
             {
                 "ref": f"model::{off.id}",
@@ -678,6 +680,7 @@ class TestTheAdminCard:
                 "state": "disabled",
                 "connection_id": off.connection_id,
                 "vision": False,
+                "auto_router": False,
             },
             {
                 "ref": f"model::{review.id}",
@@ -686,6 +689,7 @@ class TestTheAdminCard:
                 "state": "disabled",
                 "connection_id": review.connection_id,
                 "vision": False,
+                "auto_router": False,
             },
         ]
         # The connections come too, with whether each address looks like the organisation's own.
@@ -709,6 +713,7 @@ class TestTheAdminCard:
                 "state": "ok",
                 "connection_id": chat.connection_id,
                 "vision": False,
+                "auto_router": False,
             }
         ]
 

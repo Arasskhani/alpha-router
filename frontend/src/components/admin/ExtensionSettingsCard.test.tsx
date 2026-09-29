@@ -205,6 +205,20 @@ describe("the browser extension card", () => {
     expect(lastPut?.page_content_models).toEqual(["model::2", "model::9"]);
   });
 
+  const ROUTER = { ref: "model::7", label: "Auto Router", provider: "openrouter", state: "ok", auto_router: true };
+
+  it("never offers Auto Router as one of the agent's models", async () => {
+    serve({ models: [...MODELS, ROUTER] });
+    await render();
+    expect(checklist("Models the agent may use").map(([text]) => text)).not.toContain("Auto Router · openrouter");
+  });
+
+  it("shows an Auto Router already chosen for the agent, so it can be removed", async () => {
+    serve({ models: [...MODELS, ROUTER], settings: { agent_models: ["model::7"] } });
+    await render();
+    expect(checklist("Models the agent may use")).toContainEqual(["Auto Router · openrouter", true]);
+  });
+
   it("shows a review model that is no longer on offer by name, and says it has to change", async () => {
     serve({
       settings: { agent_review_model: "model::4" },

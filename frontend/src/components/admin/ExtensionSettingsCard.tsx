@@ -96,6 +96,8 @@ type ModelChoice = {
   connection_id?: number | null;
   /** Whether it reads images: only such a model can see screenshots, or be probed. */
   vision?: boolean;
+  /** Auto Router, which is never the browser agent's model. */
+  auto_router?: boolean;
 };
 
 /** The last browser_control probe of a model: could it point at a button on a made-up page? */
@@ -503,9 +505,13 @@ export default function ExtensionSettingsCard() {
   const offered = models.filter((m) => m.state === "ok");
   const review = form?.agent_review_model ? choiceFor(form.agent_review_model, models) : null;
   const reviewNote = review ? unavailableNote(review) : null;
-  // The model the Agent tab starts with: one of the agent's models when they are listed.
+  // The agent's models never include Auto Router; one already chosen is still shown, to be removed.
+  const agentModelChoices = models.filter((m) => !m.auto_router || form?.agent_models.includes(m.ref));
+  // The model the Agent tab starts with: one of the agent's models when they are listed, and one that may read pages.
   const recommendedOptions = offered
+    .filter((m) => !m.auto_router)
     .filter((m) => !form?.agent_models.length || form.agent_models.includes(m.ref))
+    .filter((m) => !form?.page_content_models.length || form.page_content_models.includes(m.ref))
     .map((m) => ({ value: m.ref, label: choiceLabel(m) }));
   const reviewOptions = [
     // A review model that is no longer on offer is still shown by name, so the
@@ -690,7 +696,7 @@ export default function ExtensionSettingsCard() {
             <span className="settings-row__title">Models the agent may use</span>
             <ModelChecklist
               label="Models the agent may use"
-              models={models}
+              models={agentModelChoices}
               selected={form.agent_models}
               disabled={locked}
               onChange={(next) => patch({ agent_models: next })}

@@ -654,6 +654,8 @@ async def model_choices(db: AsyncSession, settings: ExtensionSettings) -> list[d
                 "connection_id": int(row.connection_id) if row.connection_id is not None else None,
                 # Whether it reads images: only such a model can see screenshots, or be probed.
                 "vision": _reads_images(row),
+                # Auto Router is never the browser agent's: the page does not offer it there.
+                "auto_router": is_auto_router_model_id(str(row.external_id or "")),
             }
         )
     choices.extend(

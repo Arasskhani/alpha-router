@@ -34,6 +34,7 @@ from app.services.chat_completion_persistence import persister_from_body
 from app.services.chat_markers import (
     BROWSER_TOOL_CHOICE_BODY_KEY,
     BROWSER_TOOLS_BODY_KEY,
+    CONTEXT_FIT_META_KEY,
     PAGE_CONTEXT_BODY_KEY,
     PAGE_CONTEXT_META_KEY,
 )
@@ -629,7 +630,7 @@ async def build_turn_context(  # noqa: C901 -- straight-line preparation moved o
             if persister:
                 try:
                     if fitted.metadata():
-                        persister.set_message_metadata({"contextFit": fitted.metadata()})
+                        persister.set_message_metadata({CONTEXT_FIT_META_KEY: fitted.metadata()})
                     if page_sites:
                         persister.set_message_metadata({PAGE_CONTEXT_META_KEY: {"sites": page_sites}})
                     elif earlier:

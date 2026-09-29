@@ -256,3 +256,43 @@ async def test_openrouter_does_not_cut_the_middle_out_of_a_measured_turn(db_sess
     await db_session.commit()
     ctx = await _openrouter_turn(db_session, user, _chat(200)[1:])
     assert "transforms" not in (ctx.completion_kwargs.get("extra_body") or {})
+
+
+async def test_the_message_says_what_was_left_out_and_keeps_it_when_the_chat_is_replaced(db_session, user):
+    import uuid
+
+    from app.models.chat import ChatMessage, ChatSession
+    from app.services.user_chat_storage_service import list_session_messages, replace_session_messages
+
+    session_id = str(uuid.uuid4())
+    db_session.add(ChatSession(id=session_id, user_id=user.id, title="t", model_id="m", private_mode=False))
+    await db_session.flush()
+    fit = {"dropped": 30, "summarized": 20}
+    for sequence, (role, meta) in enumerate([("user", {}), ("assistant", {"contextFit": fit})], start=1):
+        db_session.add(
+            ChatMessage(
+                id=str(uuid.uuid4()),
+                session_id=session_id,
+                user_id=user.id,
+                role=role,
+                content=f"{role} words",
+                sequence=sequence,
+                client_message_id=f"c{sequence}",
+                meta=meta,
+            )
+        )
+    await db_session.commit()
+    listed, _more = await list_session_messages(db_session, user.id, session_id)
+    assert listed[1]["contextFit"] == fit
+    await replace_session_messages(
+        db_session,
+        user.id,
+        session_id,
+        [
+            {"role": "user", "content": "user words", "clientMessageId": "c1"},
+            {"role": "assistant", "content": "assistant words", "clientMessageId": "c2", "contextFit": {"dropped": 0}},
+        ],
+    )
+    await db_session.commit()
+    listed, _more = await list_session_messages(db_session, user.id, session_id)
+    assert listed[1]["contextFit"] == fit

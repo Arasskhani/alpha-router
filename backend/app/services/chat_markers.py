@@ -17,6 +17,10 @@ PAGE_CONTEXT_BODY_KEY = "_page_context_sites"
 #: pages shared from the browser. Page text is untrusted, so such an answer is
 #: never learned from as memory, and the web app never loads its images.
 PAGE_CONTEXT_META_KEY = "pageContext"
+#: Assistant message meta, ``{"dropped": n, "summarized": m}``: the chat was
+#: longer than the model's window, and its ``n`` oldest messages were not sent
+#: word for word (``m`` of them stood in for by the chat's summary).
+CONTEXT_FIT_META_KEY = "contextFit"
 #: Server-owned body keys: the function tools the browser extension's agent
 #: offers the model for one step, and the tool choice. The turn hands them to
 #: the provider as ``tools`` / ``tool_choice`` and streams the model's tool

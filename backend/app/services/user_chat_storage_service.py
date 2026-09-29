@@ -28,6 +28,7 @@ from app.services.chat_markers import (
     ATTACHMENT_MESSAGE_PREFIX,
     IMAGE_MESSAGE_PREFIX,
     IMAGE_PENDING_MARKER,
+    CONTEXT_FIT_META_KEY,
     PAGE_CONTEXT_META_KEY,
     SPEECH_MESSAGE_PREFIX,
     SPEECH_PENDING_MARKER,
@@ -334,6 +335,7 @@ _SERVER_OWNED_META_KEYS = frozenset(
         "completionReasonCode",
         "citations",
         PAGE_CONTEXT_META_KEY,
+        CONTEXT_FIT_META_KEY,
     }
 )
 
@@ -369,6 +371,7 @@ def _message_to_client(row: ChatMessage) -> dict[str, Any]:
         "completionReasonCode",
         "citations",
         PAGE_CONTEXT_META_KEY,
+        CONTEXT_FIT_META_KEY,
     ):
         if meta.get(key) is not None:
             out[key] = meta[key]

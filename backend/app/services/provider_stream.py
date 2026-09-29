@@ -14,6 +14,7 @@ tests that patch ``proxy_service.acompletion`` — keep their seam.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import datetime
 import logging
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
@@ -277,33 +278,49 @@ async def chunks_kept_alive(attempt: ProviderAttempt, *, keep_alive: bool) -> As
         async for chunk in attempt.chunks():
             yield chunk
         return
-    stream = attempt.chunks()
-    started = False
+    # One task reads the provider's stream and hands each chunk over, one at a time; the caller waits for the next
+    # with a limit, and sends a keep-alive each time it passes. The task goes with the caller's loop.
+    handover: asyncio.Queue[tuple[Any, BaseException | None]] = asyncio.Queue(maxsize=1)
 
-    async def next_chunk() -> Any:
-        nonlocal started
-        if not started:
+    async def pump() -> None:
+        try:
             await attempt.start()
-            started = True
-        try:
-            return await stream.__anext__()
-        except StopAsyncIteration:
-            return _NO_CHUNK
+            async for chunk in attempt.chunks():
+                await handover.put((chunk, None))
+            await handover.put((_NO_CHUNK, None))
+        except asyncio.CancelledError as exc:
+            # Called off by the caller: it is gone. Raised by the provider's stream itself: the caller's to raise.
+            task = asyncio.current_task()
+            if task is not None and task.cancelling():
+                raise
+            await handover.put((None, exc))
+        except Exception as exc:  # noqa: BLE001 -- handed to the caller, raised there as it came
+            await handover.put((None, exc))
 
-    while True:
-        waiting = asyncio.ensure_future(next_chunk())
-        # Should the caller stop listening, the wait is called off; its outcome is then nobody's.
-        waiting.add_done_callback(lambda task: task.cancelled() or task.exception())
-        try:
-            async for _ in keep_alive_until(waiting):
+    pumping = asyncio.ensure_future(pump())
+    # Should the caller stop listening, the task is called off; its outcome is then nobody's.
+    pumping.add_done_callback(lambda task: task.cancelled() or task.exception())
+    try:
+        while True:
+            try:
+                chunk, error = await asyncio.wait_for(handover.get(), timeout=KEEP_ALIVE_SECONDS)
+            except TimeoutError:
+                if pumping.done() and handover.empty():
+                    # Ended without a last word (it cannot, but for a BaseException): not waited on for ever.
+                    raise (None if pumping.cancelled() else pumping.exception()) or asyncio.CancelledError() from None
                 yield KEEP_ALIVE
-        finally:
-            if not waiting.done():
-                waiting.cancel()
-        chunk = waiting.result()
-        if chunk is _NO_CHUNK:
-            return
-        yield chunk
+                continue
+            if error is not None:
+                raise error
+            if chunk is _NO_CHUNK:
+                return
+            yield chunk
+    finally:
+        if not pumping.done():
+            pumping.cancel()
+            # Its reading of the upstream ends before the caller closes it.
+            with contextlib.suppress(BaseException):
+                await asyncio.wait({pumping}, timeout=1.0)
 
 
 async def keep_alive_until(task: asyncio.Future[Any]) -> AsyncGenerator[object, None]:

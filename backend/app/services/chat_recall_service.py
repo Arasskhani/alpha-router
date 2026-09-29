@@ -34,7 +34,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-from sqlalchemy import func, select, update
+from sqlalchemy import case, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.chat import ChatMessage, ChatRecallIndex, ChatSession, ChatSummary, is_member_channel
@@ -88,6 +88,15 @@ async def _recall_on(db: AsyncSession) -> dict[str, Any] | None:
     return settings
 
 
+async def _person_prefs(db: AsyncSession, user_id: int) -> dict[str, Any]:
+    """The person's settings, read without writing a row for someone who never saved any."""
+    from app.models.chat import UserChatPrefs
+    from app.services.user_chat_storage_service import _normalize_prefs
+
+    row: Any = await db.get(UserChatPrefs, int(user_id))
+    return _normalize_prefs(row.prefs if row is not None and isinstance(row.prefs, dict) else {})
+
+
 async def _owner_allows(db: AsyncSession, session: Any) -> bool:
     """The person's own switch for a personal chat; the project's memory switch for a project chat."""
     if session.project_id:
@@ -95,9 +104,7 @@ async def _owner_allows(db: AsyncSession, session: Any) -> bool:
 
         memory_enabled, _auto = await load_project_memory_flags(db, str(session.project_id))
         return bool(memory_enabled)
-    from app.services.user_chat_storage_service import load_user_prefs
-
-    prefs = await load_user_prefs(db, int(session.user_id))
+    prefs = await _person_prefs(db, int(session.user_id))
     return bool(prefs.get("memory_recall_chats", True))
 
 
@@ -590,7 +597,6 @@ async def recall_for_turn(
 
     from app.models.user import User
     from app.services.chat_session_access import resolve_owned_chat_session
-    from app.services.user_chat_storage_service import load_user_prefs
 
     person = await db.get(User, int(user_id))
     if person is None:
@@ -603,7 +609,7 @@ async def recall_for_turn(
     if not _eligible(session):
         return Recalled()
 
-    prefs = await load_user_prefs(db, int(user_id))
+    prefs = await _person_prefs(db, int(user_id))
     if not session.project_id and not prefs.get("memory_recall_chats", True):
         return Recalled()
     if via_api_key and not prefs.get("memory_outside_chat", False):
@@ -696,3 +702,126 @@ async def augment_messages_with_recall(
     while lead < len(messages) and messages[lead].get("role") == "system":
         lead += 1
     return [*messages[:lead], {"role": "system", "content": found.block}, *messages[lead:]]
+
+
+# ── The administrator's view ───────────────────────────────────────────────
+
+#: Backfill jobs start this far apart, so indexing old chats does not take the worker from everyone else.
+BACKFILL_STAGGER_SECONDS = 2
+EMBED_CHARS_PER_TOKEN = 3
+
+
+async def recall_status(db: AsyncSession) -> dict[str, Any]:
+    """How far the index has got: chats indexed, exchanges in it, and the jobs queued, running or failed."""
+    settings = await get_memory_settings(db)
+    rows = (
+        await db.execute(
+            select(
+                ChatRecallIndex.status, func.count(), func.coalesce(func.sum(ChatRecallIndex.chunk_count), 0)
+            ).group_by(ChatRecallIndex.status)
+        )
+    ).all()
+    by_status = {str(status): int(count) for status, count, _chunks in rows}
+    indexed = int(
+        (
+            await db.execute(select(func.count()).select_from(ChatRecallIndex).where(ChatRecallIndex.chunk_count > 0))
+        ).scalar_one()
+        or 0
+    )
+    return {
+        "embedding_model_configured": bool(settings.get("embedding_model")),
+        "enabled": bool(settings.get("recall_enabled", True)) and bool(settings.get("embedding_model")),
+        "indexed_chats": indexed,
+        "chunks": sum(int(chunks) for _status, _count, chunks in rows),
+        "pending": by_status.get("pending", 0),
+        "running": by_status.get("running", 0),
+        "failed": by_status.get("failed", 0),
+    }
+
+
+async def _backfill_candidates(db: AsyncSession) -> list[tuple[Any, int, int, int]]:
+    """(chat, first sequence to index, latest sequence, characters) for every chat with something not yet indexed."""
+    further = case(
+        (ChatRecallIndex.indexed_up_to > ChatRecallIndex.not_before, ChatRecallIndex.indexed_up_to),
+        else_=ChatRecallIndex.not_before,
+    )
+    indexed_to = func.coalesce(
+        select(further).where(ChatRecallIndex.session_id == ChatMessage.session_id).scalar_subquery(),
+        0,
+    )
+    length = func.length(ChatMessage.content)
+    rows = (
+        await db.execute(
+            select(
+                ChatMessage.session_id, func.min(ChatMessage.sequence), func.max(ChatMessage.sequence), func.sum(length)
+            )
+            .join(ChatSession, ChatSession.id == ChatMessage.session_id)
+            .where(
+                ChatMessage.role.in_(("user", "assistant")),
+                ChatMessage.sequence > indexed_to,
+                ChatSession.private_mode.is_(False),
+                (ChatSession.channel_kind.is_(None)) | (ChatSession.channel_kind != "member"),
+            )
+            .group_by(ChatMessage.session_id)
+        )
+    ).all()
+    out = []
+    for session_id, first, latest, chars in rows:
+        chat: Any = await db.get(ChatSession, session_id)
+        if _eligible(chat) and await _owner_allows(db, chat):
+            out.append((chat, int(first), int(latest), int(chars or 0)))
+    return out
+
+
+async def estimate_backfill(db: AsyncSession) -> dict[str, Any]:
+    """What indexing every chat not yet indexed would take, and roughly what its embeddings cost."""
+    settings = await get_memory_settings(db)
+    candidates = await _backfill_candidates(db)
+    characters = sum(chars for _chat, _first, _latest, chars in candidates)
+    tokens = characters // EMBED_CHARS_PER_TOKEN
+    cost: float | None = None
+    spec = str(settings.get("embedding_model") or "")
+    if spec and candidates and ":" in spec:
+        from app.models.model_catalog import AIModel
+        from app.services.usage_accounting_service import quote_hold
+
+        provider, external_id = spec.split(":", 1)
+        model = (
+            (
+                await db.execute(
+                    select(AIModel)
+                    .where(AIModel.external_id == external_id, AIModel.provider_type == provider)
+                    .limit(1)
+                )
+            )
+            .scalars()
+            .first()
+        )
+        if model is not None:
+            quote = await quote_hold(
+                db, service_type="embedding", ai_model=model, provider_type=provider, prompt_tokens=tokens
+            )
+            cost = float(quote.quoted_usd) if quote.priced and quote.quoted_usd is not None else None
+    elif not candidates:
+        cost = 0.0
+    return {
+        "chats": len(candidates),
+        "messages": sum(latest - first + 1 for _chat, first, latest, _chars in candidates),
+        "characters": characters,
+        "estimated_cost_usd": cost,
+        "enabled": bool(settings.get("recall_enabled", True)) and bool(spec),
+    }
+
+
+async def start_backfill(db: AsyncSession) -> dict[str, int]:
+    """Queue every chat with something not yet indexed, a few seconds apart."""
+    if await _recall_on(db) is None:
+        raise RuntimeError("Recall of earlier chats is switched off, or has no embedding model")
+    queued = 0
+    for index, (chat, _first, latest, _chars) in enumerate(await _backfill_candidates(db)):
+        if await maybe_schedule_chat_index(
+            db, session=chat, latest_sequence=latest, delay_seconds=index * BACKFILL_STAGGER_SECONDS
+        ):
+            queued += 1
+    await db.flush()
+    return {"queued": queued}

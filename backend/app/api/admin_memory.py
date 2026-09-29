@@ -331,6 +331,46 @@ async def post_relearn(
     return {"ok": True, **result}
 
 
+@router.get("/recall/status")
+async def get_recall_status(
+    db: AsyncSession = Depends(get_read_db),
+    _user: User = Depends(require_memory),
+) -> dict[str, Any]:
+    """How far the index of earlier chats has got, and its jobs."""
+    from app.services.chat_recall_service import recall_status
+
+    return await recall_status(db)
+
+
+@router.get("/recall/backfill/estimate")
+async def get_recall_backfill_estimate(
+    db: AsyncSession = Depends(get_read_db),
+    _user: User = Depends(require_memory),
+) -> dict[str, Any]:
+    """What indexing the chats not yet indexed would take, before anything is run."""
+    from app.services.chat_recall_service import estimate_backfill
+
+    return await estimate_backfill(db)
+
+
+@router.post("/recall/backfill")
+async def post_recall_backfill(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_memory_write),
+) -> dict[str, Any]:
+    """Queue every chat with something not yet indexed for recall; audited."""
+    from app.services.chat_recall_service import start_backfill
+
+    try:
+        result = await start_backfill(db)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    await _audit(db, request, admin, "memory_recall_backfill_started", "recall", dict(result))
+    await db.commit()
+    return {"ok": True, **result}
+
+
 @router.post("/reindex")
 async def post_reindex(
     request: Request,

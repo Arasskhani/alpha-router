@@ -124,8 +124,12 @@ describe("TabDrivers", () => {
     const d = new TabDrivers({ tabId: 5, refusedAt: "https://busy.example.com/" }, { maxSide: 1280, onDetached: () => undefined });
     await expect(d.use(5, "https://busy.example.com/")).resolves.toBe(false);
     expect(chrome.debugger.attach).not.toHaveBeenCalled();
+    expect(d.controls(5)).toBe(false);
     await expect(d.use(5, "https://busy.example.com/next")).resolves.toBe(true);
     expect(chrome.debugger.attached.has(5)).toBe(true);
+    expect(d.controls(5)).toBe(true);
+    await d.stop();
+    expect(d.controls(5)).toBe(false);
   });
 
   it("leaves nothing attached when the run stops while a tab is being attached", async () => {

@@ -115,6 +115,8 @@ export type AgentEventReport = {
 export type ControlDriver = Pick<CdpDriver, "screenshot" | "zoom" | "crop" | "click" | "clickAt" | "hover" | "scroll" | "drag" | "type" | "key" | "toCss" | "onDialog" | "handleDialog"> & {
   /** Work in this tab, on this page, from now on (lib/driver.ts TabDrivers); false when Chrome will not attach to it. */
   use?(tabId: number, url?: string): Promise<boolean>;
+  /** Whether this tab is under full control now; absent: every tab the run works in is. */
+  controls?(tabId: number): boolean;
 };
 
 /** What the run is doing, as the page's border and the toolbar badge show it. */
@@ -813,9 +815,21 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     return `Where you start - the tab next to the side panel:\n${pageText(wrapPage(options.nonce, tab.host, lines.join("\n"))!, true)}`;
   }
 
-  /** Best-effort: the visuals never fail a run, nor hold it up for long, nor outlast a Stop. */
+  /**
+   * Tabs the visuals were put up in: they come down at the end even when
+   * the tab's session ended meanwhile (Cancel on Chrome's bar).
+   */
+  const visualsIn = new Set<number>();
+
+  /**
+   * Best-effort: the visuals never fail a run, nor hold it up for long, nor outlast a Stop. Only in a
+   * tab under full control: a page full control missed (a New Tab page, one too busy to answer) gets no
+   * border saying the agent drives it, and a busy page does not hold the run up with each of them.
+   */
   async function visual(method: PageMethod, a: Record<string, unknown>, tab: WorkTab | null): Promise<void> {
     if (!tab || !deps.driver) return;
+    if (deps.driver.controls && !deps.driver.controls(tab.id)) return;
+    visualsIn.add(tab.id);
     await orOnStop(deps.browser.page(method, a, tab, signal, VISUAL_MS).catch(() => undefined), undefined);
   }
 
@@ -1883,7 +1897,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     deps.driver?.onDialog(null);
     // The layer goes with the run; the panel shows the outcome.
     const tab = lastTab;
-    if (tab && deps.driver) {
+    if (tab && deps.driver && visualsIn.has(tab.id)) {
       await deps.browser.page("visuals_hide", {}, tab, undefined, VISUAL_MS).catch(() => undefined);
     }
   }

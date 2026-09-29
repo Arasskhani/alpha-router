@@ -208,6 +208,20 @@ describe("computer actions", () => {
     expect(String(tool.content)).toContain("Clicked at (200, 100)");
   });
 
+  it("puts up no visuals on a page it has no full control of - no border, and no wait on a busy page for one", async () => {
+    let attached = false;
+    const driver = { ...fakeDriver(), use: vi.fn(async () => attached), controls: vi.fn(() => attached) };
+    const h = harness([{ text: "", toolCalls: [call("read_page")] }], { driver });
+    await h.run();
+    expect(h.browser.page).toHaveBeenCalledWith("read_page", expect.anything(), TAB, expect.anything());
+    expect(visualCalls(h.browser)).toEqual([]);
+    // The same run on a page it controls shows them, and takes them down at the end.
+    attached = true;
+    const again = harness([{ text: "", toolCalls: [call("read_page")] }], { driver });
+    await again.run();
+    expect(visualCalls(again.browser)).toEqual(expect.arrayContaining([["visuals_show", {}], ["visuals_state", { state: "working" }], ["visuals_hide", {}]]));
+  });
+
   it("a click on a buy button is judged like a ref click: refused outright, naming the button", async () => {
     const h = harness([{ text: "", toolCalls: [call("computer", { action: "left_click", coordinate: [200, 300] })] }]);
     await h.run();

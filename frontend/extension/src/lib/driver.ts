@@ -154,6 +154,11 @@ export class TabDrivers {
     return true;
   }
 
+  /** Whether this tab is under full control now: its session attached. */
+  controls(tabId: number): boolean {
+    return !this.stopped && this.drivers.get(tabId)?.attached === true;
+  }
+
   onDialog(cb: ((dialog: DialogInfo, answer: DialogAnswer) => Promise<void>) | null): void {
     this.dialogCb = cb;
     for (const driver of this.drivers.values()) this.bindDialogs(driver);

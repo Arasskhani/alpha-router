@@ -1132,7 +1132,7 @@ async def handle_memory_extraction(db: AsyncSession, job, *, completer: Any | No
             return
 
 
-async def _mine_next_part(db: AsyncSession, job, *, completer: Any | None, first: bool) -> bool:  # noqa: C901 -- the gates read in order; split, they hide which one closed the window
+async def _mine_next_part(db: AsyncSession, job, *, completer: Any | None, first: bool) -> bool:
     """Mine the next part of ``job``'s stretch; True when a part was mined and its progress is to be committed.
 
     Every gate is read again before each part: the switches, the budget and

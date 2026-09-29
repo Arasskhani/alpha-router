@@ -623,7 +623,7 @@ async def handle_project_memory_extraction(db: AsyncSession, job, *, completer: 
             return
 
 
-async def _mine_next_project_part(db: AsyncSession, job, *, completer: Any | None, first: bool) -> bool:  # noqa: C901 -- the gates read in order, as in the personal twin
+async def _mine_next_project_part(db: AsyncSession, job, *, completer: Any | None, first: bool) -> bool:
     """Mine the next part of a project job's stretch; True when one was mined and is to be committed."""
     from app.config import get_settings
     from app.services.project_config_service import load_project_memory_flags

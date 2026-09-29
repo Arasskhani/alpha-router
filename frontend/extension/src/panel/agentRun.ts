@@ -24,6 +24,7 @@ import { approvalFor, classifyAction, DEFAULT_APPROVALS, type AgentMode, type Po
 import { KEY_NAMES_SHOWN, parseKeyCombo } from "../lib/keys";
 import { looseName } from "../lib/refs";
 import type { CdpDriver } from "../lib/cdpDriver";
+import { signedReasoning } from "../lib/chatStream";
 import { probeInjection } from "../lib/injection";
 import type { ElementInfo, PageMethod, PageResult } from "../lib/pageAgent";
 import { readablePage } from "../lib/sites";
@@ -271,7 +272,8 @@ export const SCREENSHOTS_KEPT = 3;
 const OMITTED_SHOT: MessagePart = { type: "text", text: "(an earlier screenshot, left out to save space)" };
 
 function size(message: ApiMessage): number {
-  const calls = message.role === "assistant" ? JSON.stringify(message.tool_calls ?? []).length : 0;
+  // A step's reasoning counts as what it is: characters sent with every request.
+  const calls = message.role === "assistant" ? JSON.stringify(message.tool_calls ?? []).length + (message.reasoning_details ? JSON.stringify(message.reasoning_details).length : 0) : 0;
   if (Array.isArray(message.content)) {
     return message.content.reduce((sum, part) => sum + (part.type === "text" ? part.text.length : IMAGE_CHARS), 0);
   }
@@ -311,7 +313,7 @@ function withRecentScreenshots(messages: ApiMessage[], kept: number = SCREENSHOT
  * the latest screenshots kept, and - when it is still too long - the oldest
  * steps left out whole, a tool call never without its answer.
  */
-/** The model's reasoning goes back with this many of its latest steps. */
+/** The model's readable reasoning goes back with this many of its latest steps; its signed blocks with all. */
 const REASONING_KEPT = 2;
 
 export function conversation(entries: Entry[], screenshotsKept: number = SCREENSHOTS_KEPT): ApiMessage[] {
@@ -328,16 +330,18 @@ export function conversation(entries: Entry[], screenshotsKept: number = SCREENS
     ),
     screenshotsKept,
   );
-  // The model's reasoning goes back with its latest steps only: what a provider checks is the step it goes on from,
-  // and the older blocks would only grow every request.
+  // The model's reasoning goes back with its steps: its signed blocks with every step, since a provider may check
+  // every call of the turn (Gemini: all since the last user message, which on the agent's path is the whole run);
+  // the readable text only with the latest steps, where it helps, so the older text does not grow every request.
   let assistants = 0;
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     const message = messages[i];
     if (message.role !== "assistant") continue;
     assistants += 1;
     if (assistants > REASONING_KEPT && message.reasoning_details) {
-      const { reasoning_details: _dropped, ...kept } = message;
-      messages[i] = kept;
+      const { reasoning_details: details, ...rest } = message;
+      const signed = details.filter(signedReasoning);
+      messages[i] = signed.length ? { ...rest, reasoning_details: signed } : rest;
     }
   }
   const [system, task, ...rest] = messages;
@@ -1746,19 +1750,29 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       }
       check();
       if (reply.text.trim()) deps.onText(reply.text.trim());
+      /** Ids given anew here, by the provider's: the reasoning that names a call goes with its new id. */
+      const renamed = new Map<string, string>();
       const calls: ToolCall[] = reply.toolCalls.map((call, index) => {
         // Each call's id once in a run: a provider may repeat them (call_0 at every step), and the panel's step
         // rows and the saved run are keyed by it - a repeat would overwrite an earlier step. The model is answered
         // under the id it is given here.
         let id = call.id || `call_${steps}_${index}`;
-        if (callIds.has(id)) id = `${id}_s${steps}_${index}`;
+        if (callIds.has(id)) {
+          const fresh = `${id}_s${steps}_${index}`;
+          if (call.id) renamed.set(call.id, fresh);
+          id = fresh;
+        }
         callIds.add(id);
         return { id, type: "function", function: { name: call.name, arguments: call.arguments } };
+      });
+      const reasoningDetails = reply.reasoningDetails?.map((entry) => {
+        const named = entry && typeof entry === "object" ? (entry as Record<string, unknown>).id : undefined;
+        return typeof named === "string" && renamed.has(named) ? { ...(entry as Record<string, unknown>), id: renamed.get(named) } : entry;
       });
       // An empty reply - no words, no calls - is not kept: an assistant message with neither is one providers refuse.
       if (calls.length || reply.text.trim()) {
         // The model's reasoning goes back with its calls, as providers that sign it (Gemini's thought signatures) require.
-        const reasoning = calls.length && reply.reasoningDetails?.length ? { reasoning_details: reply.reasoningDetails } : {};
+        const reasoning = calls.length && reasoningDetails?.length ? { reasoning_details: reasoningDetails } : {};
         entries.push({ message: { role: "assistant", content: reply.text || null, ...(calls.length ? { tool_calls: calls } : {}), ...reasoning } });
       }
       if (!calls.length) {

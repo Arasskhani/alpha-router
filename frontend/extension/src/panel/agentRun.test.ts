@@ -280,8 +280,25 @@ describe("a run", () => {
     await run(h);
     const assistants = (at: number) => h.sent[at].filter((m) => m.role === "assistant") as Array<{ reasoning_details?: unknown[] }>;
     expect(assistants(1)[0].reasoning_details).toEqual(signed(1));
-    // Three steps in: the first step's reasoning is no longer sent, the last two are.
-    expect(assistants(3).map((m) => m.reasoning_details)).toEqual([undefined, signed(2), signed(3)]);
+    // Signed blocks go back with every step; readable reasoning only with the latest two.
+    expect(assistants(3).map((m) => m.reasoning_details)).toEqual([signed(1), signed(2), signed(3)]);
+  });
+
+  it("sends readable reasoning back with the latest steps only, and renames it with a call it goes with", async () => {
+    const readable = (n: number) => [{ type: "reasoning.text", text: `think ${n}` }];
+    const h = harness([
+      { text: "", toolCalls: [call("scroll", { direction: "down" }, "c1")], reasoningDetails: readable(1) },
+      { text: "", toolCalls: [call("scroll", { direction: "down" }, "c2")], reasoningDetails: readable(2) },
+      { text: "", toolCalls: [call("scroll", { direction: "down" }, "c1")], reasoningDetails: [{ type: "reasoning.encrypted", data: "x", id: "c1" }] },
+      { text: "", toolCalls: [call("done", { summary: "ok" })] },
+    ]);
+    await run(h);
+    const assistants = h.sent[3].filter((m) => m.role === "assistant") as Array<{ reasoning_details?: Array<{ id?: string }>; tool_calls: Array<{ id: string }> }>;
+    expect(assistants[0].reasoning_details).toBeUndefined();
+    expect(assistants[1].reasoning_details).toEqual(readable(2));
+    // The third step repeated the id c1: its call and its signed block have the new one.
+    expect(assistants[2].tool_calls[0].id).not.toBe("c1");
+    expect(assistants[2].reasoning_details![0].id).toBe(assistants[2].tool_calls[0].id);
   });
 
   it("keeps no empty reply in the conversation, which a provider would refuse", async () => {

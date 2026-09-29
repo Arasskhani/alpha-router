@@ -37,6 +37,25 @@ describe("the model's reasoning", () => {
     expect(result.toolCalls).toHaveLength(1);
   });
 
+  it("puts an entry streamed in many pieces back together, and keeps the signed ones whatever their size", async () => {
+    const pieces = Array.from({ length: 200 }, (_, i) => frame({ choices: [{ delta: { reasoning_details: [{ type: "reasoning.text", index: 0, text: `step ${i}. ` }] } }] }));
+    const result = await readChatStream(
+      streamOf([
+        ...pieces,
+        frame({ choices: [{ delta: { reasoning_details: [{ type: "reasoning.text", index: 0, signature: "sig" }] } }] }),
+        frame({ choices: [{ delta: { tool_calls: [{ index: 0, id: "tool_1", function: { name: "click", arguments: "{}" } }], reasoning_details: [{ type: "reasoning.encrypted", index: 1, data: "e".repeat(300_000), id: "tool_1" }] } }] }),
+        frame({ choices: [{ delta: {}, finish_reason: "tool_calls" }] }),
+        "data: [DONE]\n\n",
+      ]),
+      {},
+      { strict: true },
+    );
+    // One entry of text with its signature, and the encrypted block past the size limit: both signed, both kept.
+    expect(result.reasoningDetails).toHaveLength(2);
+    expect(result.reasoningDetails![0]).toMatchObject({ type: "reasoning.text", index: 0, signature: "sig", text: expect.stringMatching(/^step 0\. step 1\. .*step 199\. $/) });
+    expect(result.reasoningDetails![1]).toMatchObject({ type: "reasoning.encrypted", id: "tool_1" });
+  });
+
   it("is not there when the provider sent none", async () => {
     const result = await readChatStream(streamOf([text("hi"), "data: [DONE]\n\n"]));
     expect(result.reasoningDetails).toBeUndefined();

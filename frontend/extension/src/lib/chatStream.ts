@@ -58,8 +58,49 @@ type Choice = {
   finish_reason?: unknown;
 };
 
-/** At most this many reasoning entries are kept from one answer. */
-const MAX_REASONING_DETAILS = 64;
+/** The reasoning kept from one answer, in characters of JSON: past it, readable text goes first, signed blocks never. */
+const MAX_REASONING_CHARS = 256_000;
+
+type ReasoningEntry = Record<string, unknown>;
+
+/** The fields of a reasoning entry that stream in pieces, joined; the rest (its type, id, signature, data) is the last given. */
+const PIECEWISE = new Set(["text", "summary"]);
+
+/**
+ * Put a streamed reasoning fragment with the entry it belongs to: by its
+ * `index` when it has one (OpenRouter sends an entry in many deltas),
+ * else as an entry of its own.
+ */
+function mergeReasoning(into: ReasoningEntry[], fragment: ReasoningEntry): void {
+  const index = typeof fragment.index === "number" ? fragment.index : undefined;
+  const entry = index === undefined ? undefined : into.find((e) => e.index === index);
+  if (!entry) {
+    into.push({ ...fragment });
+    return;
+  }
+  for (const [key, value] of Object.entries(fragment)) {
+    if (PIECEWISE.has(key) && typeof value === "string" && typeof entry[key] === "string") entry[key] = `${entry[key] as string}${value}`;
+    else if (value !== undefined && value !== null && value !== "") entry[key] = value;
+  }
+}
+
+/** Whether an entry is signed or encrypted - what a provider checks - rather than reasoning to read. */
+export function signedReasoning(entry: unknown): boolean {
+  if (!entry || typeof entry !== "object") return false;
+  const e = entry as ReasoningEntry;
+  return e.type === "reasoning.encrypted" || Boolean(e.signature) || Boolean(e.data);
+}
+
+/** The answer's reasoning within its limit: the readable entries go first, from the oldest; signed ones stay. */
+function boundedReasoning(entries: ReasoningEntry[]): ReasoningEntry[] {
+  const kept = [...entries];
+  const total = () => JSON.stringify(kept).length;
+  for (let i = 0; i < kept.length && total() > MAX_REASONING_CHARS; ) {
+    if (signedReasoning(kept[i])) i += 1;
+    else kept.splice(i, 1);
+  }
+  return kept;
+}
 
 export type StreamOptions = {
   /**
@@ -97,7 +138,7 @@ export async function readChatStream(response: Response, handlers: StreamHandler
   const byIndex = new Map<number, ToolCall>();
   let done = false;
   let finish: string | null = null;
-  const reasoning: unknown[] = [];
+  const reasoning: ReasoningEntry[] = [];
   const take = (fragment: ToolCallFragment) => {
     let call: ToolCall | undefined;
     if (typeof fragment.index === "number") {
@@ -158,7 +199,7 @@ export async function readChatStream(response: Response, handlers: StreamHandler
     }
     for (const fragment of part.tool_calls ?? []) take(fragment);
     if (Array.isArray(part.reasoning_details)) {
-      for (const detail of part.reasoning_details) if (detail && typeof detail === "object" && reasoning.length < MAX_REASONING_DETAILS) reasoning.push(detail);
+      for (const detail of part.reasoning_details) if (detail && typeof detail === "object") mergeReasoning(reasoning, detail as ReasoningEntry);
     }
   }
   if (options.strict) {
@@ -167,5 +208,5 @@ export async function readChatStream(response: Response, handlers: StreamHandler
       throw new ChatStreamError("The model's answer was cut at its length limit, in the middle of an action.", { retryable: false });
     }
   }
-  return { text, toolCalls: calls, meta, ...(reasoning.length ? { reasoningDetails: reasoning } : {}) };
+  return { text, toolCalls: calls, meta, ...(reasoning.length ? { reasoningDetails: boundedReasoning(reasoning) } : {}) };
 }

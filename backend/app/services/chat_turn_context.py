@@ -565,6 +565,9 @@ async def build_turn_context(  # noqa: C901 -- straight-line preparation moved o
             await lease.abandon("context fitting error")
             raise
         messages = fitted.messages
+        if provider == "openrouter" and fitted.window is not None:
+            # The turn was measured against the window here: OpenRouter is not to cut its middle out as well.
+            completion_kwargs["extra_body"] = {**(completion_kwargs.get("extra_body") or {}), "transforms": []}
         messages = apply_prompt_cache_breakpoints(messages)
         if browser_tools:
             # The agent's tools and instructions, the same at every step of a run: cached by the provider.

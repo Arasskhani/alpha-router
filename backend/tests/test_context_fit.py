@@ -219,3 +219,40 @@ async def test_the_reply_s_trailer_says_what_was_left_out(monkeypatch, db_sessio
     assert ("context_fit" in trailer) is shown
     if shown:
         assert trailer["context_fit"] == {"dropped": 12, "summarized": 10}
+
+
+async def _openrouter_turn(db, user, messages):
+    resolved = SimpleNamespace(
+        ai_model=SimpleNamespace(
+            **{**vars(_model()), "provider_type": "openrouter", "external_id": "openai/gpt-4o-mini"}
+        ),
+        api_key="sk-test",
+        base_url="https://openrouter.ai/api/v1",
+        provider_type="openrouter",
+        model_id="openrouter/openai/gpt-4o-mini",
+        budget_reservation_id=None,
+        code_interpreter_capacity_permit=None,
+        code_interpreter_workspace_files=None,
+        agent_turn=None,
+    )
+    ctx = await build_turn_context(
+        db,
+        {"model": "model::1", "messages": messages},
+        resolved,
+        user_id=user.id,
+        username=user.username,
+        source="alpha_router_chat",
+        skip_budget=True,
+        alpha_router_api_key_id=None,
+    )
+    await ctx.lease.abandon("test over")
+    return ctx
+
+
+async def test_openrouter_does_not_cut_the_middle_out_of_a_measured_turn(db_session, user, augment):
+    ctx = await _openrouter_turn(db_session, user, _chat(200)[1:])
+    assert ctx.completion_kwargs["extra_body"]["transforms"] == []
+    db_session.add(SystemSetting(key="memory_context_fit_enabled", value="false"))
+    await db_session.commit()
+    ctx = await _openrouter_turn(db_session, user, _chat(200)[1:])
+    assert "transforms" not in (ctx.completion_kwargs.get("extra_body") or {})

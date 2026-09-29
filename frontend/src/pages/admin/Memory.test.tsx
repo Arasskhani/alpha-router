@@ -42,6 +42,7 @@ const SETTINGS = {
   stale_archive_days: 540,
   soft_delete_purge_days: 30,
   suppression_days: 180,
+  history_completion_enabled: true,
   project_feature_enabled: true,
   project_max_per_project: 500,
   project_inject_max_items: 60,
@@ -180,5 +181,25 @@ describe("the links out of Cost control", () => {
     await render();
     const costControl = host.querySelector('section[aria-label="Cost control"]');
     expect(costControl?.querySelector(".memory-admin__budget-links")).not.toBeNull();
+  });
+});
+
+describe("the chat history switch", () => {
+  function toggle() {
+    return host.querySelector<HTMLButtonElement>('button[aria-label="Complete history on the server"]');
+  }
+
+  it("shows the server's setting and sends the change on Save", async () => {
+    answerWith({ extraction_model_id: 7, history_completion_enabled: true });
+    await render();
+    expect(toggle()?.getAttribute("aria-pressed")).toBe("true");
+    await act(async () => toggle()?.click());
+    expect(toggle()?.getAttribute("aria-pressed")).toBe("false");
+    const form = host.querySelector<HTMLFormElement>("#memory-settings-form");
+    await act(async () => {
+      form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    const patchCall = vi.mocked(api).mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === "PATCH");
+    expect(JSON.parse(String((patchCall?.[1] as RequestInit).body)).history_completion_enabled).toBe(false);
   });
 });

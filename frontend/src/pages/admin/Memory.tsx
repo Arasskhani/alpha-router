@@ -33,6 +33,7 @@ type MemorySettings = {
   stale_archive_days: number;
   soft_delete_purge_days: number;
   suppression_days: number;
+  history_completion_enabled: boolean;
   project_feature_enabled: boolean;
   project_max_per_project: number;
   project_inject_max_items: number;
@@ -520,6 +521,24 @@ export default function MemoryAdmin() {
                   value={settings.suppression_days}
                   disabled={readOnly}
                   onChange={(n) => patch({ suppression_days: n })}
+                />
+              </FieldRow>
+            </div>
+          </section>
+
+          <section className="settings-section" aria-label="Chat history">
+            <h2>Chat history</h2>
+            <p className="settings-section-desc">What the model is given of the chat it is answering in.</p>
+            <div className="settings-list">
+              <FieldRow
+                title="Complete history on the server"
+                hint="When a browser sends only the latest part of a chat (a chat opened from the list holds its last page), the server adds the older messages before the model answers. Never for a private chat."
+              >
+                <Toggle
+                  label="Complete history on the server"
+                  on={settings.history_completion_enabled}
+                  disabled={readOnly}
+                  onToggle={() => patch({ history_completion_enabled: !settings.history_completion_enabled })}
                 />
               </FieldRow>
             </div>

@@ -581,8 +581,9 @@ export default function AgentView({ me, server, hidden = false, onDisconnected, 
         } else {
           const choice = await chooseDriver(activePage.tabId, { fullControl: true, maxSide });
           // Each tab the agent works in gets its own session; Cancel on Chrome's bar, on any of them, stops the run.
-          // A tab Chrome would not attach to now (a New Tab page) is tried again on the next page it shows.
-          const drivers = new TabDrivers(choice.mode === "cdp" ? { tabId: activePage.tabId, driver: choice.driver } : null, {
+          // A tab Chrome would not attach to now (a New Tab page, a busy page) is tried again on the next page it shows.
+          const first = choice.mode === "cdp" ? { tabId: activePage.tabId, driver: choice.driver } : { tabId: activePage.tabId, refusedAt: activePage.url };
+          const drivers = new TabDrivers(first, {
             maxSide,
             onDetached: (reason) => {
               if (reason === "canceled_by_user") abort.abort();

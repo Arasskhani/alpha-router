@@ -68,16 +68,23 @@ export class TabDrivers {
   private readonly onDetached: (reason: string) => void;
 
   /**
-   * `first`: the tab the run starts on, attached already - or null when
-   * Chrome would not attach there (a New Tab page, the Web Store): the
-   * agent gets full control on the first page it reaches that Chrome allows.
+   * `first`: the tab the run starts on, attached already - or, when Chrome
+   * would not attach there (a New Tab page, the Web Store, a page too busy
+   * to answer), that tab and the page it showed: the agent gets full control
+   * on the first page it reaches that Chrome allows, and does not wait on
+   * that page again. Null when the run starts on no tab.
    */
-  constructor(first: { tabId: number; driver: CdpDriver } | null, options: { maxSide: number; onDetached: (reason: string) => void }) {
+  constructor(
+    first: { tabId: number; driver: CdpDriver } | { tabId: number; refusedAt: string } | null,
+    options: { maxSide: number; onDetached: (reason: string) => void },
+  ) {
     this.maxSide = options.maxSide;
     this.onDetached = options.onDetached;
-    if (first) {
+    if (first && "driver" in first) {
       this.current = first.driver;
       this.adopt(first.tabId, first.driver);
+    } else if (first) {
+      this.refused.set(first.tabId, first.refusedAt);
     }
   }
 

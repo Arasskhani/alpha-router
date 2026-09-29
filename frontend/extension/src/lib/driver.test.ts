@@ -119,6 +119,15 @@ describe("TabDrivers", () => {
     expect(chrome.debugger.attached.has(5)).toBe(true);
   });
 
+  it("does not try again the page the run could not attach to as it began, only another page of that tab", async () => {
+    // A page too busy to answer: the attach at the start waited for it until it gave up; the first action must not wait again.
+    const d = new TabDrivers({ tabId: 5, refusedAt: "https://busy.example.com/" }, { maxSide: 1280, onDetached: () => undefined });
+    await expect(d.use(5, "https://busy.example.com/")).resolves.toBe(false);
+    expect(chrome.debugger.attach).not.toHaveBeenCalled();
+    await expect(d.use(5, "https://busy.example.com/next")).resolves.toBe(true);
+    expect(chrome.debugger.attached.has(5)).toBe(true);
+  });
+
   it("leaves nothing attached when the run stops while a tab is being attached", async () => {
     const d = await drivers();
     let release: () => void = () => undefined;

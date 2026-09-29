@@ -819,6 +819,13 @@ export const userManualSections: DocSection[] = [
             never reads a private chat, anything from before your last <strong>Delete all</strong>, or anything while
             automatic learning is off.
           </li>
+          <li>
+            <strong>Use my earlier chats</strong> (on by default) — a new chat can read the related parts of your
+            other chats: ask &ldquo;what was my workout plan?&rdquo; in a new chat and it can answer from the chat
+            where you made it. The answer says which chats it read from, each a link back. Never private chats; a
+            project chat reads only the same project&rsquo;s chats. <strong>Delete all</strong> also takes your
+            chats out of this, for good.
+          </li>
         </ul>
         <Note>
           Memories outlive individual chats. Prefer this for durable facts you are comfortable keeping on the server

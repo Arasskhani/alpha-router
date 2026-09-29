@@ -2658,6 +2658,34 @@ export const docSections: DocSection[] = [
             (ي/ی, ك/ک), Persian and Arabic digits, the zero-width non-joiner, diacritics and case.
           </li>
         </ul>
+        <h3>Earlier chats</h3>
+        <ul>
+          <li>
+            <strong>Recall earlier chats</strong> (on by default once an embedding model is chosen; locked off without
+            one) — each chat is indexed as it goes: every exchange (a question and its answer) and a short digest (its
+            title and summary) become vectors in the memory collection, ids only. A new turn searches the
+            person&rsquo;s <em>other</em> chats with the chat&rsquo;s title and its last three questions, checks each
+            hit again in the database, and gives the model up to <strong>Pieces per turn</strong> of them within{" "}
+            <strong>Characters per turn</strong>, above <strong>Minimum similarity</strong>, as records rather than
+            instructions. The answer names the chats it read from.
+          </li>
+          <li>
+            A personal chat recalls only the person&rsquo;s personal chats; a project chat only the same
+            project&rsquo;s. Never private chats or rooms, never an answer built from shared pages, never on a
+            personal API key unless the person allowed memories there. Each person has a{" "}
+            <strong>Use my earlier chats</strong> switch in Settings &rarr; Memory.
+          </li>
+          <li>
+            Deleting a chat, making it private, rewriting its messages and a retention purge remove its vectors;{" "}
+            <em>Delete all my memories</em> removes every personal chat&rsquo;s and keeps what was said before it out
+            for good; <strong>Rebuild index</strong> starts every chat again.
+          </li>
+          <li>
+            <strong>Index earlier chats</strong> — chats from before recall was on are indexed only from here:{" "}
+            <strong>Estimate</strong> first (chats, messages, and the embeddings&rsquo; price when the model has one),
+            then <strong>Index</strong>. It reads only what indexing as they go would read.
+          </li>
+        </ul>
         <h3>Failed jobs and catching up</h3>
         <ul>
           <li>
@@ -2689,7 +2717,10 @@ export const docSections: DocSection[] = [
           </li>
           <li>
             <code>memory_jobs_retried</code> (what each failed job came to) and <code>memory_relearn_started</code>{" "}
-            (days, chats, messages, parts).
+            (days, chats, messages, parts);
+          </li>
+          <li>
+            <code>memory_recall_backfill_started</code> (how many chats were queued).
           </li>
         </ul>
         <h2>Automatic project memory</h2>

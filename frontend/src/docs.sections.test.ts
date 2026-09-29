@@ -134,6 +134,13 @@ describe("the docs", () => {
       "memory_user_purged",
       "memory_jobs_retried",
       "memory_relearn_started",
+      "Recall earlier chats",
+      "Pieces per turn",
+      "Characters per turn",
+      "Minimum similarity",
+      "Index earlier chats",
+      "Use my earlier chats",
+      "memory_recall_backfill_started",
     ]) {
       expect(html).toContain(term);
     }
@@ -149,6 +156,11 @@ describe("the docs", () => {
       "Extractor answer length",
       "Allow relearning",
       "Run again",
+      "Recall earlier chats",
+      "Pieces per turn",
+      "Characters per turn",
+      "Minimum similarity",
+      "Index earlier chats",
     ]) {
       expect(page).toContain(label);
     }

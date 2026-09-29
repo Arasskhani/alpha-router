@@ -116,9 +116,15 @@ function touchedBy(record: MutationRecord, into: Set<Element>): void {
 /** Look at what the page changed since the last look, and forget it. */
 function flush(watch: Watch): void {
   watch.looked = Date.now();
-  const touched = Array.from(watch.touched).slice(0, MAX_TOUCHED);
-  watch.touched.clear();
-  scan(watch, touched, true);
+  // So many at a time; the rest wait for the next look - never dropped (a toast after 60 re-rendered badges).
+  const all = Array.from(watch.touched);
+  watch.touched = new Set(all.slice(MAX_TOUCHED));
+  scan(watch, all.slice(0, MAX_TOUCHED), true);
+}
+
+/** Look at every change noted so far: an agent's look takes all of them, a few bursts at a time. */
+function flushAll(watch: Watch): void {
+  for (let round = 0; watch.touched.size && round < 20; round += 1) flush(watch);
 }
 
 /**
@@ -145,12 +151,16 @@ export function watchAnnouncements(doc: Document, isVisible: Visibility, since?:
     const wait = watch.looked + SETTLE_MS - Date.now();
     if (wait <= 0) {
       flush(watch);
-      return;
+      if (!watch.touched.size) return;
     }
-    watch.timer = view.setTimeout(() => {
+    const later = () => {
       watch.timer = null;
       flush(watch);
-    }, wait);
+      // What a burst left for later is looked at once this one has been.
+      if (watch.touched.size) watch.timer = view.setTimeout(later, SETTLE_MS);
+    };
+    // Now after a look just made (the rest of its burst), or the rest of the wait since the last one.
+    watch.timer = view.setTimeout(later, wait > 0 ? wait : SETTLE_MS);
   });
   observer.observe(doc.documentElement, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ["open", "hidden", "style", "class", "aria-hidden"] });
   watch.observer = observer;
@@ -203,7 +213,7 @@ export function observe(doc: Document, isVisible: Visibility, at?: unknown): Obs
   const watch = watches().get(doc)!;
   // The changes the page made since its last burst was looked at: records not yet delivered, then those noted.
   for (const record of watch.observer?.takeRecords() ?? []) touchedBy(record, watch.touched);
-  flush(watch);
+  flushAll(watch);
   const said = watch.kept.splice(0);
   const focus = describeFocus(doc, isVisible);
   const view = viewOf(doc);

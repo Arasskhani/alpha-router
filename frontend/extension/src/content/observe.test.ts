@@ -49,6 +49,19 @@ describe("what the page announced", () => {
     expect(observe(document, visible).said).toEqual([{ kind: "alert", text: "Message sent" }]);
   });
 
+  it("hears a toast after a burst that changed more announcers than one look takes", async () => {
+    document.body.innerHTML = Array.from({ length: 90 }, (_, i) => `<div role="status" id="b${i}">${i}</div>`).join("");
+    watchAnnouncements(document, visible);
+    for (let i = 0; i < 90; i += 1) document.getElementById(`b${i}`)!.textContent = `badge ${i}`;
+    const toast = document.createElement("div");
+    toast.setAttribute("role", "alert");
+    toast.textContent = "Message sent";
+    document.body.append(toast);
+    await sleep(30);
+    const said = observe(document, visible).said;
+    expect(said).toContainEqual({ kind: "alert", text: "Message sent" });
+  });
+
   it("takes what a page loaded after the run began says first as news", () => {
     document.body.innerHTML = `<div role="alert">Your order was placed</div>`;
     const loaded = window.performance.timeOrigin;

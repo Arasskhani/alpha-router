@@ -320,6 +320,10 @@ describe("what is typed", () => {
     ["a flight and its time", "Flight EK12 departs at 10 am from Dubai"],
     ["a version number", "Update to 1.2.3.4.5.6.7.8.9.10.11.12.13"],
     ["an address of a machine", "Connect to 192.168.100.200"],
+    // Each passes the check only when read past the groups a card or an IBAN is written in.
+    ["a phone number in groups of three and four", "Call 212 5550 1234 103"],
+    ["a date written with spaces, then a batch number", "Batch 2026 09 28 1002 0001"],
+    ["words after two letters and two digits, past a short group", "Flight EK12 at 10 then gate A1 row 19"],
   ])("types %s", (_what, text) => {
     expect(typing(text).class).toBe("act");
   });

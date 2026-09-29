@@ -24,7 +24,8 @@ from app.services.memory_extraction_service import (
     EXTRACT_TIMEOUT,
     MAX_MESSAGE_CHARS,
     MAX_OPS,
-    MAX_WINDOW_CHARS,
+    MAX_PARTS_PER_RUN,
+    MAX_WINDOW_TURNS,
     PRE_WINDOW_MESSAGES,
     ExtractionBilling,
     ExtractionParseError,
@@ -33,6 +34,7 @@ from app.services.memory_extraction_service import (
     _watermark_moved,
     contains_secret,
     extraction_budget_exhausted,
+    fit_extraction_window,
     looks_like_injection,
     record_extraction_usage,
     restates_a_shared_page,
@@ -104,12 +106,17 @@ class ProjectWindowTurn:
 
 @dataclass
 class ProjectExtractionWindow:
+    """One part of a project job's stretch of chat; see ``ExtractionWindow``."""
+
     project_id: str
     session_id: str
     from_sequence: int
     to_sequence: int
     turns: list[ProjectWindowTurn] = field(default_factory=list)
     existing: list[tuple[str, str, str]] = field(default_factory=list)
+
+    def new_turns(self) -> list[ProjectWindowTurn]:
+        return [turn for turn in self.turns if turn.sequence >= self.from_sequence]
 
 
 @dataclass
@@ -156,11 +163,13 @@ async def build_project_extraction_window(
                     ChatMessage.role.in_(("user", "assistant")),
                 )
                 .order_by(ChatMessage.sequence.asc())
+                .limit(PRE_WINDOW_MESSAGES + MAX_WINDOW_TURNS)
             )
         )
         .scalars()
         .all()
     )
+    covered_to = int(rows[-1].sequence) if len(rows) >= PRE_WINDOW_MESSAGES + MAX_WINDOW_TURNS else end
     turns: list[ProjectWindowTurn] = []
     for row in rows:
         if restates_a_shared_page(row):
@@ -178,16 +187,7 @@ async def build_project_extraction_window(
                 author_user_id=row.user_id,
             )
         )
-    # Newest-first truncation to MAX_WINDOW_CHARS while keeping order.
-    total = 0
-    kept: list[ProjectWindowTurn] = []
-    for turn in reversed(turns):
-        cost = len(turn.text)
-        if total + cost > MAX_WINDOW_CHARS and kept:
-            break
-        kept.append(turn)
-        total += cost
-    kept.reverse()
+    kept, covered = fit_extraction_window(turns, start=start, covered_to=covered_to)
     existing_rows = (
         (
             await db.execute(
@@ -208,7 +208,7 @@ async def build_project_extraction_window(
         project_id=project_id,
         session_id=session_id,
         from_sequence=start,
-        to_sequence=end,
+        to_sequence=covered,
         turns=kept,
         existing=[(row.id, row.category or "other", row.content or "") for row in existing_rows],
     )
@@ -662,12 +662,43 @@ async def extract_project_memory_operations(
 
 
 async def handle_project_memory_extraction(db: AsyncSession, job, *, completer: Any | None = None) -> None:
+    """Mine a project job's stretch of chat in parts; the same way as ``handle_memory_extraction``."""
+    if not isinstance(job, ProjectMemoryJob):
+        raise TypeError("Expected ProjectMemoryJob")
+    parts = 0
+    while await _mine_next_project_part(db, job, completer=completer, first=parts == 0):
+        parts += 1
+        job.updated_at = dt.datetime.utcnow()
+        await db.commit()
+        if int(job.extracted_sequence or 0) >= int(job.watermark_sequence or 0):
+            return
+        if parts >= MAX_PARTS_PER_RUN:
+            from app.services.project_memory_job_service import schedule_extraction
+
+            await schedule_extraction(
+                db,
+                project_id=str(job.project_id),
+                session_id=str(job.session_id),
+                watermark_sequence=int(job.watermark_sequence or 0),
+            )
+            logger.info(
+                "project memory extraction goes on in a follow-up job project_id=%s session_id=%s job_id=%s "
+                "mined_to=%s of=%s",
+                job.project_id,
+                job.session_id,
+                job.id,
+                job.extracted_sequence,
+                job.watermark_sequence,
+            )
+            return
+
+
+async def _mine_next_project_part(db: AsyncSession, job, *, completer: Any | None, first: bool) -> bool:  # noqa: C901 -- the gates read in order, as in the personal twin
+    """Mine the next part of a project job's stretch; True when one was mined and is to be committed."""
     from app.config import get_settings
     from app.services.project_config_service import load_project_memory_flags
     from app.services.project_memory_job_service import is_eligible_session
 
-    if not isinstance(job, ProjectMemoryJob):
-        raise TypeError("Expected ProjectMemoryJob")
     settings = await get_memory_settings(db)
     if (
         not settings.get("feature_enabled", True)
@@ -676,13 +707,13 @@ async def handle_project_memory_extraction(db: AsyncSession, job, *, completer: 
         or not get_settings().memory_extract_enabled
     ):
         job.extracted_sequence = int(job.extracted_sequence or 0)
-        return
+        return False
     session = await db.get(ChatSession, job.session_id)
     if not is_eligible_session(session) or str(session.project_id) != str(job.project_id):
-        return
+        return False
     memory_enabled, auto_capture = await load_project_memory_flags(db, job.project_id)
     if not memory_enabled or not auto_capture:
-        return
+        return False
     exhausted, spent, cap = await extraction_budget_exhausted(db)
     if exhausted:
         # Same figure as the personal scope: one line item, one cap. The window
@@ -693,12 +724,13 @@ async def handle_project_memory_extraction(db: AsyncSession, job, *, completer: 
             cap,
             job.id,
         )
-        return
-    min_new = int(settings.get("project_extract_min_new_messages") or 2)
+        return False
     window_from = int(job.extracted_sequence or 0)
-    new_count = int(job.watermark_sequence or 0) - window_from
-    if new_count < min_new:
-        return
+    if not first and await _watermark_moved(db, job, window_from=window_from):
+        return False
+    need = int(settings.get("project_extract_min_new_messages") or 2) if first else 1
+    if int(job.watermark_sequence or 0) - window_from < need:
+        return False
     window = await build_project_extraction_window(
         db,
         project_id=job.project_id,
@@ -706,14 +738,15 @@ async def handle_project_memory_extraction(db: AsyncSession, job, *, completer: 
         from_sequence=window_from + 1,
         to_sequence=int(job.watermark_sequence or 0),
     )
-    if not window.turns:
-        return
+    if not window.new_turns():
+        job.extracted_sequence = window.to_sequence
+        return True
     last_member_turn = next((turn for turn in reversed(window.turns) if turn.role == "user"), None)
     operations, dropped = await extract_project_memory_operations(
         db,
         window=window,
         completer=completer,
-        billing=ExtractionBilling.for_project(job),
+        billing=ExtractionBilling.for_project(job, part=window.from_sequence),
     )
     if await _watermark_moved(db, job, window_from=window_from):
         # A project reset ran while the extraction model was thinking; the same
@@ -723,7 +756,7 @@ async def handle_project_memory_extraction(db: AsyncSession, job, *, completer: 
             job.project_id,
             job.id,
         )
-        return
+        return False
     result = await apply_project_memory_operations(
         db,
         project_id=job.project_id,
@@ -733,13 +766,16 @@ async def handle_project_memory_extraction(db: AsyncSession, job, *, completer: 
         author_user_id=last_member_turn.author_user_id if last_member_turn else None,
         dropped_personal=dropped,
     )
-    job.extracted_sequence = int(job.watermark_sequence or 0)
+    job.extracted_sequence = window.to_sequence
     logger.info(
-        "project memory extraction completed project_id=%s session_id=%s job_id=%s "
+        "project memory extraction completed project_id=%s session_id=%s job_id=%s part=%s-%s of=%s "
         "added=%s updated=%s superseded=%s skipped=%s dropped_personal=%s evicted=%s",
         job.project_id,
         job.session_id,
         job.id,
+        window.from_sequence,
+        window.to_sequence,
+        job.watermark_sequence,
         result.added,
         result.updated,
         result.superseded,
@@ -747,3 +783,4 @@ async def handle_project_memory_extraction(db: AsyncSession, job, *, completer: 
         result.dropped_personal,
         result.evicted,
     )
+    return True

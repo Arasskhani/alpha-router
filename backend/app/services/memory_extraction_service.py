@@ -7,8 +7,9 @@ import json
 import logging
 import re
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,8 +36,15 @@ from app.utils.display import MEMORY_USAGE_SOURCE
 logger = logging.getLogger(__name__)
 
 MAX_MESSAGE_CHARS = 4_000
+#: The most one extraction call reads; a longer stretch of chat is mined in parts.
 MAX_WINDOW_CHARS = 24_000
+#: Of that, the most the turns before the part (already mined, there for context) take.
+CONTEXT_CHARS = 6_000
 PRE_WINDOW_MESSAGES = 4
+#: The most new turns one part reads, however short they are.
+MAX_WINDOW_TURNS = 200
+#: The most parts one job run mines; the rest goes on in a follow-up job.
+MAX_PARTS_PER_RUN = 4
 MAX_OPS = 5
 EXTRACT_MAX_TOKENS = 600
 EXTRACT_TIMEOUT = 30
@@ -99,12 +107,22 @@ class WindowTurn:
 
 @dataclass
 class ExtractionWindow:
+    """One part of a job's stretch of chat: the turns from ``from_sequence`` up to ``to_sequence``.
+
+    ``to_sequence`` is where this part stops, which is short of the job's
+    watermark when the stretch is longer than one part. ``turns`` also holds
+    a few turns before ``from_sequence``, for context.
+    """
+
     user_id: int
     session_id: str
     from_sequence: int
     to_sequence: int
     turns: list[WindowTurn] = field(default_factory=list)
     existing: list[RetrievedMemory] = field(default_factory=list)
+
+    def new_turns(self) -> list[WindowTurn]:
+        return [turn for turn in self.turns if turn.sequence >= self.from_sequence]
 
 
 @dataclass
@@ -154,6 +172,48 @@ def restates_a_shared_page(row: ChatMessage) -> bool:
     return str(row.role) == "assistant" and bool(meta.get(PAGE_CONTEXT_META_KEY))
 
 
+class _TurnLike(Protocol):
+    sequence: int
+    text: str
+
+
+def fit_extraction_window[Turn: _TurnLike](
+    turns: Sequence[Turn], *, start: int, covered_to: int
+) -> tuple[list[Turn], int]:
+    """The turns one extraction call reads, oldest first, and the last sequence the call covers.
+
+    The turns before ``start`` were mined already and are there for context:
+    the newest of them are kept, up to ``CONTEXT_CHARS``. The new turns follow
+    from the oldest while the whole fits in ``MAX_WINDOW_CHARS``; the first
+    new turn always does. The call covers up to the turn before the first one
+    that did not fit, or ``covered_to`` when all did; the rest is the next
+    part's.
+
+    It used to keep the newest turns and drop the oldest, while the job still
+    marked the whole stretch as mined: a long reply-heavy stretch of chat lost
+    its start for good.
+    """
+    context = [turn for turn in turns if turn.sequence < start]
+    fresh = [turn for turn in turns if turn.sequence >= start]
+    kept_context: list[Turn] = []
+    room = CONTEXT_CHARS
+    for turn in reversed(context):
+        if len(turn.text) > room:
+            break
+        kept_context.insert(0, turn)
+        room -= len(turn.text)
+    total = sum(len(turn.text) for turn in kept_context)
+    kept: list[Turn] = []
+    covered = covered_to
+    for turn in fresh:
+        if kept and total + len(turn.text) > MAX_WINDOW_CHARS:
+            covered = turn.sequence - 1
+            break
+        kept.append(turn)
+        total += len(turn.text)
+    return [*kept_context, *kept], covered
+
+
 async def build_extraction_window(
     db: AsyncSession,
     *,
@@ -176,11 +236,14 @@ async def build_extraction_window(
                     ChatMessage.role.in_(("user", "assistant")),
                 )
                 .order_by(ChatMessage.sequence.asc())
+                .limit(PRE_WINDOW_MESSAGES + MAX_WINDOW_TURNS)
             )
         )
         .scalars()
         .all()
     )
+    # A stretch of more rows than one part reads ends, for now, at the last row read.
+    covered_to = int(rows[-1].sequence) if len(rows) >= PRE_WINDOW_MESSAGES + MAX_WINDOW_TURNS else end
     turns: list[WindowTurn] = []
     for row in rows:
         if restates_a_shared_page(row):
@@ -196,16 +259,7 @@ async def build_extraction_window(
                 message_id=row.id,
             )
         )
-    # Newest-first truncation to MAX_WINDOW_CHARS while keeping order.
-    total = 0
-    kept: list[WindowTurn] = []
-    for turn in reversed(turns):
-        cost = len(turn.text)
-        if total + cost > MAX_WINDOW_CHARS and kept:
-            break
-        kept.append(turn)
-        total += cost
-    kept.reverse()
+    kept, covered = fit_extraction_window(turns, start=start, covered_to=covered_to)
     existing_rows = (
         (
             await db.execute(
@@ -236,7 +290,7 @@ async def build_extraction_window(
         user_id=user_id,
         session_id=session_id,
         from_sequence=start,
-        to_sequence=end,
+        to_sequence=covered,
         turns=kept,
         existing=existing,
     )
@@ -779,6 +833,10 @@ async def extraction_spend_this_month(db: AsyncSession) -> float:
     return float(total or 0.0)
 
 
+def _part_key(part: int | None) -> str:
+    return f":from-{int(part)}" if part is not None else ""
+
+
 @dataclass(frozen=True)
 class ExtractionBilling:
     """Who an extraction call's spend belongs to, and how to key it.
@@ -789,7 +847,8 @@ class ExtractionBilling:
 
     ``key_prefix`` carries the job id and attempt so a retry — a real second
     call to a real provider — is recorded as a second row rather than being
-    swallowed as a duplicate of the first.
+    swallowed as a duplicate of the first. A job mined in parts adds where
+    each part starts, for the same reason.
     """
 
     user_id: int | None
@@ -801,18 +860,18 @@ class ExtractionBilling:
     client_app: str = "Memory"
 
     @staticmethod
-    def for_user(job: Any, username: str) -> ExtractionBilling:
+    def for_user(job: Any, username: str, *, part: int | None = None) -> ExtractionBilling:
         return ExtractionBilling(
             user_id=int(job.user_id),
             username=username,
             project_id=None,
             subject_type=None,
-            key_prefix=f"memory-extract:{job.id}:{int(job.attempt_count or 0)}",
+            key_prefix=f"memory-extract:{job.id}:{int(job.attempt_count or 0)}{_part_key(part)}",
             operation_type="memory_extract",
         )
 
     @staticmethod
-    def for_project(job: Any) -> ExtractionBilling:
+    def for_project(job: Any, *, part: int | None = None) -> ExtractionBilling:
         from app.services.metered_usage_service import PLATFORM_USERNAME
         from app.services.usage_accounting_service import SUBJECT_PLATFORM
 
@@ -821,7 +880,7 @@ class ExtractionBilling:
             username=PLATFORM_USERNAME,
             project_id=str(job.project_id),
             subject_type=SUBJECT_PLATFORM,
-            key_prefix=f"project-memory-extract:{job.id}:{int(job.attempt_count or 0)}",
+            key_prefix=f"project-memory-extract:{job.id}:{int(job.attempt_count or 0)}{_part_key(part)}",
             operation_type="project_memory_extract",
         )
 
@@ -899,13 +958,56 @@ async def _watermark_moved(db: AsyncSession, job: Any, *, window_from: int) -> b
 
 
 async def handle_memory_extraction(db: AsyncSession, job, *, completer: Any | None = None) -> None:
-    from app.config import get_settings
+    """Mine a job's stretch of chat in parts, oldest first, committing each part as it lands.
+
+    A part is one extraction call (``fit_extraction_window``). The memories it
+    writes and the job's ``extracted_sequence`` are committed together, so a
+    part that fails leaves the parts before it done, and the retry starts
+    where they stopped. One run mines at most ``MAX_PARTS_PER_RUN`` parts; a
+    longer stretch goes on in a follow-up job, so one chat cannot hold a
+    worker for as long as it is long.
+    """
     from app.models.chat import UserMemoryJob
-    from app.models.user import User
-    from app.services.memory_settings_service import get_memory_settings
 
     if not isinstance(job, UserMemoryJob):
         raise TypeError("Expected UserMemoryJob")
+    parts = 0
+    while await _mine_next_part(db, job, completer=completer, first=parts == 0):
+        parts += 1
+        job.updated_at = dt.datetime.utcnow()
+        await db.commit()
+        if int(job.extracted_sequence or 0) >= int(job.watermark_sequence or 0):
+            return
+        if parts >= MAX_PARTS_PER_RUN:
+            from app.services.memory_job_service import schedule_extraction
+
+            await schedule_extraction(
+                db,
+                user_id=int(job.user_id),
+                session_id=str(job.session_id),
+                watermark_sequence=int(job.watermark_sequence or 0),
+            )
+            logger.info(
+                "memory extraction goes on in a follow-up job user_id=%s session_id=%s job_id=%s mined_to=%s of=%s",
+                job.user_id,
+                job.session_id,
+                job.id,
+                job.extracted_sequence,
+                job.watermark_sequence,
+            )
+            return
+
+
+async def _mine_next_part(db: AsyncSession, job, *, completer: Any | None, first: bool) -> bool:  # noqa: C901 -- the gates read in order; split, they hide which one closed the window
+    """Mine the next part of ``job``'s stretch; True when a part was mined and its progress is to be committed.
+
+    Every gate is read again before each part: the switches, the budget and
+    the person's own choice can all move while a long stretch is mined.
+    """
+    from app.config import get_settings
+    from app.models.user import User
+    from app.services.user_chat_storage_service import load_user_prefs
+
     settings = await get_memory_settings(db)
     if (
         not settings.get("feature_enabled", True)
@@ -913,18 +1015,10 @@ async def handle_memory_extraction(db: AsyncSession, job, *, completer: Any | No
         or not get_settings().memory_extract_enabled
     ):
         job.extracted_sequence = int(job.extracted_sequence or 0)
-        return
+        return False
     session = await db.get(ChatSession, job.session_id)
     if session is None or bool(session.private_mode) or is_member_channel(session):
-        return
-    # Re-read the user's own switch. schedule_extraction checked it too, but a
-    # job is debounced for up to extract_max_wait_seconds and may be retried
-    # after that, so the person can turn automatic learning off while this job
-    # is already queued. Checking only at enqueue time means their opt-out is
-    # ignored for the rest of that window. The project twin re-checks the same
-    # way (handle_project_memory_extraction -> load_project_memory_flags).
-    from app.services.user_chat_storage_service import load_user_prefs
-
+        return False
     exhausted, spent, cap = await extraction_budget_exhausted(db)
     if exhausted:
         # Leave extracted_sequence where it is: the window stays open and is
@@ -937,18 +1031,27 @@ async def handle_memory_extraction(db: AsyncSession, job, *, completer: Any | No
             cap,
             job.id,
         )
-        return
+        return False
+    # Re-read the user's own switch. schedule_extraction checked it too, but a
+    # job is debounced for up to extract_max_wait_seconds and may be retried
+    # after that, so the person can turn automatic learning off while this job
+    # is already queued. Checking only at enqueue time means their opt-out is
+    # ignored for the rest of that window. The project twin re-checks the same
+    # way (handle_project_memory_extraction -> load_project_memory_flags).
     prefs = await load_user_prefs(db, job.user_id)
     if not prefs.get("memory_auto_capture", True):
         # Claim the window anyway: it was read under a permission the user has
         # since withdrawn, and re-mining it later would leak the same turns.
         job.extracted_sequence = int(job.watermark_sequence or 0)
-        return
-    min_new = int(settings.get("extract_min_new_messages") or 2)
+        return False
     window_from = int(job.extracted_sequence or 0)
-    new_count = int(job.watermark_sequence or 0) - window_from
-    if new_count < min_new:
-        return
+    if not first and await _watermark_moved(db, job, window_from=window_from):
+        # "Delete all my memories" ran between two parts.
+        return False
+    # The first part waits for enough new turns; the rest of a long stretch is mined whatever is left.
+    need = int(settings.get("extract_min_new_messages") or 2) if first else 1
+    if int(job.watermark_sequence or 0) - window_from < need:
+        return False
     window = await build_extraction_window(
         db,
         user_id=job.user_id,
@@ -956,8 +1059,10 @@ async def handle_memory_extraction(db: AsyncSession, job, *, completer: Any | No
         from_sequence=window_from + 1,
         to_sequence=int(job.watermark_sequence or 0),
     )
-    if not window.turns:
-        return
+    if not window.new_turns():
+        # Nothing here the model may read (answers built from shared pages, empty turns).
+        job.extracted_sequence = window.to_sequence
+        return True
     source_message_id = next(
         (turn.message_id for turn in reversed(window.turns) if turn.role == "user"),
         None,
@@ -967,7 +1072,7 @@ async def handle_memory_extraction(db: AsyncSession, job, *, completer: Any | No
         db,
         window=window,
         completer=completer,
-        billing=ExtractionBilling.for_user(job, str(username)),
+        billing=ExtractionBilling.for_user(job, str(username), part=window.from_sequence),
     )
     if await _watermark_moved(db, job, window_from=window_from):
         # "Delete all my memories" ran while the extraction model was thinking.
@@ -979,7 +1084,7 @@ async def handle_memory_extraction(db: AsyncSession, job, *, completer: Any | No
             job.user_id,
             job.id,
         )
-        return
+        return False
     result = await apply_memory_operations(
         db,
         user_id=job.user_id,
@@ -987,16 +1092,20 @@ async def handle_memory_extraction(db: AsyncSession, job, *, completer: Any | No
         operations=operations,
         source_message_id=source_message_id,
     )
-    job.extracted_sequence = int(job.watermark_sequence or 0)
+    job.extracted_sequence = window.to_sequence
     logger.info(
-        "memory extraction completed user_id=%s session_id=%s job_id=%s "
+        "memory extraction completed user_id=%s session_id=%s job_id=%s part=%s-%s of=%s "
         "added=%s updated=%s superseded=%s skipped=%s evicted=%s",
         job.user_id,
         job.session_id,
         job.id,
+        window.from_sequence,
+        window.to_sequence,
+        job.watermark_sequence,
         result.added,
         result.updated,
         result.superseded,
         result.skipped,
         result.evicted,
     )
+    return True

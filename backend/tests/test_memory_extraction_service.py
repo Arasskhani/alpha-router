@@ -155,7 +155,7 @@ async def _window_and_gates() -> None:
         assert "BEGIN_UNTRUSTED_CONVERSATION" in prompt
         assert "END_UNTRUSTED_CONVERSATION" in prompt
 
-        # Truncation: many oversized turns keep the newest ones under the cap.
+        # A long stretch is read in parts from its start: the first part keeps the oldest turns.
         for seq in range(3, 20):
             db.add(
                 ChatMessage(
@@ -176,9 +176,19 @@ async def _window_and_gates() -> None:
             to_sequence=19,
         )
         total_chars = sum(len(turn.text) for turn in wide.turns)
-        assert total_chars <= MAX_WINDOW_CHARS + 4000
+        assert total_chars <= MAX_WINDOW_CHARS
         assert all(len(turn.text) <= 4000 for turn in wide.turns)
-        assert any("marker-19" in turn.text for turn in wide.turns)
+        assert [turn.sequence for turn in wide.turns][:3] == [1, 2, 3]
+        assert wide.to_sequence == wide.turns[-1].sequence < 19
+        rest = await build_extraction_window(
+            db,
+            user_id=user.id,
+            session_id=session.id,
+            from_sequence=wide.to_sequence + 1,
+            to_sequence=19,
+        )
+        assert rest.new_turns()[0].sequence == wide.to_sequence + 1
+        assert all(turn.sequence > wide.to_sequence - 4 for turn in rest.turns)
 
         db.add(
             SystemSetting(

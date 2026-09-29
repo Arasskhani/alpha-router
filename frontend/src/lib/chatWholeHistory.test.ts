@@ -86,12 +86,19 @@ describe("loadWholeSessionHistory", () => {
   });
 });
 
-describe("what fitting left out of an answer", () => {
-  it("is read back with the answer's message", async () => {
+describe("what fitting left out of an answer, and the chats it read from", () => {
+  it("are read back with the answer's message", async () => {
     mockedApi.mockImplementation(async () => ({
       messages: [
         { role: "user", content: "message 1", sequence: 1, clientMessageId: "m1" },
-        { role: "assistant", content: "message 2", sequence: 2, clientMessageId: "m2", contextFit: { dropped: 30, summarized: 20 } },
+        {
+          role: "assistant",
+          content: "message 2",
+          sequence: 2,
+          clientMessageId: "m2",
+          contextFit: { dropped: 30, summarized: 20 },
+          recalledChats: [{ id: "s-9", title: "Workout" }],
+        },
         { role: "assistant", content: "message 3", sequence: 3, clientMessageId: "m3", contextFit: { dropped: "x" } },
       ],
       has_more: false,
@@ -99,6 +106,7 @@ describe("what fitting left out of an answer", () => {
     }));
     const { session } = await loadWholeSessionHistory(chat(local(4, 5), 5, "s-fit"));
     expect(session.messages[1].contextFit).toEqual({ dropped: 30, summarized: 20 });
+    expect(session.messages[1].recalledChats).toEqual([{ id: "s-9", title: "Workout" }]);
     expect(session.messages[2].contextFit).toBeUndefined();
   });
 });

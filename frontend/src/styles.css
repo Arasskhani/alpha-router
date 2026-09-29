@@ -6855,12 +6855,30 @@ table.data-table--api-logs {
 
 /* An answer built from a page shared from the browser extension. */
 .alpha-router-msg-page-label,
-.alpha-router-msg-context-label {
+.alpha-router-msg-context-label,
+.alpha-router-msg-recall-label {
   font-size: 0.72rem;
   font-weight: 600;
   color: var(--muted);
   margin-bottom: 0.2rem;
   overflow-wrap: anywhere;
+}
+
+/* Each earlier chat an answer read from: a link back to it. */
+.alpha-router-msg-recall-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.alpha-router-msg-recall-link:disabled {
+  color: inherit;
+  cursor: default;
+  text-decoration: none;
 }
 
 /* An image in such an answer: a link to open, never loaded. */

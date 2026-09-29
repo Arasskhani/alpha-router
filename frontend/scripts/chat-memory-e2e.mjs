@@ -8,7 +8,8 @@
  *   - a chat reopened from the list goes to the model whole, however long it
  *     is (the app loads a chat's latest page only, and used to send just that);
  *   - after a Stop, the next turn still carries the whole chat;
- *   - an answer the server fitted into the model's window says so under its label.
+ *   - an answer the server fitted into the model's window says so under its label;
+ *   - an answer that read from earlier chats names them, each a link back to it.
  *
  * Run it from frontend/ against a development stack:
  *
@@ -191,6 +192,23 @@ await step("an answer fitted into the model's window says so under its label", a
   const text = (await label.textContent()) || "";
   expect(text.includes("read as a summary; 2 more left out"), `the label reads ${JSON.stringify(text)}`);
   return text;
+});
+
+await step("an answer that read from an earlier chat names it, and the name opens it", async () => {
+  const earlier = await seedChat(4);
+  const earlierId = created.at(-1);
+  const title = await seedChat(2);
+  await openChat(title);
+  nextTrailer = { recalled_chats: [{ id: earlierId, title: earlier }] };
+  await send("What was my workout plan?");
+  const label = page.locator(".alpha-router-msg-recall-label").last();
+  await label.waitFor({ timeout: 10_000 });
+  expect(((await label.textContent()) || "").startsWith("Read from 1 earlier chat"), "the label does not count the chat");
+  expect((await page.getByText("Answer 3").count()) === 0, "the earlier chat is open already");
+  await label.getByRole("button", { name: earlier }).click();
+  // Only the earlier chat (four messages) has a third one.
+  await page.getByText("Answer 3").first().waitFor({ timeout: 10_000 });
+  return "opened";
 });
 
 for (const id of created) {

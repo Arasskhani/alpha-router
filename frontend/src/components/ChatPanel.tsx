@@ -320,6 +320,7 @@ import {
   withSharedPageMarks,
 } from "../lib/sharedPages";
 import { contextFitLabel, contextFitNote, readContextFit, type ContextFit } from "../lib/contextFit";
+import { readRecalledChats, recalledChatsLabel, type RecalledChat } from "../lib/recalledChats";
 import {
   shortModelName,
   readAudioMessage,
@@ -3779,6 +3780,7 @@ export default function ChatPanel({
     requestLogId?: number;
     agentMetadata?: AgentCompletionMetadata;
     contextFit?: ContextFit;
+    recalledChats?: RecalledChat[];
   }> {
     const res = await authFetch("/api/chat/completions", {
       method: "POST",
@@ -3810,6 +3812,7 @@ export default function ChatPanel({
     let requestLogId: number | undefined;
     let agentMetadata: AgentCompletionMetadata | undefined;
     let contextFit: ContextFit | undefined;
+    let recalledChats: RecalledChat[] | undefined;
 
     // readSseEvents also delivers a trailing `data:` line without a newline
     // and cancels the reader if this loop exits early (error / Stop).
@@ -3833,6 +3836,7 @@ export default function ChatPanel({
           requestLogId = metaLogId;
         }
         contextFit = readContextFit(json?.alpha_router?.context_fit) ?? contextFit;
+        recalledChats = readRecalledChats(json?.alpha_router?.recalled_chats) ?? recalledChats;
         const nextAgentMetadata = agentCompletionMetadataFromSse(
           json?.alpha_router,
         );
@@ -3857,6 +3861,7 @@ export default function ChatPanel({
       ...(requestLogId != null ? { requestLogId } : {}),
       ...(agentMetadata ? { agentMetadata } : {}),
       ...(contextFit ? { contextFit } : {}),
+      ...(recalledChats ? { recalledChats } : {}),
     };
   }
 
@@ -4320,6 +4325,7 @@ export default function ChatPanel({
       requestLogId?: number,
       agentMetadata?: AgentCompletionMetadata,
       contextFit?: ContextFit,
+      recalledChats?: RecalledChat[],
     ) => {
       const current = getSessionMessages(sid);
       const idx = current.findIndex((m) => m.clientMessageId === assistantClientMessageId);
@@ -4333,6 +4339,7 @@ export default function ChatPanel({
         ...(requestLogId != null ? { requestLogId } : {}),
         ...(agentMetadata || {}),
         ...(contextFit ? { contextFit } : {}),
+        ...(recalledChats ? { recalledChats } : {}),
       };
       if (idx >= 0) {
         const next = [...current];
@@ -4373,6 +4380,7 @@ export default function ChatPanel({
       streamed.requestLogId,
       streamed.agentMetadata,
       streamed.contextFit,
+      streamed.recalledChats,
     );
     applyMessages(sid, finalMsgs);
     applyAgentMetadataToSession(sid, streamed.agentMetadata);
@@ -6718,6 +6726,24 @@ export default function ChatPanel({
               {m.role === "assistant" && m.contextFit ? (
                 <div className="alpha-router-msg-context-label" title={contextFitNote(m.contextFit)}>
                   {contextFitLabel(m.contextFit)}
+                </div>
+              ) : null}
+              {m.role === "assistant" && m.recalledChats ? (
+                <div className="alpha-router-msg-recall-label">
+                  {recalledChatsLabel(m.recalledChats)}:{" "}
+                  {m.recalledChats.map((chat, n) => (
+                    <span key={chat.id}>
+                      {n ? ", " : ""}
+                      <button
+                        type="button"
+                        className="alpha-router-msg-recall-link"
+                        disabled={!sessions.some((s) => s.id === chat.id)}
+                        onClick={() => selectSession(chat.id)}
+                      >
+                        {chat.title || "Untitled chat"}
+                      </button>
+                    </span>
+                  ))}
                 </div>
               ) : null}
               {m.role === "assistant" && m.modelName ? (

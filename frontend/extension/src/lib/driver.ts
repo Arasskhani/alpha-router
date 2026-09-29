@@ -133,7 +133,11 @@ export class TabDrivers {
       return true;
     }
     // Refused on this page before: not tried again until the tab shows another (a policy may block one site only).
-    if (this.refused.get(tabId) === url) return false;
+    // Either way the agent works in this tab now, without a session: nothing goes to the tab it left.
+    if (this.refused.get(tabId) === url) {
+      this.current = null;
+      return false;
+    }
     // A session Chrome ended keeps no say in this tab: its dialogs callback goes with it.
     known?.onDialog(null);
     const driver = new CdpDriver(new CdpSession(tabId), { maxSide: this.maxSide });
@@ -142,6 +146,7 @@ export class TabDrivers {
     } catch {
       await driver.stop().catch(() => undefined);
       this.refused.set(tabId, url);
+      this.current = null;
       return false;
     }
     // The run ended while Chrome attached: nothing stays attached after it (the debugging bar, the focus emulation).

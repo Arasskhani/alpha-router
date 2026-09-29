@@ -132,6 +132,23 @@ describe("TabDrivers", () => {
     expect(d.controls(5)).toBe(false);
   });
 
+  it("sends nothing to the tab the agent left when Chrome will not attach to the one it works in now", async () => {
+    const d = await drivers();
+    chrome.debugger.attachError = "Cannot access a chrome:// URL";
+    await expect(d.use(9, "chrome://settings/")).resolves.toBe(false);
+    chrome.debugger.sent.length = 0;
+    // Not tab 7's screenshot, nor a click in tab 7, for an agent working in tab 9.
+    await expect(d.screenshot()).rejects.toThrow(/not on in this tab/);
+    await expect(d.click({ x: 10, y: 10 })).rejects.toThrow(/not on in this tab/);
+    await expect(d.use(9, "chrome://settings/")).resolves.toBe(false);
+    await expect(d.screenshot()).rejects.toThrow(/not on in this tab/);
+    expect(chrome.debugger.sent).toEqual([]);
+    // Back in tab 7, its session is used again.
+    await expect(d.use(7)).resolves.toBe(true);
+    await d.click({ x: 10, y: 10 });
+    expect(new Set(sentTo("Input.dispatchMouseEvent"))).toEqual(new Set([7]));
+  });
+
   it("leaves nothing attached when the run stops while a tab is being attached", async () => {
     const d = await drivers();
     let release: () => void = () => undefined;

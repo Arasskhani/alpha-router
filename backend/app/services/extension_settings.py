@@ -811,16 +811,23 @@ async def validated_update(
     agent_list = await _model_list(db, "Agent models", agent_models)
     if recommended_list and agent_list and recommended_list[0] not in agent_list:
         raise ExtensionSettingsError("The recommended agent model must be one of the agent models.")
+    content_list = await _model_list(db, "Models for page content", page_content_models)
+    # Checked when these lists change: a row saved before the rule must not keep an administrator from saving
+    # anything else - turning the extension off above all.
+    models_changed = (
+        agent_list != current.agent_models
+        or (recommended_list[0] if recommended_list else None) != current.agent_recommended_model
+        or content_list != current.page_content_models
+    )
     # Every agent step on Auto Router is refused (it would change models between steps): it is not listed either.
-    routed = await _auto_router_ids(db, (*agent_list, *recommended_list))
+    routed = await _auto_router_ids(db, (*agent_list, *recommended_list)) if models_changed else []
     if routed:
         raise ExtensionSettingsError(
             f"Agent models: model {routed[0]} is Auto Router, which picks another model at each step and is never "
             "the browser agent's. Choose a model that passed the browser control probe."
         )
-    content_list = await _model_list(db, "Models for page content", page_content_models)
     # The agent sends what it reads to its model: a recommendation the page-content list refuses would never run.
-    if recommended_list and content_list and recommended_list[0] not in content_list:
+    if models_changed and recommended_list and content_list and recommended_list[0] not in content_list:
         raise ExtensionSettingsError("The recommended agent model must also be one of the models for page content.")
     review = (agent_review_model or "").strip() or None
     # The review model has to answer for every action in Auto mode: it must work today.

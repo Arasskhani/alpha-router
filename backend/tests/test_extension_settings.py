@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import json
 
 import pytest
@@ -560,6 +562,15 @@ class TestTheRecommendedAgentModel:
                 ExtensionSettings(),
                 **_update(page_content_models=[f"model::{a.id}"], agent_recommended_model=f"model::{b.id}"),
             )
+
+    async def test_a_row_saved_before_the_rule_does_not_block_other_changes(self, db_session):
+        router = await _model(db_session, "openrouter/auto")
+        stored = replace(ExtensionSettings(), agent_models=(f"model::{router.id}",))
+        # The kill switch, and anything else that leaves the model lists as they are, still saves.
+        updated = await validated_update(
+            db_session, stored, **_update(agent_models=[f"model::{router.id}"], enabled=False)
+        )
+        assert updated.enabled is False
 
     async def test_stored_as_it_was_and_read_back(self, db_session):
         a = await _model(db_session, "gpt-rec-c")

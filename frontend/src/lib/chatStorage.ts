@@ -1442,6 +1442,63 @@ export async function loadOlderSessionMessages(session: ChatSession): Promise<{
   return { session: next, hasMore };
 }
 
+/** A page of the whole-history walk: the server's own cap on one page. */
+const WHOLE_HISTORY_PAGE = 500;
+
+/**
+ * Whether a session has messages on the server older than the ones in hand.
+ * The cache says so when a page was read; otherwise the chat's count does:
+ * a chat opened from the list is loaded with its latest page only.
+ */
+export function sessionHasOlderMessages(session: ChatSession): boolean {
+  if (session.privateMode) return false;
+  if (!session.messages.some((m) => m.sequence != null)) return false;
+  const cached = getCachedSessionMessages(session.id);
+  if (cached && cached.messages.length === session.messages.length) return cached.hasMoreOlder;
+  return (session.messageCount ?? 0) > session.messages.length;
+}
+
+/**
+ * The session with every message the server has, oldest first: the pages
+ * older than the loaded ones are read and put in front of them, which are
+ * kept as they are (a reply still streaming, a message not yet synced). A
+ * chat's next turn goes to the model with its whole history, not with the
+ * page the chat was opened on. `added` is 0 when nothing older was there.
+ */
+export async function loadWholeSessionHistory(
+  session: ChatSession,
+  opts?: { signal?: AbortSignal },
+): Promise<{ session: ChatSession; added: number }> {
+  if (!sessionHasOlderMessages(session)) return { session, added: 0 };
+  let before = session.messages.find((m) => m.sequence != null)?.sequence;
+  const older: ChatMessage[][] = [];
+  let total = 0;
+  while (before != null && total < FULL_HISTORY_MAX_MESSAGES) {
+    const page = await fetchSessionMessagesFromServer(session.id, {
+      limit: WHOLE_HISTORY_PAGE,
+      before,
+      signal: opts?.signal,
+    });
+    if (!page.messages.length) break;
+    older.unshift(page.messages);
+    total += page.messages.length;
+    if (!page.hasMore) break;
+    before = page.messages[0]?.sequence;
+  }
+  const earlier = older.flat();
+  const merged = [...earlier, ...session.messages];
+  setCachedSessionMessages(session.id, {
+    revision: session.revision ?? 1,
+    messages: merged,
+    hasMoreOlder: total >= FULL_HISTORY_MAX_MESSAGES,
+    oldestSequence: merged.find((m) => m.sequence != null)?.sequence,
+  });
+  return {
+    session: { ...session, messages: merged, messageCount: Math.max(session.messageCount ?? 0, merged.length) },
+    added: earlier.length,
+  };
+}
+
 function normalizeChatSessions(parsed: ChatSession[]): ChatSession[] {
   if (!Array.isArray(parsed)) return [];
   return parsed

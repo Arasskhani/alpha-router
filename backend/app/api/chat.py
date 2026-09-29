@@ -67,6 +67,7 @@ from app.services.budget_service import (
 )
 from app.services.chat_docx_service import ChatExportError as DocxExportError
 from app.services.chat_docx_service import render_chat_docx
+from app.services.chat_history_service import complete_chat_history
 from app.services.chat_export_service import (
     ChatExportError,
     build_download_content_disposition,
@@ -298,6 +299,8 @@ class ChatRequest(BaseModel):
     private_mode: bool = False
     project_id: str | None = None
     user_message: dict | None = None
+    #: The sequence of the first message in ``messages``: the chat's older ones are put in front on the server.
+    history_from_sequence: int | None = Field(None, ge=1)
     assistant_client_message_id: str | None = None
     alpharouter: dict | None = None
     agent_id: str | None = None
@@ -779,6 +782,14 @@ async def chat_completions(
         value = getattr(body, key)
         if value is not None:
             payload[key] = value
+    if body.history_from_sequence and not payload["private_mode"]:
+        payload["messages"], _added = await complete_chat_history(
+            db,
+            user=user,
+            chat_session_id=body.chat_session_id,
+            messages=list(body.messages),
+            history_from_sequence=body.history_from_sequence,
+        )
     client_app = _client_app(request)
     await _browser_agent_tools(db, request, body, payload, tools, user)
     shares = await _declared_page_shares(db, request, body, payload, tools)

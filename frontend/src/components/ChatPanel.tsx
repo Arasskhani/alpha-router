@@ -2898,9 +2898,12 @@ export default function ChatPanel({
       !privateMode && sessionId
         ? agentRequestFields(agentSelectionForSession(sessionId))
         : {};
+    // Where this history starts in the chat: the server puts anything older in front of it.
+    const historyFrom = privateMode ? undefined : history[0]?.sequence;
     return {
       model: modelId,
       messages: await apiMessages(history, forModel),
+      ...(historyFrom != null && historyFrom > 1 ? { history_from_sequence: historyFrom } : {}),
       stream: true,
       private_mode: !!(privateMode && !isProjectChat),
       ...(isProjectChat && projectId ? { project_id: projectId } : {}),

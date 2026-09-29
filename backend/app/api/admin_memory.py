@@ -47,6 +47,7 @@ class MemorySettingsPatch(BaseModel):
     stale_archive_days: int | None = Field(default=None, ge=0, le=3650)
     soft_delete_purge_days: int | None = Field(default=None, ge=1, le=365)
     suppression_days: int | None = Field(default=None, ge=1, le=3650)
+    history_completion_enabled: bool | None = None
     project_feature_enabled: bool | None = None
     project_max_per_project: int | None = Field(default=None, ge=10, le=2000)
     project_inject_max_items: int | None = Field(default=None, ge=1, le=200)

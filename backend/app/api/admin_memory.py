@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +15,7 @@ from app.models.chat import UserMemory, UserMemoryJob
 from app.models.cost_accounting import UsageOperation
 from app.models.project import ProjectMemory, ProjectMemoryJob
 from app.models.user import User
+from app.services.memory_job_admin_service import list_failed_jobs, retry_failed_jobs
 from app.services.memory_maintenance_service import reindex_all_memories
 from app.services.memory_settings_service import (
     MemorySettingsError,
@@ -220,6 +221,46 @@ async def get_stats(
         "project_embedding_backlog": project_backlog,
         "project_extraction_cost_usd_30d": float(project_extract_cost or 0),
     }
+
+
+@router.get("/failed-jobs")
+async def get_failed_jobs(
+    scope: Literal["user", "project"] = Query("user"),
+    db: AsyncSession = Depends(get_read_db),
+    _user: User = Depends(require_memory),
+) -> dict[str, Any]:
+    """Extraction jobs that failed for good: how many, why, and the newest of them."""
+    return await list_failed_jobs(db, scope)
+
+
+class RetryFailedJobs(BaseModel):
+    scope: Literal["user", "project"]
+    job_ids: list[str] | None = Field(default=None, max_length=500)
+
+
+@router.post("/failed-jobs/retry")
+async def post_retry_failed_jobs(
+    body: RetryFailedJobs,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_memory_write),
+) -> dict[str, Any]:
+    """Run failed jobs again from where their chats were mined to; audited."""
+    from app.services.client_ip import resolve_client_ip
+    from app.services.security_audit import log_security_event
+
+    counts = await retry_failed_jobs(db, body.scope, job_ids=body.job_ids)
+    await log_security_event(
+        db,
+        actor=admin,
+        actor_ip=resolve_client_ip(request),
+        action="memory_jobs_retried",
+        resource_type="memory",
+        resource_id=body.scope,
+        detail={"scope": body.scope, "selected": len(body.job_ids) if body.job_ids is not None else "all", **counts},
+    )
+    await db.commit()
+    return {"ok": True, "scope": body.scope, **counts}
 
 
 @router.post("/reindex")

@@ -224,3 +224,55 @@ describe("the extractor's answer length", () => {
     expect(JSON.parse(String((patchCall?.[1] as RequestInit).body)).extract_max_tokens).toBe(3000);
   });
 });
+
+describe("the failed jobs", () => {
+  const USER_FAILED = {
+    scope: "user",
+    total: 3,
+    reasons: [
+      { reason: "Memory extraction model is unavailable", count: 2 },
+      { reason: "RateLimitError: slow down", count: 1 },
+    ],
+    jobs: [],
+  };
+
+  function answerWithFailures() {
+    vi.mocked(api).mockImplementation(async (path: string, init?: RequestInit) => {
+      if (path.includes("/memory/failed-jobs/retry")) return { requeued: 2, merged: 1, covered: 0 };
+      if (path.includes("/memory/failed-jobs?scope=user")) return USER_FAILED;
+      if (path.includes("/memory/failed-jobs?scope=project")) return { scope: "project", total: 0, reasons: [], jobs: [] };
+      if (path.includes("/memory/settings")) return { ...SETTINGS, extraction_model_id: 7 };
+      if (path.includes("/memory/stats")) return { ...STATS, dead_letter_count: 3 };
+      if (path.includes("/admin/models")) return [];
+      throw new Error(`unexpected ${path} ${init?.method ?? "GET"}`);
+    });
+  }
+
+  function section() {
+    return host.querySelector('section[aria-label="Failed jobs"]');
+  }
+
+  it("says why they failed and runs a scope's jobs again", async () => {
+    answerWithFailures();
+    await render();
+    await act(async () => undefined);
+    const text = section()?.textContent ?? "";
+    expect(text).toContain("3 failed");
+    expect(text).toContain("2 Memory extraction model is unavailable");
+    expect(text).toContain("None");
+    const [personal, project] = Array.from(section()?.querySelectorAll<HTMLButtonElement>("button") ?? []);
+    expect(project.disabled).toBe(true);
+    await act(async () => personal.click());
+    const retry = vi.mocked(api).mock.calls.find(([path]) => String(path).includes("/failed-jobs/retry"));
+    expect(JSON.parse(String((retry?.[1] as RequestInit).body))).toEqual({ scope: "user" });
+    expect(host.querySelector(".alert-success")?.textContent).toContain("Queued 2 again");
+  });
+
+  it("still opens the page when the list cannot be read", async () => {
+    answerWith({ extraction_model_id: 7 });
+    await render();
+    expect(section()?.textContent).toContain("Failed jobs");
+    expect(host.querySelector(".alert-error")).toBeNull();
+  });
+});
+

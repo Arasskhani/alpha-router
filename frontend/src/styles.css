@@ -8515,6 +8515,25 @@ table.data-table--api-logs {
   margin-bottom: 1.05rem;
 }
 
+/* Why extraction jobs failed: one line per reason, its count first. */
+.memory-admin__reasons {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.memory-admin__reasons li {
+  overflow-wrap: anywhere;
+}
+
+.memory-admin__reasons strong {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  margin-inline-end: 0.35rem;
+}
+
 .memory-admin .settings-list,
 .memory-admin .settings-row,
 .memory-admin .settings-row__trail {

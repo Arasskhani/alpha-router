@@ -48,6 +48,28 @@ type MemorySettings = {
   project_min_similarity: number;
 };
 
+type FailedJobs = {
+  scope: "user" | "project";
+  total: number;
+  reasons: { reason: string; count: number }[];
+  jobs: {
+    id: string;
+    owner: string;
+    reason: string;
+    attempts: number;
+    failed_at: string | null;
+    mined_to: number;
+    of: number;
+  }[];
+};
+
+type RetryResult = { requeued: number; merged: number; covered: number };
+
+const FAILED_SCOPES: { scope: FailedJobs["scope"]; label: string }[] = [
+  { scope: "user", label: "Personal" },
+  { scope: "project", label: "Project" },
+];
+
 type MemoryStats = {
   total_memories: number;
   memories_last_7d: number;
@@ -195,6 +217,8 @@ export default function MemoryAdmin() {
   const [saving, setSaving] = useState(false);
   const [reindexing, setReindexing] = useState(false);
   const [purgeUserId, setPurgeUserId] = useState("");
+  const [failed, setFailed] = useState<Partial<Record<FailedJobs["scope"], FailedJobs>>>({});
+  const [retrying, setRetrying] = useState<FailedJobs["scope"] | null>(null);
 
   async function load() {
     setError("");
@@ -206,6 +230,46 @@ export default function MemoryAdmin() {
     setSettings(cfg);
     setStats(st);
     setModels(Array.isArray(catalog) ? catalog : []);
+    void loadFailed();
+  }
+
+  /** Why jobs failed: read on its own, so the page still opens if this read does not. */
+  async function loadFailed() {
+    const lists = await Promise.all(
+      FAILED_SCOPES.map(({ scope }) =>
+        api<FailedJobs>(`/api/admin/memory/failed-jobs?scope=${scope}`).catch(() => null),
+      ),
+    );
+    const next: Partial<Record<FailedJobs["scope"], FailedJobs>> = {};
+    for (const list of lists) if (list) next[list.scope] = list;
+    setFailed(next);
+  }
+
+  async function onRetry(scope: FailedJobs["scope"]) {
+    const total = failed[scope]?.total ?? 0;
+    const ok = await confirm({
+      title: "Run failed jobs again",
+      message: `Send ${total} failed ${scope === "user" ? "personal" : "project"} extraction job${total === 1 ? "" : "s"} back to the queue. Each goes on from where its chat was mined to, and is billed as extraction.`,
+      confirmLabel: "Run again",
+    });
+    if (!ok) return;
+    setRetrying(scope);
+    setError("");
+    setFlash("");
+    try {
+      const result = await api<RetryResult>("/api/admin/memory/failed-jobs/retry", {
+        method: "POST",
+        body: JSON.stringify({ scope }),
+      });
+      setFlash(
+        `Queued ${result.requeued} again. ${result.merged} handed to a newer job of the same chat, ${result.covered} already mined.`,
+      );
+      await load();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setRetrying(null);
+    }
   }
 
   useEffect(() => {
@@ -421,6 +485,47 @@ export default function MemoryAdmin() {
               <StatusCell label="Extract 30d" value={stats ? formatUsd(stats.project_extraction_cost_usd_30d) : "…"} />
               <StatusCell label="Jobs" value={stats ? formatJobs(stats.project_jobs_by_status) : "…"} />
             </dl>
+          </div>
+        </section>
+
+        <section className="settings-section memory-admin__failed" aria-label="Failed jobs">
+          <h2>Failed jobs</h2>
+          <p className="settings-section-desc">
+            Extraction jobs that failed for good, grouped by why. Fix the cause (a model, an allowance), then run them
+            again: each goes on from where its chat was mined to.
+          </p>
+          <div className="settings-list">
+            {FAILED_SCOPES.map(({ scope, label }) => {
+              const list = failed[scope];
+              const total = list?.total ?? 0;
+              return (
+                <FieldRow
+                  key={scope}
+                  title={label}
+                  hint={list ? (total ? `${total.toLocaleString()} failed` : "None") : "…"}
+                  detail={
+                    total ? (
+                      <ul className="memory-admin__reasons">
+                        {list?.reasons.map((item) => (
+                          <li key={item.reason}>
+                            <strong>{item.count.toLocaleString()}</strong> {item.reason}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null
+                  }
+                >
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    disabled={readOnly || !total || retrying !== null}
+                    onClick={() => void onRetry(scope)}
+                  >
+                    {retrying === scope ? "Queuing…" : "Run again"}
+                  </button>
+                </FieldRow>
+              );
+            })}
           </div>
         </section>
 

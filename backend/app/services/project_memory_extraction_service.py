@@ -34,6 +34,7 @@ from app.services.memory_extraction_service import (
     advance_watermark,
     ask_extractor,
     contains_secret,
+    defer_to_running_job,
     drop_overtaken_part,
     extraction_budget_exhausted,
     fit_extraction_window,
@@ -660,6 +661,21 @@ async def _mine_next_project_part(db: AsyncSession, job, *, completer: Any | Non
     window_from = int(job.extracted_sequence or 0)
     if not first and await _watermark_moved(db, job, window_from=window_from):
         return False
+    if first:
+        running, ahead = await defer_to_running_job(db, job)
+        if running:
+            from app.services.project_memory_job_service import schedule_extraction
+
+            await schedule_extraction(
+                db,
+                project_id=str(job.project_id),
+                session_id=str(job.session_id),
+                watermark_sequence=int(job.watermark_sequence or 0),
+            )
+            return False
+        if ahead > window_from:
+            to = min(ahead, int(job.watermark_sequence or 0))
+            return await advance_watermark(db, job, window_from=window_from, to=to)
     need = int(settings.get("project_extract_min_new_messages") or 2) if first else 1
     if int(job.watermark_sequence or 0) - window_from < need:
         return False

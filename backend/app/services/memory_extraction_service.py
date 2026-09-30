@@ -1135,6 +1135,26 @@ async def drop_overtaken_part(db: AsyncSession, job: Any, *, scope: str) -> bool
     return False
 
 
+async def defer_to_running_job(db: AsyncSession, job: Any) -> tuple[bool, int]:
+    """Whether another job of the same chat is mining it now, and how far the chat's other jobs have mined it.
+
+    A job is made while another one of the same chat is still running (a new
+    reply, relearning, an administrator's retry) and starts from what that
+    one had committed so far: without this the two would read, and bill,
+    the same parts.
+    """
+    model = type(job)
+    now = dt.datetime.utcnow()
+    others = (model.session_id == job.session_id, model.id != job.id)
+    running = (
+        await db.execute(
+            select(model.id).where(*others, model.status == "running", model.lease_expires_at > now).limit(1)
+        )
+    ).scalar_one_or_none()
+    ahead = (await db.execute(select(func.max(model.extracted_sequence)).where(*others))).scalar_one_or_none()
+    return running is not None, int(ahead or 0)
+
+
 def smaller_part(window: ExtractionWindow | Any, max_chars: int, cause: ExtractionTruncated) -> int:
     """The size to read a part in again after the extractor ran out of room answering it: half of it.
 
@@ -1252,6 +1272,23 @@ async def _mine_next_part(db: AsyncSession, job, *, completer: Any | None, first
     if not first and await _watermark_moved(db, job, window_from=window_from):
         # "Delete all my memories" ran between two parts.
         return False
+    if first:
+        running, ahead = await defer_to_running_job(db, job)
+        if running:
+            # Another job of this chat is mining it now: this one goes on after it.
+            from app.services.memory_job_service import schedule_extraction
+
+            await schedule_extraction(
+                db,
+                user_id=int(job.user_id),
+                session_id=str(job.session_id),
+                watermark_sequence=int(job.watermark_sequence or 0),
+            )
+            return False
+        if ahead > window_from:
+            # What another job of this chat mined already is not read again.
+            to = min(ahead, int(job.watermark_sequence or 0))
+            return await advance_watermark(db, job, window_from=window_from, to=to)
     # The first part waits for enough new turns; the rest of a long stretch is mined whatever is left.
     need = int(settings.get("extract_min_new_messages") or 2) if first else 1
     if int(job.watermark_sequence or 0) - window_from < need:

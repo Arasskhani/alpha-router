@@ -296,6 +296,47 @@ class TestPersonal:
             ).all()
             assert kept == []
 
+    async def test_a_job_waits_for_another_job_of_its_chat_that_is_mining_it(self, db_session, user, chat):
+        await _messages(db_session, chat, 40)
+        mining = _job(UserMemoryJob, owner={"user_id": user.id}, session_id=chat.id, watermark=20)
+        mining.lease_expires_at = dt.datetime.utcnow() + dt.timedelta(minutes=5)
+        job = _job(UserMemoryJob, owner={"user_id": user.id}, session_id=chat.id, watermark=40)
+        db_session.add_all([mining, job])
+        await db_session.commit()
+        model = _Model()
+
+        await handle_memory_extraction(db_session, job, completer=model)
+        await db_session.commit()
+
+        assert model.parts == []  # nothing read twice, nothing billed twice
+        follow = (
+            (
+                await db_session.execute(
+                    select(UserMemoryJob).where(UserMemoryJob.session_id == chat.id, UserMemoryJob.status == "pending")
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert [row.watermark_sequence for row in follow] == [40]
+
+    async def test_what_another_job_of_the_chat_mined_is_not_read_again(self, db_session, user, chat):
+        await _messages(db_session, chat, 40)
+        done = _job(UserMemoryJob, owner={"user_id": user.id}, session_id=chat.id, watermark=20, extracted=20)
+        done.status = "succeeded"
+        job = _job(UserMemoryJob, owner={"user_id": user.id}, session_id=chat.id, watermark=40)
+        db_session.add_all([done, job])
+        await db_session.commit()
+        model = _Model()
+
+        await handle_memory_extraction(db_session, job, completer=model)
+        await db_session.commit()
+
+        read = sorted({turn for part in model.parts for turn in part})
+        assert read and min(turn for turn in read if turn > 20) == 21
+        assert job.extracted_sequence == 40
+        assert all(turn > 20 - 6 for turn in read)  # only a few turns before 21, as context
+
     def test_each_part_is_billed_under_its_own_key(self):
         job = UserMemoryJob(id="j1", user_id=7, attempt_count=1)
         first = ExtractionBilling.for_user(job, "u", part="1-23").key_prefix

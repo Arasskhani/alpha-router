@@ -395,6 +395,11 @@ class ChatRecallIndex(Base):
     chunk_count = Column(Integer, nullable=False, default=0)
     #: sha256 of the text the chat's digest was embedded from, so an unchanged digest is not embedded again.
     digest_hash = Column(String(64), nullable=True)
+    #: What the chat is about, written by the summary model for a chat without a summary; None when none.
+    digest_text = Column(Text, nullable=True)
+    #: The last sequence it was written from, and the ``not_before`` it was written under (valid only while equal).
+    digest_up_to = Column(Integer, nullable=True)
+    digest_after = Column(Integer, nullable=True)
     embedding_model = Column(String(255), nullable=True)
     #: idle | pending | running | failed
     status = Column(String(16), nullable=False, default="idle")

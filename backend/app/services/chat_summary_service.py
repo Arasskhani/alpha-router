@@ -513,8 +513,12 @@ async def _complete(
     completer: Any,
     first_sequence: int,
     max_tokens: int,
+    purpose: str = "chat-summary",
 ) -> str:
-    """One call to the summary model, recorded under a key of its own."""
+    """One call to the summary model, recorded under a key of its own (``purpose`` starts it).
+
+    ``row`` is the chat's summary or recall index row: the chat, its owner and project, the attempt.
+    """
     if completer is not None:
         return _completion_text(await completer({"messages": [{"role": "user", "content": user_content}]})).strip()
     from litellm import acompletion
@@ -545,7 +549,7 @@ async def _complete(
     text = _completion_text(response).strip()
     # A key of the call's own: the attempts start again with every run, and a chat rewritten from its
     # start summarizes its first message again - a repeated key would leave a paid call unrecorded.
-    key_prefix = f"chat-summary:{row.session_id}:{int(row.attempt_count or 0)}:{first_sequence}:{uuid.uuid4().hex[:10]}"
+    key_prefix = f"{purpose}:{row.session_id}:{int(row.attempt_count or 0)}:{first_sequence}:{uuid.uuid4().hex[:10]}"
     if row.project_id:
         from app.services.metered_usage_service import PLATFORM_USERNAME
         from app.services.usage_accounting_service import SUBJECT_PLATFORM

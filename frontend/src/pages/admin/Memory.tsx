@@ -120,12 +120,15 @@ function describeRecallStatus(s: RecallStatus): string {
 }
 
 function describeBackfill(e: BackfillEstimate): string {
+  if (!e.enabled) return "Recall is off, or no embedding model is saved: turn it on, choose one and save first.";
   if (!e.chats) return "Every chat is indexed already.";
   const cost = e.estimated_cost_usd == null ? "the embedding model has no price" : `about ${formatUsd(e.estimated_cost_usd)}`;
   return `${e.chats.toLocaleString()} chats, ${e.messages.toLocaleString()} messages not indexed yet: ${cost}.`;
 }
 
 function describeEstimate(e: RelearnEstimate): string {
+  if (!e.enabled) return "Relearning is off: turn on Allow relearning and save first.";
+  if (!e.model_configured) return "No extraction model is saved: choose one under Pipeline and save first.";
   const chats = e.chats.user + e.chats.project;
   if (!chats) return `Nothing to read again in the last ${e.days} days.`;
   const cost = e.estimated_cost_usd == null ? "the extraction model has no price" : `about ${formatUsd(e.estimated_cost_usd)}`;
@@ -278,6 +281,8 @@ export default function MemoryAdmin() {
   const { confirm } = useConfirm();
   const readOnly = useReadOnly();
   const [settings, setSettings] = useState<MemorySettings | null>(null);
+  /** The settings as the server has them: what Estimate, Relearn, Index and Rebuild act on. */
+  const [saved, setSaved] = useState<MemorySettings | null>(null);
   const [stats, setStats] = useState<MemoryStats | null>(null);
   const [models, setModels] = useState<AdminModel[]>([]);
   const [flash, setFlash] = useState("");
@@ -302,8 +307,14 @@ export default function MemoryAdmin() {
       api<AdminModel[]>("/api/admin/models"),
     ]);
     setSettings(cfg);
+    setSaved(cfg);
     setStats(st);
     setModels(Array.isArray(catalog) ? catalog : []);
+  }
+
+  /** The figures only: the settings being edited stay as they are. */
+  async function loadStats() {
+    setStats(await api<MemoryStats>("/api/admin/memory/stats"));
   }
 
   /** Why jobs failed: read on its own, so the page still opens if this read does not. */
@@ -337,7 +348,7 @@ export default function MemoryAdmin() {
       setFlash(
         `Queued ${result.requeued} again. ${result.merged} handed to a newer job of the same chat, ${result.covered} already mined.`,
       );
-      await Promise.all([load(), loadFailed()]);
+      await Promise.all([loadStats(), loadFailed()]);
     } catch (err) {
       setError(String(err));
     } finally {
@@ -447,6 +458,7 @@ export default function MemoryAdmin() {
         body: JSON.stringify(settings),
       });
       setSettings(saved);
+      setSaved(saved);
       setFlash("Memory settings saved.");
     } catch (err) {
       setError(String(err));
@@ -469,7 +481,7 @@ export default function MemoryAdmin() {
     try {
       const result = await api<{ indexed?: number }>("/api/admin/memory/reindex", { method: "POST" });
       setFlash(`Reindexed ${result.indexed ?? 0} memories.`);
-      await load();
+      await loadStats();
     } catch (err) {
       setError(String(err));
     } finally {
@@ -498,7 +510,7 @@ export default function MemoryAdmin() {
       });
       setFlash(`Deleted ${result.deleted ?? 0} memories for user ${id}.`);
       setPurgeUserId("");
-      await load();
+      await loadStats();
     } catch (err) {
       setError(String(err));
     }
@@ -517,6 +529,16 @@ export default function MemoryAdmin() {
     patch({ allowed_sensitive_categories: [...next] });
   }
 
+  /** Whether any of these settings is edited here and not saved yet. */
+  function unsaved(...keys: (keyof MemorySettings)[]): boolean {
+    if (!saved || !settings) return false;
+    return keys.some((key) => JSON.stringify(settings[key]) !== JSON.stringify(saved[key]));
+  }
+  const relearnUnsaved = unsaved("feature_enabled", "relearn_enabled", "extraction_model_id");
+  const recallUnsaved = unsaved("feature_enabled", "recall_enabled", "embedding_model");
+  const reindexUnsaved = unsaved("embedding_model");
+  const SAVE_FIRST = "Save your changes first: this acts on the saved settings.";
+
   const saveBar = (
     <>
       <button type="submit" form="memory-settings-form" className="btn" disabled={readOnly || saving || !settings}>
@@ -525,7 +547,8 @@ export default function MemoryAdmin() {
       <button
         type="button"
         className="btn btn-ghost"
-        disabled={readOnly || reindexing || !settings}
+        disabled={readOnly || reindexing || !settings || reindexUnsaved}
+        title={reindexUnsaved ? SAVE_FIRST : undefined}
         onClick={() => void onReindex()}
       >
         {reindexing ? "Reindexing…" : "Rebuild index"}
@@ -734,7 +757,13 @@ export default function MemoryAdmin() {
             <FieldRow
               title="Days to read again"
               hint="1–90"
-              detail={estimate ? <p className="memory-admin__estimate">{describeEstimate(estimate)}</p> : null}
+              detail={
+                relearnUnsaved ? (
+                  <p className="memory-admin__estimate">{SAVE_FIRST}</p>
+                ) : estimate ? (
+                  <p className="memory-admin__estimate">{describeEstimate(estimate)}</p>
+                ) : null
+              }
             >
               <NumberInput
                 id="memory-relearn-days"
@@ -745,7 +774,7 @@ export default function MemoryAdmin() {
                   setEstimate(null);
                 }}
               />
-              <button type="button" className="btn btn-ghost" onClick={() => void onEstimate()}>
+              <button type="button" className="btn btn-ghost" disabled={relearnUnsaved} onClick={() => void onEstimate()}>
                 Estimate
               </button>
               <button
@@ -754,6 +783,7 @@ export default function MemoryAdmin() {
                 disabled={
                   readOnly ||
                   relearning ||
+                  relearnUnsaved ||
                   !estimate?.enabled ||
                   !estimate.model_configured ||
                   !(estimate.chats.user + estimate.chats.project)
@@ -1048,15 +1078,26 @@ export default function MemoryAdmin() {
               <FieldRow
                 title="Index earlier chats"
                 hint="Chats are indexed as they go on. The ones from before recall was on are indexed only from here."
-                detail={backfill ? <p className="memory-admin__estimate">{describeBackfill(backfill)}</p> : null}
+                detail={
+                  recallUnsaved ? (
+                    <p className="memory-admin__estimate">{SAVE_FIRST}</p>
+                  ) : backfill ? (
+                    <p className="memory-admin__estimate">{describeBackfill(backfill)}</p>
+                  ) : null
+                }
               >
-                <button type="button" className="btn btn-ghost" onClick={() => void onBackfillEstimate()}>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  disabled={recallUnsaved}
+                  onClick={() => void onBackfillEstimate()}
+                >
                   Estimate
                 </button>
                 <button
                   type="button"
                   className="btn"
-                  disabled={readOnly || backfilling || !backfill?.enabled || !backfill.chats}
+                  disabled={readOnly || backfilling || recallUnsaved || !backfill?.enabled || !backfill.chats}
                   onClick={() => void onBackfill()}
                 >
                   {backfilling ? "Queuing…" : "Index"}
@@ -1297,11 +1338,13 @@ export default function MemoryAdmin() {
             <button
               type="button"
               className="btn btn-ghost"
-              disabled={readOnly || reindexing}
+              disabled={readOnly || reindexing || reindexUnsaved}
+              title={reindexUnsaved ? SAVE_FIRST : undefined}
               onClick={() => void onReindex()}
             >
               {reindexing ? "Reindexing…" : "Rebuild index"}
             </button>
+            {reindexUnsaved ? <span className="muted-text">{SAVE_FIRST}</span> : null}
           </div>
         </form>
 

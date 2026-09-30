@@ -282,6 +282,21 @@ describe("the failed jobs", () => {
     expect(host.querySelector(".alert-success")?.textContent).toContain("Queued 2 again");
   });
 
+  it("keeps the settings being edited when the jobs are run again", async () => {
+    answerWithFailures();
+    await render();
+    await act(async () => undefined);
+    const keep = host.querySelector<HTMLInputElement>("#memory-summary-keep");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(keep, "31");
+      keep?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const [personal] = Array.from(section()?.querySelectorAll<HTMLButtonElement>("button") ?? []);
+    await act(async () => personal.click());
+    expect(host.querySelector<HTMLInputElement>("#memory-summary-keep")?.value).toBe("31");
+    expect(vi.mocked(api).mock.calls.filter(([path]) => String(path).includes("/memory/settings"))).toHaveLength(1);
+  });
+
   it("still opens the page when the list cannot be read", async () => {
     answerWith({ extraction_model_id: 7 });
     await render();
@@ -338,11 +353,23 @@ describe("relearning recent chats", () => {
     expect(host.querySelector(".alert-success")?.textContent).toContain("Queued 3 chats");
   });
 
-  it("cannot start while the switch is off on the server", async () => {
+  it("cannot start while the switch is off on the server, and says so", async () => {
     answerWithEstimate({ ...ESTIMATE, enabled: false });
     await render();
     await act(async () => button("Estimate")?.click());
     expect(button("Relearn")?.disabled).toBe(true);
+    expect(section()?.textContent).toContain("Relearning is off: turn on Allow relearning and save first.");
+  });
+
+  it("waits for the switch to be saved before it estimates", async () => {
+    answerWithEstimate(ESTIMATE);
+    await render();
+    const toggle = section()?.querySelector<HTMLButtonElement>('button[aria-label="Allow relearning"]');
+    await act(async () => toggle?.click());
+    expect(button("Estimate")?.disabled).toBe(true);
+    expect(section()?.textContent).toContain("Save your changes first");
+    await act(async () => toggle?.click());
+    expect(button("Estimate")?.disabled).toBe(false);
   });
 });
 
@@ -429,6 +456,17 @@ describe("earlier chats", () => {
     await act(async () => button("Index")?.click());
     expect(vi.mocked(api).mock.calls.some(([path, init]) => String(path).endsWith("/memory/recall/backfill") && (init as RequestInit)?.method === "POST")).toBe(true);
     expect(host.querySelector(".alert-success")?.textContent).toContain("Queued 30 chats to be indexed.");
+  });
+
+  it("says why it cannot index while recall is off on the server", async () => {
+    answerWithRecall(
+      { embedding_model: "openai:text-embedding-3-small", embedding_dimensions: 1536 },
+      { chats: 30, messages: 900, characters: 400000, estimated_cost_usd: 0.0021, enabled: false },
+    );
+    await render();
+    await act(async () => button("Estimate")?.click());
+    expect(section()?.textContent).toContain("Recall is off, or no embedding model is saved");
+    expect(button("Index")?.disabled).toBe(true);
   });
 });
 

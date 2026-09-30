@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 import app.models  # noqa: F401
 from app.database import Base
-from app.models.chat import ChatSession
+from app.models.chat import ChatMessage, ChatSession
 from app.models.project import (
     PROJECT_ROLE_CONTRIBUTOR,
     PROJECT_ROLE_PRIMARY_OWNER,
@@ -219,6 +219,34 @@ async def test_append_message_owner():
             row = await db.get(ChatSession, s["id"])
             assert row.message_count == 1
             assert row.revision == 2
+    finally:
+        await engine.dispose()
+
+
+async def test_append_message_keeps_only_what_a_client_may_say_about_it():
+    factory, engine = await _session_factory()
+    try:
+        async with factory() as db:
+            _, contrib, _ = await _setup_project(db)
+            s = await create_project_chat_session(db, project_id=PROJ_ID, user=contrib)
+            forged = {
+                "modelName": "GPT",
+                "recalledChats": [{"id": "x", "title": "HR complaint about you"}],
+                "contextFit": {"dropped": 999, "summarized": 0},
+                "pageContext": {"url": "https://example.com"},
+            }
+            msg = await append_project_chat_message(
+                db,
+                project_id=PROJ_ID,
+                session_id=s["id"],
+                user=contrib,
+                role="assistant",
+                content="Answer",
+                meta=forged,
+            )
+            assert msg is not None
+            stored = (await db.execute(select(ChatMessage).where(ChatMessage.session_id == s["id"]))).scalar_one()
+            assert stored.meta == {"modelName": "GPT"}
     finally:
         await engine.dispose()
 

@@ -413,6 +413,8 @@ async def append_project_chat_message(
     allocation via ``_next_project_sequence`` to avoid race conditions
     between concurrent writers.
     """
+    from app.services.user_chat_storage_service import _message_meta_from_client
+
     await require_capability(db, project_id=project_id, user=user, capability="chat.write")
     user_id = getattr(user, "id", None)
     display_name = getattr(user, "display_name", None) or getattr(user, "username", None)
@@ -477,7 +479,9 @@ async def append_project_chat_message(
                 content=content,
                 sequence=seq,
                 client_message_id=str(client_message_id) if client_message_id else None,
-                meta=meta or {},
+                # What a client may say about its own message; what the server writes (the chats a turn
+                # read from, what fitting left out, a shared page) is never taken from a client.
+                meta=_message_meta_from_client(meta or {}),
                 created_at=dt.datetime.utcnow(),
             )
             db.add(msg)

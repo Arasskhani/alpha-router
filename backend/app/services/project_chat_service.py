@@ -25,6 +25,7 @@ from app.models.chat import (
     is_member_channel,
 )
 from app.models.project import Project, ProjectChatPin, ProjectUserPref
+from app.services.chat_markers import is_whole_reply
 from app.services.project_access_service import (
     require_capability,
     resolve_project_access,
@@ -494,9 +495,11 @@ async def append_project_chat_message(
             row.updated_at = dt.datetime.utcnow()
             await db.flush()
             await db.refresh(row, attribute_names=["message_count", "revision"])
-            if msg.role == "assistant":
-                # Only a completed exchange is worth mining, and the check stays
-                # ahead of the import so member turns pay nothing on this path.
+            stored_meta: dict[str, Any] = msg.meta if isinstance(msg.meta, dict) else {}
+            stored = {"role": msg.role, "content": msg.content, "streaming": stored_meta.get("streaming")}
+            if is_whole_reply(stored):
+                # Only a completed exchange is worth reading - not an answer still being written, nor a media
+                # turn's pending marker - and the check stays ahead of the import so member turns pay nothing.
                 from app.services.project_memory_job_service import (
                     maybe_schedule_from_append,
                 )
@@ -504,7 +507,7 @@ async def append_project_chat_message(
                 await maybe_schedule_from_append(
                     db,
                     session=row,
-                    messages=[{"role": msg.role}],
+                    messages=[stored],
                     watermark_sequence=seq,
                 )
                 from app.services.chat_recall_service import maybe_schedule_chat_index

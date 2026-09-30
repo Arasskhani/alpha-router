@@ -251,6 +251,33 @@ async def test_append_message_keeps_only_what_a_client_may_say_about_it():
         await engine.dispose()
 
 
+async def test_an_answer_still_being_made_is_not_learned_from_until_it_is_whole(monkeypatch):
+    from app.services import project_memory_job_service
+
+    scheduled: list[int] = []
+
+    async def _schedule(_db, *, watermark_sequence, **_kwargs):
+        scheduled.append(int(watermark_sequence))
+
+    monkeypatch.setattr(project_memory_job_service, "schedule_extraction", _schedule)
+    factory, engine = await _session_factory()
+    try:
+        async with factory() as db:
+            owner, _, _ = await _setup_project(db)
+            s = await create_project_chat_session(db, project_id=PROJ_ID, user=owner)
+            for content, meta in (
+                ("__ALPHA_ROUTER_IMAGE_PENDING__", None),
+                ("Friday is", {"streaming": True}),
+                ("Friday is a rest day.", None),
+            ):
+                await append_project_chat_message(
+                    db, project_id=PROJ_ID, session_id=s["id"], user=owner, role="assistant", content=content, meta=meta
+                )
+            assert scheduled == [3]
+    finally:
+        await engine.dispose()
+
+
 async def test_append_message_contributor():
     factory, engine = await _session_factory()
     try:

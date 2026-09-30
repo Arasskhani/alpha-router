@@ -595,6 +595,50 @@ async def forget_chats(db: AsyncSession, session_ids: list[str] | set[str], *, k
     await db.flush()
 
 
+async def forget_chat_starts(db: AsyncSession, purged_to: dict[str, int]) -> None:
+    """A retention purge took each chat's oldest messages, up to a sequence: what was indexed of those goes.
+
+    The rest of each chat stays indexed - a purge runs every night and takes
+    a few messages from every long chat, and forgetting the whole chat each
+    time would embed it all again on its next reply and leave a quiet one
+    out of recall for good. The digest goes (it is made of the chat's start)
+    and is made again from what is left. With the store down the vectors
+    stay, and their words - re-read from the chat - are gone with the
+    messages.
+    """
+    if not purged_to:
+        return
+    counts: dict[str, int] = {}
+    try:
+        from app.services.memory_vector_service import MemoryVectorService
+
+        service = MemoryVectorService()
+        try:
+            collection = await service.resolve_target_collection()
+            for session_id, up_to in purged_to.items():
+                await service.delete_session_start(collection_name=collection, session_id=session_id, up_to=up_to)
+                counts[session_id] = await service.count_session_chunks(
+                    collection_name=collection, session_id=session_id
+                )
+        finally:
+            await service.close()
+    except Exception:
+        logger.exception("Removing purged chat recall vectors failed for %s chats", len(purged_to))
+    rows: list[Any] = list(
+        (await db.execute(select(ChatRecallIndex).where(ChatRecallIndex.session_id.in_(list(purged_to)))))
+        .scalars()
+        .all()
+    )
+    now = dt.datetime.utcnow()
+    for row in rows:
+        row.digest_hash = None
+        if str(row.session_id) in counts:
+            row.chunk_count = counts[str(row.session_id)]
+        # A new stamp: an index run in flight, which may have read the purged messages, writes nothing.
+        row.updated_at = now
+    await db.flush()
+
+
 async def forget_user_chats(db: AsyncSession, user_id: int) -> None:
     """ "Delete all my memories": the person's personal chats leave recall, and what they said stays out."""
     ids = (

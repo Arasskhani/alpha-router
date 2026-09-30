@@ -254,12 +254,13 @@ async def purge_expired_chat_messages(
     cutoff = dt.datetime.utcnow() - dt.timedelta(days=days)
     removed = 0
     affected: set[str] = set()
+    purged_to: dict[str, int] = {}
     active_hold = _chat_message_has_active_legal_hold()
 
     while True:
         batch_ids = (
             await db.execute(
-                select(ChatMessage.id, ChatMessage.session_id)
+                select(ChatMessage.id, ChatMessage.session_id, ChatMessage.sequence)
                 .where(
                     ChatMessage.created_at < cutoff,
                     ~active_hold,
@@ -270,8 +271,9 @@ async def purge_expired_chat_messages(
         if not batch_ids:
             break
         msg_ids = [row[0] for row in batch_ids]
-        for _, sid in batch_ids:
+        for _, sid, sequence in batch_ids:
             affected.add(sid)
+            purged_to[sid] = max(purged_to.get(sid, 0), int(sequence or 0))
         result = await db.execute(delete(ChatMessage).where(ChatMessage.id.in_(msg_ids)))
         removed += int(result.rowcount or 0)
         await db.flush()
@@ -280,12 +282,12 @@ async def purge_expired_chat_messages(
 
     if affected:
         await _sync_affected_session_stats(db, affected)
-        # A summary may still hold what the purged messages said.
-        from app.services.chat_recall_service import forget_chats
+        # A summary may still hold what the purged messages said; the recall index loses what it had of them.
+        from app.services.chat_recall_service import forget_chat_starts
         from app.services.chat_summary_service import forget_summaries
 
         await forget_summaries(db, affected)
-        await forget_chats(db, affected)
+        await forget_chat_starts(db, purged_to)
     removed_empty = await cleanup_empty_sessions_after_purge(db, affected)
     if removed or removed_empty:
         await append_governance_audit_event(

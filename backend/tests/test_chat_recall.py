@@ -705,6 +705,35 @@ class TestForgetting:
         # Nor is anything indexed while it is off.
         assert not await maybe_schedule_chat_index(db_session, session=workout, latest_sequence=4)
 
+    async def test_a_retention_purge_takes_only_what_it_purged_out_of_the_index(self, db_session, user, store):
+        from unittest.mock import patch
+
+        from app.services.retention_policy_service import purge_expired_chat_messages
+
+        later = ["What about Friday?", "Friday is a rest day.", "And Sunday?", "A long walk on Sunday."]
+        workout = await _chat(db_session, user, "Workout", WORKOUT + later)
+        row = await _indexed(db_session, workout)
+        assert row.chunk_count == 4
+        old = dt.datetime.utcnow() - dt.timedelta(days=400)
+        for message in (
+            await db_session.execute(select(ChatMessage).where(ChatMessage.session_id == workout.id))
+        ).scalars():
+            if message.sequence <= 4:
+                message.created_at = old
+        db_session.add(SystemSetting(key="chat_retention_enabled", value="true"))
+        db_session.add(SystemSetting(key="chat_retention_days", value="30"))
+        await db_session.commit()
+        with patch("app.services.retention_policy_service.append_governance_audit_event"):
+            await purge_expired_chat_messages(db_session, retention_days=30)
+        await db_session.commit()
+
+        points, _ = await store.scroll(await MemoryVectorService(store).resolve_target_collection(), limit=50)
+        mine = [p.payload for p in points if p.payload.get("session_id") == workout.id]
+        assert sorted(p["from_seq"] for p in mine if p["kind"] == KIND_CHAT_CHUNK) == [5, 7]
+        assert all(p["kind"] == KIND_CHAT_CHUNK for p in mine)  # the digest was made of the start
+        await db_session.refresh(row)
+        assert (row.indexed_up_to, row.chunk_count, row.digest_hash) == (8, 2, None)
+
     async def test_a_rewritten_chat_is_indexed_again_from_what_is_left(self, db_session, user, store):
         workout = await _chat(db_session, user, "Workout", WORKOUT)
         row = await _indexed(db_session, workout)

@@ -248,6 +248,41 @@ class MemoryVectorService:
             wait=True,
         )
 
+    async def delete_session_start(self, *, collection_name: str, session_id: str, up_to: int) -> None:
+        """A chat's exchanges that begin at or before sequence ``up_to``, and its digest (a retention purge)."""
+        await self.client.delete(
+            validate_collection_name(collection_name),
+            models.FilterSelector(
+                filter=models.Filter(
+                    must=[models.FieldCondition(key="session_id", match=models.MatchValue(value=str(session_id)))],
+                    should=[
+                        models.Filter(
+                            must=[
+                                models.FieldCondition(key="kind", match=models.MatchValue(value=KIND_CHAT_CHUNK)),
+                                models.FieldCondition(key="from_seq", range=models.Range(lte=int(up_to))),
+                            ]
+                        ),
+                        models.FieldCondition(key="kind", match=models.MatchValue(value=KIND_CHAT_DIGEST)),
+                    ],
+                )
+            ),
+            wait=True,
+        )
+
+    async def count_session_chunks(self, *, collection_name: str, session_id: str) -> int:
+        """How many exchange points a chat has in the store."""
+        found = await self.client.count(
+            validate_collection_name(collection_name),
+            count_filter=models.Filter(
+                must=[
+                    models.FieldCondition(key="session_id", match=models.MatchValue(value=str(session_id))),
+                    models.FieldCondition(key="kind", match=models.MatchValue(value=KIND_CHAT_CHUNK)),
+                ]
+            ),
+            exact=True,
+        )
+        return int(found.count)
+
     async def delete_user(self, *, collection_name: str, user_id: int) -> None:
         await self._delete_by_owner(
             collection_name=collection_name,

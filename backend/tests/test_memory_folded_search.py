@@ -132,6 +132,22 @@ class TestTheRevision:
             monkeypatch.setattr(module, "op", Operations(MigrationContext.configure(conn)))
             getattr(module, step)()
 
+    def test_each_batch_starts_where_the_last_one_ended(self, database, monkeypatch):
+        reads: list[str] = []
+
+        def _seen(_conn, _cursor, statement, *_args):
+            if statement.lstrip().upper().startswith("SELECT ID, CONTENT FROM USER_MEMORIES"):
+                reads.append(statement)
+
+        sa.event.listen(database, "before_cursor_execute", _seen)
+        try:
+            self._run(database, monkeypatch, "upgrade")
+        finally:
+            sa.event.remove(database, "before_cursor_execute", _seen)
+        # 1,202 rows in batches of 500: three batches and the read that finds none left, each after the last.
+        assert len(reads) == 4
+        assert all("id > " in statement for statement in reads[1:])
+
     def test_folds_every_row_in_batches_and_goes_back(self, database, monkeypatch):
         self._run(database, monkeypatch, "upgrade")
         with database.connect() as conn:

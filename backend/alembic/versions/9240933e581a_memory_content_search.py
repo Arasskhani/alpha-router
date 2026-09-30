@@ -74,14 +74,15 @@ def _columns(table: str) -> set[str]:
 
 
 def _backfill(table: str) -> None:
+    """Fill the column in batches, walking the ids forward (each batch starts after the last one's end)."""
     bind = op.get_bind()
-    select = sa.text(f"SELECT id, content FROM {table} WHERE {_COLUMN} IS NULL ORDER BY id LIMIT :n")
+    first = sa.text(f"SELECT id, content FROM {table} WHERE {_COLUMN} IS NULL ORDER BY id LIMIT :n")
+    after = sa.text(f"SELECT id, content FROM {table} WHERE {_COLUMN} IS NULL AND id > :last ORDER BY id LIMIT :n")
     update = sa.text(f"UPDATE {table} SET {_COLUMN} = :folded WHERE id = :id")
-    while True:
-        rows = bind.execute(select, {"n": _BATCH}).fetchall()
-        if not rows:
-            return
+    rows = bind.execute(first, {"n": _BATCH}).fetchall()
+    while rows:
         bind.execute(update, [{"id": row.id, "folded": _fold(row.content)} for row in rows])
+        rows = bind.execute(after, {"n": _BATCH, "last": rows[-1].id}).fetchall()
 
 
 def upgrade() -> None:

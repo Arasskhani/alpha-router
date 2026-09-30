@@ -176,6 +176,8 @@ class TestTheJob:
         # The second part folds into the first part's summary.
         assert "Summary 1: the user squats" in model.prompts[1]
         assert row.first_message_hash == summaries._hash(FIRST)
+        # Where it ends: the last message it covers, as the model reads it.
+        assert row.last_message_hash == summaries._hash(_text(40))
 
     async def test_a_run_a_rewrite_overtook_writes_nothing_onto_the_new_summary(
         self, db_session, session_factory, user, model_on
@@ -288,7 +290,20 @@ class TestTheJob:
         assert row.status == "failed"
 
 
-async def _summarized(db, user, *, covered: int = 40) -> ChatSession:
+def _text(sequence: int, chars: int = 1_000) -> str:
+    """What ``_chat`` stores as message ``sequence``."""
+    if sequence == 1:
+        return FIRST
+    role = "user" if sequence % 2 else "assistant"
+    return f"{role} {sequence} " + "w" * chars
+
+
+def _history(count: int = 60) -> list[dict]:
+    """The chat ``_chat`` stores, as a turn's history holds it."""
+    return [{"role": "user" if s % 2 else "assistant", "content": _text(s)} for s in range(1, count + 1)]
+
+
+async def _summarized(db, user, *, covered: int = 40, last_hash: str | None = None) -> ChatSession:
     chat = await _chat(db, user, 60)
     now = dt.datetime.utcnow()
     db.add(
@@ -299,6 +314,7 @@ async def _summarized(db, user, *, covered: int = 40) -> ChatSession:
             up_to_sequence=covered,
             covered_count=covered,
             first_message_hash=summaries._hash(FIRST),
+            last_message_hash=last_hash,
             status="idle",
             attempt_count=0,
             created_at=now,
@@ -336,6 +352,27 @@ class TestUsingIt:
         assert (
             await summary_for_turn(db_session, chat_session_id=chat.id, user_id=user.id, messages=_turn("Hi")) is None
         )
+
+    async def test_it_ends_where_its_last_message_is_in_the_turn_s_history(self, db_session, user):
+        chat = await _summarized(db_session, user, covered=40, last_hash=summaries._hash(_text(40)))
+
+        async def _covered(history: list[dict]) -> int | None:
+            found = await summary_for_turn(db_session, chat_session_id=chat.id, user_id=user.id, messages=history)
+            return None if found is None else found.covered
+
+        assert await _covered(_history()) == 40
+        # The browser holds one message fewer before it (or one more): the summary still ends at message 40.
+        assert await _covered([m for i, m in enumerate(_history()) if i != 9]) == 39
+        extra = _history()
+        extra.insert(5, {"role": "assistant", "content": "A message the server never stored."})
+        assert await _covered(extra) == 41
+        found = await summary_for_turn(db_session, chat_session_id=chat.id, user_id=user.id, messages=extra)
+        assert found.text.startswith(TURN_PREFIX.format(count=41))
+        # A history that does not hold it cannot use it; one made before summaries said where they end goes by count.
+        assert await _covered(_history(30)) is None
+        legacy = await _summarized(db_session, user, covered=40)
+        found = await summary_for_turn(db_session, chat_session_id=legacy.id, user_id=user.id, messages=_history(30))
+        assert found.covered == 40
 
     async def test_nobody_else_s_turn_does(self, db_session, user):
         chat = await _summarized(db_session, user)

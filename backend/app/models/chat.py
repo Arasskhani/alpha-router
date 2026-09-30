@@ -332,6 +332,8 @@ class ChatSummary(Base):
     covered_count = Column(Integer, nullable=False, default=0)
     #: sha256 of the chat's first message as the model reads it: a turn whose history starts elsewhere cannot use it.
     first_message_hash = Column(String(64), nullable=True)
+    #: sha256 of the last message it covers, as the model reads it: where in a turn's history the summary ends.
+    last_message_hash = Column(String(64), nullable=True)
     model_id = Column(Integer, nullable=True)
     #: idle | pending | running | failed
     status = Column(String(16), nullable=False, default="idle")

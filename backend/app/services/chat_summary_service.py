@@ -219,7 +219,14 @@ async def summary_for_turn(
     user_id: int | None,
     messages: list[dict[str, Any]],
 ) -> SummaryForTurn | None:
-    """The chat's summary, when this person may read the chat and the turn's history is the chat from its start."""
+    """The chat's summary, when this person may read the chat and the turn's history is the chat from its start.
+
+    ``covered`` is how many of the history's oldest messages it stands in
+    for: up to and with the last message it covers, found in the history by
+    that message (the nearest to where the count puts it). A history that
+    does not hold it cannot use the summary. One made before summaries
+    recorded their last message goes by count.
+    """
     if not chat_session_id or not user_id:
         return None
     settings = await get_memory_settings(db)
@@ -243,10 +250,33 @@ async def summary_for_turn(
         return None
     if not _eligible(session):
         return None
-    first = next((m for m in messages if m.get("role") in ("user", "assistant")), None)
-    if first is None or row.first_message_hash != _hash(message_text_for_model(first.get("content"))):
+    conversation = [m for m in messages if m.get("role") in ("user", "assistant")]
+    if not conversation or row.first_message_hash != _hash(message_text_for_model(conversation[0].get("content"))):
         return None
-    return SummaryForTurn(covered=int(row.covered_count), text=summary_block(int(row.covered_count), str(row.content)))
+    covered = _covered_in(conversation, count=int(row.covered_count), last_hash=row.last_message_hash)
+    if not covered:
+        return None
+    return SummaryForTurn(covered=covered, text=summary_block(covered, str(row.content)))
+
+
+def _covered_in(conversation: list[dict[str, Any]], *, count: int, last_hash: str | None) -> int:
+    """How many of ``conversation``'s oldest messages a summary of ``count`` messages ending with ``last_hash`` covers.
+
+    0 when the conversation does not hold that message.
+    """
+    if not last_hash:
+        return count
+    expected = count - 1
+
+    def _is_last(index: int) -> bool:
+        return _hash(message_text_for_model(conversation[index].get("content"))) == last_hash
+
+    if 0 <= expected < len(conversation) and _is_last(expected):
+        return count
+    found = [index for index in range(len(conversation)) if _is_last(index)]
+    if not found:
+        return 0
+    return min(found, key=lambda index: (abs(index - expected), index)) + 1
 
 
 # ── The job ────────────────────────────────────────────────────────────────
@@ -342,11 +372,22 @@ async def summary_spend_this_month(db: AsyncSession) -> float:
     return float(total or 0.0)
 
 
-async def _part(
-    db: AsyncSession, session_id: str, *, after: int, upto: int
-) -> tuple[list[tuple[int, str, str]], int, int]:
-    """The next stretch to fold in, oldest first, up to ``MAX_WINDOW_CHARS``; the last sequence it covers; and
-    how many of the messages a turn's history holds it covers.
+@dataclass(frozen=True)
+class _Stretch:
+    """The next stretch of a chat to fold in."""
+
+    #: (sequence, role, text) of the messages folded in, oldest first.
+    turns: list[tuple[int, str, str]]
+    #: The last sequence it covers.
+    covered: int
+    #: How many of the messages a turn's history holds it covers.
+    counted: int
+    #: The hash of the last of those, as the model reads it (None when it counts none).
+    last_hash: str | None
+
+
+async def _part(db: AsyncSession, session_id: str, *, after: int, upto: int) -> _Stretch:
+    """The next stretch to fold in, oldest first, up to ``MAX_WINDOW_CHARS``.
 
     An answer built from pages shared from the browser is covered but not
     folded in: page text is untrusted, and the summary goes where the chat's
@@ -375,13 +416,16 @@ async def _part(
     turns: list[tuple[int, str, str]] = []
     total = 0
     counted = 0
+    last_hash: str | None = None
     covered = upto if len(rows) < 400 else int(rows[-1].sequence)
     for row in rows:
-        text = message_text_for_model(row.content)[:MAX_MESSAGE_CHARS]
+        whole = message_text_for_model(row.content)
+        text = whole[:MAX_MESSAGE_CHARS]
         if not text:
             continue
         if restates_a_shared_page(row):
             counted += 1
+            last_hash = _hash(whole)
             continue
         if turns and total + len(text) > MAX_WINDOW_CHARS:
             covered = int(row.sequence) - 1
@@ -389,7 +433,8 @@ async def _part(
         turns.append((int(row.sequence), str(row.role), text))
         total += len(text)
         counted += 1
-    return turns, covered, counted
+        last_hash = _hash(whole)
+    return _Stretch(turns=turns, covered=covered, counted=counted, last_hash=last_hash)
 
 
 async def _fold(
@@ -521,13 +566,16 @@ async def handle_chat_summary(db: AsyncSession, row: Any, *, completer: Any | No
         target = int(latest or 0) - int(settings.get("summary_keep_recent") or 20)
         if target <= up_to:
             return False
-        turns, covered, counted = await _part(db, row.session_id, after=up_to, upto=target)
+        stretch = await _part(db, row.session_id, after=up_to, upto=target)
+        turns, covered = stretch.turns, stretch.covered
         now = dt.datetime.utcnow()
         values: dict[str, Any] = {
             "up_to_sequence": covered,
-            "covered_count": covered_count + counted,
+            "covered_count": covered_count + stretch.counted,
             "updated_at": now,
         }
+        if stretch.last_hash:
+            values["last_message_hash"] = stretch.last_hash
         if turns:
             opening = opening or await _opening_hash(db, str(row.session_id))
             text = await _fold(

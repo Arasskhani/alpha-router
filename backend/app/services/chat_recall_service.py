@@ -40,7 +40,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.prompt_fences import wrap_untrusted
 from app.models.chat import ChatMessage, ChatRecallIndex, ChatSession, ChatSummary, is_member_channel
 from app.services.chat_history_service import message_text_for_model
-from app.services.chat_markers import PAGE_CONTEXT_META_KEY
+from app.services.chat_markers import PAGE_CONTEXT_META_KEY, is_answer_in_progress
 from app.services.memory_settings_service import get_memory_settings
 from app.services.outbox_service import enqueue_outbox_event
 
@@ -191,11 +191,15 @@ LIVE_ANSWER_SECONDS = 6 * 60 * 60
 
 
 def _live_answer_at(rows: list[Any]) -> int | None:
-    """Where in ``rows`` the exchange of an answer still being written begins; None when every answer is done."""
+    """Where in ``rows`` the exchange of an answer still being written begins; None when every answer is done.
+
+    Still being written: streaming, or a media turn whose image, video or
+    speech is not there yet (its pending marker).
+    """
     now = dt.datetime.utcnow()
     for index, row in enumerate(rows):
         meta = row.meta if isinstance(row.meta, dict) else {}
-        if str(row.role) != "assistant" or meta.get("streaming") is not True:
+        if str(row.role) != "assistant" or not is_answer_in_progress(row.content, meta.get("streaming")):
             continue
         if row.created_at is not None and (now - row.created_at).total_seconds() > LIVE_ANSWER_SECONDS:
             continue

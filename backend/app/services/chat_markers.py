@@ -8,6 +8,21 @@ SPEECH_MESSAGE_PREFIX = "__ALPHA_ROUTER_SPEECH_JSON__:"
 SPEECH_PENDING_MARKER = "__ALPHA_ROUTER_SPEECH_PENDING__"
 ATTACHMENT_MESSAGE_PREFIX = "__ALPHA_ROUTER_ATTACH_JSON__:"
 AUDIO_MESSAGE_PREFIX = "__ALPHA_ROUTER_AUDIO_JSON__:"
+#: The answer of a media turn while its image, video or speech is being made.
+PENDING_MARKERS = frozenset({IMAGE_PENDING_MARKER, VIDEO_PENDING_MARKER, SPEECH_PENDING_MARKER})
+
+
+def is_answer_in_progress(content: object, streaming: object) -> bool:
+    """An assistant message still being written: streaming, or a media turn's pending marker."""
+    return streaming is True or (isinstance(content, str) and content.strip() in PENDING_MARKERS)
+
+
+def is_whole_reply(message: dict) -> bool:
+    """A message as the browser sends it (``role``, ``content``, ``streaming``) that is a finished answer."""
+    return str(message.get("role") or "") == "assistant" and not is_answer_in_progress(
+        message.get("content"), message.get("streaming")
+    )
+
 
 #: Server-owned body key: the hosts of the pages a chat turn carries from the
 #: browser extension. Such a turn is answered without the user's memory or

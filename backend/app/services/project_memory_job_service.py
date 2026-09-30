@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.models.chat import ChatMessage, ChatSession, is_member_channel
 from app.models.project import ProjectMemoryJob
+from app.services.chat_markers import is_whole_reply
 from app.services.memory_settings_service import get_memory_settings
 from app.services.outbox_service import enqueue_outbox_event
 from app.services.project_config_service import load_project_memory_flags
@@ -411,8 +412,8 @@ async def maybe_schedule_from_append(
     try:
         if not session.project_id:
             return
-        # A reply stored whole: one still streaming is learned from when it is finished (ChatCompletionPersister).
-        if not any(str(msg.get("role") or "") == "assistant" and msg.get("streaming") is not True for msg in messages):
+        # A reply stored whole: one still being written is learned from when it is finished.
+        if not any(is_whole_reply(msg) for msg in messages):
             return
         await schedule_extraction(
             db,

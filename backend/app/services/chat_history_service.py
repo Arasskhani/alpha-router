@@ -26,11 +26,9 @@ from app.services.chat_markers import (
     ATTACHMENT_MESSAGE_PREFIX,
     AUDIO_MESSAGE_PREFIX,
     IMAGE_MESSAGE_PREFIX,
-    IMAGE_PENDING_MARKER,
+    PENDING_MARKERS,
     SPEECH_MESSAGE_PREFIX,
-    SPEECH_PENDING_MARKER,
     VIDEO_MESSAGE_PREFIX,
-    VIDEO_PENDING_MARKER,
 )
 
 logger = logging.getLogger(__name__)
@@ -43,7 +41,6 @@ MAX_COMPLETED_CHARS = 4_000_000
 #: Rows read at a time, newest first, until either limit is reached.
 READ_BATCH = 100
 
-_PENDING = frozenset({IMAGE_PENDING_MARKER, VIDEO_PENDING_MARKER, SPEECH_PENDING_MARKER})
 _MEDIA = (
     (IMAGE_MESSAGE_PREFIX, "Generated image"),
     (VIDEO_MESSAGE_PREFIX, "Generated video"),
@@ -91,7 +88,7 @@ def message_text_for_model(content: Any) -> str:
         ]
         return " ".join(part for part in parts if part).strip()
     text = str(content or "").strip()
-    if not text or text in _PENDING:
+    if not text or text in PENDING_MARKERS:
         return ""
     if text.startswith(ATTACHMENT_MESSAGE_PREFIX):
         payload = _json_after(text, ATTACHMENT_MESSAGE_PREFIX)

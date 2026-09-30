@@ -35,6 +35,8 @@ from app.services.chat_markers import (
     SPEECH_PENDING_MARKER,
     VIDEO_MESSAGE_PREFIX,
     VIDEO_PENDING_MARKER,
+    is_answer_in_progress,
+    is_whole_reply,
 )
 from app.services.private_mode_service import (
     PrivateModePersistenceError,
@@ -1118,6 +1120,7 @@ async def _try_reconcile_inflight_assistant(
     session.last_message_at = dt.datetime.utcnow()
     _bump_session_revision(session)
     await db.flush()
+    await schedule_after_stored_reply(db, user_id, session_id)
     return True
 
 
@@ -1290,8 +1293,8 @@ async def append_session_messages(
                 user_id,
                 session_id,
             )
-        # A reply stored whole (one still streaming is scheduled when it is finished: ChatCompletionPersister).
-        if any(str(msg.get("role") or "") == "assistant" and msg.get("streaming") is not True for msg in messages):
+        # A reply stored whole (one still being written is scheduled when it is finished).
+        if any(is_whole_reply(msg) for msg in messages):
             from app.services.chat_recall_service import maybe_schedule_chat_index
             from app.services.chat_summary_service import maybe_schedule_summary
 
@@ -1304,40 +1307,49 @@ async def append_session_messages(
 async def schedule_after_stored_reply(db: AsyncSession, user_id: int, session_id: str) -> None:
     """A turn stored its reply whole: queue what learns from it - memory, the chat's summary, its recall index.
 
-    The turn's start stored its question and an empty, streaming answer;
-    learning from that would read the answer before it was written, and
-    move past it for good. Never fails the stored reply.
+    The turn's start stored its question and an empty, streaming answer (or
+    a media turn's pending marker); learning from that would read the answer
+    before it was written, and move past it for good. Called by every path
+    that finishes an answer: the server's stream, the browser's last write,
+    Stop, a media job's result, and the finishing of one left open.
+
+    In a savepoint: never fails the stored reply, nor its transaction.
     """
     try:
-        session = await db.get(ChatSession, session_id)
-        if session is None:
-            return
-        latest = int(
-            (
-                await db.execute(select(func.max(ChatMessage.sequence)).where(ChatMessage.session_id == session_id))
-            ).scalar_one_or_none()
-            or 0
-        )
-        stored = [{"role": "assistant"}]
-        if session.project_id:
-            from app.services.project_memory_job_service import (
-                maybe_schedule_from_append as schedule_project_extraction,
-            )
-
-            await schedule_project_extraction(db, session=session, messages=stored, watermark_sequence=latest)
-        else:
-            from app.services.memory_job_service import maybe_schedule_from_append
-
-            await maybe_schedule_from_append(
-                db, user_id=user_id, session=session, messages=stored, watermark_sequence=latest
-            )
-        from app.services.chat_recall_service import maybe_schedule_chat_index
-        from app.services.chat_summary_service import maybe_schedule_summary
-
-        await maybe_schedule_summary(db, session=session, latest_sequence=latest)
-        await maybe_schedule_chat_index(db, session=session, latest_sequence=latest)
+        async with db.begin_nested():
+            await _schedule_after_stored_reply(db, user_id, session_id)
     except Exception:
         logger.exception("Scheduling what learns from a stored reply failed session_id=%s", session_id)
+
+
+async def _schedule_after_stored_reply(db: AsyncSession, user_id: int, session_id: str) -> None:
+    session = await db.get(ChatSession, session_id)
+    if session is None:
+        return
+    latest = int(
+        (
+            await db.execute(select(func.max(ChatMessage.sequence)).where(ChatMessage.session_id == session_id))
+        ).scalar_one_or_none()
+        or 0
+    )
+    stored = [{"role": "assistant"}]
+    if session.project_id:
+        from app.services.project_memory_job_service import (
+            maybe_schedule_from_append as schedule_project_extraction,
+        )
+
+        await schedule_project_extraction(db, session=session, messages=stored, watermark_sequence=latest)
+    else:
+        from app.services.memory_job_service import maybe_schedule_from_append
+
+        await maybe_schedule_from_append(
+            db, user_id=user_id, session=session, messages=stored, watermark_sequence=latest
+        )
+    from app.services.chat_recall_service import maybe_schedule_chat_index
+    from app.services.chat_summary_service import maybe_schedule_summary
+
+    await maybe_schedule_summary(db, session=session, latest_sequence=latest)
+    await maybe_schedule_chat_index(db, session=session, latest_sequence=latest)
 
 
 async def purge_session_messages_for_private_mode(
@@ -1516,6 +1528,7 @@ async def finalize_chat_session_image(
         session.last_message_at = dt.datetime.utcnow()
         _bump_session_revision(session)
         await db.flush()
+        await schedule_after_stored_reply(db, user_id, session_id)
         return True
     return bool(content.startswith(IMAGE_MESSAGE_PREFIX))
 
@@ -1575,6 +1588,7 @@ async def finalize_chat_session_video(
         session.last_message_at = dt.datetime.utcnow()
         _bump_session_revision(session)
         await db.flush()
+        await schedule_after_stored_reply(db, user_id, session_id)
         return True
     if content.startswith(VIDEO_MESSAGE_PREFIX):
         return True
@@ -1656,6 +1670,7 @@ async def finalize_chat_session_speech(
         session.last_message_at = dt.datetime.utcnow()
         _bump_session_revision(session)
         await db.flush()
+        await schedule_after_stored_reply(db, user_id, session_id)
         return True
     if content.startswith(SPEECH_MESSAGE_PREFIX):
         return True
@@ -1722,6 +1737,14 @@ async def update_last_session_message(
     session.last_message_at = dt.datetime.utcnow()
     _bump_session_revision(session)
     await db.flush()
+    # The last write of an answer says when it was received; the writes while it streams do not.
+    stored_meta: dict[str, Any] = last.meta if isinstance(last.meta, dict) else {}
+    if (
+        (meta or {}).get("receivedAt") is not None
+        and last.role == "assistant"
+        and not is_answer_in_progress(last.content, stored_meta.get("streaming"))
+    ):
+        await schedule_after_stored_reply(db, user_id, session_id)
     return _session_to_client(session)
 
 
@@ -1776,6 +1799,7 @@ async def cancel_streaming_reply(
     session.last_message_at = dt.datetime.utcnow()
     _bump_session_revision(session)
     await db.flush()
+    await schedule_after_stored_reply(db, user_id, session_id)
     return _session_to_client(session)
 
 

@@ -19,7 +19,7 @@ from types import SimpleNamespace
 
 import pytest
 from qdrant_client import AsyncQdrantClient
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.models.chat import ChatMessage, ChatRecallIndex, ChatSession
 from app.models.knowledge import OutboxEvent
@@ -132,6 +132,38 @@ WORKOUT = [
 ]
 
 
+async def _live_answer(db, chat: ChatSession, owner: User, *, content: str = "", age_minutes: int = 0) -> ChatMessage:
+    """The chat's next message: an answer still streaming, started ``age_minutes`` ago."""
+    sequence = int(
+        (await db.execute(select(func.max(ChatMessage.sequence)).where(ChatMessage.session_id == chat.id))).scalar_one()
+    )
+    row = ChatMessage(
+        id=str(uuid.uuid4()),
+        session_id=chat.id,
+        user_id=owner.id,
+        role="assistant",
+        content=content,
+        sequence=sequence + 1,
+        meta={"streaming": True},
+        created_at=dt.datetime.utcnow() - dt.timedelta(minutes=age_minutes),
+    )
+    db.add(row)
+    await db.commit()
+    return row
+
+
+async def _queued_index(db) -> list[str]:
+    stmt = select(OutboxEvent.aggregate_id).where(OutboxEvent.event_type == "chat_index.job.ready")
+    return list((await db.execute(stmt)).scalars().all())
+
+
+async def _learning(db, session_id: str) -> list[int]:
+    from app.models.chat import UserMemoryJob
+
+    stmt = select(UserMemoryJob.watermark_sequence).where(UserMemoryJob.session_id == session_id)
+    return list((await db.execute(stmt)).scalars().all())
+
+
 def _asking(text: str) -> list[dict]:
     return [{"role": "system", "content": "Be brief."}, {"role": "user", "content": text}]
 
@@ -242,6 +274,139 @@ class TestTheIndex:
         assert await _queued() == [chat.id]
         # Memory learns from the turn once its answer is there to read, too.
         assert await _learning() == [6]
+
+    async def test_the_turn_queues_learning_once_when_it_is_stopped_while_it_streams(self, db_session, user, store):
+        from app.services.chat_completion_persistence import ChatCompletionPersister
+        from app.services.user_chat_storage_service import cancel_streaming_reply
+
+        chat = await _chat(db_session, user, "Workout", WORKOUT)
+        db_session.add(SystemSetting(key="memory_extraction_model_id", value="1"))
+        await db_session.commit()
+        persister = ChatCompletionPersister(
+            db_session,
+            user_id=user.id,
+            session_id=chat.id,
+            model_id="model::1",
+            model_name="GPT",
+            user_message={"role": "user", "content": "And on Friday?", "clientMessageId": "u5"},
+            assistant_client_message_id="a6",
+        )
+        await persister.prepare()
+        await db_session.commit()
+        await persister.on_content("Friday is")
+        # Stop, from another tab: the answer is finished as far as it got, and queued; the stream then ends.
+        assert await cancel_streaming_reply(db_session, user.id, chat.id) is not None
+        await db_session.commit()
+        await persister.finalize(success=True)
+        assert await _queued_index(db_session) == [chat.id]
+        assert await _learning(db_session, chat.id) == [6]
+
+    async def test_a_media_turn_is_learned_from_when_its_result_is_there(self, db_session, user, store):
+        from app.services.chat_markers import IMAGE_PENDING_MARKER, SPEECH_PENDING_MARKER, VIDEO_PENDING_MARKER
+        from app.services.user_chat_storage_service import (
+            append_session_messages,
+            finalize_chat_session_image,
+            finalize_chat_session_speech,
+            finalize_chat_session_video,
+        )
+
+        db_session.add(SystemSetting(key="memory_extraction_model_id", value="1"))
+        await db_session.commit()
+        results = {
+            IMAGE_PENDING_MARKER: lambda sid: finalize_chat_session_image(
+                db_session, user.id, sid, "/media/cat.png", "a cat on a sofa", "img-model"
+            ),
+            VIDEO_PENDING_MARKER: lambda sid: finalize_chat_session_video(
+                db_session, user.id, sid, "/media/cat.mp4", "a cat on a sofa", "vid-model"
+            ),
+            SPEECH_PENDING_MARKER: lambda sid: finalize_chat_session_speech(
+                db_session, user.id, sid, "/media/cat.mp3", "a cat on a sofa", "tts-model"
+            ),
+        }
+        for marker, finish in results.items():
+            chat = await _chat(db_session, user, f"Workout {marker}", WORKOUT)
+            # The browser stores the question and the marker as the media job starts: nothing is queued yet.
+            stored = await append_session_messages(
+                db_session,
+                user.id,
+                chat.id,
+                [
+                    {"role": "user", "content": "Draw a cat on a sofa", "clientMessageId": f"u-{marker}"},
+                    {"role": "assistant", "content": marker, "clientMessageId": f"a-{marker}"},
+                ],
+            )
+            await db_session.commit()
+            assert stored is not None and len(stored) == 2
+            assert chat.id not in await _queued_index(db_session)
+            assert await _learning(db_session, chat.id) == []
+            # An index run meanwhile stops before the turn whose result is not there yet.
+            row = await _indexed(db_session, chat)
+            assert row.indexed_up_to == 4
+            row.status = "done"
+            await db_session.commit()
+
+            assert await finish(chat.id) is True
+            await db_session.commit()
+            assert chat.id in await _queued_index(db_session)
+            assert await _learning(db_session, chat.id) == [6]
+
+    async def test_a_stopped_media_turn_and_one_left_open_are_learned_from(self, db_session, user, store):
+        from app.services.chat_markers import IMAGE_PENDING_MARKER
+        from app.services.user_chat_storage_service import cancel_streaming_reply, list_session_messages
+
+        db_session.add(SystemSetting(key="memory_extraction_model_id", value="1"))
+        await db_session.commit()
+        stopped = await _chat(db_session, user, "Stopped", [*WORKOUT, "Draw a cat", IMAGE_PENDING_MARKER])
+        assert await cancel_streaming_reply(db_session, user.id, stopped.id) is not None
+        await db_session.commit()
+        assert await _learning(db_session, stopped.id) == [6]
+
+        # A streaming answer whose turn died: finished when the chat is next opened, and queued then.
+        left = await _chat(db_session, user, "Left open", [*WORKOUT, "And on Friday?"])
+        await _live_answer(db_session, left, user, age_minutes=60)
+        await list_session_messages(db_session, user.id, left.id)
+        await db_session.commit()
+        assert await _learning(db_session, left.id) == [6]
+        assert left.id in await _queued_index(db_session)
+
+    async def test_only_the_browser_s_last_write_of_an_answer_queues_learning(self, db_session, user, store):
+        from app.services.user_chat_storage_service import update_last_session_message
+
+        db_session.add(SystemSetting(key="memory_extraction_model_id", value="1"))
+        await db_session.commit()
+        chat = await _chat(db_session, user, "Workout", [*WORKOUT, "And on Friday?"])
+        await _live_answer(db_session, chat, user)
+        await update_last_session_message(db_session, user.id, chat.id, "Friday is")
+        await db_session.commit()
+        assert await _learning(db_session, chat.id) == [] and chat.id not in await _queued_index(db_session)
+        await update_last_session_message(
+            db_session, user.id, chat.id, "Friday is a rest day.", meta={"streaming": False, "receivedAt": 1}
+        )
+        await db_session.commit()
+        assert await _learning(db_session, chat.id) == [6] and chat.id in await _queued_index(db_session)
+
+    async def test_a_failure_while_queuing_never_loses_the_stored_answer(self, db_session, user, store, monkeypatch):
+        from sqlalchemy import text
+
+        from app.services.user_chat_storage_service import update_last_session_message
+
+        async def _broken(db, **_kwargs):
+            await db.execute(text("SELECT * FROM no_such_table"))  # aborts the transaction outside a savepoint
+
+        monkeypatch.setattr("app.services.chat_summary_service.maybe_schedule_summary", _broken)
+        chat = await _chat(db_session, user, "Workout", [*WORKOUT, "And on Friday?"])
+        await _live_answer(db_session, chat, user)
+        chat_id = chat.id
+        await update_last_session_message(
+            db_session, user.id, chat_id, "Friday is a rest day.", meta={"streaming": False, "receivedAt": 1}
+        )
+        await db_session.commit()
+        stored = (
+            await db_session.execute(
+                select(ChatMessage.content).where(ChatMessage.session_id == chat_id, ChatMessage.sequence == 6)
+            )
+        ).scalar_one()
+        assert stored == "Friday is a rest day."
 
     async def test_a_reply_that_finishes_while_a_run_holds_the_chat_is_indexed_after_it(self, db_session, user, store):
         from app.services.chat_recall_service import claim_chat_index, finish_chat_index

@@ -328,7 +328,12 @@ async def own_session_title(db: AsyncSession, chat_session_id: str | None, user_
         return None
     from app.models.chat import ChatSession
 
-    session = await db.get(ChatSession, sid)
+    try:
+        session = await db.get(ChatSession, sid)
+    except Exception:
+        # Only part of the memory lookup: the turn goes on without it.
+        logger.exception("Reading the chat's title for the memory lookup failed session_id=%s", sid)
+        return None
     if session is None or session.user_id != user_id:
         return None
     return str(session.title or "") or None

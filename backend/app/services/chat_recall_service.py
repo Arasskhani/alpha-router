@@ -471,22 +471,32 @@ async def _row_for(db: AsyncSession, session: Any) -> Any:
 async def maybe_schedule_chat_index(
     db: AsyncSession, *, session: Any, latest_sequence: int, delay_seconds: int = DEBOUNCE_SECONDS
 ) -> bool:
-    """After a reply is stored (or by the administrator's backfill): queue the chat to be indexed."""
+    """After a reply is stored (or by the administrator's backfill): queue the chat to be indexed.
+
+    In a savepoint: a failure here never takes the stored reply's transaction with it.
+    """
     try:
-        if await _recall_on(db) is None or not _eligible(session) or not await _owner_allows(db, session):
-            return False
-        row = await _row_for(db, session)
-        now = dt.datetime.utcnow()
-        if _busy(row, now):
-            return False
-        if int(latest_sequence) <= max(int(row.indexed_up_to or 0), int(row.not_before or 0)):
-            return False
-        row.attempt_count = 0
-        await _queue(db, row, now + dt.timedelta(seconds=delay_seconds))
-        return True
+        async with db.begin_nested():
+            return await _schedule_chat_index(
+                db, session=session, latest_sequence=latest_sequence, delay_seconds=delay_seconds
+            )
     except Exception:
         logger.exception("Scheduling a chat for recall failed session_id=%s", getattr(session, "id", None))
         return False
+
+
+async def _schedule_chat_index(db: AsyncSession, *, session: Any, latest_sequence: int, delay_seconds: int) -> bool:
+    if await _recall_on(db) is None or not _eligible(session) or not await _owner_allows(db, session):
+        return False
+    row = await _row_for(db, session)
+    now = dt.datetime.utcnow()
+    if _busy(row, now):
+        return False
+    if int(latest_sequence) <= max(int(row.indexed_up_to or 0), int(row.not_before or 0)):
+        return False
+    row.attempt_count = 0
+    await _queue(db, row, now + dt.timedelta(seconds=delay_seconds))
+    return True
 
 
 async def claim_chat_index(db: AsyncSession, *, session_id: str, worker_id: str) -> Any:

@@ -91,6 +91,26 @@ class TestScheduling:
         await maybe_schedule_summary(db_session, session=off, latest_sequence=60)
         assert await _events(db_session) == []
 
+    async def test_a_failure_to_queue_it_never_takes_the_stored_reply_with_it(
+        self, db_session, user, model_on, monkeypatch
+    ):
+        from sqlalchemy import text
+
+        from app.services import chat_recall_service
+
+        chat = await _chat(db_session, user, 60)
+
+        async def _broken(db, *_args, **_kwargs):
+            await db.execute(text("SELECT no_such_column FROM chat_messages"))
+
+        monkeypatch.setattr(summaries, "_unsummarized_chars", _broken)
+        monkeypatch.setattr(chat_recall_service, "_recall_on", _broken)
+        db_session.add(SystemSetting(key="reply_marker", value="kept"))
+        await maybe_schedule_summary(db_session, session=chat, latest_sequence=60)
+        await chat_recall_service.maybe_schedule_chat_index(db_session, session=chat, latest_sequence=60)
+        await db_session.commit()  # the reply's own transaction goes on (on PostgreSQL too)
+        assert (await db_session.get(SystemSetting, "reply_marker")).value == "kept"
+
     async def test_a_run_left_behind_by_a_stopped_worker_is_queued_again(self, db_session, user, model_on):
         chat = await _chat(db_session, user, 60)
         past = dt.datetime.utcnow() - dt.timedelta(minutes=10)

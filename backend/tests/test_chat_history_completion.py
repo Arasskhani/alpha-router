@@ -114,6 +114,28 @@ class TestCompletion:
         )
         assert added == 0
 
+    async def test_a_failure_to_read_leaves_the_turn_and_its_transaction_as_they_were(
+        self, db_session, user, monkeypatch
+    ):
+        from sqlalchemy import text
+
+        from app.services import chat_history_service
+
+        session_id = await _chat(db_session, user, 30)
+
+        async def _broken(db, *_args, **_kwargs):
+            await db.execute(text("SELECT no_such_column FROM chat_messages"))
+
+        monkeypatch.setattr(chat_history_service, "older_chat_messages", _broken)
+        db_session.add(SystemSetting(key="turn_marker", value="kept"))
+        sent = _page(30, 11)
+        messages, added = await complete_chat_history(
+            db_session, user=user, chat_session_id=session_id, messages=sent, history_from_sequence=11
+        )
+        assert (messages, added) == (sent, 0)
+        await db_session.commit()  # the turn's own transaction goes on (on PostgreSQL too)
+        assert (await db_session.get(SystemSetting, "turn_marker")).value == "kept"
+
 
 class TestTheModelsReading:
     def test_attachments_voice_and_media(self):

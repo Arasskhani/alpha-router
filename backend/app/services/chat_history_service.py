@@ -142,9 +142,33 @@ async def complete_chat_history(
 
     Only in a chat the person may write in, never a private one, and only
     while the administrator leaves it on. Leading system messages stay first.
+    A failure to read leaves the turn as it came (in a savepoint, so it
+    does not take the turn's transaction with it).
     """
     if not history_from_sequence or int(history_from_sequence) <= 1 or not chat_session_id:
         return messages, 0
+    try:
+        async with db.begin_nested():
+            return await _complete(
+                db,
+                user=user,
+                chat_session_id=chat_session_id,
+                messages=messages,
+                history_from_sequence=int(history_from_sequence),
+            )
+    except Exception:
+        logger.exception("completing a turn's history failed session_id=%s; sent as it came", chat_session_id)
+        return messages, 0
+
+
+async def _complete(
+    db: AsyncSession,
+    *,
+    user: object,
+    chat_session_id: str,
+    messages: list[dict],
+    history_from_sequence: int,
+) -> tuple[list[dict], int]:
     from app.services.chat_session_access import resolve_owned_chat_session
     from app.services.memory_settings_service import get_memory_settings
 

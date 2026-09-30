@@ -128,42 +128,50 @@ async def _unsummarized_chars(db: AsyncSession, session_id: str, *, after: int, 
 
 
 async def maybe_schedule_summary(db: AsyncSession, *, session: Any, latest_sequence: int) -> None:
-    """After a reply is stored: queue the chat's summary when the part not yet summarized has grown enough."""
+    """After a reply is stored: queue the chat's summary when the part not yet summarized has grown enough.
+
+    In a savepoint: a failure here never takes the stored reply's transaction with it.
+    """
     try:
-        settings = await _settings_on(db)
-        if settings is None or not _eligible(session):
-            return
-        keep = int(settings.get("summary_keep_recent") or 20)
-        target = int(latest_sequence) - keep
-        if target <= 0:
-            return
-        row: Any = await db.get(ChatSummary, session.id)
-        done = int(row.up_to_sequence or 0) if row is not None else 0
-        now = dt.datetime.utcnow()
-        if row is not None and _busy(row, now):
-            return
-        if await _unsummarized_chars(db, session.id, after=done, upto=target) < SUMMARY_STEP_CHARS:
-            return
-        if row is None:
-            row = ChatSummary(
-                session_id=session.id,
-                user_id=session.user_id,
-                project_id=session.project_id,
-                content="",
-                up_to_sequence=0,
-                covered_count=0,
-                status="pending",
-                attempt_count=0,
-                created_at=now,
-                updated_at=now,
-            )
-            async with db.begin_nested():
-                db.add(row)
-                await db.flush()
-        row.attempt_count = 0
-        await _queue(db, row, now + dt.timedelta(seconds=DEBOUNCE_SECONDS))
+        async with db.begin_nested():
+            await _schedule_summary(db, session=session, latest_sequence=latest_sequence)
     except Exception:
         logger.exception("Scheduling a chat summary failed session_id=%s", getattr(session, "id", None))
+
+
+async def _schedule_summary(db: AsyncSession, *, session: Any, latest_sequence: int) -> None:
+    settings = await _settings_on(db)
+    if settings is None or not _eligible(session):
+        return
+    keep = int(settings.get("summary_keep_recent") or 20)
+    target = int(latest_sequence) - keep
+    if target <= 0:
+        return
+    row: Any = await db.get(ChatSummary, session.id)
+    done = int(row.up_to_sequence or 0) if row is not None else 0
+    now = dt.datetime.utcnow()
+    if row is not None and _busy(row, now):
+        return
+    if await _unsummarized_chars(db, session.id, after=done, upto=target) < SUMMARY_STEP_CHARS:
+        return
+    if row is None:
+        row = ChatSummary(
+            session_id=session.id,
+            user_id=session.user_id,
+            project_id=session.project_id,
+            content="",
+            up_to_sequence=0,
+            covered_count=0,
+            status="pending",
+            attempt_count=0,
+            created_at=now,
+            updated_at=now,
+        )
+        async with db.begin_nested():
+            db.add(row)
+            await db.flush()
+    row.attempt_count = 0
+    await _queue(db, row, now + dt.timedelta(seconds=DEBOUNCE_SECONDS))
 
 
 def _busy(row: Any, now: dt.datetime) -> bool:

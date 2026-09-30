@@ -114,6 +114,31 @@ class TestCompletion:
         )
         assert added == 0
 
+    async def test_reads_back_only_as_much_as_a_window_could_hold(self, db_session, user, monkeypatch):
+        from app.services import chat_history_service
+
+        session_id = await _chat(db_session, user, 400)
+        sent = _page(400, 391)
+        # Read back in batches, every one of them in order when there is room.
+        whole, added = await complete_chat_history(
+            db_session, user=user, chat_session_id=session_id, messages=sent, history_from_sequence=391
+        )
+        assert added == 390 and whole[0]["content"] == "My workout plan: squats on Monday."
+        assert [m["content"] for m in whole[1:390]] == [
+            f"{'user' if n % 2 else 'assistant'} message {n}" for n in range(2, 391)
+        ]
+        monkeypatch.setattr(chat_history_service, "MAX_COMPLETED_CHARS", 1_000)
+        messages, added = await complete_chat_history(
+            db_session, user=user, chat_session_id=session_id, messages=sent, history_from_sequence=391
+        )
+        older = messages[:added]
+        assert 0 < added < 390 and sum(len(m["content"]) for m in older) <= 1_000
+        # The ones nearest the turn are the ones kept, in order.
+        assert older[-1]["content"] == "assistant message 390"
+        assert [m["content"] for m in older] == [
+            f"{m['role']} message {n}" for n, m in zip(range(391 - added, 391), older, strict=True)
+        ]
+
     async def test_a_failure_to_read_leaves_the_turn_and_its_transaction_as_they_were(
         self, db_session, user, monkeypatch
     ):

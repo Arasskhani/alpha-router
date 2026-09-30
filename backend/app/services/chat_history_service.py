@@ -35,8 +35,13 @@ from app.services.chat_markers import (
 
 logger = logging.getLogger(__name__)
 
-#: The most older messages put in front of one turn: the client's own walk stops here too.
+#: The most older messages put in front of one turn.
 MAX_COMPLETED_MESSAGES = 5000
+#: And the most characters: a turn is fitted into the model's window afterwards, and more than this never fits
+#: one (about a million tokens); nor is it read into a worker's memory for one request.
+MAX_COMPLETED_CHARS = 4_000_000
+#: Rows read at a time, newest first, until either limit is reached.
+READ_BATCH = 100
 
 _PENDING = frozenset({IMAGE_PENDING_MARKER, VIDEO_PENDING_MARKER, SPEECH_PENDING_MARKER})
 _MEDIA = (
@@ -108,26 +113,45 @@ async def older_chat_messages(
     *,
     before_sequence: int,
     limit: int = MAX_COMPLETED_MESSAGES,
+    max_chars: int | None = None,
 ) -> list[dict[str, str]]:
-    """The chat's user and assistant messages older than ``before_sequence``, oldest first, as the model reads them."""
-    rows = (
-        await db.execute(
-            select(ChatMessage.role, ChatMessage.content)
-            .where(
-                ChatMessage.session_id == session_id,
-                ChatMessage.sequence < int(before_sequence),
-                ChatMessage.role.in_(("user", "assistant")),
+    """The chat's user and assistant messages older than ``before_sequence``, oldest first, as the model reads them.
+
+    Read newest first, a batch at a time, up to ``limit`` messages and
+    ``max_chars`` characters (``MAX_COMPLETED_CHARS``): the ones nearest the
+    turn are the ones kept.
+    """
+    budget = int(max_chars or MAX_COMPLETED_CHARS)
+    newest_first: list[dict[str, str]] = []
+    total = 0
+    read = 0
+    upper = int(before_sequence)
+    while read < int(limit):
+        rows = (
+            await db.execute(
+                select(ChatMessage.sequence, ChatMessage.role, ChatMessage.content)
+                .where(
+                    ChatMessage.session_id == session_id,
+                    ChatMessage.sequence < upper,
+                    ChatMessage.role.in_(("user", "assistant")),
+                )
+                .order_by(ChatMessage.sequence.desc())
+                .limit(min(READ_BATCH, int(limit) - read))
             )
-            .order_by(ChatMessage.sequence.desc())
-            .limit(max(0, int(limit)))
-        )
-    ).all()
-    out: list[dict[str, str]] = []
-    for role, content in reversed(rows):
-        text = message_text_for_model(content)
-        if text:
-            out.append({"role": str(role), "content": text})
-    return out
+        ).all()
+        for _sequence, role, content in rows:
+            text = message_text_for_model(content)
+            if not text:
+                continue
+            if total + len(text) > budget:
+                return list(reversed(newest_first))
+            newest_first.append({"role": str(role), "content": text})
+            total += len(text)
+        read += len(rows)
+        if len(rows) < READ_BATCH:
+            break
+        upper = int(rows[-1][0])
+    return list(reversed(newest_first))
 
 
 async def complete_chat_history(

@@ -509,6 +509,58 @@ class TestForgetting:
         await db_session.commit()
         assert await self._found(db_session, user) == []
 
+    async def test_an_index_run_a_delete_all_overtook_leaves_nothing_behind(
+        self, db_session, session_factory, user, store, monkeypatch
+    ):
+        from app.services.user_memory_service import delete_all_memories
+
+        workout = await _chat(db_session, user, "Workout", WORKOUT)
+        row = await recall._row_for(db_session, workout)
+        await db_session.commit()
+
+        async def _embedding_while_deleted(_db, texts, **_kwargs):
+            # The person deletes everything while this run waits on the embedding model.
+            async with session_factory() as other:
+                await delete_all_memories(other, user.id)
+                await other.commit()
+            return [_embed(text) for text in texts]
+
+        monkeypatch.setattr("app.services.memory_embedding_service.embed_memory_texts", _embedding_while_deleted)
+        assert await index_chat(db_session, row) is False
+        points, _ = await store.scroll(await MemoryVectorService(store).resolve_target_collection(), limit=50)
+        assert all(p.payload.get("session_id") != workout.id for p in points)
+        async with session_factory() as check:
+            live = await check.get(ChatRecallIndex, workout.id)
+            assert (live.not_before, live.indexed_up_to, live.chunk_count) == (4, 0, 0)
+
+    async def test_a_forget_that_lands_as_the_vectors_are_written_takes_them_back_out(
+        self, db_session, session_factory, user, store, monkeypatch
+    ):
+        workout = await _chat(db_session, user, "Workout", WORKOUT)
+        row = await recall._row_for(db_session, workout)
+        await db_session.commit()
+        workout_id = workout.id  # the run rolls its session back: its objects expire
+        real_upsert = MemoryVectorService.upsert
+
+        async def _nothing(_ids):
+            return None
+
+        async def _upsert_then_forgotten(self, **kwargs):
+            await real_upsert(self, **kwargs)
+            # The chat is rewritten just after the store took the vectors (and before the run's row write).
+            monkeypatch.setattr(recall, "drop_chat_vectors", _nothing)
+            async with session_factory() as other:
+                await forget_chats(other, [workout_id])
+                await other.commit()
+
+        monkeypatch.setattr(MemoryVectorService, "upsert", _upsert_then_forgotten)
+        assert await index_chat(db_session, row) is False
+        points, _ = await store.scroll(await MemoryVectorService(store).resolve_target_collection(), limit=50)
+        assert all(p.payload.get("session_id") != workout_id for p in points)
+        async with session_factory() as check:
+            live = await check.get(ChatRecallIndex, workout_id)
+            assert (live.indexed_up_to, live.chunk_count, live.digest_hash) == (0, 0, None)
+
     async def test_a_rewritten_chat_is_indexed_again_from_what_is_left(self, db_session, user, store):
         workout = await _chat(db_session, user, "Workout", WORKOUT)
         row = await _indexed(db_session, workout)

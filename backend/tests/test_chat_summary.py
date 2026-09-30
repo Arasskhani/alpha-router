@@ -157,6 +157,41 @@ class TestTheJob:
         assert "Summary 1: the user squats" in model.prompts[1]
         assert row.first_message_hash == summaries._hash(FIRST)
 
+    async def test_a_run_a_rewrite_overtook_writes_nothing_onto_the_new_summary(
+        self, db_session, session_factory, user, model_on
+    ):
+        from app.services.user_chat_storage_service import replace_session_messages
+
+        chat = await _chat(db_session, user, 60)
+        row = await _row(db_session, chat)
+        chat_id, user_id = chat.id, user.id  # the run's own session rolls back: its objects expire
+        calls: list[int] = []
+
+        async def _model(_payload: dict) -> str:
+            calls.append(1)
+            if len(calls) == 2:
+                # While the second part is folded, the person edits a message: the stored chat is
+                # rewritten (its summary goes), and the reply that follows starts a new summary.
+                async with session_factory() as other:
+                    rewritten = [{"role": "user", "content": FIRST}]
+                    for sequence in range(2, 61):
+                        role = "user" if sequence % 2 else "assistant"
+                        rewritten.append({"role": role, "content": f"new {role} {sequence} " + "z" * 1_000})
+                    await replace_session_messages(other, user_id, chat_id, rewritten)
+                    await other.commit()
+                    await maybe_schedule_summary(
+                        other, session=await other.get(ChatSession, chat_id), latest_sequence=60
+                    )
+                    await other.commit()
+            return f"Summary {len(calls)}: what was said before the edit."
+
+        assert await handle_chat_summary(db_session, row, completer=_model) is False
+        async with session_factory() as check:
+            fresh = await check.get(ChatSummary, chat_id)
+            assert fresh is not None and fresh.status == "pending"
+            assert (fresh.content, fresh.up_to_sequence, fresh.covered_count) == ("", 0, 0)
+            assert fresh.first_message_hash is None
+
     async def test_a_long_backlog_goes_on_in_another_run(self, db_session, user, model_on):
         chat = await _chat(db_session, user, 200)
         row = await _row(db_session, chat)
@@ -341,7 +376,7 @@ async def test_the_knowledge_worker_runs_the_job(db_session, session_factory, us
     messages = await read_new_messages(redis, consumer_name="worker-1")
     assert [message.event_type for message in messages] == ["chat_summary.job.ready"]
 
-    async def _fold(_db, _row, turns, *, model_id, completer):
+    async def _fold(_db, _row, turns, *, so_far, model_id, completer):
         return f"Folded {len(turns)} messages."
 
     worker = KnowledgeWorker(

@@ -25,7 +25,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.chat import ChatMessage, ChatSession, ChatSummary, is_member_channel
@@ -330,10 +330,18 @@ async def _part(db: AsyncSession, session_id: str, *, after: int, upto: int) -> 
     return turns, covered
 
 
-async def _fold(db: AsyncSession, row: Any, turns: list[tuple[int, str, str]], *, model_id: int, completer: Any) -> str:
+async def _fold(
+    db: AsyncSession,
+    row: Any,
+    turns: list[tuple[int, str, str]],
+    *,
+    so_far: str,
+    model_id: int,
+    completer: Any,
+) -> str:
     conversation = "\n".join(f"[{role} #{sequence}] {text}" for sequence, role, text in turns)
     user_content = (
-        f"Summary so far:\n{row.content or '(none yet)'}\n\n"
+        f"Summary so far:\n{so_far or '(none yet)'}\n\n"
         f"BEGIN_UNTRUSTED_CONVERSATION\n{conversation}\nEND_UNTRUSTED_CONVERSATION\n"
     )
     if completer is not None:
@@ -401,11 +409,37 @@ async def _fold(db: AsyncSession, row: Any, turns: list[tuple[int, str, str]], *
     return text
 
 
+async def _opening_hash(db: AsyncSession, session_id: str) -> str:
+    """The hash of the chat's first message the model reads: what a turn's history must start with."""
+    opening = (
+        await db.execute(
+            select(ChatMessage.content)
+            .where(ChatMessage.session_id == session_id, ChatMessage.role.in_(("user", "assistant")))
+            .order_by(ChatMessage.sequence.asc())
+            .limit(20)
+        )
+    ).scalars()
+    texts = (message_text_for_model(content) for content in opening)
+    return _hash(next((text for text in texts if text), ""))
+
+
 async def handle_chat_summary(db: AsyncSession, row: Any, *, completer: Any | None = None) -> bool:
     """Fold the chat's next stretches into its summary, a part at a time, committing each.
 
     True when more is left than one run folds in (``MAX_PARTS_PER_RUN``).
+
+    Each part is written only onto the row as this run found it: a rewrite,
+    a purge or a switch to private deletes the row (and the next reply may
+    make a new one) while the model is folding, and what the run read before
+    that must not land on it. Nothing is written to the row while the model
+    is asked, so no lock is held across the call either.
     """
+    session_id = str(row.session_id)
+    version = row.updated_at
+    so_far = str(row.content or "")
+    up_to = int(row.up_to_sequence or 0)
+    covered_count = int(row.covered_count or 0)
+    opening = row.first_message_hash
     parts = 0
     while True:
         settings = await _settings_on(db)
@@ -420,37 +454,44 @@ async def handle_chat_summary(db: AsyncSession, row: Any, *, completer: Any | No
             await db.execute(select(func.max(ChatMessage.sequence)).where(ChatMessage.session_id == row.session_id))
         ).scalar_one_or_none()
         target = int(latest or 0) - int(settings.get("summary_keep_recent") or 20)
-        after = int(row.up_to_sequence or 0)
-        if target <= after:
+        if target <= up_to:
             return False
-        turns, covered = await _part(db, row.session_id, after=after, upto=target)
+        turns, covered = await _part(db, row.session_id, after=up_to, upto=target)
+        now = dt.datetime.utcnow()
+        values: dict[str, Any] = {"up_to_sequence": covered, "updated_at": now}
         if turns:
-            if not row.first_message_hash:
-                opening = (
-                    await db.execute(
-                        select(ChatMessage.content)
-                        .where(ChatMessage.session_id == row.session_id, ChatMessage.role.in_(("user", "assistant")))
-                        .order_by(ChatMessage.sequence.asc())
-                        .limit(20)
-                    )
-                ).scalars()
-                texts = (message_text_for_model(content) for content in opening)
-                row.first_message_hash = _hash(next((text for text in texts if text), ""))
-            text = await _fold(db, row, turns, model_id=int(settings["summary_model_id"]), completer=completer)
+            opening = opening or await _opening_hash(db, str(row.session_id))
+            text = await _fold(
+                db, row, turns, so_far=so_far, model_id=int(settings["summary_model_id"]), completer=completer
+            )
             if not text:
                 raise RuntimeError("The summary model answered with nothing")
-            row.content = text
-            row.covered_count = int(row.covered_count or 0) + len(turns)
-            row.model_id = int(settings["summary_model_id"])
-        row.up_to_sequence = covered
-        row.updated_at = dt.datetime.utcnow()
+            values.update(
+                content=text,
+                covered_count=covered_count + len(turns),
+                model_id=int(settings["summary_model_id"]),
+                first_message_hash=opening,
+            )
+        written = await db.execute(
+            update(ChatSummary)
+            .where(ChatSummary.session_id == row.session_id, ChatSummary.updated_at == version)
+            .values(**values)
+            .execution_options(synchronize_session=False)
+        )
+        if int(getattr(written, "rowcount", 0) or 0) != 1:
+            await db.rollback()  # the row is expired now: only the locals are read below
+            logger.info("chat summary run overtaken, its part dropped session_id=%s", session_id)
+            return False
         await db.commit()
+        await db.refresh(row)
+        version, so_far = row.updated_at, str(row.content or "")
+        up_to, covered_count = int(row.up_to_sequence or 0), int(row.covered_count or 0)
         parts += 1
         logger.info(
             "chat summary brought up to date session_id=%s up_to=%s covered=%s",
             row.session_id,
-            row.up_to_sequence,
-            row.covered_count,
+            up_to,
+            covered_count,
         )
         if covered >= target:
             return False

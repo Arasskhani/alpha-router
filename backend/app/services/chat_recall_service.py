@@ -272,6 +272,9 @@ async def index_chat(db: AsyncSession, row: Any, *, limit: int = MAX_EXCHANGES_P
         exchanges, more = exchanges[:limit], True
     # How far this run reaches: the end of its last exchange, or of the rows when it stops at the end of the chat.
     reached = exchanges[-1].last if exchanges and more else last_row
+    # The row as this run found it: a forget (a rewrite, a purge, a delete-all) stamps it anew.
+    version = row.updated_at
+    session_id = str(row.session_id)
     service, target, model_name = await _vector_target(db)
     try:
         points: list[MemoryVectorPoint] = []
@@ -308,17 +311,47 @@ async def index_chat(db: AsyncSession, row: Any, *, limit: int = MAX_EXCHANGES_P
                 for (pid, payload, _text), vector in zip(batch, vectors, strict=True)
             )
         if points:
+            if not await _unchanged(db, str(row.session_id), version):
+                logger.info("chat recall index run overtaken by a forget session_id=%s", row.session_id)
+                return False
             await service.upsert(collection_name=target, points=points)
+        now = dt.datetime.utcnow()
+        values: dict[str, Any] = {
+            "indexed_up_to": max(start, reached),
+            "chunk_count": ChatRecallIndex.chunk_count
+            + sum(1 for p in points if p.payload.get("kind") == KIND_CHAT_CHUNK),
+            "embedding_model": model_name,
+            "indexed_at": now,
+            "updated_at": now,
+        }
+        if digest:
+            values["digest_hash"] = digest_hash
+        written = await db.execute(
+            update(ChatRecallIndex)
+            .where(ChatRecallIndex.session_id == row.session_id, ChatRecallIndex.updated_at == version)
+            .values(**values)
+            .execution_options(synchronize_session=False)
+        )
+        if int(getattr(written, "rowcount", 0) or 0) != 1:
+            # Forgotten while this run embedded: what it wrote to the store goes too.
+            await db.rollback()  # the row is expired now: only the locals are read below
+            if points:
+                await service.delete_ids(collection_name=target, point_ids=[p.point_id for p in points])
+            logger.info("chat recall index run overtaken by a forget session_id=%s", session_id)
+            return False
     finally:
         await service.close()
-    row.indexed_up_to = max(start, reached)
-    row.chunk_count = int(row.chunk_count or 0) + sum(1 for p in points if p.payload.get("kind") == KIND_CHAT_CHUNK)
-    row.digest_hash = digest_hash if digest else row.digest_hash
-    row.embedding_model = model_name
-    row.indexed_at = dt.datetime.utcnow()
-    row.updated_at = row.indexed_at
     await db.commit()
+    await db.refresh(row)
     return more
+
+
+async def _unchanged(db: AsyncSession, session_id: str, version: Any) -> bool:
+    """True while the chat's index row is as a run found it (a column read: the committed value, not the session's)."""
+    live = (
+        await db.execute(select(ChatRecallIndex.updated_at).where(ChatRecallIndex.session_id == session_id))
+    ).scalar_one_or_none()
+    return live is not None and live == version
 
 
 # ── The job ────────────────────────────────────────────────────────────────
@@ -489,6 +522,7 @@ async def forget_chats(db: AsyncSession, session_ids: list[str] | set[str], *, k
         row.indexed_up_to = 0
         row.chunk_count = 0
         row.digest_hash = None
+        # A new stamp: an index run in flight for this chat sees it and writes nothing (``index_chat``).
         row.updated_at = dt.datetime.utcnow()
     await db.flush()
 
@@ -512,7 +546,12 @@ async def forget_user_chats(db: AsyncSession, user_id: int) -> None:
 async def reset_after_reindex(db: AsyncSession) -> None:
     """A rebuilt collection has none of the chat vectors: every chat is indexed again as it goes on."""
     await db.execute(
-        update(ChatRecallIndex).values(indexed_up_to=ChatRecallIndex.not_before, chunk_count=0, digest_hash=None)
+        update(ChatRecallIndex).values(
+            indexed_up_to=ChatRecallIndex.not_before,
+            chunk_count=0,
+            digest_hash=None,
+            updated_at=dt.datetime.utcnow(),
+        )
     )
 
 

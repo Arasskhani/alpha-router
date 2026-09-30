@@ -846,6 +846,33 @@ class TestTheWrittenDigest:
         row = await _indexed(db_session, await _chat(db_session, user, "Workout", WORKOUT))
         assert writer.calls == [] and row.digest_text is None and row.indexed_up_to == 4
 
+    async def test_a_digest_written_as_its_owner_turns_summaries_off_is_never_kept(
+        self, db_session, session_factory, user, store, monkeypatch
+    ):
+        await self._model_on(db_session)
+        chat = await _chat(db_session, user, "Workout", WORKOUT)
+        row = await recall._row_for(db_session, chat)
+        await db_session.commit()
+        chat_id, user_id = chat.id, user.id
+
+        async def _complete_while_opting_out(_db, _row, **_kwargs):
+            # The person turns summaries off while the model writes this chat's first digest.
+            async with session_factory() as other:
+                await save_user_prefs(other, user_id, {"memory_summarize_chats": False})
+                await other.commit()
+            return "A digest: the user's training schedule."
+
+        monkeypatch.setattr("app.services.chat_summary_service._complete", _complete_while_opting_out)
+        assert await index_chat(db_session, row) is False
+        async with session_factory() as check:
+            live = await check.get(ChatRecallIndex, chat_id)
+            assert live.digest_text is None
+            # Nor would one stored before be read for them: their first questions only.
+            live.digest_text, live.digest_after = "Written before.", 0
+            await check.commit()
+            chat_row = await check.get(ChatSession, chat_id)
+            assert await recall._digest_text(check, chat_row) == f"Workout\n{WORKOUT[0]}\n{WORKOUT[2]}"
+
     async def test_a_failure_or_the_monthly_cap_leaves_the_first_questions(
         self, db_session, user, store, writer, monkeypatch
     ):

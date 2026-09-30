@@ -230,15 +230,19 @@ async def _digest_text(db: AsyncSession, session: Any, *, not_before: int = 0, w
     without the title: the summary, the chat's first questions and the title
     made from them are what was said before it (a written digest is valid
     only for the delete-all it was written under). With nothing said since,
-    there is no digest at all.
+    there is no digest at all. For an owner who turned summaries off, only
+    their first questions: nothing the summary model wrote.
     """
+    from app.services.chat_summary_service import owner_allows_summaries
+
     body = ""
-    if not not_before:
+    summarized = await owner_allows_summaries(db, session)
+    if not not_before and summarized:
         summary = await db.get(ChatSummary, session.id)
         body = str(summary.content or "") if summary is not None else ""
-    if not body and written is None:
+    if not body and written is None and summarized:
         written = await _stored_digest(db, session.id, not_before=not_before)
-    if not body and written:
+    if not body and written and summarized:
         body = written
     if not body:
         firsts = (

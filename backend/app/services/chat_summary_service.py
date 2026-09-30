@@ -291,14 +291,14 @@ async def forget_person_summaries(db: AsyncSession, user_id: int) -> None:
         .where(
             ChatRecallIndex.user_id == int(user_id),
             ChatRecallIndex.project_id.is_(None),
-            ChatRecallIndex.digest_text.is_not(None),
         )
         .values(
             digest_text=None,
             digest_up_to=None,
             digest_after=None,
+            # Every one, not only those with a written digest: a digest made of a summary is embedded again from
+            # the first questions, and a run in flight - its digest about to be written - writes nothing.
             digest_hash=None,
-            # A new stamp: an index run in flight writes nothing.
             updated_at=dt.datetime.utcnow(),
         )
         .execution_options(synchronize_session=False)

@@ -678,12 +678,31 @@ class TestThePersonsSwitch:
                 updated_at=now,
             )
         )
+        # A chat whose digest is its summary (none written): embedded again from its first questions too.
+        plain = await _chat(db_session, user, 4)
+        db_session.add(
+            ChatRecallIndex(
+                session_id=plain.id,
+                user_id=user.id,
+                indexed_up_to=4,
+                not_before=0,
+                chunk_count=2,
+                digest_hash="h2",
+                status="idle",
+                attempt_count=0,
+                created_at=now,
+                updated_at=now,
+            )
+        )
         await db_session.commit()
         await save_user_prefs(db_session, user.id, {"memory_summarize_chats": False})
         await db_session.commit()
         row = await db_session.get(ChatRecallIndex, chat.id)
         await db_session.refresh(row)
         assert (row.digest_text, row.digest_hash, row.chunk_count) == (None, None, 2)
+        other = await db_session.get(ChatRecallIndex, plain.id)
+        await db_session.refresh(other)
+        assert other.digest_hash is None and other.updated_at > now
 
 
 async def test_a_part_a_run_adds_as_a_purge_lands_goes_with_the_others(db_session, session_factory, user, model_on):

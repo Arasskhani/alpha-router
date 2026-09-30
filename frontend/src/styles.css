@@ -18074,6 +18074,16 @@ p.error,
     display: inline-flex;
     align-items: center;
   }
+  /* A row with a field and two buttons left its title and hint about 40px
+     at 360px: they go under the title, the row's full width. */
+  .settings-row-block--actions .settings-row {
+    flex-wrap: wrap;
+  }
+  .settings-row-block--actions .settings-row__trail {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
   .data-table .model-toggle-btn {
     min-width: 2.75rem;
     min-height: 2.75rem;

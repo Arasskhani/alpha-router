@@ -193,14 +193,18 @@ function FieldRow({
   hint,
   children,
   detail,
+  actions,
 }: {
   title: ReactNode;
   hint?: ReactNode;
   children?: ReactNode;
   detail?: ReactNode;
+  /** Several controls in the row: on a phone they go under the title instead of squeezing it. */
+  actions?: boolean;
 }) {
+  const classes = ["settings-row-block", detail ? "settings-row-block--open" : "", actions ? "settings-row-block--actions" : ""];
   return (
-    <div className={`settings-row-block${detail ? " settings-row-block--open" : ""}`}>
+    <div className={classes.filter(Boolean).join(" ")}>
       <div className="settings-row">
         <div className="settings-row__meta">
           <span className="settings-row__title">{title}</span>
@@ -658,7 +662,12 @@ export default function MemoryAdmin() {
                 <strong>Extraction model</strong> — learns facts from chats.{" "}
                 {settings.extraction_model_id ? `Chosen: ${modelLabel(settings.extraction_model_id)}.` : "Not chosen: nothing is learned."}
               </span>
-              <button type="button" className="btn btn-ghost" onClick={() => focusField("memory-extraction-model")}>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                aria-label={`${settings.extraction_model_id ? "Change" : "Choose"} the extraction model`}
+                onClick={() => focusField("memory-extraction-model")}
+              >
                 {settings.extraction_model_id ? "Change" : "Choose"}
               </button>
             </li>
@@ -670,7 +679,12 @@ export default function MemoryAdmin() {
                   ? `Chosen: ${settings.embedding_model}. After changing it, Rebuild index.`
                   : "Not chosen: memories are found only by their words, and earlier chats are not recalled."}
               </span>
-              <button type="button" className="btn btn-ghost" onClick={() => focusField("memory-embedding-model")}>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                aria-label={`${settings.embedding_model ? "Change" : "Choose"} the embedding model`}
+                onClick={() => focusField("memory-embedding-model")}
+              >
                 {settings.embedding_model ? "Change" : "Choose"}
               </button>
             </li>
@@ -763,6 +777,7 @@ export default function MemoryAdmin() {
             <FieldRow
               title="Days to read again"
               hint="1–90"
+              actions
               detail={
                 relearnUnsaved ? (
                   <p className="memory-admin__estimate">{SAVE_FIRST}</p>
@@ -1089,6 +1104,7 @@ export default function MemoryAdmin() {
               </FieldRow>
               <FieldRow
                 title="Index earlier chats"
+                actions
                 hint="Chats are indexed as they go on. The ones from before recall was on are indexed only from here."
                 detail={
                   recallUnsaved ? (

@@ -519,5 +519,23 @@ describe("the setup steps", () => {
     expect(section()?.textContent).toContain("Chosen: GPT X.");
     expect(section()?.textContent).toContain("After changing it, Rebuild index.");
   });
+
+  it("name each button by the model it is for", async () => {
+    answerWith({ extraction_model_id: 7 });
+    await render();
+    const names = [...(section()?.querySelectorAll("button") ?? [])].map((b) => b.getAttribute("aria-label"));
+    expect(names).toEqual(["Change the extraction model", "Choose the embedding model"]);
+  });
+});
+
+describe("rows with several controls", () => {
+  it("are marked to go under their title on a phone", async () => {
+    answerWith({ extraction_model_id: 7 });
+    await render();
+    const rows = [...host.querySelectorAll(".settings-row-block--actions")].map(
+      (row) => row.querySelector(".settings-row__title")?.textContent,
+    );
+    expect(rows).toEqual(["Days to read again", "Index earlier chats"]);
+  });
 });
 

@@ -15,7 +15,8 @@
  *   - an answer that read from earlier chats names them, each a link that opens
  *     it - one the chat list has not loaded too;
  *   - after an image turn (the image is answered here too), the next turn still
- *     says where its history starts, and holds the image exchange.
+ *     says where its history starts, and holds the image exchange. It needs the
+ *     Image Generation tool allowed for the account (Admin -> Chat tools).
  *
  * With CHAT_E2E_LIVE_RECALL=1 one more step runs against the stack itself, no
  * answer faked: a chat is stored, the knowledge worker indexes it (about a
@@ -36,7 +37,8 @@
  *   CHAT_E2E_RECALL_WAIT   seconds to wait for the index in that step (default 240)
  *   CHAT_E2E_LIVE_MODEL    the chat model that step's turn goes to (default: the first one offered)
  *
- * It makes a few chats in the account and deletes them at the end.
+ * It makes a few chats in the account and deletes them at the end, with any
+ * memory already learned from them (one learned later stays).
  * Exit codes: 0 every step passed, 1 a step failed, 2 bad configuration or setup.
  */
 import process from "node:process";
@@ -304,7 +306,13 @@ const IMAGE_MODEL = {
 
 async function toggleImageTool() {
   await page.getByRole("button", { name: "Tools", exact: true }).click();
-  await page.getByRole("button", { name: "Toggle Image Generation" }).click({ timeout: 5_000 });
+  const toggle = page.getByRole("button", { name: "Toggle Image Generation" });
+  const shown = await toggle.waitFor({ timeout: 5_000 }).then(
+    () => true,
+    () => false,
+  );
+  expect(shown, "the Image Generation tool is not offered to this account (Admin -> Chat tools)");
+  await toggle.click();
   await page.keyboard.press("Escape");
   await sleep(300);
 }
@@ -356,19 +364,34 @@ await step("after an image turn, the next turn still says where its history star
 if (process.env.CHAT_E2E_LIVE_RECALL === "1") {
   await step("live: a new chat reads from an earlier one the knowledge worker indexed, and names it", async () => {
     const status = async () => (await page.request.get(`${BASE}/api/admin/memory/recall/status`)).json();
-    const before = await status();
+    const prefs = await (await page.request.get(`${BASE}/api/user/chats/prefs`)).json();
+    expect(
+      prefs.memory_enabled !== false && prefs.memory_recall_chats !== false,
+      "the account has its memory or its earlier chats switched off (Settings -> Memory)",
+    );
+    let before = await status();
     expect(before.enabled, "recall is not set up here (Admin -> Memory: an embedding model, Recall earlier chats)");
+    // What earlier steps queued settles first, so what this step waits for is its own chat.
+    const settle = Date.now() + 120_000;
+    while ((before.pending || before.running) && Date.now() < settle) {
+      await sleep(5_000);
+      before = await status();
+    }
     const code = `lark-${Date.now().toString(36)}`;
-    const earlier = await seedChat(2, [`My locker code is ${code}, remember it.`, `Noted: your locker code is ${code}.`]);
+    const earlier = await seedChat(2, [`My locker code is ${code}.`, `Noted: your locker code is ${code}.`]);
     const wait = Number(process.env.CHAT_E2E_RECALL_WAIT || 240) * 1000;
-    const until = Date.now() + wait;
+    const started = Date.now();
     let now = before;
-    while (Date.now() < until) {
+    while (Date.now() < started + wait) {
       now = await status();
       if (now.chunks > before.chunks && !now.pending && !now.running) break;
       await sleep(5_000);
     }
-    expect(now.chunks > before.chunks, `nothing was indexed in ${wait / 1000}s: is the knowledge worker running?`);
+    const indexedIn = Math.round((Date.now() - started) / 1000);
+    expect(
+      now.chunks > before.chunks,
+      `nothing was indexed in ${wait / 1000}s: is the knowledge worker running, and the account's indexing budget left?`,
+    );
     const title = await seedChat(0, undefined, process.env.CHAT_E2E_LIVE_MODEL || model);
     await openChat(title);
     liveNext = true;
@@ -378,10 +401,17 @@ if (process.env.CHAT_E2E_LIVE_RECALL === "1") {
     const text = (await label.textContent()) || "";
     // Other chats of the account may be read too (this check's own among them); the one with the code must be.
     expect(text.startsWith("Read from") && text.includes(earlier), `the label reads ${JSON.stringify(text)}`);
-    return `indexed in about ${Math.round((wait - (until - Date.now())) / 1000)}s`;
+    return `indexed in about ${indexedIn}s`;
   });
 }
 
+// Memories learned from this check's chats go with them (listed before the chats, which they name).
+const learned = await (await page.request.get(`${BASE}/api/user/memories?limit=200`)).json().catch(() => ({}));
+for (const memory of learned?.memories || []) {
+  if (created.includes(memory.source_session_id)) {
+    await page.request.delete(`${BASE}/api/user/memories/${memory.id}`, { headers }).catch(() => undefined);
+  }
+}
 for (const id of created) {
   await page.request.delete(`${BASE}/api/user/chats/sessions/${id}`, { headers }).catch(() => undefined);
 }

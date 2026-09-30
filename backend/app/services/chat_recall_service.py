@@ -296,7 +296,7 @@ async def _write_digest(db: AsyncSession, row: Any, *, not_before: int, reached:
     from app.services.memory_extraction_service import restates_a_shared_page
 
     settings = await summaries._settings_on(db)
-    if settings is None:
+    if settings is None or not await summaries.owner_allows_summaries(db, await db.get(ChatSession, row.session_id)):
         return None
     if not not_before:
         summary = await db.get(ChatSummary, row.session_id)

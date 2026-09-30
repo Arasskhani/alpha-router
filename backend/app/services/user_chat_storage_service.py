@@ -179,6 +179,8 @@ def _default_prefs() -> dict[str, Any]:
         "memory_outside_chat": False,
         # On by default: a new chat may use what the person said in their earlier ones.
         "memory_recall_chats": True,
+        # On by default: the summary model may summarize the person's long chats (and write what each is about).
+        "memory_summarize_chats": True,
     }
 
 
@@ -283,6 +285,8 @@ def _normalize_prefs(raw: dict[str, Any] | None) -> dict[str, Any]:
         base["memory_outside_chat"] = _coerce_bool(raw.get("memory_outside_chat"), default=False)
     if "memory_recall_chats" in raw:
         base["memory_recall_chats"] = _coerce_bool(raw.get("memory_recall_chats"), default=True)
+    if "memory_summarize_chats" in raw:
+        base["memory_summarize_chats"] = _coerce_bool(raw.get("memory_summarize_chats"), default=True)
     return base
 
 
@@ -603,6 +607,11 @@ async def save_user_prefs(db: AsyncSession, user_id: int, updates: dict[str, Any
     if person_allows_recall(current) and not person_allows_recall(merged):
         # Earlier chats (or memory) turned off: what was indexed of them goes, not only its use.
         await forget_person_chats(db, user_id)
+    if current.get("memory_summarize_chats", True) and not merged.get("memory_summarize_chats", True):
+        # Summaries turned off: what the summary model wrote of their chats goes, not only its use.
+        from app.services.chat_summary_service import forget_person_summaries
+
+        await forget_person_summaries(db, user_id)
     return merged
 
 

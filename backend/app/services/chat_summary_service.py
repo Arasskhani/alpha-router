@@ -131,6 +131,21 @@ def _eligible(session: Any) -> bool:
     return session is not None and not bool(session.private_mode) and not is_member_channel(session)
 
 
+async def owner_allows_summaries(db: AsyncSession, session: Any) -> bool:
+    """The chat's owner lets the summary model read it: their own switch for a personal chat.
+
+    A project chat is the project's, and follows the administrator's settings.
+    """
+    if session is None:
+        return False
+    if session.project_id:
+        return True
+    from app.services.user_chat_storage_service import load_user_prefs
+
+    prefs = await load_user_prefs(db, int(session.user_id))
+    return bool(prefs.get("memory_summarize_chats", True))
+
+
 async def _unsummarized_chars(db: AsyncSession, session_id: str, *, after: int, upto: int) -> int:
     if upto <= after:
         return 0
@@ -164,7 +179,7 @@ async def maybe_schedule_summary(db: AsyncSession, *, session: Any, latest_seque
 
 async def _schedule_summary(db: AsyncSession, *, session: Any, latest_sequence: int) -> None:
     settings = await _settings_on(db)
-    if settings is None or not _eligible(session):
+    if settings is None or not _eligible(session) or not await owner_allows_summaries(db, session):
         return
     keep = int(settings.get("summary_keep_recent") or 20)
     target = int(latest_sequence) - keep
@@ -234,6 +249,46 @@ async def forget_summaries(db: AsyncSession, session_ids: list[str] | set[str]) 
     if ids:
         await db.execute(delete(ChatSummaryPart).where(ChatSummaryPart.session_id.in_(ids)))
         await db.execute(delete(ChatSummary).where(ChatSummary.session_id.in_(ids)))
+
+
+async def forget_person_summaries(db: AsyncSession, user_id: int) -> None:
+    """The person turned summaries off: what the summary model wrote of their personal chats goes.
+
+    Their summaries and parts, and the digests it wrote for recall (the
+    digest is their first questions again, re-read at recall).
+    """
+    from app.models.chat import ChatRecallIndex
+
+    ids = list(
+        (
+            await db.execute(
+                select(ChatSummary.session_id).where(
+                    ChatSummary.user_id == int(user_id), ChatSummary.project_id.is_(None)
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    await forget_summaries(db, ids)
+    await db.execute(
+        update(ChatRecallIndex)
+        .where(
+            ChatRecallIndex.user_id == int(user_id),
+            ChatRecallIndex.project_id.is_(None),
+            ChatRecallIndex.digest_text.is_not(None),
+        )
+        .values(
+            digest_text=None,
+            digest_up_to=None,
+            digest_after=None,
+            digest_hash=None,
+            # A new stamp: an index run in flight writes nothing.
+            updated_at=dt.datetime.utcnow(),
+        )
+        .execution_options(synchronize_session=False)
+    )
+    await db.flush()
 
 
 async def forget_summary_starts(db: AsyncSession, purged_to: dict[str, int]) -> None:
@@ -309,7 +364,7 @@ async def summary_for_turn(
         session = await resolve_owned_chat_session(db, user=user, chat_session_id=chat_session_id)
     except HTTPException:
         return None
-    if not _eligible(session):
+    if not _eligible(session) or not await owner_allows_summaries(db, session):
         return None
     conversation = [m for m in messages if m.get("role") in ("user", "assistant")]
     if not conversation or row.first_message_hash != _hash(message_text_for_model(conversation[0].get("content"))):
@@ -712,7 +767,7 @@ async def handle_chat_summary(db: AsyncSession, row: Any, *, completer: Any | No
     while True:
         settings = await _settings_on(db)
         session = await db.get(ChatSession, session_id)
-        if settings is None or not _eligible(session):
+        if settings is None or not _eligible(session) or not await owner_allows_summaries(db, session):
             return False
         cap = float(settings.get("summary_monthly_budget_usd") or 0.0)
         if cap > 0 and await summary_spend_this_month(db) >= cap:

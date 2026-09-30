@@ -828,6 +828,13 @@ class TestTheWrittenDigest:
         assert writer.calls == []
         assert await recall._digest_text(db_session, summarized) == "Summarized\nThe user squats on Monday."
 
+    async def test_none_is_written_for_a_person_who_turned_summaries_off(self, db_session, user, store, writer):
+        await self._model_on(db_session)
+        await save_user_prefs(db_session, user.id, {"memory_summarize_chats": False})
+        await db_session.commit()
+        row = await _indexed(db_session, await _chat(db_session, user, "Workout", WORKOUT))
+        assert writer.calls == [] and row.digest_text is None and row.indexed_up_to == 4
+
     async def test_a_failure_or_the_monthly_cap_leaves_the_first_questions(
         self, db_session, user, store, writer, monkeypatch
     ):

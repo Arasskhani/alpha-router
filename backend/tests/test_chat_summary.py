@@ -549,6 +549,90 @@ class TestForgetting:
             assert (fresh.content, fresh.up_to_sequence) == ("", 0)
 
 
+class TestThePersonsSwitch:
+    async def test_off_their_personal_chats_are_not_summarized_nor_their_summaries_used(
+        self, db_session, user, model_on
+    ):
+        from app.services.user_chat_storage_service import save_user_prefs
+
+        chat = await _summarized(db_session, user)
+        assert await summary_for_turn(db_session, chat_session_id=chat.id, user_id=user.id, messages=_history())
+        await save_user_prefs(db_session, user.id, {"memory_summarize_chats": False})
+        await db_session.commit()
+        # What was written of their chats goes at once, parts too.
+        assert await db_session.get(ChatSummary, chat.id) is None
+        assert await _parts(db_session, chat) == []
+        other = await _chat(db_session, user, 60)
+        await maybe_schedule_summary(db_session, session=other, latest_sequence=60)
+        assert await _events(db_session) == []
+        row = await _row(db_session, other)
+        model = _Model()
+        assert await handle_chat_summary(db_session, row, completer=model) is False
+        assert model.prompts == []
+        row.content, row.covered_count, row.first_message_hash = "S", 40, summaries._hash(FIRST)
+        await db_session.commit()
+        assert (
+            await summary_for_turn(db_session, chat_session_id=other.id, user_id=user.id, messages=_history()) is None
+        )
+        # On again: summarized as the chats go on.
+        await save_user_prefs(db_session, user.id, {"memory_summarize_chats": True})
+        await db_session.commit()
+        await maybe_schedule_summary(db_session, session=await _chat(db_session, user, 60), latest_sequence=60)
+        assert len(await _events(db_session)) == 1
+
+    async def test_a_project_chat_is_the_project_s_and_is_summarized_all_the_same(self, db_session, user, model_on):
+        from app.models.project import PROJECT_ROLE_PRIMARY_OWNER, Project, ProjectMember
+        from app.services.user_chat_storage_service import save_user_prefs
+
+        await save_user_prefs(db_session, user.id, {"memory_summarize_chats": False})
+        project = Project(
+            id=str(uuid.uuid4()),
+            name="Team",
+            status="active",
+            visibility="private",
+            created_by_user_id=user.id,
+            revision=1,
+        )
+        db_session.add(project)
+        await db_session.flush()
+        db_session.add(ProjectMember(project_id=project.id, user_id=user.id, role=PROJECT_ROLE_PRIMARY_OWNER))
+        chat = await _chat(db_session, user, 60)
+        chat.project_id = project.id
+        await db_session.commit()
+        await maybe_schedule_summary(db_session, session=chat, latest_sequence=60)
+        assert len(await _events(db_session)) == 1
+
+    async def test_the_written_digests_of_their_chats_go_too(self, db_session, user):
+        from app.models.chat import ChatRecallIndex
+        from app.services.user_chat_storage_service import save_user_prefs
+
+        chat = await _chat(db_session, user, 4)
+        now = dt.datetime.utcnow()
+        db_session.add(
+            ChatRecallIndex(
+                session_id=chat.id,
+                user_id=user.id,
+                indexed_up_to=4,
+                not_before=0,
+                chunk_count=2,
+                digest_hash="h",
+                digest_text="The user's training schedule.",
+                digest_up_to=4,
+                digest_after=0,
+                status="idle",
+                attempt_count=0,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        await db_session.commit()
+        await save_user_prefs(db_session, user.id, {"memory_summarize_chats": False})
+        await db_session.commit()
+        row = await db_session.get(ChatRecallIndex, chat.id)
+        await db_session.refresh(row)
+        assert (row.digest_text, row.digest_hash, row.chunk_count) == (None, None, 2)
+
+
 async def test_the_knowledge_worker_runs_the_job(db_session, session_factory, user, model_on):
     from app.services.knowledge_job_handlers import KnowledgeJobContext
     from app.services.knowledge_queue import ensure_consumer_group, read_new_messages

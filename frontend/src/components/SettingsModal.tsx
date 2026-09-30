@@ -808,11 +808,15 @@ function MemoryPanel() {
         </SettingsRow>
         <SettingsRow
           title="Use my earlier chats"
-          hint="A new chat can read the related parts of your other chats, and says which it read from. Never private chats."
+          hint={
+            memoryEnabled
+              ? "A new chat can read the related parts of your other chats, and says which it read from. Never private chats. Turning it off removes what was kept of your chats for this."
+              : "Turn on “Use my memories in chat” first."
+          }
         >
           <SettingsToggle
-            on={recallChats}
-            disabled={busy}
+            on={memoryEnabled && recallChats}
+            disabled={busy || !memoryEnabled}
             label="Use my earlier chats"
             onToggle={() => void onToggleRecallChats(!recallChats)}
           />

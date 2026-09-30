@@ -146,5 +146,19 @@ describe("the Memory tab", () => {
     expect(saved).toEqual([{ memory_recall_chats: false }]);
     expect(toggle?.getAttribute("aria-pressed")).toBe("false");
   });
+
+  it("is off, and locked, while memory is off", async () => {
+    vi.mocked(api).mockImplementation(async (path: string) => {
+      if (path === "/api/user/chats/prefs") return { memory_enabled: false, memory_recall_chats: true } as never;
+      if (path.startsWith("/api/user/memories")) return { memories: [], total: 0 } as never;
+      return {} as never;
+    });
+    await openSettings();
+    await clickTab("Memory");
+    const toggle = document.querySelector<HTMLButtonElement>('button[aria-label="Use my earlier chats"]');
+    expect(toggle?.getAttribute("aria-pressed")).toBe("false");
+    expect(toggle?.disabled).toBe(true);
+    expect(host.textContent).toContain("Turn on “Use my memories in chat” first.");
+  });
 });
 

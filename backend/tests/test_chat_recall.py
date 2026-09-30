@@ -186,6 +186,50 @@ class TestTheIndex:
         other = await _chat(db_session, user, "Other", WORKOUT)
         assert not await maybe_schedule_chat_index(db_session, session=other, latest_sequence=4)
 
+    async def test_an_answer_still_being_written_is_read_once_it_is_stored(self, db_session, user, store):
+        chat = await _chat(db_session, user, "Workout", WORKOUT)
+        live = (
+            await db_session.execute(
+                select(ChatMessage).where(ChatMessage.session_id == chat.id, ChatMessage.sequence == 4)
+            )
+        ).scalar_one()
+        live.content, live.meta = "Stretching every", {"streaming": True}
+        await db_session.commit()
+        row = await _indexed(db_session, chat)
+        assert (row.indexed_up_to, row.chunk_count) == (2, 1)
+
+        live.content, live.meta = WORKOUT[3], {"streaming": False}
+        await db_session.commit()
+        await index_chat(db_session, row)
+        assert (row.indexed_up_to, row.chunk_count) == (4, 2)
+        points, _ = await store.scroll(await MemoryVectorService(store).resolve_target_collection(), limit=50)
+        assert sorted(p.payload["from_seq"] for p in points if p.payload.get("kind") == KIND_CHAT_CHUNK) == [1, 3]
+
+    async def test_the_turn_queues_the_index_when_its_reply_is_stored_not_when_it_starts(self, db_session, user, store):
+        from app.services.chat_completion_persistence import ChatCompletionPersister
+
+        chat = await _chat(db_session, user, "Workout", WORKOUT)
+        persister = ChatCompletionPersister(
+            db_session,
+            user_id=user.id,
+            session_id=chat.id,
+            model_id="model::1",
+            model_name="GPT",
+            user_message={"role": "user", "content": "And on Friday?", "clientMessageId": "u5"},
+            assistant_client_message_id="a6",
+        )
+
+        async def _queued() -> list:
+            stmt = select(OutboxEvent.aggregate_id).where(OutboxEvent.event_type == "chat_index.job.ready")
+            return list((await db_session.execute(stmt)).scalars().all())
+
+        await persister.prepare()
+        await db_session.commit()
+        assert await _queued() == []
+        await persister.on_content("Friday is a rest day.")
+        await persister.finalize(success=True)
+        assert await _queued() == [chat.id]
+
 
 class TestRecall:
     async def test_a_new_chat_reads_the_related_part_of_an_earlier_one(self, db_session, user, store):

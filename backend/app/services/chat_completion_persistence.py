@@ -360,8 +360,10 @@ class ChatCompletionPersister:
         # stale; force a full re-write of the final content regardless of the
         # incremental counters.
         self.reset_persist_state()
+        stored = False
         try:
             await self._flush(content, partial=False)
+            stored = True
             if success:
                 await _maybe_set_fallback_session_title(
                     self.db,
@@ -378,7 +380,21 @@ class ChatCompletionPersister:
             try:
                 await self._flush(content, partial=False)
                 await self.db.commit()
+                stored = True
             except Exception:  # noqa: BLE001 -- session is rolled back and the caller continues without the write
+                await self.db.rollback()
+        if stored:
+            await self._schedule_after_reply()
+
+    async def _schedule_after_reply(self) -> None:
+        """The reply is stored whole: now the chat's summary and recall index may read it."""
+        from app.services.chat_recall_service import schedule_after_reply
+
+        try:
+            await schedule_after_reply(self.db, self.session_id)
+            await self.db.commit()
+        except Exception:  # noqa: BLE001 -- the reply is stored; its index waits for the next one
+            with contextlib.suppress(Exception):
                 await self.db.rollback()
 
     async def _flush(self, content: str, *, partial: bool) -> None:

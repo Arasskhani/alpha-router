@@ -1277,7 +1277,8 @@ async def append_session_messages(
                 user_id,
                 session_id,
             )
-        if any(str(msg.get("role") or "") == "assistant" for msg in messages):
+        # A reply stored whole (one still streaming is scheduled when it is finished: ChatCompletionPersister).
+        if any(str(msg.get("role") or "") == "assistant" and msg.get("streaming") is not True for msg in messages):
             from app.services.chat_recall_service import maybe_schedule_chat_index
             from app.services.chat_summary_service import maybe_schedule_summary
 

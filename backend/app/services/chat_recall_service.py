@@ -168,6 +168,43 @@ def exchanges_of(rows: list[Any]) -> list[Exchange]:
     return [item for item in out if item.question]
 
 
+#: An answer marked as still streaming for longer than this was left behind by a turn that died.
+LIVE_ANSWER_SECONDS = 15 * 60
+
+
+def _live_answer_at(rows: list[Any]) -> int | None:
+    """Where in ``rows`` the exchange of an answer still being written begins; None when every answer is done."""
+    now = dt.datetime.utcnow()
+    for index, row in enumerate(rows):
+        meta = row.meta if isinstance(row.meta, dict) else {}
+        if str(row.role) != "assistant" or meta.get("streaming") is not True:
+            continue
+        if row.created_at is not None and (now - row.created_at).total_seconds() > LIVE_ANSWER_SECONDS:
+            continue
+        start = index
+        while start > 0 and str(rows[start - 1].role) != "user":
+            start -= 1
+        return max(0, start - 1)
+    return None
+
+
+async def schedule_after_reply(db: AsyncSession, session_id: str) -> None:
+    """A reply was stored whole: queue the chat's summary and recall index (never a failed reply)."""
+    try:
+        from app.services.chat_summary_service import maybe_schedule_summary
+
+        session = await db.get(ChatSession, session_id)
+        if session is None:
+            return
+        latest = (
+            await db.execute(select(func.max(ChatMessage.sequence)).where(ChatMessage.session_id == session_id))
+        ).scalar_one_or_none()
+        await maybe_schedule_summary(db, session=session, latest_sequence=int(latest or 0))
+        await maybe_schedule_chat_index(db, session=session, latest_sequence=int(latest or 0))
+    except Exception:
+        logger.exception("Scheduling a stored reply's summary and index failed session_id=%s", session_id)
+
+
 def _point_id(session_id: str, *parts: object) -> str:
     return str(uuid.uuid5(POINT_NAMESPACE, ":".join([session_id, *map(str, parts)])))
 
@@ -262,9 +299,13 @@ async def index_chat(db: AsyncSession, row: Any, *, limit: int = MAX_EXCHANGES_P
         .scalars()
         .all()
     )
+    more = len(rows) >= limit * 4
+    live = _live_answer_at(list(rows))
+    if live is not None:
+        # An answer still being written: this run stops before its question, the one after the reply is stored reads it.
+        rows, more = rows[:live], False
     exchanges = exchanges_of(list(rows))
     last_row = int(rows[-1].sequence) if rows else start
-    more = len(rows) >= limit * 4
     if more and len(exchanges) > 1:
         # The rows stop mid-chat: the last exchange may be cut, and is read whole by the next run.
         exchanges = exchanges[:-1]

@@ -440,6 +440,75 @@ class TestForgetting:
         await index_chat(db_session, row)
         assert row.chunk_count == 0
 
+    async def test_after_delete_all_the_digest_holds_only_what_was_asked_since(self, db_session, user, store):
+        from app.services.user_memory_service import delete_all_memories
+
+        workout = await _chat(db_session, user, "Workout", WORKOUT)
+        row = await _indexed(db_session, workout)
+        await delete_all_memories(db_session, user.id)
+        await db_session.commit()
+        # The chat goes on after the delete-all.
+        for sequence, (role, text) in enumerate(
+            [("user", "What about Friday for my workout?"), ("assistant", "Friday is a rest day.")], start=5
+        ):
+            db_session.add(
+                ChatMessage(
+                    id=str(uuid.uuid4()),
+                    session_id=workout.id,
+                    user_id=user.id,
+                    role=role,
+                    content=text,
+                    sequence=sequence,
+                    meta={},
+                )
+            )
+        await db_session.commit()
+        await db_session.refresh(row)
+        await index_chat(db_session, row)
+        new = await _chat(db_session, user, "New chat", [])
+        found = await recall_for_turn(
+            db_session,
+            user_id=user.id,
+            chat_session_id=new.id,
+            messages=_asking("my workout plan on Monday, squats and stretching"),
+            private_mode=False,
+            via_api_key=False,
+        )
+        assert found.block and "Friday" in found.block
+        assert "squats on Monday" not in found.block and "stretch every morning" not in found.block
+
+    async def test_what_the_store_kept_after_delete_all_is_never_recalled(self, db_session, user, store, monkeypatch):
+        from app.services.user_memory_service import delete_all_memories
+
+        workout = await _chat(db_session, user, "Workout", WORKOUT)
+        await _indexed(db_session, workout)
+
+        async def _unreachable(*_args, **_kwargs):
+            raise ConnectionError("vector store down")
+
+        # The store is down while the person deletes everything: the vectors stay in it.
+        monkeypatch.setattr(MemoryVectorService, "delete_sessions", _unreachable)
+        monkeypatch.setattr(MemoryVectorService, "delete_user", _unreachable)
+        await delete_all_memories(db_session, user.id)
+        await db_session.commit()
+        points, _ = await store.scroll(await MemoryVectorService(store).resolve_target_collection(), limit=50)
+        assert any(p.payload.get("session_id") == workout.id for p in points)
+        assert await self._found(db_session, user) == []
+        # Nor does the old digest, matched on what was said before, stand in for what is asked since.
+        db_session.add(
+            ChatMessage(
+                id=str(uuid.uuid4()),
+                session_id=workout.id,
+                user_id=user.id,
+                role="user",
+                content="Anything new?",
+                sequence=5,
+                meta={},
+            )
+        )
+        await db_session.commit()
+        assert await self._found(db_session, user) == []
+
     async def test_a_rewritten_chat_is_indexed_again_from_what_is_left(self, db_session, user, store):
         workout = await _chat(db_session, user, "Workout", WORKOUT)
         row = await _indexed(db_session, workout)

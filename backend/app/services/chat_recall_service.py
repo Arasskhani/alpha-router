@@ -172,21 +172,42 @@ def _point_id(session_id: str, *parts: object) -> str:
     return str(uuid.uuid5(POINT_NAMESPACE, ":".join([session_id, *map(str, parts)])))
 
 
-async def _digest_text(db: AsyncSession, session: Any) -> str:
-    """The chat's title and what it was about: its summary when it has one, else its first questions."""
-    summary = await db.get(ChatSummary, session.id)
-    body = str(summary.content or "") if summary is not None else ""
+async def _digest_text(db: AsyncSession, session: Any, *, not_before: int = 0) -> str:
+    """The chat's title and what it was about: its summary when it has one, else its first questions.
+
+    After a delete-all (``not_before``) only what was asked since goes in:
+    the summary, and the chat's first questions, are what was said before
+    it. With nothing asked since, there is no digest at all.
+    """
+    body = ""
+    if not not_before:
+        summary = await db.get(ChatSummary, session.id)
+        body = str(summary.content or "") if summary is not None else ""
     if not body:
         firsts = (
             await db.execute(
                 select(ChatMessage.content)
-                .where(ChatMessage.session_id == session.id, ChatMessage.role == "user")
+                .where(
+                    ChatMessage.session_id == session.id,
+                    ChatMessage.role == "user",
+                    ChatMessage.sequence > int(not_before),
+                )
                 .order_by(ChatMessage.sequence.asc())
                 .limit(5)
             )
         ).scalars()
-        body = "\n".join(message_text_for_model(content)[:300] for content in firsts)
+        body = "\n".join(text[:300] for text in map(message_text_for_model, firsts) if text).strip()
+    if not body:
+        return ""
     return f"{session.title or 'Chat'}\n{body}"[:DIGEST_CHARS].strip()
+
+
+async def _kept_out_before(db: AsyncSession, session_id: str) -> int | None:
+    """What of the chat is never to be recalled (up to this sequence); None for a chat with no index at all."""
+    value = (
+        await db.execute(select(ChatRecallIndex.not_before).where(ChatRecallIndex.session_id == session_id))
+    ).scalar_one_or_none()
+    return None if value is None else int(value)
 
 
 async def _vector_target(db: AsyncSession) -> tuple[Any, str, str]:
@@ -267,13 +288,15 @@ async def index_chat(db: AsyncSession, row: Any, *, limit: int = MAX_EXCHANGES_P
                     "part": part,
                 }
                 texts.append((_point_id(str(row.session_id), "chunk", exchange.first, part), payload, text))
-        digest = await _digest_text(db, session)
+        kept_out = int(row.not_before or 0)
+        digest = await _digest_text(db, session, not_before=kept_out)
         digest_hash = _hash(digest)
         if digest and digest_hash != row.digest_hash:
             texts.append(
                 (
                     _point_id(str(row.session_id), "digest"),
-                    {**owner, "kind": KIND_CHAT_DIGEST, "session_id": str(row.session_id)},
+                    # "after": the digest was built from nothing said up to this sequence.
+                    {**owner, "kind": KIND_CHAT_DIGEST, "session_id": str(row.session_id), "after": kept_out},
                     digest,
                 )
             )
@@ -550,11 +573,16 @@ async def _hits(db: AsyncSession, *, query: str, session: Any, settings: dict[st
     return sorted(found, key=lambda hit: hit.score, reverse=True)
 
 
-async def _words(db: AsyncSession, hit: Any, chat: Any) -> str:
+async def _words(db: AsyncSession, hit: Any, chat: Any, *, not_before: int) -> str:
+    """The words of a hit, re-read from the chat; "" for one that reaches back past what is kept out."""
     from app.services.memory_vector_service import KIND_CHAT_DIGEST
 
     if hit.payload.get("kind") == KIND_CHAT_DIGEST:
-        return await _digest_text(db, chat)
+        if int(hit.payload.get("after") or 0) < not_before:
+            return ""
+        return await _digest_text(db, chat, not_before=not_before)
+    if int(hit.payload.get("from_seq") or 0) <= not_before:
+        return ""
     rows = (
         (
             await db.execute(
@@ -651,7 +679,11 @@ async def _recalled_from(db: AsyncSession, hits: list[Any], *, session: Any, use
                 continue
         elif chat.project_id or int(chat.user_id) != user_id:
             continue
-        words = (await _words(db, hit, chat)).strip()
+        # Nothing said before a delete-all, whatever the store still holds (a drop that failed, a run it overtook).
+        kept_out = await _kept_out_before(db, other)
+        if kept_out is None:
+            continue
+        words = (await _words(db, hit, chat, not_before=kept_out)).strip()
         if not words:
             continue
         when = (chat.last_message_at or chat.created_at or dt.datetime.utcnow()).strftime("%Y-%m-%d")

@@ -390,11 +390,16 @@ class TestTheIndex:
         await update_last_session_message(db_session, user.id, chat.id, "Friday is")
         await db_session.commit()
         assert await _learning(db_session, chat.id) == [] and chat.id not in await _queued_index(db_session)
-        await update_last_session_message(
-            db_session, user.id, chat.id, "Friday is a rest day.", meta={"streaming": False, "receivedAt": 1}
-        )
+        # As the browser sends it: when it was received, and nothing about streaming.
+        await update_last_session_message(db_session, user.id, chat.id, "Friday is a rest day.", meta={"receivedAt": 1})
         await db_session.commit()
         assert await _learning(db_session, chat.id) == [6] and chat.id in await _queued_index(db_session)
+        stored = (
+            await db_session.execute(
+                select(ChatMessage).where(ChatMessage.session_id == chat.id, ChatMessage.sequence == 6)
+            )
+        ).scalar_one()
+        assert stored.meta["streaming"] is False
 
     async def test_a_failure_while_queuing_never_loses_the_stored_answer(self, db_session, user, store, monkeypatch):
         from sqlalchemy import text

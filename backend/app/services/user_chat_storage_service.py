@@ -1742,6 +1742,10 @@ async def update_last_session_message(
     if meta:
         merged = dict(last.meta) if isinstance(last.meta, dict) else {}
         merged.update(meta)
+        if meta.get("receivedAt") is not None and "streaming" not in meta:
+            # The browser's last write of an answer says when it was received, and never mentions the
+            # streaming mark the server's placeholder set: the answer is finished all the same.
+            merged["streaming"] = False
         last.meta = merged
     session.last_message_at = dt.datetime.utcnow()
     _bump_session_revision(session)

@@ -47,9 +47,7 @@ import {
   loadChatSessionsLocal,
   loadSessionMessagesIfNeeded,
   loadOlderSessionMessages,
-  loadWholeSessionHistory,
   overlayLatestPage,
-  sessionHasOlderMessages,
   mergeSessionAfterMessageLoad,
   resolveNewChatModel,
   saveDefaultModelToServer,
@@ -4977,33 +4975,6 @@ export default function ChatPanel({
     return sessionsRef.current.find((s) => s.id === sessionId)?.messages ?? [];
   }
 
-  /**
-   * The session's messages, whole. A chat opened from the list holds only its
-   * latest page, and a turn built from that page sends the model a chat that
-   * starts in the middle: what was said first is gone. The older pages are
-   * read first, and shown too, as scrolling up would show them. Should the
-   * read fail, the turn goes with what is here and the server puts the rest
-   * in front (history_from_sequence).
-   */
-  async function wholeSessionMessages(sessionId: string): Promise<ChatMessage[]> {
-    const current = getSessionMessages(sessionId);
-    const session = sessionsRef.current.find((s) => s.id === sessionId);
-    if (!session) return current;
-    const live = { ...session, messages: current };
-    if (!sessionHasOlderMessages(live)) return current;
-    try {
-      const { session: whole, added } = await loadWholeSessionHistory(live);
-      if (!added) return current;
-      // Only the older part is taken: what is here may have moved on while the pages were read.
-      const merged = [...whole.messages.slice(0, added), ...getSessionMessages(sessionId)];
-      updateSessionMessages(sessionId, merged);
-      if (sessionId === activeIdRef.current) setMessagesHasOlder(false);
-      return merged;
-    } catch {
-      return current;
-    }
-  }
-
   async function executePromptTurn(
     sessionId: string,
     userText: string,
@@ -5042,7 +5013,9 @@ export default function ChatPanel({
           clientMessageId: newClientMessageId(),
           ...(projectAuthorDisplayName ? { authorDisplayName: projectAuthorDisplayName } : {}),
         };
-    const prevMsgs = await wholeSessionMessages(sessionId);
+    // What is here: the latest page for a chat opened from the list. The server puts the chat's older
+    // messages in front (history_from_sequence), so nothing waits on reading them before the turn starts.
+    const prevMsgs = getSessionMessages(sessionId);
     const turnBaseCount = prevMsgs.length;
     pinScrollToBottomRef.current = true;
     const turnSession = sessionsRef.current.find((s) => s.id === sessionId);

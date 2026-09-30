@@ -8,6 +8,7 @@ import {
   errorCodeLabel,
   formatTokenCount,
   logIdentityLabel,
+  memoryContextRows,
   money,
   type CostDetails,
   type RequestLogSummary,
@@ -36,6 +37,7 @@ export default function RequestLogCostDetailsModal({
   exportError,
 }: Props) {
   const fmt = formatTokenCount;
+  const memoryRows = memoryContextRows(details?.request?.memory_context, formatLocalDateTime);
 
   return (
     <Modal
@@ -122,6 +124,22 @@ export default function RequestLogCostDetailsModal({
               {details.request.error_message && (
                 <p className="api-log-cost-details__error-text">{details.request.error_message}</p>
               )}
+            </div>
+          )}
+
+          {!loading && !error && memoryRows.length > 0 && (
+            <div className="api-log-cost-details__operation">
+              <h4>Memory and context</h4>
+              <dl>
+                {memoryRows.map((row) => (
+                  <div key={row.label} className="api-log-cost-event__full">
+                    <dt>{row.label}</dt>
+                    <dd className={row.label.startsWith("Earlier chats") ? "api-log-cost-details__mono" : undefined}>
+                      {row.value}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
             </div>
           )}
 

@@ -64,8 +64,66 @@ type RequestFailureBlock = {
   correlation_id?: string | null;
   provider_job_id?: string | null;
   source_ip?: string | null;
+  /** Operator-only: what a chat turn was given beside its messages (ids and counts). */
+  memory_context?: MemoryContext | null;
   project_id: string | null;
 };
+
+/** What a chat turn was given beside its messages, as its request log keeps it (``memory_context``). */
+export type MemoryContext = {
+  memories?: number;
+  project_memories?: number;
+  recalled_chats?: string[];
+  context_fit?: {
+    dropped: number;
+    summarized: number;
+    window?: number | null;
+    budget?: number | null;
+    tokens_before?: number;
+    tokens_after?: number;
+    summary?: { up_to?: number | null; version?: string | null; tokens?: number } | null;
+  } | null;
+};
+
+/** The Memory and context rows of a request's details: one label and value each; none when nothing was given. */
+export function memoryContextRows(
+  context: MemoryContext | null | undefined,
+  formatTime: (iso: string) => string,
+): { label: string; value: string }[] {
+  if (!context) return [];
+  const rows: { label: string; value: string }[] = [];
+  const memories = [
+    context.memories ? `${context.memories} personal` : "",
+    context.project_memories ? `${context.project_memories} project` : "",
+  ].filter(Boolean);
+  if (memories.length) rows.push({ label: "Memories", value: memories.join(" · ") });
+  const chats = context.recalled_chats ?? [];
+  if (chats.length) {
+    rows.push({ label: `Earlier chats read (${chats.length})`, value: chats.join(", ") });
+  }
+  const fit = context.context_fit;
+  if (fit && fit.dropped) {
+    const parts = [
+      `${fit.dropped} older message${fit.dropped === 1 ? "" : "s"}` +
+        (fit.summarized ? ` (${fit.summarized} read as the summary)` : ""),
+    ];
+    if (fit.window) parts.push(`window ${formatTokenCount(fit.window)} tokens`);
+    if (fit.tokens_before && fit.tokens_after) {
+      parts.push(`${formatTokenCount(fit.tokens_before)} → ${formatTokenCount(fit.tokens_after)} tokens`);
+    }
+    rows.push({ label: "Left out to fit", value: parts.join(" · ") });
+    const summary = fit.summary;
+    if (fit.summarized && summary) {
+      const about = [
+        summary.up_to ? `up to message #${summary.up_to}` : "",
+        summary.tokens ? `about ${formatTokenCount(summary.tokens)} tokens` : "",
+        summary.version ? `written ${formatTime(summary.version)}` : "",
+      ].filter(Boolean);
+      rows.push({ label: "Summary used", value: about.join(" · ") || "Yes" });
+    }
+  }
+  return rows;
+}
 
 type CostEvent = {
   id: string;

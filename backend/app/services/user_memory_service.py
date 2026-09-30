@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
-import json
 import logging
 import re
 import time
@@ -25,7 +24,7 @@ from app.models.chat import (
     UserMemoryEvent,
     UserMemorySuppression,
 )
-from app.services.chat_markers import ATTACHMENT_MESSAGE_PREFIX
+from app.services.chat_history_service import message_text_for_model
 from app.services.memory_settings_service import (
     CORE_CATEGORIES,
     MEMORY_CATEGORIES,
@@ -664,6 +663,12 @@ async def is_hash_suppressed(db: AsyncSession, user_id: int, content_hash: str) 
 
 
 def extract_message_text(content: Any) -> str:
+    """A stored message's words as memory reads them: as the model reads them (``message_text_for_model``).
+
+    A generated image, video or speech is a line naming it with its prompt,
+    a voice note its transcript, and a media turn's pending marker nothing -
+    never the wire format.
+    """
     if isinstance(content, list):
         parts: list[str] = []
         for item in content:
@@ -674,22 +679,7 @@ def extract_message_text(content: Any) -> str:
         return " ".join(parts).strip()
     if not isinstance(content, str):
         return str(content or "").strip()
-    raw = content
-    if raw.startswith(ATTACHMENT_MESSAGE_PREFIX):
-        try:
-            payload = json.loads(raw[len(ATTACHMENT_MESSAGE_PREFIX) :])
-        except json.JSONDecodeError:
-            return raw
-        chunks = [str(payload.get("userText") or "")]
-        for attachment in payload.get("attachments") or []:
-            if not isinstance(attachment, dict):
-                continue
-            text = str(attachment.get("text") or "").strip()
-            name = str(attachment.get("name") or "attachment")
-            if text:
-                chunks.append(f"--- {name} ---\n{text}")
-        return "\n\n".join(chunk for chunk in chunks if chunk.strip())
-    return raw
+    return message_text_for_model(content)
 
 
 def extract_query_text(messages: list[dict] | None, *, title: str | None = None, questions: int = 3) -> str:

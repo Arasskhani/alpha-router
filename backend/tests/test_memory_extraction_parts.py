@@ -438,6 +438,41 @@ class TestPersonal:
         assert ExtractionBilling.for_user(job, "u", part="1-23").key_prefix != first
         assert ExtractionBilling.for_user(job, "u").key_prefix.startswith("memory-extract:j1:1:")
 
+    async def test_generated_media_is_read_as_the_model_reads_it_and_a_pending_marker_not_at_all(
+        self, db_session, user, chat
+    ):
+        from app.services.chat_markers import IMAGE_MESSAGE_PREFIX, VIDEO_PENDING_MARKER
+        from app.services.memory_extraction_service import build_extraction_window
+
+        image = IMAGE_MESSAGE_PREFIX + json.dumps({"url": "/media/cat.png", "prompt": "my cat Milo on the sofa"})
+        turns = [
+            ("user", "Draw my cat Milo on the sofa"),
+            ("assistant", image),
+            ("user", "Now a video of him"),
+            ("assistant", VIDEO_PENDING_MARKER),
+        ]
+        for sequence, (role, content) in enumerate(turns, start=1):
+            db_session.add(
+                ChatMessage(
+                    id=str(uuid.uuid4()),
+                    session_id=chat.id,
+                    user_id=user.id,
+                    role=role,
+                    content=content,
+                    sequence=sequence,
+                )
+            )
+        await db_session.commit()
+
+        window = await build_extraction_window(
+            db_session, user_id=user.id, session_id=chat.id, from_sequence=1, to_sequence=4
+        )
+        assert [(t.sequence, t.text) for t in window.turns] == [
+            (1, "Draw my cat Milo on the sofa"),
+            (2, "[Generated image: my cat Milo on the sofa]"),
+            (3, "Now a video of him"),
+        ]
+
 
 class TestProject:
     async def test_a_long_project_thread_is_mined_from_its_start(self, db_session, user):

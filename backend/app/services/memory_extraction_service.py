@@ -11,8 +11,9 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
 
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import set_committed_value
 
 from app.models.chat import ChatMessage, ChatSession, UserMemory, is_member_channel
 from app.services.chat_markers import PAGE_CONTEXT_META_KEY
@@ -962,8 +963,6 @@ async def extraction_budget_exhausted(db: AsyncSession) -> tuple[bool, float, fl
 async def extraction_spend_this_month(db: AsyncSession) -> float:
     """Month-to-date extraction spend, UTC, matching the budget period."""
 
-    from sqlalchemy import func
-
     from app.models.cost_accounting import UsageOperation
 
     now = dt.datetime.utcnow()
@@ -1104,6 +1103,38 @@ async def _watermark_moved(db: AsyncSession, job: Any, *, window_from: int) -> b
     return live is None or int(live) != window_from
 
 
+async def advance_watermark(db: AsyncSession, job: Any, *, window_from: int, to: int) -> bool:
+    """Move the job's ``extracted_sequence`` from ``window_from`` to ``to``; False when it is no longer there.
+
+    Compare-and-set, in the transaction that writes the part's memories:
+    "Delete all my memories" (or a project reset) moves the watermark on
+    between the last check and this write - while the part's memories are
+    embedded and stored - and a plain update would put it back, so the next
+    part would read on from before the delete-all. On False the caller rolls
+    the part back.
+    """
+    model = type(job)
+    written = await db.execute(
+        update(model)
+        .where(model.id == job.id, model.extracted_sequence == int(window_from))
+        .values(extracted_sequence=int(to))
+        .execution_options(synchronize_session=False)
+    )
+    if int(getattr(written, "rowcount", 0) or 0) != 1:
+        return False
+    set_committed_value(job, "extracted_sequence", int(to))
+    return True
+
+
+async def drop_overtaken_part(db: AsyncSession, job: Any, *, scope: str) -> bool:
+    """Roll back a part whose watermark moved under it; always False (nothing to commit)."""
+    job_id = str(job.id)
+    await db.rollback()
+    await db.refresh(job)
+    logger.info("%s memory extraction abandoned, watermark moved under it job_id=%s", scope, job_id)
+    return False
+
+
 def smaller_part(window: ExtractionWindow | Any, max_chars: int, cause: ExtractionTruncated) -> int:
     """The size to read a part in again after the extractor ran out of room answering it: half of it.
 
@@ -1213,7 +1244,9 @@ async def _mine_next_part(db: AsyncSession, job, *, completer: Any | None, first
     if not prefs.get("memory_auto_capture", True):
         # Claim the window anyway: it was read under a permission the user has
         # since withdrawn, and re-mining it later would leak the same turns.
-        job.extracted_sequence = int(job.watermark_sequence or 0)
+        await advance_watermark(
+            db, job, window_from=int(job.extracted_sequence or 0), to=int(job.watermark_sequence or 0)
+        )
         return False
     window_from = int(job.extracted_sequence or 0)
     if not first and await _watermark_moved(db, job, window_from=window_from):
@@ -1236,8 +1269,7 @@ async def _mine_next_part(db: AsyncSession, job, *, completer: Any | None, first
         )
         if not window.new_turns():
             # Nothing here the model may read (answers built from shared pages, empty turns).
-            job.extracted_sequence = window.to_sequence
-            return True
+            return await advance_watermark(db, job, window_from=window_from, to=window.to_sequence)
         try:
             operations = await extract_memory_operations(
                 db,
@@ -1272,7 +1304,9 @@ async def _mine_next_part(db: AsyncSession, job, *, completer: Any | None, first
         operations=operations,
         source_message_id=source_message_id,
     )
-    job.extracted_sequence = window.to_sequence
+    if not await advance_watermark(db, job, window_from=window_from, to=window.to_sequence):
+        # ... or while this part's memories were being written.
+        return await drop_overtaken_part(db, job, scope="personal")
     logger.info(
         "memory extraction completed user_id=%s session_id=%s job_id=%s part=%s-%s of=%s "
         "added=%s updated=%s superseded=%s skipped=%s evicted=%s",

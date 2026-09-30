@@ -31,8 +31,10 @@ from app.services.memory_extraction_service import (
     ExtractionTruncated,
     _first_json_object,
     _watermark_moved,
+    advance_watermark,
     ask_extractor,
     contains_secret,
+    drop_overtaken_part,
     extraction_budget_exhausted,
     fit_extraction_window,
     looks_like_injection,
@@ -672,8 +674,7 @@ async def _mine_next_project_part(db: AsyncSession, job, *, completer: Any | Non
             max_chars=max_chars,
         )
         if not window.new_turns():
-            job.extracted_sequence = window.to_sequence
-            return True
+            return await advance_watermark(db, job, window_from=window_from, to=window.to_sequence)
         try:
             operations, dropped = await extract_project_memory_operations(
                 db,
@@ -703,7 +704,8 @@ async def _mine_next_project_part(db: AsyncSession, job, *, completer: Any | Non
         author_user_id=last_member_turn.author_user_id if last_member_turn else None,
         dropped_personal=dropped,
     )
-    job.extracted_sequence = window.to_sequence
+    if not await advance_watermark(db, job, window_from=window_from, to=window.to_sequence):
+        return await drop_overtaken_part(db, job, scope="project")
     logger.info(
         "project memory extraction completed project_id=%s session_id=%s job_id=%s part=%s-%s of=%s "
         "added=%s updated=%s superseded=%s skipped=%s dropped_personal=%s evicted=%s",

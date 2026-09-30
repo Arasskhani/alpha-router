@@ -255,6 +255,47 @@ class TestPersonal:
         # The rest is claimed, not left to be mined once the switch is back on.
         assert job.extracted_sequence == 80
 
+    async def test_a_delete_all_while_a_part_is_written_stops_the_job_there(
+        self, db_session, session_factory, user, chat, monkeypatch
+    ):
+        from app.services import memory_extraction_service as extraction
+        from app.services.user_memory_service import delete_all_memories
+
+        user_id = user.id
+        await _messages(db_session, chat, 80)
+        job = _job(UserMemoryJob, owner={"user_id": user_id}, session_id=chat.id, watermark=80)
+        db_session.add(job)
+        await db_session.commit()
+        job_id = job.id
+        real_apply = extraction.apply_memory_operations
+        pressed: list[int] = []
+
+        async def _apply_then_delete_all(db, **kwargs):
+            result = await real_apply(db, **kwargs)
+            if not pressed:
+                # "Delete all my memories", while the first part's memories are being written.
+                pressed.append(1)
+                async with session_factory() as other:
+                    await delete_all_memories(other, user_id)
+                    await other.commit()
+            return result
+
+        monkeypatch.setattr(extraction, "apply_memory_operations", _apply_then_delete_all)
+        model = _Model()
+        await handle_memory_extraction(db_session, job, completer=model)
+        await db_session.commit()
+
+        assert len(model.parts) == 1
+        async with session_factory() as check:
+            live = await check.get(UserMemoryJob, job_id)
+            assert live.extracted_sequence == 80  # where the delete-all put it, not back where the part ended
+            kept = (
+                await check.execute(
+                    select(UserMemory.content).where(UserMemory.user_id == user_id, UserMemory.deleted_at.is_(None))
+                )
+            ).all()
+            assert kept == []
+
     def test_each_part_is_billed_under_its_own_key(self):
         job = UserMemoryJob(id="j1", user_id=7, attempt_count=1)
         first = ExtractionBilling.for_user(job, "u", part="1-23").key_prefix
@@ -321,3 +362,68 @@ class TestProject:
             .all()
         )
         assert len(rows) == MAX_PARTS_PER_RUN
+
+    async def test_a_project_part_lands_only_where_its_watermark_still_is(
+        self, db_session, session_factory, user, monkeypatch
+    ):
+        from app.services import project_memory_extraction_service as project_extraction
+
+        project_id = "proj-cas"
+        db_session.add(
+            Project(
+                id=project_id,
+                name="Billing",
+                status="active",
+                visibility="private",
+                created_by_user_id=user.id,
+                revision=1,
+                acl_version=1,
+            )
+        )
+        await db_session.flush()
+        db_session.add(ProjectMember(project_id=project_id, user_id=user.id, role=PROJECT_ROLE_PRIMARY_OWNER))
+        session = ChatSession(
+            id=str(uuid.uuid4()),
+            user_id=user.id,
+            title="Standup",
+            model_id="m",
+            private_mode=False,
+            project_id=project_id,
+            channel_kind="ai",
+        )
+        db_session.add(session)
+        db_session.add(SystemSetting(key="memory_extraction_model_id", value="1"))
+        await db_session.commit()
+        await _messages(db_session, session, 60)
+        job = _job(ProjectMemoryJob, owner={"project_id": project_id}, session_id=session.id, watermark=60)
+        db_session.add(job)
+        await db_session.commit()
+        job_id = job.id
+
+        real_apply = project_extraction.apply_project_memory_operations
+
+        async def _apply_then_reset(db, **kwargs):
+            result = await real_apply(db, **kwargs)
+            # The project's memories are reset while the first part's are being written.
+            async with session_factory() as other:
+                live = await other.get(ProjectMemoryJob, job_id)
+                live.extracted_sequence = 60
+                await other.commit()
+            return result
+
+        monkeypatch.setattr(project_extraction, "apply_project_memory_operations", _apply_then_reset)
+        model = _Model(category="decision")
+        await handle_project_memory_extraction(db_session, job, completer=model)
+        await db_session.commit()
+
+        assert len(model.parts) == 1
+        async with session_factory() as check:
+            assert (await check.get(ProjectMemoryJob, job_id)).extracted_sequence == 60
+            if check.bind.dialect.name == "postgresql":
+                # (On the one shared SQLite connection the reset's commit takes the part's rows with it.)
+                rows = (
+                    (await check.execute(select(ProjectMemory).where(ProjectMemory.project_id == project_id)))
+                    .scalars()
+                    .all()
+                )
+                assert rows == []

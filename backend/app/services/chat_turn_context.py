@@ -329,7 +329,9 @@ async def own_session_title(db: AsyncSession, chat_session_id: str | None, user_
     from app.models.chat import ChatSession
 
     try:
-        session = await db.get(ChatSession, sid)
+        # A savepoint: on PostgreSQL a failed read would otherwise take the turn's transaction with it.
+        async with db.begin_nested():
+            session = await db.get(ChatSession, sid)
     except Exception:
         # Only part of the memory lookup: the turn goes on without it.
         logger.exception("Reading the chat's title for the memory lookup failed session_id=%s", sid)

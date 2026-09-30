@@ -101,3 +101,20 @@ async def test_a_turn_looks_memories_up_with_its_own_chat_s_title(db_session, us
     )
     await ctx.lease.abandon("test over")
     assert seen["query"] == "Gym\nTell me about my workout plan\nWhat do I do on Monday?\nAnd on Wednesday?"
+
+
+async def test_a_failure_to_read_the_title_leaves_the_turn_s_transaction_usable(db_session, user, monkeypatch):
+    from sqlalchemy import text
+
+    from app.models.system import SystemSetting
+    from app.services.chat_turn_context import own_session_title
+
+    async def _broken(*_args, **_kwargs):
+        await db_session.execute(text("SELECT no_such_column FROM chat_sessions"))
+
+    db_session.add(SystemSetting(key="turn_marker", value="kept"))
+    monkeypatch.setattr(db_session, "get", _broken)
+    assert await own_session_title(db_session, "any-chat", user.id) is None
+    monkeypatch.undo()
+    await db_session.commit()  # on PostgreSQL too: the failed read took only its savepoint with it
+    assert (await db_session.get(SystemSetting, "turn_marker")).value == "kept"

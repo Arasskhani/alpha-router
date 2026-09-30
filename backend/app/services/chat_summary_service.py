@@ -57,6 +57,8 @@ SUMMARY_STEP_CHARS = MAX_WINDOW_CHARS
 MAX_STEPS_PER_RUN = 8
 SUMMARY_MAX_TOKENS = 2_000
 PART_MAX_TOKENS = 1_000
+#: The letters and digits of a message its fingerprint is made of (``_fingerprint``).
+FINGERPRINT_CHARS = 200
 DEBOUNCE_SECONDS = 60
 LEASE_SECONDS = 300
 MAX_ATTEMPTS = 5
@@ -114,6 +116,15 @@ class SummaryForTurn:
 
 def _hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _fingerprint(text: str) -> str:
+    """A message as the server and the browser both render it: its first letters and digits, case folded.
+
+    The browser sends some messages otherwise than the server reads them
+    (an attachment's notes, spacing); their start is the same.
+    """
+    return _hash("".join(ch for ch in text.casefold() if ch.isalnum())[:FINGERPRINT_CHARS])
 
 
 async def _settings_on(db: AsyncSession) -> dict[str, Any] | None:
@@ -372,8 +383,6 @@ async def summary_for_turn(
     if not conversation or row.first_message_hash != _hash(message_text_for_model(conversation[0].get("content"))):
         return None
     covered = _covered_in(conversation, count=int(row.covered_count), last_hash=row.last_message_hash)
-    if not covered:
-        return None
     return SummaryForTurn(
         covered=covered,
         text=summary_block(covered, str(row.content)),
@@ -385,20 +394,23 @@ async def summary_for_turn(
 def _covered_in(conversation: list[dict[str, Any]], *, count: int, last_hash: str | None) -> int:
     """How many of ``conversation``'s oldest messages a summary of ``count`` messages ending with ``last_hash`` covers.
 
-    0 when the conversation does not hold that message.
+    Where that message is (the nearest to where the count puts it); by the
+    count when the conversation holds none like it - one the browser
+    renders past recognition (an image sent alone), or a summary made
+    before summaries recorded their last message.
     """
     if not last_hash:
         return count
     expected = count - 1
 
     def _is_last(index: int) -> bool:
-        return _hash(message_text_for_model(conversation[index].get("content"))) == last_hash
+        return _fingerprint(message_text_for_model(conversation[index].get("content"))) == last_hash
 
     if 0 <= expected < len(conversation) and _is_last(expected):
         return count
     found = [index for index in range(len(conversation)) if _is_last(index)]
     if not found:
-        return 0
+        return count
     return min(found, key=lambda index: (abs(index - expected), index)) + 1
 
 
@@ -572,7 +584,7 @@ async def _part(db: AsyncSession, session_id: str, *, after: int, upto: int) -> 
             continue
         if restates_a_shared_page(row):
             counted += 1
-            last_hash = _hash(whole)
+            last_hash = _fingerprint(whole)
             continue
         if turns and total + len(text) > MAX_WINDOW_CHARS:
             covered = int(row.sequence) - 1
@@ -580,7 +592,7 @@ async def _part(db: AsyncSession, session_id: str, *, after: int, upto: int) -> 
         turns.append((int(row.sequence), str(row.role), text))
         total += len(text)
         counted += 1
-        last_hash = _hash(whole)
+        last_hash = _fingerprint(whole)
     return _Stretch(turns=turns, covered=covered, counted=counted, last_hash=last_hash)
 
 

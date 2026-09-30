@@ -192,7 +192,7 @@ class TestTheJob:
         assert row.content == "Summary 3: the user squats on Monday."
         assert row.first_message_hash == summaries._hash(FIRST)
         # Where it ends: the last message it covers, as the model reads it.
-        assert row.last_message_hash == summaries._hash(_text(40))
+        assert row.last_message_hash == summaries._fingerprint(_text(40))
 
     async def test_a_run_a_rewrite_overtook_writes_nothing_onto_the_new_summary(
         self, db_session, session_factory, user, model_on
@@ -371,7 +371,7 @@ class TestUsingIt:
         )
 
     async def test_it_ends_where_its_last_message_is_in_the_turn_s_history(self, db_session, user):
-        chat = await _summarized(db_session, user, covered=40, last_hash=summaries._hash(_text(40)))
+        chat = await _summarized(db_session, user, covered=40, last_hash=summaries._fingerprint(_text(40)))
 
         async def _covered(history: list[dict]) -> int | None:
             found = await summary_for_turn(db_session, chat_session_id=chat.id, user_id=user.id, messages=history)
@@ -385,8 +385,14 @@ class TestUsingIt:
         assert await _covered(extra) == 41
         found = await summary_for_turn(db_session, chat_session_id=chat.id, user_id=user.id, messages=extra)
         assert found.text.startswith(TURN_PREFIX.format(count=41))
-        # A history that does not hold it cannot use it; one made before summaries said where they end goes by count.
-        assert await _covered(_history(30)) is None
+        # The browser renders it a little otherwise (spacing, a note after it): still found.
+        noted = _history()
+        noted[39] = {"role": "assistant", "content": [{"type": "text", "text": _text(40) + "\n\n[a note]"}]}
+        noted.insert(5, {"role": "user", "content": "One more."})
+        assert await _covered(noted) == 41
+        # A history that holds nothing like it - and a summary made before summaries said where they end - goes by
+        # the count.
+        assert await _covered(_history(30)) == 40
         legacy = await _summarized(db_session, user, covered=40)
         found = await summary_for_turn(db_session, chat_session_id=legacy.id, user_id=user.id, messages=_history(30))
         assert found.covered == 40
@@ -518,7 +524,7 @@ class TestForgetting:
         assert (row.up_to_sequence, row.covered_count) == (40, 30)
         assert row.content == "Summary 2: the user squats on Monday."
         assert row.first_message_hash == summaries._hash(_text(11))
-        assert row.last_message_hash == summaries._hash(_text(40))
+        assert row.last_message_hash == summaries._fingerprint(_text(40))
 
     async def test_a_run_in_flight_when_a_purge_lands_writes_nothing(self, db_session, session_factory, user, model_on):
         from app.services.chat_summary_service import forget_summary_starts

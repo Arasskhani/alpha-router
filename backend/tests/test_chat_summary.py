@@ -686,6 +686,40 @@ class TestThePersonsSwitch:
         assert (row.digest_text, row.digest_hash, row.chunk_count) == (None, None, 2)
 
 
+async def test_a_part_a_run_adds_as_a_purge_lands_goes_with_the_others(db_session, session_factory, user, model_on):
+    """PostgreSQL row locks: the purge waits for the run that holds its chat's row, then deletes its part too."""
+    import asyncio
+
+    from app.services.chat_summary_service import forget_summary_starts
+
+    if db_session.bind.dialect.name != "postgresql":
+        pytest.skip("row locks")
+    chat = await _chat(db_session, user, 60)
+    await _row(db_session, chat)
+    chat_id = chat.id
+
+    async def _purge() -> None:
+        async with session_factory() as purge:
+            await forget_summary_starts(purge, {chat_id: 10})
+            await purge.commit()
+
+    async with session_factory() as runner:
+        live = await runner.get(ChatSummary, chat_id)
+        stretch = await summaries._part(runner, chat_id, after=0, upto=20)
+        assert await summaries._add_part(
+            runner, live, stretch, after=0, version=live.updated_at, model_id=1, completer=_Model()
+        )
+        # The run holds its row, and its new part, until it commits: the purge lands now.
+        landing = asyncio.create_task(_purge())
+        await asyncio.sleep(0.5)
+        assert not landing.done()
+        await runner.commit()
+    await asyncio.wait_for(landing, 10)
+    async with session_factory() as check:
+        left = (await check.execute(select(ChatSummaryPart).where(ChatSummaryPart.session_id == chat_id))).all()
+        assert left == []
+
+
 async def test_the_knowledge_worker_runs_the_job(db_session, session_factory, user, model_on):
     from app.services.knowledge_job_handlers import KnowledgeJobContext
     from app.services.knowledge_queue import ensure_consumer_group, read_new_messages

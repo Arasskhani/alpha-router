@@ -260,8 +260,10 @@ async def forget_summaries(db: AsyncSession, session_ids: list[str] | set[str]) 
     """Remove the summaries, and their parts, of chats whose stored messages were rewritten or made private."""
     ids = [str(item) for item in session_ids if item]
     if ids:
-        await db.execute(delete(ChatSummaryPart).where(ChatSummaryPart.session_id.in_(ids)))
+        # The rows before the parts: a run adding a part holds its row until it commits, so this waits for
+        # it (and the parts' deletion then sees that part), or goes first (and the run finds no row, adds none).
         await db.execute(delete(ChatSummary).where(ChatSummary.session_id.in_(ids)))
+        await db.execute(delete(ChatSummaryPart).where(ChatSummaryPart.session_id.in_(ids)))
 
 
 async def forget_person_summaries(db: AsyncSession, user_id: int) -> None:
@@ -316,25 +318,27 @@ async def forget_summary_starts(db: AsyncSession, purged_to: dict[str, int]) -> 
     """
     if not purged_to:
         return
+    # The rows before the parts (see ``forget_summaries``): a part a run adds as this lands is deleted with the
+    # others, or never added.
+    await db.execute(
+        update(ChatSummary)
+        .where(ChatSummary.session_id.in_([str(k) for k in purged_to]))
+        .values(
+            content="",
+            up_to_sequence=0,
+            covered_count=0,
+            first_message_hash=None,
+            last_message_hash=None,
+            updated_at=dt.datetime.utcnow(),
+        )
+        .execution_options(synchronize_session=False)
+    )
     for session_id, up_to in purged_to.items():
         await db.execute(
             delete(ChatSummaryPart).where(
                 ChatSummaryPart.session_id == str(session_id), ChatSummaryPart.from_sequence <= int(up_to)
             )
         )
-    rows: list[Any] = list(
-        (await db.execute(select(ChatSummary).where(ChatSummary.session_id.in_([str(k) for k in purged_to]))))
-        .scalars()
-        .all()
-    )
-    now = dt.datetime.utcnow()
-    for row in rows:
-        row.content = ""
-        row.up_to_sequence = 0
-        row.covered_count = 0
-        row.first_message_hash = None
-        row.last_message_hash = None
-        row.updated_at = now
     await db.flush()
 
 

@@ -904,3 +904,28 @@ async def test_the_person_s_switch_is_saved_and_read_back(client, db_session, se
     saved = await client.patch("/api/user/chats/prefs", json={"memory_recall_chats": False}, headers=headers)
     assert saved.status_code == 200, saved.text
     assert (await client.get("/api/user/chats/prefs", headers=headers)).json()["memory_recall_chats"] is False
+
+
+async def test_a_chat_an_answer_read_from_opens_by_id_for_its_owner_alone(
+    client, db_session, session_factory, user, monkeypatch
+):
+    from app.config import get_settings
+    from app.core.security import create_access_token
+    from app.database import get_read_db
+    from app.main import app as fastapi_app
+
+    async def _read_db():
+        async with session_factory() as session:
+            yield session
+
+    monkeypatch.setitem(fastapi_app.dependency_overrides, get_read_db, _read_db)
+    mine = await _chat(db_session, user, "Workout", WORKOUT)
+    other = await _person(db_session, "someone")
+    theirs = await _chat(db_session, other, "Theirs", WORKOUT)
+    settings = get_settings()
+    client.cookies.set(settings.session_cookie_name, create_access_token(user.username, "user"))
+    opened = await client.get(f"/api/user/chat-sessions/{mine.id}")
+    assert opened.status_code == 200 and opened.json()["title"] == "Workout"
+    assert opened.json()["messageCount"] in (0, 4)
+    assert (await client.get(f"/api/user/chat-sessions/{theirs.id}")).status_code == 404
+    assert (await client.get("/api/user/chat-sessions/no-such-chat")).status_code == 404

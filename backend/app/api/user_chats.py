@@ -23,6 +23,7 @@ from app.services.user_chat_storage_service import (
     delete_chat_folder,
     delete_chat_session,
     get_chat_session,
+    get_personal_chat_session,
     list_chat_folders,
     list_chat_sessions,
     list_session_messages,
@@ -339,6 +340,19 @@ async def remove_chat_session(
 
 
 messages_router = APIRouter(prefix="/api/user/chat-sessions", tags=["user-chats"])
+
+
+@messages_router.get("/{session_id}")
+async def get_session(
+    session_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_read_db),
+):
+    """One of the person's own chats, by id: one the list has not loaded (an answer names it as read from)."""
+    session = await get_personal_chat_session(db, int(user.id), session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return session
 
 
 @messages_router.get("/{session_id}/messages")

@@ -856,6 +856,14 @@ async def get_chat_session(db: AsyncSession, user_id: int, session_id: str) -> d
     return _session_to_client(row)
 
 
+async def get_personal_chat_session(db: AsyncSession, user_id: int, session_id: str) -> dict[str, Any] | None:
+    """One of the person's own personal chats (never a project's: those are read through the project)."""
+    row = await db.get(ChatSession, session_id)
+    if row is None or row.project_id or int(row.user_id) != int(user_id):
+        return None
+    return _session_to_client(row)
+
+
 async def create_chat_session(db: AsyncSession, user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
     session_id = str(payload.get("id") or uuid.uuid4())
     project_id_raw = payload.get("projectId") or payload.get("project_id")

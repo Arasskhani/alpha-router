@@ -243,6 +243,59 @@ class TestTheIndex:
         # Memory learns from the turn once its answer is there to read, too.
         assert await _learning() == [6]
 
+    async def test_a_reply_that_finishes_while_a_run_holds_the_chat_is_indexed_after_it(self, db_session, user, store):
+        from app.services.chat_recall_service import claim_chat_index, finish_chat_index
+
+        chat = await _chat(db_session, user, "Workout", WORKOUT)
+        db_session.add_all(
+            [
+                ChatMessage(
+                    id=str(uuid.uuid4()),
+                    session_id=chat.id,
+                    user_id=user.id,
+                    role="user",
+                    content="And on Friday?",
+                    sequence=5,
+                    meta={},
+                ),
+                ChatMessage(
+                    id=str(uuid.uuid4()),
+                    session_id=chat.id,
+                    user_id=user.id,
+                    role="assistant",
+                    content="",
+                    sequence=6,
+                    meta={"streaming": True},
+                ),
+            ]
+        )
+        await db_session.commit()
+        row = await recall._row_for(db_session, chat)
+        row.status = "pending"
+        await db_session.commit()
+        row = await claim_chat_index(db_session, session_id=chat.id, worker_id="w1")
+        await db_session.commit()
+        assert await index_chat(db_session, row) is False
+        assert row.indexed_up_to == 4  # stopped before the answer being written
+        # The answer is stored whole while the run still holds the row: its own queuing finds it busy.
+        live = (
+            await db_session.execute(
+                select(ChatMessage).where(ChatMessage.session_id == chat.id, ChatMessage.sequence == 6)
+            )
+        ).scalar_one()
+        live.content, live.meta = "Friday is a rest day.", {"streaming": False}
+        await db_session.commit()
+        assert not await maybe_schedule_chat_index(db_session, session=chat, latest_sequence=6)
+        # The run's end sees it, and runs again.
+        assert await finish_chat_index(db_session, row, error=None) == "pending"
+        await db_session.commit()
+        queued = (
+            (await db_session.execute(select(OutboxEvent).where(OutboxEvent.event_type == "chat_index.job.ready")))
+            .scalars()
+            .all()
+        )
+        assert len(queued) == 1
+
 
 class TestRecall:
     async def test_a_new_chat_reads_the_related_part_of_an_earlier_one(self, db_session, user, store):

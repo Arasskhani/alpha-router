@@ -289,7 +289,9 @@ async def finish_summary(db: AsyncSession, row: Any, *, error: Exception | None,
     now = dt.datetime.utcnow()
     if error is None:
         row.last_error = None
-        if more:
+        if more or await _grown_past(db, row):
+            # More than one run folds, or the chat grew by a part while this run held the row (its own queuing
+            # saw the row busy and let it be): run again.
             row.attempt_count = 0
             await _queue(db, row, now + dt.timedelta(seconds=5))
         else:
@@ -307,6 +309,22 @@ async def finish_summary(db: AsyncSession, row: Any, *, error: Exception | None,
         return "failed"
     await _queue(db, row, now + dt.timedelta(seconds=min(3600, 30 * (2 ** int(row.attempt_count or 0)))))
     return "retry"
+
+
+async def _grown_past(db: AsyncSession, row: Any) -> bool:
+    """Whether the part of the chat not yet summarized has grown by a whole part (what queues a run)."""
+    settings = await _settings_on(db)
+    if settings is None:
+        return False
+    latest = (
+        await db.execute(select(func.max(ChatMessage.sequence)).where(ChatMessage.session_id == row.session_id))
+    ).scalar_one_or_none()
+    target = int(latest or 0) - int(settings.get("summary_keep_recent") or 20)
+    done = int(row.up_to_sequence or 0)
+    return (
+        target > done
+        and await _unsummarized_chars(db, str(row.session_id), after=done, upto=target) >= SUMMARY_STEP_CHARS
+    )
 
 
 async def summary_spend_this_month(db: AsyncSession) -> float:

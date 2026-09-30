@@ -234,6 +234,28 @@ class TestTheJob:
         # Still counted: a turn's history holds that answer, and the summary stands in for it.
         assert (row.up_to_sequence, row.covered_count) == (40, 40)
 
+    async def test_a_chat_that_grew_by_a_part_while_a_run_held_it_is_run_again(self, db_session, user, model_on):
+        chat = await _chat(db_session, user, 60)
+        row = await _row(db_session, chat)
+        await handle_chat_summary(db_session, row, completer=_Model())
+        assert row.up_to_sequence == 40
+        # Thirty more messages land while the run still holds the row.
+        for sequence in range(61, 91):
+            role = "user" if sequence % 2 else "assistant"
+            db_session.add(
+                ChatMessage(
+                    id=str(uuid.uuid4()),
+                    session_id=chat.id,
+                    user_id=user.id,
+                    role=role,
+                    content=f"{role} {sequence} " + "w" * 1_000,
+                    sequence=sequence,
+                )
+            )
+        await db_session.commit()
+        assert await finish_summary(db_session, row, error=None) == "pending"
+        assert len(await _events(db_session)) == 1
+
     async def test_a_long_backlog_goes_on_in_another_run(self, db_session, user, model_on):
         chat = await _chat(db_session, user, 200)
         row = await _row(db_session, chat)

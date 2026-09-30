@@ -185,8 +185,9 @@ def exchanges_of(rows: list[Any]) -> list[Exchange]:
     return [item for item in out if item.question]
 
 
-#: An answer marked as still streaming for longer than this was left behind by a turn that died.
-LIVE_ANSWER_SECONDS = 15 * 60
+#: An answer marked as still streaming for longer than this was left behind by a turn that died (an agent's
+#: run can take a good while; one that died is finished, and queues the chat, when it is next opened).
+LIVE_ANSWER_SECONDS = 6 * 60 * 60
 
 
 def _live_answer_at(rows: list[Any]) -> int | None:
@@ -522,7 +523,9 @@ async def finish_chat_index(db: AsyncSession, row: Any, *, error: Exception | No
     now = dt.datetime.utcnow()
     if error is None:
         row.last_error = None
-        if more:
+        if more or await _finished_beyond(db, row):
+            # More than one run reads, or a reply finished while this run held the row (its own queuing saw
+            # the row busy and let it be): run again.
             row.attempt_count = 0
             await _queue(db, row, now + dt.timedelta(seconds=5))
             return "pending"
@@ -540,6 +543,28 @@ async def finish_chat_index(db: AsyncSession, row: Any, *, error: Exception | No
         return "failed"
     await _queue(db, row, now + dt.timedelta(seconds=min(3600, 30 * (2 ** int(row.attempt_count or 0)))))
     return "retry"
+
+
+async def _finished_beyond(db: AsyncSession, row: Any) -> bool:
+    """Whether the chat has exchanges past what is indexed that a run could read now (none still being written)."""
+    start = max(int(row.indexed_up_to or 0), int(row.not_before or 0))
+    rows = list(
+        (
+            await db.execute(
+                select(ChatMessage)
+                .where(
+                    ChatMessage.session_id == row.session_id,
+                    ChatMessage.sequence > start,
+                    ChatMessage.role.in_(("user", "assistant")),
+                )
+                .order_by(ChatMessage.sequence.asc())
+                .limit(MAX_EXCHANGES_PER_RUN * 4)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return bool(rows) and _live_answer_at(rows) != 0
 
 
 # ── Forgetting ─────────────────────────────────────────────────────────────

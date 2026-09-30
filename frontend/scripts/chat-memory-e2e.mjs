@@ -13,7 +13,16 @@
  *   - an answer the server fitted into the model's window says so under its
  *     label, and the label opens what that means;
  *   - an answer that read from earlier chats names them, each a link that opens
- *     it - one the chat list has not loaded too.
+ *     it - one the chat list has not loaded too;
+ *   - after an image turn (the image is answered here too), the next turn still
+ *     says where its history starts, and holds the image exchange.
+ *
+ * With CHAT_E2E_LIVE_RECALL=1 one more step runs against the stack itself, no
+ * answer faked: a chat is stored, the knowledge worker indexes it (about a
+ * minute after its reply), and a turn in a new chat - answered by the stack's
+ * chat model - names it under the answer. It needs recall set up (Admin ->
+ * Memory: an embedding model, Recall earlier chats on) and the knowledge worker
+ * and scheduler running.
  *
  * Run it from frontend/ against a development stack:
  *
@@ -23,6 +32,9 @@
  *   CHAT_E2E_USER       an account without two-factor sign-in (required)
  *   CHAT_E2E_PASSWORD   its password (required)
  *   CHAT_E2E_CHROMIUM   optional path to a Chromium executable
+ *   CHAT_E2E_LIVE_RECALL   1 to run the live recall step (see above)
+ *   CHAT_E2E_RECALL_WAIT   seconds to wait for the index in that step (default 240)
+ *   CHAT_E2E_LIVE_MODEL    the chat model that step's turn goes to (default: the first one offered)
  *
  * It makes a few chats in the account and deletes them at the end.
  * Exit codes: 0 every step passed, 1 a step failed, 2 bad configuration or setup.
@@ -88,18 +100,21 @@ if (!model) {
   process.exit(2);
 }
 
-/** A chat of `count` messages, its first one FIRST; its title is unique to this run. */
-async function seedChat(count) {
+/** A chat of `count` messages, its first one FIRST (or the `texts` given); its title is unique to this run. */
+async function seedChat(count, texts, chatModel = model) {
   const title = `Chat memory check ${count} ${Date.now().toString(36)}`;
-  const made = await (await page.request.post(`${BASE}/api/user/chats/sessions`, { headers, data: { title, model, titleLocked: true } })).json();
+  const made = await (
+    await page.request.post(`${BASE}/api/user/chats/sessions`, { headers, data: { title, model: chatModel, titleLocked: true } })
+  ).json();
   created.push(made.id);
+  if (!count) return title;
   const start = Date.now() - count * 60_000;
   const messages = [];
   for (let i = 0; i < count; i += 1) {
     const user = i % 2 === 0;
     messages.push({
       role: user ? "user" : "assistant",
-      content: i === 0 ? FIRST : `${user ? "Question" : "Answer"} ${i}`,
+      content: texts?.[i] ?? (i === 0 ? FIRST : `${user ? "Question" : "Answer"} ${i}`),
       clientMessageId: `chat-memory-${made.id}-${i}`,
       ...(user ? { sentAt: start + i * 60_000 } : { receivedAt: start + i * 60_000, modelId: model }),
     });
@@ -122,10 +137,17 @@ page.on("request", (request) => {
 const sent = [];
 let holdNext = false;
 let release = null;
+/** The next turn goes to the stack itself (the live recall step). */
+let liveNext = false;
 /** The server's trailing metadata for the next answer, when a step wants one. */
 let nextTrailer = null;
 await page.route("**/api/chat/completions", async (route) => {
   sent.push(JSON.parse(route.request().postData() || "{}"));
+  if (liveNext) {
+    liveNext = false;
+    await route.continue();
+    return;
+  }
   if (holdNext) {
     holdNext = false;
     await new Promise((done) => {
@@ -269,6 +291,96 @@ await step("the name of an earlier chat the list has not loaded opens it too", a
     await page.unroute("**/api/user/chats?**");
   }
 });
+
+/** The image model this check offers the chat (the image itself is answered here, so none is called). */
+const IMAGE_MODEL = {
+  id: "chat-memory-e2e-image",
+  external_id: "chat-memory-e2e-image",
+  name: "Chat memory check image model",
+  provider: "openai",
+  is_image_model: true,
+  supports_text_to_image: true,
+};
+
+async function toggleImageTool() {
+  await page.getByRole("button", { name: "Tools", exact: true }).click();
+  await page.getByRole("button", { name: "Toggle Image Generation" }).click({ timeout: 5_000 });
+  await page.keyboard.press("Escape");
+  await sleep(300);
+}
+
+await step("after an image turn, the next turn still says where its history starts, and holds the image", async () => {
+  const title = await seedChat(60);
+  const id = created.at(-1);
+  let images = 0;
+  await page.route("**/api/chat/models", async (route) => {
+    const response = await route.fetch();
+    const list = await response.json();
+    await route.fulfill({ response, json: Array.isArray(list) ? [...list, IMAGE_MODEL] : list });
+  });
+  await page.route("**/api/images/generate", async (route) => {
+    images += 1;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ data: [{ url: `${BASE}/favicon.svg` }], model: IMAGE_MODEL.id }),
+    });
+  });
+  try {
+    await openChat(title);
+    await toggleImageTool();
+    const before = sent.length;
+    const box = page.locator("textarea").first();
+    await box.fill("Draw my workout plan as a poster");
+    await box.press("Enter");
+    for (let i = 0; i < 100 && images === 0; i += 1) await sleep(100);
+    expect(images === 1, "the turn did not go to image generation");
+    expect(sent.length === before, "the image turn went to the chat model");
+    // Stored on the server: the prompt, then the image in place of its pending marker.
+    let last = "";
+    for (let i = 0; i < 60; i += 1) {
+      const page_ = await (await page.request.get(`${BASE}/api/user/chat-sessions/${id}/messages?limit=2`)).json();
+      last = String(page_.messages?.at(-1)?.content || "");
+      if (last.startsWith("__ALPHA_ROUTER_IMAGE_JSON__:")) break;
+      await sleep(250);
+    }
+    expect(last.startsWith("__ALPHA_ROUTER_IMAGE_JSON__:"), `the chat's last stored message is ${JSON.stringify(last.slice(0, 40))}`);
+    await toggleImageTool();
+    return wholeWithTheServer(await send("What was my workout plan?"), 60, 3);
+  } finally {
+    await page.unroute("**/api/chat/models");
+    await page.unroute("**/api/images/generate");
+  }
+});
+
+if (process.env.CHAT_E2E_LIVE_RECALL === "1") {
+  await step("live: a new chat reads from an earlier one the knowledge worker indexed, and names it", async () => {
+    const status = async () => (await page.request.get(`${BASE}/api/admin/memory/recall/status`)).json();
+    const before = await status();
+    expect(before.enabled, "recall is not set up here (Admin -> Memory: an embedding model, Recall earlier chats)");
+    const code = `lark-${Date.now().toString(36)}`;
+    const earlier = await seedChat(2, [`My locker code is ${code}, remember it.`, `Noted: your locker code is ${code}.`]);
+    const wait = Number(process.env.CHAT_E2E_RECALL_WAIT || 240) * 1000;
+    const until = Date.now() + wait;
+    let now = before;
+    while (Date.now() < until) {
+      now = await status();
+      if (now.chunks > before.chunks && !now.pending && !now.running) break;
+      await sleep(5_000);
+    }
+    expect(now.chunks > before.chunks, `nothing was indexed in ${wait / 1000}s: is the knowledge worker running?`);
+    const title = await seedChat(0, undefined, process.env.CHAT_E2E_LIVE_MODEL || model);
+    await openChat(title);
+    liveNext = true;
+    await send("What is my locker code?");
+    const label = page.locator(".alpha-router-msg-recall-label").last();
+    await label.waitFor({ timeout: 90_000 });
+    const text = (await label.textContent()) || "";
+    // Other chats of the account may be read too (this check's own among them); the one with the code must be.
+    expect(text.startsWith("Read from") && text.includes(earlier), `the label reads ${JSON.stringify(text)}`);
+    return `indexed in about ${Math.round((wait - (until - Date.now())) / 1000)}s`;
+  });
+}
 
 for (const id of created) {
   await page.request.delete(`${BASE}/api/user/chats/sessions/${id}`, { headers }).catch(() => undefined);

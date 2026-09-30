@@ -291,11 +291,14 @@ export default function MemoryAdmin() {
   const [reindexing, setReindexing] = useState(false);
   const [purgeUserId, setPurgeUserId] = useState("");
   const [failed, setFailed] = useState<Partial<Record<FailedJobs["scope"], FailedJobs>>>({});
+  /** The failed-job lists were asked for (read or not): until then "…", after it "Could not load". */
+  const [failedAsked, setFailedAsked] = useState(false);
   const [retrying, setRetrying] = useState<FailedJobs["scope"] | null>(null);
   const [relearnDays, setRelearnDays] = useState(30);
   const [estimate, setEstimate] = useState<RelearnEstimate | null>(null);
   const [relearning, setRelearning] = useState(false);
   const [recallStatus, setRecallStatus] = useState<RecallStatus | null>(null);
+  const [recallStatusFailed, setRecallStatusFailed] = useState(false);
   const [backfill, setBackfill] = useState<BackfillEstimate | null>(null);
   const [backfilling, setBackfilling] = useState(false);
 
@@ -327,6 +330,7 @@ export default function MemoryAdmin() {
     const next: Partial<Record<FailedJobs["scope"], FailedJobs>> = {};
     for (const list of lists) if (list) next[list.scope] = list;
     setFailed(next);
+    setFailedAsked(true);
   }
 
   async function onRetry(scope: FailedJobs["scope"]) {
@@ -358,7 +362,9 @@ export default function MemoryAdmin() {
 
   /** The recall index's progress: read on its own, so the page opens whatever it says. */
   async function loadRecallStatus() {
-    setRecallStatus(await api<RecallStatus>("/api/admin/memory/recall/status").catch(() => null));
+    const status = await api<RecallStatus>("/api/admin/memory/recall/status").catch(() => null);
+    setRecallStatus(status);
+    setRecallStatusFailed(status === null);
   }
 
   async function onBackfillEstimate() {
@@ -711,7 +717,7 @@ export default function MemoryAdmin() {
                 <FieldRow
                   key={scope}
                   title={label}
-                  hint={list ? (total ? `${total.toLocaleString()} failed` : "None") : "…"}
+                  hint={list ? (total ? `${total.toLocaleString()} failed` : "None") : failedAsked ? "Could not load" : "…"}
                   detail={
                     total ? (
                       <ul className="memory-admin__reasons">
@@ -1037,7 +1043,13 @@ export default function MemoryAdmin() {
             <div className="settings-list">
               <FieldRow
                 title="Recall earlier chats"
-                hint={recallStatus ? describeRecallStatus(recallStatus) : "On by default once an embedding model is chosen."}
+                hint={
+                  recallStatus
+                    ? describeRecallStatus(recallStatus)
+                    : recallStatusFailed
+                      ? "Could not load how far the index has got."
+                      : "On by default once an embedding model is chosen."
+                }
               >
                 <Toggle
                   label="Recall earlier chats"

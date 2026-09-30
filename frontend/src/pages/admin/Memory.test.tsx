@@ -297,10 +297,12 @@ describe("the failed jobs", () => {
     expect(vi.mocked(api).mock.calls.filter(([path]) => String(path).includes("/memory/settings"))).toHaveLength(1);
   });
 
-  it("still opens the page when the list cannot be read", async () => {
+  it("still opens the page when the list cannot be read, and says it could not", async () => {
     answerWith({ extraction_model_id: 7 });
     await render();
+    await act(async () => undefined);
     expect(section()?.textContent).toContain("Failed jobs");
+    expect(section()?.textContent).toContain("Could not load");
     expect(host.querySelector(".alert-error")).toBeNull();
   });
 });
@@ -432,6 +434,13 @@ describe("earlier chats", () => {
   function button(label: string) {
     return Array.from(section()?.querySelectorAll<HTMLButtonElement>("button") ?? []).find((b) => b.textContent === label);
   }
+
+  it("says when how far the index has got could not be read", async () => {
+    answerWith({ extraction_model_id: 7, embedding_model: "openai:text-embedding-3-small", embedding_dimensions: 1536 });
+    await render();
+    await act(async () => undefined);
+    expect(section()?.textContent).toContain("Could not load how far the index has got.");
+  });
 
   it("is locked, and says why, without an embedding model", async () => {
     answerWithRecall({ embedding_model: "" }, {});

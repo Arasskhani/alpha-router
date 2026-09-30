@@ -301,33 +301,54 @@ async def summary_spend_this_month(db: AsyncSession) -> float:
     return float(total or 0.0)
 
 
-async def _part(db: AsyncSession, session_id: str, *, after: int, upto: int) -> tuple[list[tuple[int, str, str]], int]:
-    """The next stretch to fold in, oldest first, up to ``MAX_WINDOW_CHARS``; and the last sequence it covers."""
+async def _part(
+    db: AsyncSession, session_id: str, *, after: int, upto: int
+) -> tuple[list[tuple[int, str, str]], int, int]:
+    """The next stretch to fold in, oldest first, up to ``MAX_WINDOW_CHARS``; the last sequence it covers; and
+    how many of the messages a turn's history holds it covers.
+
+    An answer built from pages shared from the browser is covered but not
+    folded in: page text is untrusted, and the summary goes where the chat's
+    own messages do not - the model's system text, and the chat's digest for
+    recall in the person's other chats.
+    """
+    from app.services.memory_extraction_service import restates_a_shared_page
+
     rows = (
-        await db.execute(
-            select(ChatMessage.sequence, ChatMessage.role, ChatMessage.content)
-            .where(
-                ChatMessage.session_id == session_id,
-                ChatMessage.sequence > after,
-                ChatMessage.sequence <= upto,
-                ChatMessage.role.in_(("user", "assistant")),
+        (
+            await db.execute(
+                select(ChatMessage)
+                .where(
+                    ChatMessage.session_id == session_id,
+                    ChatMessage.sequence > after,
+                    ChatMessage.sequence <= upto,
+                    ChatMessage.role.in_(("user", "assistant")),
+                )
+                .order_by(ChatMessage.sequence.asc())
+                .limit(400)
             )
-            .order_by(ChatMessage.sequence.asc())
-            .limit(400)
         )
-    ).all()
+        .scalars()
+        .all()
+    )
     turns: list[tuple[int, str, str]] = []
     total = 0
-    covered = upto if len(rows) < 400 else int(rows[-1][0])
-    for sequence, role, content in rows:
-        text = message_text_for_model(content)[:MAX_MESSAGE_CHARS]
+    counted = 0
+    covered = upto if len(rows) < 400 else int(rows[-1].sequence)
+    for row in rows:
+        text = message_text_for_model(row.content)[:MAX_MESSAGE_CHARS]
+        if not text:
+            continue
+        if restates_a_shared_page(row):
+            counted += 1
+            continue
         if turns and total + len(text) > MAX_WINDOW_CHARS:
-            covered = int(sequence) - 1
+            covered = int(row.sequence) - 1
             break
-        if text:
-            turns.append((int(sequence), str(role), text))
-            total += len(text)
-    return turns, covered
+        turns.append((int(row.sequence), str(row.role), text))
+        total += len(text)
+        counted += 1
+    return turns, covered, counted
 
 
 async def _fold(
@@ -456,9 +477,13 @@ async def handle_chat_summary(db: AsyncSession, row: Any, *, completer: Any | No
         target = int(latest or 0) - int(settings.get("summary_keep_recent") or 20)
         if target <= up_to:
             return False
-        turns, covered = await _part(db, row.session_id, after=up_to, upto=target)
+        turns, covered, counted = await _part(db, row.session_id, after=up_to, upto=target)
         now = dt.datetime.utcnow()
-        values: dict[str, Any] = {"up_to_sequence": covered, "updated_at": now}
+        values: dict[str, Any] = {
+            "up_to_sequence": covered,
+            "covered_count": covered_count + counted,
+            "updated_at": now,
+        }
         if turns:
             opening = opening or await _opening_hash(db, str(row.session_id))
             text = await _fold(
@@ -466,12 +491,7 @@ async def handle_chat_summary(db: AsyncSession, row: Any, *, completer: Any | No
             )
             if not text:
                 raise RuntimeError("The summary model answered with nothing")
-            values.update(
-                content=text,
-                covered_count=covered_count + len(turns),
-                model_id=int(settings["summary_model_id"]),
-                first_message_hash=opening,
-            )
+            values.update(content=text, model_id=int(settings["summary_model_id"]), first_message_hash=opening)
         written = await db.execute(
             update(ChatSummary)
             .where(ChatSummary.session_id == row.session_id, ChatSummary.updated_at == version)

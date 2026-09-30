@@ -1293,6 +1293,45 @@ async def append_session_messages(
     return [_message_to_client(r) for r in inserted]
 
 
+async def schedule_after_stored_reply(db: AsyncSession, user_id: int, session_id: str) -> None:
+    """A turn stored its reply whole: queue what learns from it - memory, the chat's summary, its recall index.
+
+    The turn's start stored its question and an empty, streaming answer;
+    learning from that would read the answer before it was written, and
+    move past it for good. Never fails the stored reply.
+    """
+    try:
+        session = await db.get(ChatSession, session_id)
+        if session is None:
+            return
+        latest = int(
+            (
+                await db.execute(select(func.max(ChatMessage.sequence)).where(ChatMessage.session_id == session_id))
+            ).scalar_one_or_none()
+            or 0
+        )
+        stored = [{"role": "assistant"}]
+        if session.project_id:
+            from app.services.project_memory_job_service import (
+                maybe_schedule_from_append as schedule_project_extraction,
+            )
+
+            await schedule_project_extraction(db, session=session, messages=stored, watermark_sequence=latest)
+        else:
+            from app.services.memory_job_service import maybe_schedule_from_append
+
+            await maybe_schedule_from_append(
+                db, user_id=user_id, session=session, messages=stored, watermark_sequence=latest
+            )
+        from app.services.chat_recall_service import maybe_schedule_chat_index
+        from app.services.chat_summary_service import maybe_schedule_summary
+
+        await maybe_schedule_summary(db, session=session, latest_sequence=latest)
+        await maybe_schedule_chat_index(db, session=session, latest_sequence=latest)
+    except Exception:
+        logger.exception("Scheduling what learns from a stored reply failed session_id=%s", session_id)
+
+
 async def purge_session_messages_for_private_mode(
     db: AsyncSession,
     user_id: int,

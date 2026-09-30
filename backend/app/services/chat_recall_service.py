@@ -205,23 +205,6 @@ def _live_answer_at(rows: list[Any]) -> int | None:
     return None
 
 
-async def schedule_after_reply(db: AsyncSession, session_id: str) -> None:
-    """A reply was stored whole: queue the chat's summary and recall index (never a failed reply)."""
-    try:
-        from app.services.chat_summary_service import maybe_schedule_summary
-
-        session = await db.get(ChatSession, session_id)
-        if session is None:
-            return
-        latest = (
-            await db.execute(select(func.max(ChatMessage.sequence)).where(ChatMessage.session_id == session_id))
-        ).scalar_one_or_none()
-        await maybe_schedule_summary(db, session=session, latest_sequence=int(latest or 0))
-        await maybe_schedule_chat_index(db, session=session, latest_sequence=int(latest or 0))
-    except Exception:
-        logger.exception("Scheduling a stored reply's summary and index failed session_id=%s", session_id)
-
-
 def _point_id(session_id: str, *parts: object) -> str:
     return str(uuid.uuid5(POINT_NAMESPACE, ":".join([session_id, *map(str, parts)])))
 

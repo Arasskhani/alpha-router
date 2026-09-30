@@ -379,7 +379,8 @@ async def maybe_schedule_from_append(
     watermark_sequence: int,
 ) -> None:
     try:
-        if not any(str(msg.get("role") or "") == "assistant" for msg in messages):
+        # A reply stored whole: one still streaming is learned from when it is finished (ChatCompletionPersister).
+        if not any(str(msg.get("role") or "") == "assistant" and msg.get("streaming") is not True for msg in messages):
             return
         await schedule_extraction(
             db,

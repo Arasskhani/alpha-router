@@ -206,7 +206,9 @@ class TestTheIndex:
         points, _ = await store.scroll(await MemoryVectorService(store).resolve_target_collection(), limit=50)
         assert sorted(p.payload["from_seq"] for p in points if p.payload.get("kind") == KIND_CHAT_CHUNK) == [1, 3]
 
-    async def test_the_turn_queues_the_index_when_its_reply_is_stored_not_when_it_starts(self, db_session, user, store):
+    async def test_the_turn_queues_learning_from_it_when_its_reply_is_stored_not_when_it_starts(
+        self, db_session, user, store
+    ):
         from app.services.chat_completion_persistence import ChatCompletionPersister
 
         chat = await _chat(db_session, user, "Workout", WORKOUT)
@@ -224,12 +226,22 @@ class TestTheIndex:
             stmt = select(OutboxEvent.aggregate_id).where(OutboxEvent.event_type == "chat_index.job.ready")
             return list((await db_session.execute(stmt)).scalars().all())
 
+        async def _learning() -> list[int]:
+            from app.models.chat import UserMemoryJob
+
+            stmt = select(UserMemoryJob.watermark_sequence).where(UserMemoryJob.session_id == chat.id)
+            return list((await db_session.execute(stmt)).scalars().all())
+
+        db_session.add(SystemSetting(key="memory_extraction_model_id", value="1"))
+        await db_session.commit()
         await persister.prepare()
         await db_session.commit()
-        assert await _queued() == []
+        assert await _queued() == [] and await _learning() == []
         await persister.on_content("Friday is a rest day.")
         await persister.finalize(success=True)
         assert await _queued() == [chat.id]
+        # Memory learns from the turn once its answer is there to read, too.
+        assert await _learning() == [6]
 
 
 class TestRecall:

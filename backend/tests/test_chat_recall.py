@@ -414,6 +414,63 @@ class TestRecall:
         )
         assert found.block is None
 
+    async def test_the_administrator_s_project_memory_switch_turns_project_recall_off(self, db_session, user, store):
+        db_session.add(
+            Project(
+                id="proj-off",
+                name="Gym app",
+                status="active",
+                visibility="private",
+                created_by_user_id=user.id,
+                revision=1,
+                acl_version=1,
+            )
+        )
+        await db_session.flush()
+        db_session.add(ProjectMember(project_id="proj-off", user_id=user.id, role=PROJECT_ROLE_PRIMARY_OWNER))
+        await db_session.commit()
+        earlier = await _chat(db_session, user, "Gym app plan", WORKOUT, project_id="proj-off")
+        await _indexed(db_session, earlier)
+        here = await _chat(db_session, user, "Gym app, second", [], project_id="proj-off")
+
+        async def _found():
+            return await recall_for_turn(
+                db_session,
+                user_id=user.id,
+                chat_session_id=here.id,
+                messages=_asking("the workout plan on Monday"),
+                private_mode=False,
+                via_api_key=False,
+            )
+
+        assert (await _found()).chats
+        db_session.add(SystemSetting(key="project_memory_feature_enabled", value="false"))
+        await db_session.commit()
+        assert (await _found()).block is None
+        assert not await maybe_schedule_chat_index(db_session, session=earlier, latest_sequence=6)
+
+    async def test_a_similarity_floor_of_nothing_is_a_floor_of_nothing(self, db_session, user, store, monkeypatch):
+        db_session.add(SystemSetting(key="memory_recall_min_similarity", value="0"))
+        await db_session.commit()
+        floors: list[float] = []
+        real_search = MemoryVectorService.search
+
+        async def _search(self, **kwargs):
+            floors.append(kwargs["score_threshold"])
+            return await real_search(self, **kwargs)
+
+        monkeypatch.setattr(MemoryVectorService, "search", _search)
+        new = await _chat(db_session, user, "New chat", [])
+        await recall_for_turn(
+            db_session,
+            user_id=user.id,
+            chat_session_id=new.id,
+            messages=_asking("anything"),
+            private_mode=False,
+            via_api_key=False,
+        )
+        assert floors and set(floors) == {0.0}
+
     async def test_an_order_written_in_an_earlier_chat_reaches_the_model_only_as_a_marked_record(
         self, db_session, user, store
     ):

@@ -210,6 +210,10 @@ async def summary_for_turn(
     """The chat's summary, when this person may read the chat and the turn's history is the chat from its start."""
     if not chat_session_id or not user_id:
         return None
+    settings = await get_memory_settings(db)
+    if not settings.get("summary_enabled", True) or not settings.get("context_fit_enabled", True):
+        # Switched off: the summaries already made are not used either.
+        return None
     row: Any = await db.get(ChatSummary, chat_session_id)
     if row is None or not row.content or not row.covered_count:
         return None

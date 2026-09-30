@@ -105,10 +105,16 @@ async def _person_prefs(db: AsyncSession, user_id: int) -> dict[str, Any]:
 
 
 async def _owner_allows(db: AsyncSession, session: Any) -> bool:
-    """The person's own switch for a personal chat; the project's memory switch for a project chat."""
+    """The person's own switch for a personal chat; for a project chat, the administrator's switch for
+    project memory and the project's own memory switch (and a project that still exists)."""
     if session.project_id:
+        from app.models.project import Project
         from app.services.project_config_service import load_project_memory_flags
 
+        if not (await get_memory_settings(db)).get("project_feature_enabled", True):
+            return False
+        if await db.get(Project, str(session.project_id)) is None:
+            return False
         memory_enabled, _auto = await load_project_memory_flags(db, str(session.project_id))
         return bool(memory_enabled)
     prefs = await _person_prefs(db, int(session.user_id))
@@ -640,7 +646,9 @@ async def _hits(db: AsyncSession, *, query: str, session: Any, settings: dict[st
         collection = await service.resolve_target_collection()
         scope = "project" if session.project_id else "user"
         owner = {"project_id": str(session.project_id)} if session.project_id else {"user_id": int(session.user_id)}
-        threshold = float(settings.get("recall_min_similarity") or 0.35)
+        # 0 is a setting (take every hit), not "unset".
+        setting = settings.get("recall_min_similarity")
+        threshold = float(0.35 if setting is None else setting)
         wanted = int(settings.get("recall_max_items") or 4)
         found = []
         for kind, limit in ((KIND_CHAT_CHUNK, wanted * 4), (KIND_CHAT_DIGEST, wanted)):

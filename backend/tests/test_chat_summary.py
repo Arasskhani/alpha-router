@@ -276,6 +276,13 @@ def _turn(first: str = FIRST) -> list[dict]:
 
 
 class TestUsingIt:
+    async def test_none_is_used_once_the_administrator_turns_summaries_off(self, db_session, user):
+        chat = await _summarized(db_session, user)
+        assert await summary_for_turn(db_session, chat_session_id=chat.id, user_id=user.id, messages=_turn())
+        db_session.add(SystemSetting(key="memory_summary_enabled", value="false"))
+        await db_session.commit()
+        assert await summary_for_turn(db_session, chat_session_id=chat.id, user_id=user.id, messages=_turn()) is None
+
     async def test_the_owner_s_turn_gets_it_when_its_history_is_the_chat_from_its_start(self, db_session, user):
         chat = await _summarized(db_session, user)
         found = await summary_for_turn(db_session, chat_session_id=chat.id, user_id=user.id, messages=_turn())

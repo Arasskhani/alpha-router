@@ -524,6 +524,15 @@ async def delete_memory(
 
 
 async def delete_all_memories(db: AsyncSession, user_id: int, *, actor: str = "user") -> int:
+    # The jobs' watermarks move first: a part being mined now either commits before this (and its memories are
+    # deleted below) or finds its watermark moved and is rolled back. Deleting first let a part commit between
+    # the two and keep what it had just learned.
+    try:
+        from app.services.memory_job_service import reset_watermarks_for_user
+
+        await reset_watermarks_for_user(db, user_id)
+    except Exception:
+        logger.exception("Failed to reset memory watermarks user_id=%s", user_id)
     result = await db.execute(delete(UserMemory).where(UserMemory.user_id == user_id))
     # Suppressions are deliberately kept. Each one is a separate decision the
     # person made — "delete this and never learn it again" — and wiping them
@@ -538,12 +547,6 @@ async def delete_all_memories(db: AsyncSession, user_id: int, *, actor: str = "u
         actor=actor,
         detail={"deleted": removed, "scope": "all"},
     )
-    try:
-        from app.services.memory_job_service import reset_watermarks_for_user
-
-        await reset_watermarks_for_user(db, user_id)
-    except Exception:
-        logger.exception("Failed to reset memory watermarks user_id=%s", user_id)
     try:
         # Earlier chats are recalled into new ones too: "delete all" takes them out of that, for good.
         from app.services.chat_recall_service import forget_user_chats

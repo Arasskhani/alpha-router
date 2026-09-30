@@ -296,6 +296,62 @@ class TestPersonal:
             ).all()
             assert kept == []
 
+    async def test_a_part_committing_in_the_middle_of_a_delete_all_keeps_nothing(
+        self, db_session, session_factory, user, chat, monkeypatch
+    ):
+        import asyncio
+        import hashlib
+
+        from app.services import user_memory_service
+        from app.services.memory_extraction_service import advance_watermark
+        from app.services.user_memory_service import delete_all_memories
+
+        if db_session.bind.dialect.name != "postgresql":
+            pytest.skip("needs two real connections")
+        user_id = user.id
+        await _messages(db_session, chat, 10)
+        job = _job(UserMemoryJob, owner={"user_id": user_id}, session_id=chat.id, watermark=10)
+        db_session.add(job)
+        await db_session.commit()
+        job_id = job.id
+
+        async with session_factory() as part, session_factory() as wiping:
+            part_job = await part.get(UserMemoryJob, job_id)
+            part.add(
+                UserMemory(
+                    id=str(uuid.uuid4()),
+                    user_id=user_id,
+                    content="Learned just now",
+                    content_hash=hashlib.sha256(b"Learned just now").hexdigest(),
+                )
+            )
+            await part.flush()
+
+            async def _commit_the_part() -> bool:
+                if await advance_watermark(part, part_job, window_from=0, to=10):
+                    await part.commit()
+                    return True
+                await part.rollback()
+                return False
+
+            racing: list[asyncio.Task] = []
+            real_event = user_memory_service.record_memory_event
+
+            async def _event_with_the_part_racing(*args, **kwargs):
+                # Between the delete-all's statements, the part tries to land.
+                racing.append(asyncio.create_task(_commit_the_part()))
+                await asyncio.sleep(0.5)
+                return await real_event(*args, **kwargs)
+
+            monkeypatch.setattr(user_memory_service, "record_memory_event", _event_with_the_part_racing)
+            await delete_all_memories(wiping, user_id)
+            await wiping.commit()
+            landed = await asyncio.wait_for(racing[0], timeout=10)
+
+        async with session_factory() as check:
+            kept = (await check.execute(select(UserMemory.content).where(UserMemory.user_id == user_id))).all()
+        assert landed is False and kept == []
+
     async def test_a_job_waits_for_another_job_of_its_chat_that_is_mining_it(self, db_session, user, chat):
         await _messages(db_session, chat, 40)
         mining = _job(UserMemoryJob, owner={"user_id": user.id}, session_id=chat.id, watermark=20)

@@ -2633,27 +2633,32 @@ export const docSections: DocSection[] = [
           <li>
             <strong>Complete history on the server</strong> (on by default) — a chat opened from the list holds only
             its latest page in the browser. Each turn says where its history starts, and the server puts the chat&rsquo;s
-            older messages in front before the model answers, so the model reads the whole chat. Never for a private
-            chat, and only in a chat the person may write in.
+            older messages in front before the model answers, so the model reads the whole chat (up to about four
+            million characters, the ones nearest the turn first). Never for a private chat, and only in a chat the
+            person may write in now. Off: the model reads only what the browser holds.
           </li>
           <li>
             <strong>Fit each turn into the model&rsquo;s window</strong> (on by default) — before a turn is sent, its
             prompt is measured with LiteLLM&rsquo;s local tokenizer against the model&rsquo;s window: the catalog&rsquo;s
             context length, else LiteLLM&rsquo;s own figure, else <strong>Window of an unknown model</strong> (0 sends
-            such a model&rsquo;s turns as they are). A prompt over its <strong>Share of the window for the chat</strong>{" "}
-            (75% by default, less when the turn asks for a longer answer) is fitted: the system messages stay, the{" "}
-            <strong>Newest messages kept word for word</strong> (20) stay, and the oldest give way to the chat&rsquo;s
-            summary, or are left out with a note to the model. A turn with tools or tool calls is never cut, and on
-            OpenRouter the provider&rsquo;s own middle-out cutting is turned off for a measured turn. The answer says
-            under its label what was summarized or left out.
+            such a model&rsquo;s turns as they are). A prompt that leaves the model room to answer (the turn&rsquo;s
+            answer length, or at most 4,096 tokens and an eighth of the window) goes as it is; one that does not is
+            brought down to its <strong>Share of the window for the chat</strong> (75% by default): the system
+            messages stay, the <strong>Newest messages kept word for word</strong> (20) stay, and the oldest give way
+            to the chat&rsquo;s summary, or are left out with a note to the model. A turn with tools or tool calls is
+            never cut, only Alpha Router&rsquo;s own chat is fitted (a turn through the API gateway goes as the client
+            sent it), and on OpenRouter the provider&rsquo;s own middle-out cutting is turned off for a measured turn.
+            The answer says under its label what was summarized or left out, and the label opens what that means.
           </li>
           <li>
             <strong>Summarize long chats</strong> — with a <strong>Summary model</strong> chosen (a cheap, fast one),
             each long chat keeps a summary of its older messages, brought up to date in the background by the
             Knowledge worker whenever the chat has grown by about 24,000 characters past it. It keeps facts, numbers,
-            names, decisions and plans in the chat&rsquo;s language. It is used only for the person who may read the
-            chat, never for private chats or rooms, and goes when the chat&rsquo;s messages are rewritten, purged by
-            retention, made private or deleted. Cost is the system operation <code>chat_summary</code> (the
+            names, decisions and plans in the chat&rsquo;s language, and never folds in an answer built from pages
+            shared from the browser. It reaches the model marked as notes, not instructions. It is used only for the
+            person who may read the chat, never for private chats or rooms, not at all once summaries are switched
+            off, and goes when the chat&rsquo;s messages are rewritten, purged by retention, made private or
+            deleted. Cost is the system operation <code>chat_summary</code> (the
             project&rsquo;s, for a project chat), never against a budget, capped by{" "}
             <strong>Monthly summary budget</strong> (0, no limit).
           </li>
@@ -2682,19 +2687,23 @@ export const docSections: DocSection[] = [
             title and summary) become vectors in the memory collection, ids only. A new turn searches the
             person&rsquo;s <em>other</em> chats with the chat&rsquo;s title and its last three questions, checks each
             hit again in the database, and gives the model up to <strong>Pieces per turn</strong> of them within{" "}
-            <strong>Characters per turn</strong>, above <strong>Minimum similarity</strong>, as records rather than
-            instructions. The answer names the chats it read from.
+            <strong>Characters per turn</strong>, above <strong>Minimum similarity</strong>, each marked as a record,
+            not instructions. The answer names the chats it read from, each a link that opens it.
           </li>
           <li>
             A personal chat recalls only the person&rsquo;s personal chats; a project chat only the same
             project&rsquo;s. Never private chats or rooms, never an answer built from shared pages, never on a
             personal API key unless the person allowed memories there. Each person has a{" "}
-            <strong>Use my earlier chats</strong> switch in Settings &rarr; Memory.
+            <strong>Use my earlier chats</strong> switch in Settings &rarr; Memory, and it is off for them while{" "}
+            <strong>Use my memories in chat</strong> is; turning either off removes what was indexed of their chats.
+            A project chat follows project memory and the project&rsquo;s own memory switch, and only its current
+            members&rsquo; turns read from it.
           </li>
           <li>
-            Deleting a chat, making it private, rewriting its messages and a retention purge remove its vectors;{" "}
-            <em>Delete all my memories</em> removes every personal chat&rsquo;s and keeps what was said before it out
-            for good; <strong>Rebuild index</strong> starts every chat again.
+            Deleting a chat, making it private and rewriting its messages remove its vectors, and a retention purge
+            removes those of what it purged; <em>Delete all my memories</em> removes every personal chat&rsquo;s and
+            keeps what was said before it out for good (a chat&rsquo;s digest is then made only of what was asked
+            since); <strong>Rebuild index</strong> starts every chat again.
           </li>
           <li>
             <strong>Index earlier chats</strong> — chats from before recall was on are indexed only from here:{" "}

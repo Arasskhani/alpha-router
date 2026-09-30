@@ -824,8 +824,10 @@ export const userManualSections: DocSection[] = [
             <strong>Use my earlier chats</strong> (on by default) — a new chat can read the related parts of your
             other chats: ask &ldquo;what was my workout plan?&rdquo; in a new chat and it can answer from the chat
             where you made it. The answer says which chats it read from, each a link back. Never private chats; a
-            project chat reads only the same project&rsquo;s chats. <strong>Delete all</strong> also takes your
-            chats out of this, for good.
+            project chat reads only the same project&rsquo;s chats. It needs <strong>Use my memories in chat</strong>{" "}
+            on. Turning either off removes what was kept of your chats for this; once they are back on, your chats
+            are read again as they go on. <strong>Delete all</strong> also takes your chats out of this, and what you
+            said before it stays out for good.
           </li>
         </ul>
         <Note>

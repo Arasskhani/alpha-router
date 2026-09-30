@@ -954,7 +954,7 @@ export default function MemoryAdmin() {
             <div className="settings-list">
               <FieldRow
                 title="Complete history on the server"
-                hint="When a browser sends only the latest part of a chat (a chat opened from the list holds its last page), the server adds the older messages before the model answers. Never for a private chat."
+                hint="The browser sends the part of a chat it holds (a chat opened from the list holds its latest page); the server puts the older messages in front before the model answers. Off: the model reads only what the browser holds. Never for a private chat."
               >
                 <Toggle
                   label="Complete history on the server"
@@ -984,7 +984,10 @@ export default function MemoryAdmin() {
                   onToggle={() => patch({ context_fit_enabled: !settings.context_fit_enabled })}
                 />
               </FieldRow>
-              <FieldRow title="Share of the window for the chat" hint="Percent, 30–95. The rest is room for the answer.">
+              <FieldRow
+                title="Share of the window for the chat"
+                hint="Percent, 30–95. A turn that leaves the model room to answer goes whole; one that does not is brought down to this share."
+              >
                 <NumberInput
                   id="memory-context-share"
                   value={settings.context_share_percent}
@@ -1063,7 +1066,8 @@ export default function MemoryAdmin() {
             <p className="settings-section-desc">
               A new turn reads the related parts of the person&rsquo;s other chats: a personal chat from their personal
               chats, a project chat from the same project&rsquo;s. Never private chats or rooms. Each person can turn it
-              off for themselves.
+              off for their personal chats, and it is off for them while their memory is off; a project chat follows
+              project memory and the project&rsquo;s own memory switch.
             </p>
             {settings.embedding_model ? null : (
               <p className="alert alert-info" role="status">

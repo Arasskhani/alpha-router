@@ -117,8 +117,12 @@ async def _owner_allows(db: AsyncSession, session: Any) -> bool:
             return False
         memory_enabled, _auto = await load_project_memory_flags(db, str(session.project_id))
         return bool(memory_enabled)
-    prefs = await _person_prefs(db, int(session.user_id))
-    return bool(prefs.get("memory_recall_chats", True))
+    return person_allows_recall(await _person_prefs(db, int(session.user_id)))
+
+
+def person_allows_recall(prefs: dict[str, Any]) -> bool:
+    """The person's own switches: memory on ("Use my memories in chat") and their earlier chats on."""
+    return bool(prefs.get("memory_enabled", True)) and bool(prefs.get("memory_recall_chats", True))
 
 
 # ── The index ──────────────────────────────────────────────────────────────
@@ -597,6 +601,26 @@ async def forget_user_chats(db: AsyncSession, user_id: int) -> None:
     await forget_chats(db, list(ids), keep_out_before=True)
 
 
+async def forget_person_chats(db: AsyncSession, user_id: int) -> None:
+    """The person turned their earlier chats (or memory) off: what was indexed of their personal chats goes.
+
+    The index is derived data, rebuilt as the chats go on once it is turned
+    back on; what a delete-all keeps out stays kept out.
+    """
+    ids = (
+        (
+            await db.execute(
+                select(ChatRecallIndex.session_id).where(
+                    ChatRecallIndex.user_id == int(user_id), ChatRecallIndex.project_id.is_(None)
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    await forget_chats(db, list(ids))
+
+
 async def reset_after_reindex(db: AsyncSession) -> None:
     """A rebuilt collection has none of the chat vectors: every chat is indexed again as it goes on."""
     await db.execute(
@@ -733,7 +757,7 @@ async def recall_for_turn(
         return Recalled()
 
     prefs = await _person_prefs(db, int(user_id))
-    if not session.project_id and not prefs.get("memory_recall_chats", True):
+    if not session.project_id and not person_allows_recall(prefs):
         return Recalled()
     if via_api_key and not prefs.get("memory_outside_chat", False):
         return Recalled()

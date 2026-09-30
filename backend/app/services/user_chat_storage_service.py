@@ -589,6 +589,8 @@ async def load_user_prefs(db: AsyncSession, user_id: int) -> dict[str, Any]:
 
 
 async def save_user_prefs(db: AsyncSession, user_id: int, updates: dict[str, Any]) -> dict[str, Any]:
+    from app.services.chat_recall_service import forget_person_chats, person_allows_recall
+
     row = await ensure_user_chat_prefs(db, user_id)
     current = _normalize_prefs(row.prefs if isinstance(row.prefs, dict) else {})
     merged = _normalize_prefs({**current, **updates})
@@ -596,6 +598,9 @@ async def save_user_prefs(db: AsyncSession, user_id: int, updates: dict[str, Any
     row.prefs = merged
     row.updated_at = dt.datetime.utcnow()
     await db.flush()
+    if person_allows_recall(current) and not person_allows_recall(merged):
+        # Earlier chats (or memory) turned off: what was indexed of them goes, not only its use.
+        await forget_person_chats(db, user_id)
     return merged
 
 

@@ -388,7 +388,7 @@ class TestRecall:
         )
         assert found.block is None
 
-    @pytest.mark.parametrize("switch", ["admin", "person", "api_key", "no_embedding"])
+    @pytest.mark.parametrize("switch", ["admin", "person", "person_memory", "api_key", "no_embedding"])
     async def test_every_switch_turns_it_off(self, db_session, user, store, switch):
         workout = await _chat(db_session, user, "Workout", WORKOUT)
         await _indexed(db_session, workout)
@@ -398,6 +398,8 @@ class TestRecall:
             db_session.add(SystemSetting(key="memory_recall_enabled", value="false"))
         elif switch == "person":
             await save_user_prefs(db_session, user.id, {"memory_recall_chats": False})
+        elif switch == "person_memory":
+            await save_user_prefs(db_session, user.id, {"memory_enabled": False})
         elif switch == "api_key":
             via_api_key = True
         else:
@@ -687,6 +689,21 @@ class TestForgetting:
         async with session_factory() as check:
             live = await check.get(ChatRecallIndex, workout_id)
             assert (live.indexed_up_to, live.chunk_count, live.digest_hash) == (0, 0, None)
+
+    @pytest.mark.parametrize("switch", ["memory_recall_chats", "memory_enabled"])
+    async def test_turning_it_off_takes_what_was_indexed_away(self, db_session, user, store, switch):
+        workout = await _chat(db_session, user, "Workout", WORKOUT)
+        row = await _indexed(db_session, workout)
+        row.not_before = 1  # a delete-all's mark stays
+        await db_session.commit()
+        await save_user_prefs(db_session, user.id, {switch: False})
+        await db_session.commit()
+        points, _ = await store.scroll(await MemoryVectorService(store).resolve_target_collection(), limit=50)
+        assert all(p.payload.get("session_id") != workout.id for p in points)
+        await db_session.refresh(row)
+        assert (row.indexed_up_to, row.chunk_count, row.not_before) == (0, 0, 1)
+        # Nor is anything indexed while it is off.
+        assert not await maybe_schedule_chat_index(db_session, session=workout, latest_sequence=4)
 
     async def test_a_rewritten_chat_is_indexed_again_from_what_is_left(self, db_session, user, store):
         workout = await _chat(db_session, user, "Workout", WORKOUT)

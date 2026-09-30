@@ -65,6 +65,20 @@ describe("overlayLatestPage", () => {
     expect(merged.at(-1)?.content).toBe("Stopped.");
   });
 
+  it("keeps a turn sent while the page was on its way, but not a copy of what the page has", () => {
+    const stopped = { role: "assistant" as const, content: "Stopped.", sequence: 59, clientMessageId: "a59" };
+    const here = [
+      ...local(1, 58),
+      { role: "assistant" as const, content: "half a rep", clientMessageId: "a59", streaming: true },
+      { role: "user" as const, content: "And now?", clientMessageId: "u60" },
+      { role: "assistant" as const, content: "", clientMessageId: "a61", streaming: true },
+    ];
+    const merged = overlayLatestPage(here, [...local(10, 58), stopped]);
+    expect(merged.map((m) => m.content).slice(-3)).toEqual(["Stopped.", "And now?", ""]);
+    expect(merged.filter((m) => m.clientMessageId === "a59")).toEqual([stopped]);
+    expect(merged).toHaveLength(61);
+  });
+
   it("is the page when nothing here is older, and what is here when the page has no rows", () => {
     const page = local(1, 20);
     expect(overlayLatestPage(local(5, 20), page)).toBe(page);

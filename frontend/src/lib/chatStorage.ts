@@ -1456,16 +1456,27 @@ export async function loadOlderSessionMessages(session: ChatSession): Promise<{
 
 /**
  * The server's latest page laid over the messages here: the page is the
- * truth for what it covers (a reply the server finished or stopped), and the
- * messages older than it stay. Taking the page alone cut a long chat back to
- * its last 50 messages after an image or a Stop, and the next turn sent the
- * model only those.
+ * truth for what it covers (a reply the server finished or stopped); the
+ * messages older than it stay, and so do the ones here newer than it that
+ * it does not have yet (a turn sent while the page was on its way, its
+ * reply still streaming). Taking the page alone cut a long chat back to its
+ * last 50 messages after an image or a Stop, and dropped a turn sent in the
+ * meantime.
  */
 export function overlayLatestPage(local: ChatMessage[], page: ChatMessage[]): ChatMessage[] {
-  const oldest = page.find((m) => m.sequence != null)?.sequence;
-  if (oldest == null) return page.length ? page : local;
+  const withSequence = page.filter((m) => m.sequence != null);
+  if (!withSequence.length) return page.length ? page : local;
+  const oldest = withSequence[0].sequence as number;
+  const newest = withSequence[withSequence.length - 1].sequence as number;
+  const inPage = new Set(page.map((m) => m.clientMessageId).filter(Boolean));
   const older = local.filter((m) => m.sequence != null && m.sequence < oldest);
-  return older.length ? [...older, ...page] : page;
+  const newer = local.filter(
+    (m) =>
+      !!m.clientMessageId &&
+      !inPage.has(m.clientMessageId) &&
+      (m.sequence == null || m.sequence > newest),
+  );
+  return older.length || newer.length ? [...older, ...page, ...newer] : page;
 }
 
 function normalizeChatSessions(parsed: ChatSession[]): ChatSession[] {

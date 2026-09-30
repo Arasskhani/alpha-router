@@ -128,6 +128,22 @@ class TestFitting:
         fit = await _fit(db_session, messages)
         assert fit.messages is messages and fit.dropped == 0
 
+    async def test_the_count_is_made_off_the_event_loop(self, db_session, monkeypatch):
+        import threading
+
+        from app.services import context_fit_service
+
+        counted_on: list[threading.Thread] = []
+        real = context_fit_service.count_prompt_tokens
+
+        def _count(**kwargs):
+            counted_on.append(threading.current_thread())
+            return real(**kwargs)
+
+        monkeypatch.setattr(context_fit_service, "count_prompt_tokens", _count)
+        await _fit(db_session, _chat(200))
+        assert counted_on and counted_on[0] is not threading.main_thread()
+
     def test_the_window_comes_from_the_catalog_then_litellm(self, monkeypatch):
         assert model_window(_model(9_000), "gpt-4o-mini", 0) == 9_000
         assert model_window(_model(None), "gpt-4o-mini", 0) == 128_000

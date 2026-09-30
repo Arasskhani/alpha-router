@@ -22,6 +22,7 @@ is sent as it came: dropping half of a call and its result breaks the turn.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -192,7 +193,8 @@ async def _fit(
     if total_chars * 3 <= limit:
         # No tokenizer makes more than three tokens of a character: this fits, without counting.
         return fit
-    measured = count_prompt_tokens(provider_type=provider_type, model=model, messages=messages)
+    # Off the event loop: counting a long chat takes the tokenizer a good part of a second.
+    measured = await asyncio.to_thread(count_prompt_tokens, provider_type=provider_type, model=model, messages=messages)
     tokens = measured or total_chars // CHARS_PER_TOKEN
     fit.tokens_before = fit.tokens_after = tokens
     if tokens <= limit:

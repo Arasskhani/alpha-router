@@ -430,13 +430,17 @@ async def _queue(db: AsyncSession, row: Any, run_after: dt.datetime) -> None:
     row.lease_expires_at = None
     row.updated_at = dt.datetime.utcnow()
     await db.flush()
+    await _enqueue(db, str(row.session_id), run_after)
+
+
+async def _enqueue(db: AsyncSession, session_id: str, run_after: dt.datetime) -> None:
     await enqueue_outbox_event(
         db,
         aggregate_type=AGGREGATE_TYPE,
-        aggregate_id=str(row.session_id),
+        aggregate_id=session_id,
         event_type=EVENT_TYPE,
-        payload={"session_id": str(row.session_id)},
-        idempotency_key=f"chat-index:{row.session_id}:{uuid.uuid4().hex[:12]}",
+        payload={"session_id": session_id},
+        idempotency_key=f"chat-index:{session_id}:{uuid.uuid4().hex[:12]}",
         available_at=run_after,
     )
 
@@ -486,21 +490,27 @@ async def maybe_schedule_chat_index(
 
 
 async def claim_chat_index(db: AsyncSession, *, session_id: str, worker_id: str) -> Any:
-    row: Any = await db.get(ChatRecallIndex, session_id)
-    now = dt.datetime.utcnow()
-    if row is None or row.status not in ("pending", "running", "failed"):
-        return None
-    if row.status == "running" and row.lease_expires_at is not None and row.lease_expires_at > now:
-        return None
-    if row.status == "failed" and int(row.attempt_count or 0) >= MAX_ATTEMPTS:
-        return None
-    row.status = "running"
-    row.worker_id = worker_id
-    row.attempt_count = int(row.attempt_count or 0) + 1
-    row.lease_expires_at = now + dt.timedelta(seconds=LEASE_SECONDS)
-    row.updated_at = now
-    await db.flush()
-    return row
+    from app.services.row_job_service import claim_row
+
+    return await claim_row(
+        db,
+        ChatRecallIndex,
+        session_id=session_id,
+        worker_id=worker_id,
+        lease_seconds=LEASE_SECONDS,
+        max_attempts=MAX_ATTEMPTS,
+    )
+
+
+async def redeliver_chat_index(db: AsyncSession, *, session_id: str) -> bool:
+    """A delivery found the row held: have it delivered again once the lease runs out (its worker may be gone)."""
+    from app.services.row_job_service import lease_end
+
+    when = await lease_end(db, ChatRecallIndex, session_id=session_id)
+    if when is None:
+        return False
+    await _enqueue(db, session_id, when)
+    return True
 
 
 async def heartbeat_chat_index(db: AsyncSession, row: Any, *, worker_id: str) -> bool:

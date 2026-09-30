@@ -250,6 +250,7 @@ class KnowledgeWorker:
             model=ChatSummary,
             key=str(message.payload.get("session_id") or message.aggregate_id or ""),
             claim=summaries.claim_summary,
+            redeliver=summaries.redeliver_summary,
             heartbeat=summaries.heartbeat_summary,
             handle=summaries.handle_chat_summary,
             finish=summaries.finish_summary,
@@ -266,6 +267,7 @@ class KnowledgeWorker:
             model=ChatRecallIndex,
             key=str(message.payload.get("session_id") or message.aggregate_id or ""),
             claim=recall.claim_chat_index,
+            redeliver=recall.redeliver_chat_index,
             heartbeat=recall.heartbeat_chat_index,
             handle=recall.handle_chat_index,
             finish=recall.finish_chat_index,
@@ -279,6 +281,7 @@ class KnowledgeWorker:
         model: Any,
         key: str,
         claim: Any,
+        redeliver: Any,
         heartbeat: Any,
         handle: Any,
         finish: Any,
@@ -287,13 +290,18 @@ class KnowledgeWorker:
         """Run a job whose state lives on the row it works on (a chat's summary, a chat's recall index).
 
         ``claim(db, session_id=, worker_id=)`` takes the row or answers None;
+        ``redeliver(db, session_id=)`` asks for another delivery once a live
+        lease holding the row runs out (its worker may be gone);
         ``handle(db, row)`` does the work, committing as it goes, and answers
         whether more is left; ``finish(db, row, error=, more=)`` closes the run
         and answers "failed" when the job gives up. The lease is kept alive
-        while the work runs.
+        while the work runs; the work runs only while the row is still this
+        worker's.
         """
         async with self.session_factory() as db:
             row = await claim(db, session_id=key, worker_id=self.consumer_name) if key else None
+            if row is None and key:
+                await redeliver(db, session_id=key)
             await db.commit()
         if row is None:
             await acknowledge_message(self.redis, message.stream_id)
@@ -324,7 +332,7 @@ class KnowledgeWorker:
         try:
             async with self.session_factory() as db:
                 current = await db.get(model, key)
-                if current is not None:
+                if current is not None and current.status == "running" and current.worker_id == self.consumer_name:
                     more = await handle(db, current)
                     await db.commit()
         except Exception as exc:  # noqa: BLE001 -- the run is closed below with the error recorded on the row

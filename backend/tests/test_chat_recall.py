@@ -1280,6 +1280,51 @@ class TestForgetting:
         assert {p.payload["gen"] for p in points if p.payload.get("session_id") == workout.id} == {1}
         assert await self._found(db_session, user)
 
+    async def _points(self, store, session_id: str) -> list[dict]:
+        points, _ = await store.scroll(await MemoryVectorService(store).resolve_target_collection(), limit=100)
+        return [p.payload for p in points if p.payload.get("session_id") == session_id]
+
+    async def _drop(self, db, index: int) -> str:
+        stmt = (
+            select(OutboxEvent)
+            .where(OutboxEvent.event_type == recall.DROP_EVENT_TYPE)
+            .order_by(OutboxEvent.created_at, OutboxEvent.id)
+        )
+        event = list((await db.execute(stmt)).scalars().all())[index]
+        event.status = "processed"
+        outcome = await recall.handle_vector_drop(db, dict(event.payload_json))
+        await db.commit()
+        return outcome
+
+    async def test_a_purge_s_late_deletion_never_takes_what_was_indexed_after_a_rewrite(self, db_session, user, store):
+        later = ["What about Friday?", "Friday is a rest day.", "And Sunday?", "A long walk on Sunday."]
+        chat = await _chat(db_session, user, "Workout", WORKOUT + later)
+        row = await _indexed(db_session, chat)
+        await recall.forget_chat_starts(db_session, {chat.id: 4})  # its deletion waits (the store is down)
+        await forget_chats(db_session, [chat.id])  # then the chat is rewritten, and indexed again
+        await db_session.commit()
+        await index_chat(db_session, row)
+        assert await self._drop(db_session, 0) == "succeeded"  # the purge's, at last
+        assert await self._drop(db_session, 1) == "succeeded"
+        mine = await self._points(store, chat.id)
+        assert sorted(p["from_seq"] for p in mine if p["kind"] == KIND_CHAT_CHUNK) == [1, 3, 5, 7]
+        assert {p["gen"] for p in mine} == {row.generation} == {2}
+
+    async def test_a_purge_carries_forward_only_its_own_generation(self, db_session, user, store):
+        later = ["What about Friday?", "Friday is a rest day.", "And Sunday?", "A long walk on Sunday."]
+        chat = await _chat(db_session, user, "Workout", WORKOUT + later)
+        await _indexed(db_session, chat)
+        await forget_chats(db_session, [chat.id])  # a rewrite: its deletion waits for the store
+        await recall.forget_chat_starts(db_session, {chat.id: 2})  # then a purge, whose deletion runs first
+        await db_session.commit()
+        assert await self._drop(db_session, 1) == "succeeded"
+        left = await self._points(store, chat.id)
+        # What the rewrite left behind stays of its generation - not recalled, and not the purge's to keep.
+        assert sorted(p["from_seq"] for p in left) == [3, 5, 7] and {p["gen"] for p in left} == {0}
+        assert await self._found(db_session, user) == []
+        assert await self._drop(db_session, 0) == "succeeded"
+        assert await self._points(store, chat.id) == []
+
     async def test_a_deletion_the_store_was_down_for_is_tried_again_later(self, db_session, user, store, monkeypatch):
         workout = await _chat(db_session, user, "Workout", WORKOUT)
         await _indexed(db_session, workout)

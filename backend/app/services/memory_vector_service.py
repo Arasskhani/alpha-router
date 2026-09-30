@@ -234,9 +234,10 @@ class MemoryVectorService:
         """A chat's points written under a generation before ``below_generation`` (every one when None).
 
         With ``up_to`` (a retention purge): its exchanges that begin at or
-        before that sequence, whatever their generation (no later run can
-        index purged messages), and its digest from before the generation.
-        A point without a generation was written before generations existed.
+        before that sequence, and its digest - those from before the
+        generation too (a rewrite since has numbered the chat's new messages
+        from its start again, and they are indexed under a later one). A
+        point without a generation was written before generations existed.
         """
         session = models.FieldCondition(key="session_id", match=models.MatchValue(value=str(session_id)))
         older: list[Any] = []
@@ -265,6 +266,7 @@ class MemoryVectorService:
                         must=[
                             models.FieldCondition(key="kind", match=models.MatchValue(value=KIND_CHAT_CHUNK)),
                             models.FieldCondition(key="from_seq", range=models.Range(lte=int(up_to))),
+                            *older,
                         ]
                     ),
                     models.Filter(
@@ -280,7 +282,14 @@ class MemoryVectorService:
         )
 
     async def retag_chat_points(self, *, collection_name: str, session_id: str, generation: int) -> None:
-        """The chat's points from an earlier generation carried into ``generation`` (what a purge left is current)."""
+        """The chat's points from the generation just before ``generation`` carried into it (what a purge left).
+
+        Only that one: points from an earlier generation still are a forget's,
+        whose own deletion (queued, perhaps waiting for the store) takes them.
+        """
+        previous: list[Any] = [models.FieldCondition(key="gen", match=models.MatchValue(value=int(generation) - 1))]
+        if int(generation) == 1:
+            previous.append(models.IsEmptyCondition(is_empty=models.PayloadField(key="gen")))
         await self.client.set_payload(
             validate_collection_name(collection_name),
             payload={"gen": int(generation)},
@@ -288,12 +297,7 @@ class MemoryVectorService:
                 filter=models.Filter(
                     must=[
                         models.FieldCondition(key="session_id", match=models.MatchValue(value=str(session_id))),
-                        models.Filter(
-                            should=[
-                                models.FieldCondition(key="gen", range=models.Range(lt=int(generation))),
-                                models.IsEmptyCondition(is_empty=models.PayloadField(key="gen")),
-                            ]
-                        ),
+                        models.Filter(should=previous),
                     ]
                 )
             ),

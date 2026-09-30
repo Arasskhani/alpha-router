@@ -167,7 +167,22 @@ describe("the Memory tab", () => {
     await act(async () => toggle?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     expect(saved).toEqual([{ memory_summarize_chats: false }]);
     expect(toggle?.getAttribute("aria-pressed")).toBe("false");
-    expect(host.textContent).toContain("what was summarized is removed");
+    expect(host.textContent).toContain("what was summarized of them is removed");
+  });
+
+  it("keeps the summaries switch as it was when saving it fails, and says why", async () => {
+    vi.mocked(api).mockImplementation(async (path: string, init?: RequestInit) => {
+      if (path === "/api/user/chats/prefs" && init?.method === "PATCH") throw new Error("Could not save your settings");
+      if (path === "/api/user/chats/prefs") return {} as never;
+      if (path.startsWith("/api/user/memories")) return { memories: [], total: 0 } as never;
+      return {} as never;
+    });
+    await openSettings();
+    await clickTab("Memory");
+    const toggle = document.querySelector<HTMLButtonElement>('button[aria-label="Summarize my long chats"]');
+    await act(async () => toggle?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(toggle?.getAttribute("aria-pressed")).toBe("true");
+    expect(host.textContent).toContain("Could not save your settings");
   });
 
   it("is off, and locked, while memory is off", async () => {

@@ -233,6 +233,7 @@ function NumberInput({
   step,
   min,
   onChange,
+  label,
 }: {
   id: string;
   value: number;
@@ -240,6 +241,8 @@ function NumberInput({
   step?: string;
   min?: number;
   onChange: (n: number) => void;
+  /** Its accessible name: the row's title (else one made of the id). */
+  label?: string;
 }) {
   return (
     <input
@@ -250,7 +253,7 @@ function NumberInput({
       min={min}
       value={Number.isFinite(value) ? value : 0}
       disabled={disabled}
-      aria-label={id.replace(/-/g, " ")}
+      aria-label={label ?? id.replace(/-/g, " ")}
       onChange={(e) => onChange(Number(e.target.value))}
     />
   );
@@ -1066,6 +1069,7 @@ export default function MemoryAdmin() {
               >
                 <NumberInput
                   id="memory-summary-person-budget"
+                  label="Monthly summary budget per person"
                   value={settings.summary_person_monthly_budget_usd}
                   step="0.5"
                   min={0}
@@ -1138,10 +1142,11 @@ export default function MemoryAdmin() {
               </FieldRow>
               <FieldRow
                 title="Monthly indexing budget per person"
-                hint="US dollars, for the embeddings of each person's own chats, which API Logs records against them as “Chat recall index”. 0 means no limit; past it, that person's new messages are indexed no further until the 1st, and what is indexed is still recalled."
+                hint="US dollars, for the embeddings of each person's own chats, which API Logs records against them as “Chat recall index”. 0 means no limit; past it, that person's new messages are indexed no further until the 1st. What is indexed is still recalled, and each turn's search (a small cost, recorded too) goes on past it."
               >
                 <NumberInput
                   id="memory-recall-person-budget"
+                  label="Monthly indexing budget per person"
                   value={settings.recall_person_monthly_budget_usd}
                   step="0.1"
                   min={0}

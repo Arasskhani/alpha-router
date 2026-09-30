@@ -117,7 +117,7 @@ export function memoryContextRows(
       const about = [
         summary.up_to ? `up to message #${summary.up_to}` : "",
         summary.tokens ? `about ${formatTokenCount(summary.tokens)} tokens` : "",
-        summary.version ? `written ${formatTime(summary.version)}` : "",
+        summary.version ? `last updated ${formatTime(summary.version)}` : "",
       ].filter(Boolean);
       rows.push({ label: "Summary used", value: about.join(" · ") || "Yes" });
     }
@@ -196,6 +196,7 @@ export function operationTypeLabel(value: string | null | undefined): string {
     embedding: "Embedding",
     rerank: "Rerank",
     memory_extract: "Memory learning",
+    project_memory_extract: "Project memory learning",
     chat_summary: "Chat summary",
     chat_recall_embed: "Chat recall index",
   };

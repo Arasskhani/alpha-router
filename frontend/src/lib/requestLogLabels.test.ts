@@ -10,6 +10,7 @@ describe("operationTypeLabel", () => {
 
   it("names the work memory does for a person in words", () => {
     expect(operationTypeLabel("memory_extract")).toBe("Memory learning");
+    expect(operationTypeLabel("project_memory_extract")).toBe("Project memory learning");
     expect(operationTypeLabel("chat_summary")).toBe("Chat summary");
     expect(operationTypeLabel("chat_recall_embed")).toBe("Chat recall index");
   });

@@ -37,7 +37,18 @@ describe("memoryContextRows", () => {
     expect(rows[2].value).toContain("40 older messages (38 read as the summary)");
     expect(rows[2].value).toContain("tokens");
     expect(rows[3].value).toContain("up to message #40");
-    expect(rows[3].value).toContain("at 2026-09-30T08:00:00");
+    expect(rows[3].value).toContain("last updated at 2026-09-30T08:00:00");
+  });
+
+  it("says a summary stood in when it knows nothing more of it, and a window without its token counts", () => {
+    const rows = memoryContextRows(
+      { context_fit: { dropped: 3, summarized: 3, window: 8000, summary: { up_to: null, version: null } } },
+      at,
+    );
+    expect(rows).toEqual([
+      { label: "Left out to fit", value: "3 older messages (3 read as the summary) · window 8,000 tokens" },
+      { label: "Summary used", value: "Yes" },
+    ]);
   });
 
   it("leaves the summary out when none stood in", () => {

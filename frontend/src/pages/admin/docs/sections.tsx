@@ -2721,7 +2721,8 @@ export const docSections: DocSection[] = [
             (their index and each turn&rsquo;s search), recorded in API Logs against the person as{" "}
             <em>Chat recall index</em>, never taken from their budget; a project chat&rsquo;s are the
             platform&rsquo;s. Past it, that person&rsquo;s new messages are indexed no further until the 1st; what is
-            indexed is still recalled. 0, no limit.
+            indexed is still recalled, and each turn&rsquo;s search (a small cost, recorded too) goes on past it. 0, no
+            limit.
           </li>
           <li>
             <strong>Index earlier chats</strong> — chats from before recall was on are indexed only from here:{" "}
@@ -2769,7 +2770,7 @@ export const docSections: DocSection[] = [
         <p>
           A chat turn&rsquo;s request details in API Logs say what it was given beside its messages: how many
           memories, the ids of the earlier chats it read, and what was left out to fit the model&rsquo;s window with
-          the summary that stood in for it (up to which message, when it was written, its size) — ids and counts,
+          the summary that stood in for it (up to which message, when it was last updated, its size) — ids and counts,
           never words.
         </p>
         <h2>Automatic project memory</h2>

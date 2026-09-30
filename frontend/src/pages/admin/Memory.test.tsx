@@ -444,6 +444,13 @@ describe("long chats", () => {
     }
     expect(host.textContent).toContain("Monthly summary budget per person");
     expect(host.textContent).toContain("Monthly indexing budget per person");
+    // Named by what the page calls them.
+    expect(host.querySelector("#memory-summary-person-budget")?.getAttribute("aria-label")).toBe(
+      "Monthly summary budget per person",
+    );
+    expect(host.querySelector("#memory-recall-person-budget")?.getAttribute("aria-label")).toBe(
+      "Monthly indexing budget per person",
+    );
     const form = host.querySelector<HTMLFormElement>("#memory-settings-form");
     await act(async () => {
       form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));

@@ -655,7 +655,7 @@ function MemoryPanel() {
       setMessage(
         checked
           ? "Your long chats can be summarized to fit the model."
-          : "Your chats are not summarized; what was summarized is removed.",
+          : "Your own chats are not summarized; what was summarized of them is removed.",
       );
     } catch (err) {
       setError(formatApiError(err));
@@ -845,7 +845,7 @@ function MemoryPanel() {
         </SettingsRow>
         <SettingsRow
           title="Summarize my long chats"
-          hint="When a chat grows longer than the model can read, a summary of its older part keeps what was said in view. Never private chats. Turning it off removes the summaries of your chats; the oldest messages of a long chat are then left out."
+          hint="When a chat grows longer than the model can read, a summary of its older part keeps what was said in view. Never private chats; a project chat follows the project's settings. Turning it off removes the summaries of your own chats; the oldest messages of a long chat are then left out."
         >
           <SettingsToggle
             on={summarizeChats}

@@ -256,6 +256,32 @@ export function historyForModelRequest(messages: ChatMessage[]): ChatMessage[] {
   return messages.filter((m) => (m.content || "").trim());
 }
 
+/**
+ * Where a turn's history starts in the stored chat, for the server to put the
+ * older messages in front of it (``history_from_sequence``). Undefined when
+ * the history is the chat from its start, or for a private chat (the server
+ * holds none of it).
+ */
+export function historyFromSequence(history: ChatMessage[], privateMode: boolean): number | undefined {
+  if (privateMode) return undefined;
+  const first = history[0]?.sequence;
+  return first != null && first > 1 ? first : undefined;
+}
+
+/**
+ * The chat list with a chat read by id put in it - one an answer read from,
+ * older than the days the list holds. A project list is kept in its own order
+ * (``sort``); a list that has it already comes back as it is.
+ */
+export function insertFetchedSession(
+  sessions: ChatSession[],
+  fetched: ChatSession,
+  sort?: (sessions: ChatSession[]) => ChatSession[],
+): ChatSession[] {
+  if (sessions.some((row) => row.id === fetched.id)) return sessions;
+  return sort ? sort([fetched, ...sessions]) : [...sessions, fetched];
+}
+
 /** Calendar-day boundaries for sidebar sections (local timezone). */
 export function startOfLocalDayMs(d = new Date()): number {
   const x = new Date(d);

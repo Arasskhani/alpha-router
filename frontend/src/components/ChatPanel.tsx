@@ -38,6 +38,8 @@ import {
   DEFAULT_CHAT_TITLE,
   fetchUserChatsFromServer,
   fetchChatSessionById,
+  historyFromSequence,
+  insertFetchedSession,
   fetchProjectChatById,
   fetchProjectChatSync,
   hydrateUserPrefsFromServer,
@@ -2900,11 +2902,11 @@ export default function ChatPanel({
         ? agentRequestFields(agentSelectionForSession(sessionId))
         : {};
     // Where this history starts in the chat: the server puts anything older in front of it.
-    const historyFrom = privateMode ? undefined : history[0]?.sequence;
+    const historyFrom = historyFromSequence(history, privateMode);
     return {
       model: modelId,
       messages: await apiMessages(history, forModel),
-      ...(historyFrom != null && historyFrom > 1 ? { history_from_sequence: historyFrom } : {}),
+      ...(historyFrom != null ? { history_from_sequence: historyFrom } : {}),
       stream: true,
       private_mode: !!(privateMode && !isProjectChat),
       ...(isProjectChat && projectId ? { project_id: projectId } : {}),
@@ -3011,10 +3013,8 @@ export default function ChatPanel({
         setChatError("That chat could not be opened. It may have been deleted.");
         return;
       }
-      if (!sessionsRef.current.some((row) => row.id === id)) {
-        const next = isProjectChat
-          ? sortProjectSessions([fetched, ...sessionsRef.current])
-          : [...sessionsRef.current, fetched];
+      const next = insertFetchedSession(sessionsRef.current, fetched, isProjectChat ? sortProjectSessions : undefined);
+      if (next !== sessionsRef.current) {
         sessionsRef.current = next;
         setSessions(next);
       }

@@ -9,7 +9,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("../api", () => ({ api: vi.fn() }));
 
 import { api } from "../api";
-import { fetchChatSessionById, fetchSessionMessagesFromServer, overlayLatestPage, type ChatMessage } from "./chatStorage";
+import {
+  fetchChatSessionById,
+  fetchSessionMessagesFromServer,
+  historyFromSequence,
+  insertFetchedSession,
+  overlayLatestPage,
+  type ChatMessage,
+  type ChatSession,
+} from "./chatStorage";
 
 const mockedApi = vi.mocked(api);
 
@@ -98,5 +106,39 @@ describe("a chat an answer read from, when the list has not loaded it", () => {
   it("is nothing when it cannot be read", async () => {
     mockedApi.mockRejectedValueOnce(new Error("Session not found"));
     expect(await fetchChatSessionById("s-gone")).toBeNull();
+  });
+});
+
+
+describe("where a turn's history starts", () => {
+  it("is the first message's place in the chat when the page does not start at its beginning", () => {
+    expect(historyFromSequence(local(141, 200), false)).toBe(141);
+  });
+
+  it("is left out for a history that is the chat from its start, a new chat, or a private one", () => {
+    expect(historyFromSequence(local(1, 60), false)).toBeUndefined();
+    expect(historyFromSequence([{ role: "user", content: "Hi" }], false)).toBeUndefined();
+    expect(historyFromSequence([], false)).toBeUndefined();
+    expect(historyFromSequence(local(141, 200), true)).toBeUndefined();
+  });
+});
+
+describe("a chat an answer read from, opened by id", () => {
+  const listed = (id: string, title = id) => ({ id, title }) as unknown as ChatSession;
+
+  it("is put at the end of the list when the list does not hold it", () => {
+    const list = [listed("a"), listed("b")];
+    expect(insertFetchedSession(list, listed("old")).map((s) => s.id)).toEqual(["a", "b", "old"]);
+  });
+
+  it("keeps a project list in its own order", () => {
+    const byTitle = (rows: ChatSession[]) => [...rows].sort((x, y) => String(x.title).localeCompare(String(y.title)));
+    const list = [listed("b", "Beta"), listed("c", "Gamma")];
+    expect(insertFetchedSession(list, listed("a", "Alpha"), byTitle).map((s) => s.id)).toEqual(["a", "b", "c"]);
+  });
+
+  it("leaves a list that holds it as it is", () => {
+    const list = [listed("a"), listed("b")];
+    expect(insertFetchedSession(list, listed("b", "fresh copy"))).toBe(list);
   });
 });

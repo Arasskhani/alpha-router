@@ -282,11 +282,11 @@ async def purge_expired_chat_messages(
 
     if affected:
         await _sync_affected_session_stats(db, affected)
-        # A summary may still hold what the purged messages said; the recall index loses what it had of them.
+        # The summary and the recall index lose what they had of the purged messages, and keep the rest.
         from app.services.chat_recall_service import forget_chat_starts
-        from app.services.chat_summary_service import forget_summaries
+        from app.services.chat_summary_service import forget_summary_starts
 
-        await forget_summaries(db, affected)
+        await forget_summary_starts(db, purged_to)
         await forget_chat_starts(db, purged_to)
     removed_empty = await cleanup_empty_sessions_after_purge(db, affected)
     if removed or removed_empty:

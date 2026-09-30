@@ -348,6 +348,33 @@ class ChatSummary(Base):
     __table_args__ = (Index("ix_chat_summaries_status_run", "status", "run_after"),)
 
 
+class ChatSummaryPart(Base):
+    """One stretch of a chat, summarized on its own: what the chat's running summary is folded from.
+
+    The parts follow each other from the chat's start. A retention purge
+    takes the parts that reach into what it purged and keeps the rest; the
+    running summary is then folded again from them, after what is left of
+    the parts that went is summarized again - not the whole chat.
+    """
+
+    __tablename__ = "chat_summary_parts"
+
+    id = Column(String(36), primary_key=True)
+    session_id = Column(String(36), ForeignKey("chat_sessions.id", ondelete="CASCADE"), nullable=False)
+    #: The sequences it covers, both included: the one after the part before it, up to its last.
+    from_sequence = Column(Integer, nullable=False)
+    to_sequence = Column(Integer, nullable=False)
+    #: How many of the messages a turn's history holds it covers.
+    counted = Column(Integer, nullable=False, default=0)
+    #: Its summary: "" when it held nothing to summarize (only answers built from shared pages).
+    content = Column(Text, nullable=False, default="")
+    #: sha256 of the last of the messages it counts, as the model reads it.
+    last_message_hash = Column(String(64), nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+
+    __table_args__ = (UniqueConstraint("session_id", "from_sequence", name="ux_chat_summary_parts_session_from"),)
+
+
 class ChatRecallIndex(Base):
     """What of a chat is indexed for recall in its owner's other chats, and the indexing job's state.
 

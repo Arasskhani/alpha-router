@@ -17,7 +17,7 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy import select
 
-from app.models.chat import ChatMessage, ChatSession, ChatSummary
+from app.models.chat import ChatMessage, ChatSession, ChatSummary, ChatSummaryPart
 from app.models.knowledge import OutboxEvent
 from app.models.system import SystemSetting
 from app.models.user import User
@@ -143,6 +143,11 @@ class _Model:
         return f"Summary {len(self.prompts)}: the user squats on Monday."
 
 
+async def _parts(db, chat) -> list[ChatSummaryPart]:
+    stmt = select(ChatSummaryPart).where(ChatSummaryPart.session_id == chat.id).order_by(ChatSummaryPart.from_sequence)
+    return list((await db.execute(stmt)).scalars().all())
+
+
 async def _row(db, chat) -> ChatSummary:
     now = dt.datetime.utcnow()
     row = ChatSummary(
@@ -162,7 +167,7 @@ async def _row(db, chat) -> ChatSummary:
 
 
 class TestTheJob:
-    async def test_folds_the_older_messages_in_part_by_part(self, db_session, user, model_on):
+    async def test_summarizes_the_older_messages_part_by_part_and_folds_the_parts_in(self, db_session, user, model_on):
         chat = await _chat(db_session, user, 60)
         row = await _row(db_session, chat)
         model = _Model()
@@ -170,11 +175,21 @@ class TestTheJob:
         assert more is False
         assert row.up_to_sequence == 40  # the newest 20 are always sent word for word
         assert row.covered_count == 40
-        assert row.content.startswith(f"Summary {len(model.prompts)}")
-        assert len(model.prompts) == 2
-        assert "[user #1] My workout plan" in model.prompts[0] and "(none yet)" in model.prompts[0]
-        # The second part folds into the first part's summary.
-        assert "Summary 1: the user squats" in model.prompts[1]
+        parts = await _parts(db_session, chat)
+        assert [(p.from_sequence, p.counted) for p in parts][0] == (1, parts[0].to_sequence)
+        assert parts[-1].to_sequence == 40 and len(parts) == 2
+        assert parts[1].from_sequence == parts[0].to_sequence + 1
+        # Each part is its messages summarized on their own; the first part is the summary so far, the next
+        # is folded into it.
+        assert len(model.prompts) == 3
+        assert "[user #1] My workout plan" in model.prompts[0] and "Summary so far" not in model.prompts[0]
+        assert (
+            f"[user #{parts[1].from_sequence}]" in model.prompts[1]
+            or f"[assistant #{parts[1].from_sequence}]" in (model.prompts[1])
+        )
+        assert "Summary so far:\nSummary 1: the user squats" in model.prompts[2]
+        assert "Summary 2: the user squats" in model.prompts[2]
+        assert row.content == "Summary 3: the user squats on Monday."
         assert row.first_message_hash == summaries._hash(FIRST)
         # Where it ends: the last message it covers, as the model reads it.
         assert row.last_message_hash == summaries._hash(_text(40))
@@ -213,6 +228,8 @@ class TestTheJob:
             assert fresh is not None and fresh.status == "pending"
             assert (fresh.content, fresh.up_to_sequence, fresh.covered_count) == ("", 0, 0)
             assert fresh.first_message_hash is None
+            parts = (await check.execute(select(ChatSummaryPart).where(ChatSummaryPart.session_id == chat_id))).all()
+            assert parts == []
 
     async def test_an_answer_built_from_a_shared_page_is_covered_but_never_folded_in(self, db_session, user, model_on):
         from app.services.chat_markers import PAGE_CONTEXT_META_KEY
@@ -449,14 +466,22 @@ class TestForgetting:
         for chat in (rewritten, private, dropped):
             assert await db_session.get(ChatSummary, chat.id) is None
 
-    async def test_a_retention_purge_takes_the_summaries_of_the_chats_it_touched(self, db_session, user):
+    async def test_a_retention_purge_takes_only_what_it_purged_and_the_rest_is_folded_again(
+        self, db_session, user, model_on
+    ):
         from app.services.retention_policy_service import purge_expired_chat_messages
 
-        chat = await _summarized(db_session, user)
+        chat = await _chat(db_session, user, 60)
+        row = await _row(db_session, chat)
+        await handle_chat_summary(db_session, row, completer=_Model())
+        before = [(p.from_sequence, p.to_sequence, p.content) for p in await _parts(db_session, chat)]
+        assert len(before) == 2 and before[0][1] > 10
         old = dt.datetime.utcnow() - dt.timedelta(days=400)
-        for row in (await db_session.execute(select(ChatMessage).where(ChatMessage.session_id == chat.id))).scalars():
-            if row.sequence <= 10:
-                row.created_at = old
+        for message in (
+            await db_session.execute(select(ChatMessage).where(ChatMessage.session_id == chat.id))
+        ).scalars():
+            if message.sequence <= 10:
+                message.created_at = old
         db_session.add(SystemSetting(key="chat_retention_enabled", value="true"))
         db_session.add(SystemSetting(key="chat_retention_days", value="30"))
         await db_session.commit()
@@ -464,7 +489,57 @@ class TestForgetting:
             result = await purge_expired_chat_messages(db_session, retention_days=30)
         await db_session.commit()
         assert result["removed_messages"] == 10
-        assert await db_session.get(ChatSummary, chat.id) is None
+
+        # At once: the summary holds nothing of what was purged, and the part that reached into it is gone.
+        row = await db_session.get(ChatSummary, chat.id)
+        await db_session.refresh(row)
+        assert (row.content, row.up_to_sequence, row.covered_count, row.first_message_hash) == ("", 0, 0, None)
+        assert row.status == "pending" and len(await _events(db_session)) == 1
+        assert [(p.from_sequence, p.to_sequence, p.content) for p in await _parts(db_session, chat)] == before[1:]
+
+        # The next run reads again only what is left of that part, then folds the summary from the parts.
+        row.status = "running"
+        await db_session.commit()
+        model = _Model()
+        assert await handle_chat_summary(db_session, row, completer=model) is False
+        assert "[user #11]" in model.prompts[0] and "#10]" not in model.prompts[0]
+        assert f"#{before[0][1]}]" in model.prompts[0] and f"#{before[1][0]}]" not in model.prompts[0]
+        assert len(model.prompts) == 2
+        assert "Summary 1: the user squats" in model.prompts[1] and before[1][2] in model.prompts[1]
+        parts = await _parts(db_session, chat)
+        assert [(p.from_sequence, p.to_sequence) for p in parts] == [(1, before[0][1]), before[1][:2]]
+        assert (row.up_to_sequence, row.covered_count) == (40, 30)
+        assert row.content == "Summary 2: the user squats on Monday."
+        assert row.first_message_hash == summaries._hash(_text(11))
+        assert row.last_message_hash == summaries._hash(_text(40))
+
+    async def test_a_run_in_flight_when_a_purge_lands_writes_nothing(self, db_session, session_factory, user, model_on):
+        from app.services.chat_summary_service import forget_summary_starts
+
+        chat = await _chat(db_session, user, 60)
+        row = await _row(db_session, chat)
+        chat_id = chat.id
+        calls: list[int] = []
+
+        async def _model(_payload: dict) -> str:
+            calls.append(1)
+            if len(calls) == 1:
+                async with session_factory() as other:
+                    await other.execute(
+                        ChatMessage.__table__.delete().where(
+                            ChatMessage.session_id == chat_id, ChatMessage.sequence <= 10
+                        )
+                    )
+                    await forget_summary_starts(other, {chat_id: 10})
+                    await other.commit()
+            return "Notes on what was said, the purged messages too."
+
+        assert await handle_chat_summary(db_session, row, completer=_model) is False
+        async with session_factory() as check:
+            parts = (await check.execute(select(ChatSummaryPart).where(ChatSummaryPart.session_id == chat_id))).all()
+            assert parts == []
+            fresh = await check.get(ChatSummary, chat_id)
+            assert (fresh.content, fresh.up_to_sequence) == ("", 0)
 
 
 async def test_the_knowledge_worker_runs_the_job(db_session, session_factory, user, model_on):
@@ -487,13 +562,13 @@ async def test_the_knowledge_worker_runs_the_job(db_session, session_factory, us
     messages = await read_new_messages(redis, consumer_name="worker-1")
     assert [message.event_type for message in messages] == ["chat_summary.job.ready"]
 
-    async def _fold(_db, _row, turns, *, so_far, model_id, completer):
-        return f"Folded {len(turns)} messages."
+    async def _complete(_db, _row, *, system, user_content, **_kwargs):
+        return f"Folded, {user_content.count(' #')} messages."
 
     worker = KnowledgeWorker(
         session_factory=session_factory, redis=redis, consumer_name="worker-1", context=KnowledgeJobContext(qdrant=None)
     )
-    with patch.object(summaries, "_fold", _fold):
+    with patch.object(summaries, "_complete", _complete):
         result = await worker.process_message(messages[0])
     assert result.outcome == "succeeded"
     assert redis.acked == [messages[0].stream_id]
@@ -501,3 +576,6 @@ async def test_the_knowledge_worker_runs_the_job(db_session, session_factory, us
         row = await other.get(ChatSummary, chat.id)
         assert (row.status, row.up_to_sequence, row.covered_count) == ("idle", 40, 40)
         assert row.content.startswith("Folded")
+        assert (
+            len((await other.execute(select(ChatSummaryPart).where(ChatSummaryPart.session_id == chat.id))).all()) == 2
+        )

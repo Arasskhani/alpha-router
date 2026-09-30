@@ -134,7 +134,7 @@ async def test_an_embedding_without_usage_is_counted(db_session, session_factory
     monkeypatch.setattr(proxy_service, "AsyncSessionLocal", session_factory)
     with (
         patch.object(proxy_service, "preflight_stream_chat", AsyncMock(return_value=resolved)),
-        patch.object(proxy_service, "aembedding", AsyncMock(return_value=response)),
+        patch.object(proxy_service, "aembedding", AsyncMock(return_value=response)) as embed,
     ):
         await proxy_service.create_embedding(
             db_session,
@@ -148,6 +148,9 @@ async def test_an_embedding_without_usage_is_counted(db_session, session_factory
             client_app="test",
             source_ip=None,
         )
+    # To the connection's own address: LiteLLM's embedding call reads api_base, not base_url.
+    assert embed.call_args.kwargs["api_base"] == "https://example.invalid"
+    assert "base_url" not in embed.call_args.kwargs
     async with session_factory() as fresh:
         log = (await fresh.execute(select(RequestLog))).scalar_one()
     assert log.prompt_tokens > 0

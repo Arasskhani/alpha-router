@@ -232,7 +232,9 @@ class CatalogKnowledgeEmbeddingBackend:
             ),
             "input": bounded,
             "api_key": resolved.api_key,
-            "base_url": resolved.base_url,
+            # LiteLLM's embedding call reads the address from api_base only: given base_url it went to the
+            # provider's public address (api.openai.com for an OpenAI-compatible connection), not the connection's.
+            "api_base": resolved.base_url,
             "dimensions": dimensions,
             "timeout": settings.knowledge_embedding_timeout_seconds,
             "caching": True,

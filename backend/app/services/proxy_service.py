@@ -1621,7 +1621,8 @@ async def create_embedding(
     embed_kwargs: dict = {
         "input": body.get("input"),
         "api_key": resolved.api_key,
-        "base_url": resolved.base_url,
+        # LiteLLM's embedding call reads the address from api_base only (base_url is ignored there).
+        "api_base": resolved.base_url,
         "caching": True,
     }
     if body.get("dimensions") is not None:

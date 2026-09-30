@@ -243,3 +243,14 @@ async def test_work_done_on_a_person_s_behalf_is_recorded_against_them_and_charg
     assert (await db_session.execute(select(func.count()).select_from(BudgetReservation))).scalar_one() == 0
     await db_session.refresh(user)
     assert float(user.budget_used_usd or 0) == 0.0
+
+
+async def test_an_embedding_goes_to_the_connection_s_own_address(db_session, embedding_model, provider):
+    """LiteLLM's embedding call reads the address from api_base only: given base_url, a call for an
+    OpenAI-compatible connection went to api.openai.com instead of the connection's own server."""
+    connection = await db_session.get(Connection, embedding_model.connection_id)
+    connection.base_url = "http://embeddings.internal:8090/v1"
+    await db_session.commit()
+    await _embed(db_session, ["alpha"])
+    assert provider[-1]["api_base"] == "http://embeddings.internal:8090/v1"
+    assert "base_url" not in provider[-1]

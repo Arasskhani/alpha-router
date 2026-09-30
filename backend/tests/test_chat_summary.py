@@ -280,7 +280,10 @@ class TestUsingIt:
         chat = await _summarized(db_session, user)
         found = await summary_for_turn(db_session, chat_session_id=chat.id, user_id=user.id, messages=_turn())
         assert found.covered == 40
-        assert found.text == TURN_PREFIX.format(count=40) + "The user squats on Monday."
+        assert found.text == (
+            TURN_PREFIX.format(count=40)
+            + "BEGIN_UNTRUSTED_CHAT_SUMMARY\nThe user squats on Monday.\nEND_UNTRUSTED_CHAT_SUMMARY"
+        )
         assert (
             await summary_for_turn(db_session, chat_session_id=chat.id, user_id=user.id, messages=_turn("Hi")) is None
         )

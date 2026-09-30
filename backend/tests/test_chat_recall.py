@@ -1029,6 +1029,8 @@ async def test_a_turn_goes_to_the_model_with_what_it_recalled_and_says_where_fro
     sent = ctx.completion_kwargs["messages"]
     assert sent[0]["role"] == "system" and sent[0]["content"].startswith(RECALL_HEADER)
     assert ctx.recalled_chats == [{"id": workout.id, "title": "Workout"}]
+    # Its request log says which, by id.
+    assert ctx.memory_context == {"recalled_chats": [workout.id]}
 
 
 async def test_the_knowledge_worker_indexes_a_chat(db_session, session_factory, user, store):

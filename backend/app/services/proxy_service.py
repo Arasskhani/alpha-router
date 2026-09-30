@@ -1485,6 +1485,7 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
                         injected_project_memory_ids=injected_project_memory_ids,
                         context_fit=ctx.context_fit,
                         recalled_chats=ctx.recalled_chats,
+                        memory_context=ctx.memory_context,
                     ),
                     TurnOutcome(
                         success=success,

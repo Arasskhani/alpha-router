@@ -3,7 +3,9 @@
 import datetime
 
 from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
+from sqlalchemy.types import JSON
 
 from app.database import Base, MoneyUSD
 
@@ -76,6 +78,9 @@ class RequestLog(Base):
     # Provider-side job id for async media (video/image), so a row can be traced
     # back to the job that produced it.
     provider_job_id = Column(String(128), nullable=True, index=True)
+    #: What a chat turn was given beside its messages, ids and counts only (``chat_turn_context.memory_context``):
+    #: memories, the earlier chats it read from, the chat summary it used and what fitting left out. None for others.
+    memory_context = Column(JSON().with_variant(JSONB(), "postgresql"), nullable=True)
 
     user = relationship("User", back_populates="logs")
 

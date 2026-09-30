@@ -82,6 +82,8 @@ class TurnIdentity:
     context_fit: dict | None = None
     #: The earlier chats the turn read from; None when none.
     recalled_chats: list[dict] | None = None
+    #: What the turn was given beside its messages, for its request log (``TurnContext.memory_context``).
+    memory_context: dict | None = None
 
 
 def agent_identity_metadata(agent_turn: PreparedAgentTurn) -> dict[str, object]:
@@ -210,6 +212,7 @@ async def _persist_stream_usage(identity: TurnIdentity, outcome: TurnOutcome) ->
                     project_id=identity.project_id_for_billing,
                     error_code=outcome.error_code,
                     http_status=outcome.http_status,
+                    memory_context=identity.memory_context,
                 )
                 chat_session_id = str(identity.body.get("chat_session_id") or "").strip()
                 assistant_cid = str(identity.body.get("assistant_client_message_id") or "").strip()

@@ -83,6 +83,7 @@ async def log_usage(
     correlation_id: str | None = None,
     provider_job_id: str | None = None,
     subject_type: str | None = None,
+    memory_context: dict | None = None,
     charge_budget: bool = True,
 ) -> int | None:
     """Write the request log and the usage rows behind one provider call.
@@ -126,6 +127,7 @@ async def log_usage(
         # is the id already stamped on that request's log lines.
         correlation_id=(correlation_id or current_correlation_id() or None),
         provider_job_id=(provider_job_id or None),
+        memory_context=(memory_context or None),
         alpha_router_api_key_id=alpha_router_api_key_id,
         user_api_key_id=user_api_key_id,
         budget_reservation_id=budget_reservation_id,

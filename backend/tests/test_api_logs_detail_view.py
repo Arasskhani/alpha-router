@@ -159,13 +159,44 @@ async def test_the_user_facing_payload_withholds_the_operating_internals(db_sess
     assert owner["request"]["http_status"] == operator["request"]["http_status"]
 
     # How we run is not.
-    for field in ("correlation_id", "provider_job_id", "source_ip"):
+    for field in ("correlation_id", "provider_job_id", "source_ip", "memory_context"):
         assert field in operator["request"], field
         assert field not in owner["request"], field
 
     for event in owner["events"]:
         assert "raw_usage" not in event
         assert "connection_id" not in event
+
+
+async def test_a_chat_turn_s_log_says_what_it_was_given_beside_its_messages(db_session, user) -> None:
+    context = {
+        "memories": 3,
+        "recalled_chats": ["chat-a", "chat-b"],
+        "context_fit": {"dropped": 40, "summarized": 40, "summary": {"up_to": 40, "version": "2026-09-30T08:00:00"}},
+    }
+    log_id = await log_usage(
+        db_session,
+        user_id=user.id,
+        username=user.username,
+        model_id="gpt-4o-mini",
+        prompt_tokens=10,
+        completion_tokens=5,
+        cached_tokens=0,
+        total_cost_usd=0.001,
+        response_time_ms=42.0,
+        prompt_language="en",
+        source_ip="10.0.0.1",
+        source="alpha_router_chat",
+        success=True,
+        memory_context=context,
+    )
+    await db_session.commit()
+    row = await db_session.get(RequestLog, log_id)
+
+    assert (await _cost_details_payload(db_session, row))["request"]["memory_context"] == context
+    # Other requests carry none.
+    other = await db_session.get(RequestLog, await _failed_video_log(db_session, user))
+    assert (await _cost_details_payload(db_session, other))["request"]["memory_context"] is None
 
 
 async def test_the_user_route_asks_for_the_narrow_payload(db_session, user) -> None:

@@ -92,6 +92,18 @@ class TestFitting:
         assert fit.summarized == 150 and fit.dropped >= 150
         assert fit.messages[-20:] == messages[-20:]
 
+    async def test_the_request_log_hears_which_summary_stood_in_and_what_was_left_out(self, db_session):
+        messages = _chat(200)
+        summary = SimpleNamespace(
+            covered=150, text="Summary: squats on Monday.", up_to=150, version="2026-09-30T08:00:00"
+        )
+        details = (await _fit(db_session, messages, summary=summary)).log_details()
+        assert details["summarized"] == 150 and details["dropped"] >= 150 and details["window"] == WINDOW
+        assert details["summary"]["up_to"] == 150 and details["summary"]["version"] == "2026-09-30T08:00:00"
+        assert details["summary"]["tokens"] > 0
+        # Nothing left out: nothing to log.
+        assert (await _fit(db_session, _chat(2))).log_details() is None
+
     async def test_the_answer_s_room_is_kept(self, db_session):
         messages = _chat(40)
         roomy = await _fit(db_session, messages)
@@ -346,3 +358,52 @@ async def test_the_message_says_what_was_left_out_and_keeps_it_when_the_chat_is_
     await db_session.commit()
     listed, _more = await list_session_messages(db_session, user.id, session_id)
     assert listed[1]["contextFit"] == fit
+
+
+async def test_the_turn_s_request_log_keeps_what_it_was_given(monkeypatch, db_session, session_factory, user):
+    from sqlalchemy import select
+
+    from app.models.logging import RequestLog
+    from app.services import turn_settlement
+    from app.services.turn_settlement import TurnIdentity, TurnOutcome, settle_turn
+
+    async def _nothing(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(turn_settlement, "_record_memory_usage", _nothing)
+    monkeypatch.setattr(turn_settlement, "budget_notice_after_settlement", _nothing)
+    monkeypatch.setattr(turn_settlement, "AsyncSessionLocal", session_factory)
+    context = {"memories": 2, "context_fit": {"dropped": 12, "summarized": 10, "summary": {"up_to": 10}}}
+    identity = TurnIdentity(
+        request=SimpleNamespace(headers={}, client=SimpleNamespace(host="10.0.0.1")),
+        body={},
+        user_id=user.id,
+        username=user.username,
+        model="gpt-4o-mini",
+        prompt_lang="en",
+        source="alpha_router_chat",
+        alpha_router_api_key_id=None,
+        user_api_key_id=None,
+        client_app=None,
+        project_id_for_billing=None,
+        stream_reservation_id=None,
+        context_fit={"dropped": 12, "summarized": 10},
+        memory_context=context,
+    )
+    outcome = TurnOutcome(
+        success=True,
+        error_message=None,
+        was_cancelled=False,
+        client_disconnected=False,
+        prompt_tokens=1,
+        completion_tokens=1,
+        cached_tokens=0,
+        total_cost=0.0,
+        usage_events=[],
+        elapsed_ms=1.0,
+    )
+    await settle_turn(
+        identity, outcome, db=db_session, persister=None, capacity_permit=None, capacity_heartbeat_task=None
+    )
+    row = (await db_session.execute(select(RequestLog).where(RequestLog.user_id == user.id))).scalar_one()
+    assert row.memory_context == context

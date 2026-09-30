@@ -909,7 +909,9 @@ async def _cost_details_payload(
     and why it failed, and none of the operating internals: the raw provider
     payload (which exposes upstream routing), the connection row behind the
     call, the correlation id, the provider job id and the recorded source IP.
-    Those answer an operator's questions, not the account holder's.
+    Those answer an operator's questions, not the account holder's; so does
+    what a chat turn was given beside its messages (memory, earlier chats, the
+    summary), by id.
     """
     request_block: dict[str, Any] = {
         "id": log_row.id,
@@ -927,6 +929,9 @@ async def _cost_details_payload(
         request_block["correlation_id"] = log_row.correlation_id
         request_block["provider_job_id"] = log_row.provider_job_id
         request_block["source_ip"] = log_row.source_ip
+        # What a chat turn was given beside its messages: ids and counts (the person sees the chats named under
+        # the answer itself).
+        request_block["memory_context"] = log_row.memory_context if isinstance(log_row.memory_context, dict) else None
     if not log_row.usage_operation_id:
         return {
             "operation": None,

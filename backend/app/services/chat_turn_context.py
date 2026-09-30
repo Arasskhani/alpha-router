@@ -173,6 +173,32 @@ class TurnContext:
     context_fit: dict | None = None
     #: The earlier chats this turn read from (``[{"id", "title"}]``); None when none.
     recalled_chats: list[dict] | None = None
+    #: What the turn was given beside its messages, for its request log (``memory_context``); None when nothing.
+    memory_context: dict | None = None
+
+
+def memory_context(
+    *,
+    memories: list[str],
+    project_memories: list[str],
+    recalled_chats: list[dict],
+    fitted: ContextFit,
+) -> dict | None:
+    """What a turn was given beside its messages, for its request log: ids and counts, never words.
+
+    None when it was given nothing: no memories, no earlier chats, nothing left out.
+    """
+    context: dict[str, Any] = {}
+    if memories:
+        context["memories"] = len(memories)
+    if project_memories:
+        context["project_memories"] = len(project_memories)
+    if recalled_chats:
+        context["recalled_chats"] = [str(chat.get("id")) for chat in recalled_chats if chat.get("id")]
+    fit = fitted.log_details()
+    if fit:
+        context["context_fit"] = fit
+    return context or None
 
 
 async def adaptive_openrouter_extra_body(ai_model: AIModel) -> dict | None:
@@ -719,6 +745,12 @@ async def build_turn_context(  # noqa: C901 -- straight-line preparation moved o
             budget_hold_usd=budget_hold_usd,
             context_fit=fitted.metadata(),
             recalled_chats=recalled_chats or None,
+            memory_context=memory_context(
+                memories=injected_memory_ids,
+                project_memories=injected_project_memory_ids,
+                recalled_chats=recalled_chats,
+                fitted=fitted,
+            ),
         )
     except BaseException:
         await lease.abandon("turn preparation error")

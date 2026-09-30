@@ -447,6 +447,13 @@ class TestUsingIt:
         assert sent[0]["role"] == "system" and sent[0]["content"].startswith(TURN_PREFIX.format(count=40)[:40])
         assert sent[-1]["content"] == "What was my plan?"
         assert ctx.context_fit["summarized"] == 40
+        # Its request log says which summary stood in for what, and what was left out.
+        fit = ctx.memory_context["context_fit"]
+        assert (fit["dropped"], fit["summarized"], fit["window"]) == (ctx.context_fit["dropped"], 40, 16_000)
+        assert fit["tokens_before"] > fit["tokens_after"] > 0
+        row = await db_session.get(ChatSummary, chat.id)
+        assert fit["summary"]["up_to"] == 40 and fit["summary"]["version"] == row.updated_at.isoformat()
+        assert fit["summary"]["tokens"] > 0
 
 
 class TestForgetting:

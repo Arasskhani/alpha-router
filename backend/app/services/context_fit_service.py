@@ -62,12 +62,36 @@ class ContextFit:
     budget: int | None = None
     tokens_before: int = 0
     tokens_after: int = 0
+    #: The summary that stood in for the oldest messages (``SummaryForTurn.version`` / ``up_to``), and its size.
+    summary_version: str | None = None
+    summary_up_to: int | None = None
+    summary_tokens: int = 0
 
     def metadata(self) -> dict[str, int] | None:
         """For the reply's metadata and the stored message: None when nothing was left out."""
         if not self.dropped:
             return None
         return {"dropped": self.dropped, "summarized": self.summarized}
+
+    def log_details(self) -> dict[str, Any] | None:
+        """For the request's log: what was left out and the summary used in its place; None when nothing."""
+        if not self.dropped:
+            return None
+        details: dict[str, Any] = {
+            "dropped": self.dropped,
+            "summarized": self.summarized,
+            "window": self.window,
+            "budget": self.budget,
+            "tokens_before": self.tokens_before,
+            "tokens_after": self.tokens_after,
+        }
+        if self.summarized:
+            details["summary"] = {
+                "up_to": self.summary_up_to,
+                "version": self.summary_version,
+                "tokens": self.summary_tokens,
+            }
+        return details
 
 
 def _text(message: dict[str, Any]) -> str:
@@ -236,6 +260,10 @@ async def _fit(
     fit.messages = fitted
     fit.dropped = dropped
     fit.summarized = covered
+    if covered:
+        fit.summary_version = str(getattr(summary, "version", "") or "") or None
+        fit.summary_up_to = int(getattr(summary, "up_to", 0) or 0) or None
+        fit.summary_tokens = int(summary_room)
     fit.tokens_after = int(size(fitted))
     logger.info(
         "chat turn fitted to the model window model=%s window=%s budget=%s tokens=%s->%s dropped=%s summarized=%s",

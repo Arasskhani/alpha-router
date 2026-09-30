@@ -107,6 +107,9 @@ class SummaryForTurn:
 
     covered: int
     text: str
+    #: Which summary it is, for the request's log: the last sequence it covers and when it was last written.
+    up_to: int = 0
+    version: str = ""
 
 
 def _hash(text: str) -> str:
@@ -314,7 +317,12 @@ async def summary_for_turn(
     covered = _covered_in(conversation, count=int(row.covered_count), last_hash=row.last_message_hash)
     if not covered:
         return None
-    return SummaryForTurn(covered=covered, text=summary_block(covered, str(row.content)))
+    return SummaryForTurn(
+        covered=covered,
+        text=summary_block(covered, str(row.content)),
+        up_to=int(row.up_to_sequence or 0),
+        version=row.updated_at.isoformat() if row.updated_at else "",
+    )
 
 
 def _covered_in(conversation: list[dict[str, Any]], *, count: int, last_hash: str | None) -> int:

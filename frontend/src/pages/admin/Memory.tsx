@@ -136,6 +136,13 @@ function describeEstimate(e: RelearnEstimate): string {
   return `${chats.toLocaleString()} chats (${e.chats.user.toLocaleString()} personal, ${e.chats.project.toLocaleString()} project), ${e.messages.toLocaleString()} messages in ${e.parts.toLocaleString()} parts: ${cost}.${cap}`;
 }
 
+/** Days to read again, as typed, brought into 1–90 (30 when nothing is typed). */
+function relearnDaysIn(typed: string): number {
+  const n = Math.round(Number(typed));
+  if (!typed.trim() || !Number.isFinite(n)) return 30;
+  return Math.max(1, Math.min(90, n));
+}
+
 const FAILED_SCOPES: { scope: FailedJobs["scope"]; label: string }[] = [
   { scope: "user", label: "Personal" },
   { scope: "project", label: "Project" },
@@ -298,7 +305,8 @@ export default function MemoryAdmin() {
   /** The failed-job lists were asked for (read or not): until then "…", after it "Could not load". */
   const [failedAsked, setFailedAsked] = useState(false);
   const [retrying, setRetrying] = useState<FailedJobs["scope"] | null>(null);
-  const [relearnDays, setRelearnDays] = useState(30);
+  /** As typed: it is brought into 1–90 when the field is left, or used - not at every key. */
+  const [relearnDays, setRelearnDays] = useState("30");
   const [estimate, setEstimate] = useState<RelearnEstimate | null>(null);
   const [relearning, setRelearning] = useState(false);
   const [recallStatus, setRecallStatus] = useState<RecallStatus | null>(null);
@@ -406,7 +414,9 @@ export default function MemoryAdmin() {
   async function onEstimate() {
     setError("");
     try {
-      setEstimate(await api<RelearnEstimate>(`/api/admin/memory/relearn/estimate?days=${relearnDays}`));
+      const days = relearnDaysIn(relearnDays);
+      setRelearnDays(String(days));
+      setEstimate(await api<RelearnEstimate>(`/api/admin/memory/relearn/estimate?days=${days}`));
     } catch (err) {
       setError(String(err));
     }
@@ -786,14 +796,19 @@ export default function MemoryAdmin() {
                 ) : null
               }
             >
-              <NumberInput
+              <input
                 id="memory-relearn-days"
-                value={relearnDays}
+                type="number"
+                className="settings-row__control"
                 min={1}
-                onChange={(n) => {
-                  setRelearnDays(Math.max(1, Math.min(90, Math.round(n) || 1)));
+                max={90}
+                value={relearnDays}
+                aria-label="memory relearn days"
+                onChange={(e) => {
+                  setRelearnDays(e.target.value);
                   setEstimate(null);
                 }}
+                onBlur={() => setRelearnDays(String(relearnDaysIn(relearnDays)))}
               />
               <button type="button" className="btn btn-ghost" disabled={relearnUnsaved} onClick={() => void onEstimate()}>
                 Estimate

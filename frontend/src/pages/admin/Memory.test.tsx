@@ -363,6 +363,28 @@ describe("relearning recent chats", () => {
     expect(section()?.textContent).toContain("Relearning is off: turn on Allow relearning and save first.");
   });
 
+  it("lets the days be typed, and brings them into range when they are used", async () => {
+    answerWithEstimate(ESTIMATE);
+    await render();
+    const days = host.querySelector<HTMLInputElement>("#memory-relearn-days");
+    const type = async (value: string) =>
+      act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(days, value);
+        days?.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    // Cleared, then 4, then 45: what was typed, not 1, then 14, then 90.
+    await type("");
+    expect(days?.value).toBe("");
+    await type("4");
+    await type("45");
+    expect(days?.value).toBe("45");
+    await type("400");
+    await act(async () => button("Estimate")?.click());
+    const asked = vi.mocked(api).mock.calls.find(([path]) => String(path).includes("/relearn/estimate"));
+    expect(String(asked?.[0])).toContain("days=90");
+    expect(days?.value).toBe("90");
+  });
+
   it("waits for the switch to be saved before it estimates", async () => {
     answerWithEstimate(ESTIMATE);
     await render();

@@ -849,7 +849,10 @@ class TestTheWrittenDigest:
     async def test_a_digest_written_as_its_owner_turns_summaries_off_is_never_kept(
         self, db_session, session_factory, user, store, monkeypatch
     ):
+        from app.services.user_chat_storage_service import load_user_prefs
+
         await self._model_on(db_session)
+        await load_user_prefs(db_session, user.id)  # the person's settings row exists before the run reads it
         chat = await _chat(db_session, user, "Workout", WORKOUT)
         row = await recall._row_for(db_session, chat)
         await db_session.commit()

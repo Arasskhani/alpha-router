@@ -354,7 +354,7 @@ async def _write_digest(db: AsyncSession, row: Any, *, not_before: int, reached:
             db,
             row,
             system=_DIGEST_PROMPT,
-            user_content=f"BEGIN_UNTRUSTED_CONVERSATION\n{conversation}\nEND_UNTRUSTED_CONVERSATION\n",
+            user_content=wrap_untrusted("CONVERSATION", conversation) + "\n",
             model_id=int(settings["summary_model_id"]),
             completer=None,
             first_sequence=lines[0][0],

@@ -690,7 +690,8 @@ async def _summarize_stretch(
         db,
         row,
         system=_PART_PROMPT,
-        user_content=f"BEGIN_UNTRUSTED_CONVERSATION\n{conversation}\nEND_UNTRUSTED_CONVERSATION\n",
+        # Fenced by wrap_untrusted: a message that holds the fence's end cannot close it early.
+        user_content=wrap_untrusted("CONVERSATION", conversation) + "\n",
         model_id=model_id,
         completer=completer,
         first_sequence=turns[0][0],
@@ -708,8 +709,8 @@ async def _fold(db: AsyncSession, row: Any, parts: list[Any], *, so_far: str, mo
         row,
         system=_SYSTEM_PROMPT,
         user_content=(
-            f"Summary so far:\n{so_far or '(none yet)'}\n\n"
-            f"BEGIN_UNTRUSTED_CONVERSATION_NOTES\n{notes}\nEND_UNTRUSTED_CONVERSATION_NOTES\n"
+            f"Summary so far:\n{wrap_untrusted('SUMMARY_SO_FAR', so_far or '(none yet)')}\n\n"
+            f"{wrap_untrusted('CONVERSATION_NOTES', notes)}\n"
         ),
         model_id=model_id,
         completer=completer,

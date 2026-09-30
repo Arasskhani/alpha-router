@@ -60,6 +60,7 @@ DIGEST_CHARS = 1_000
 DIGEST_REFRESH_MESSAGES = 10
 #: What of a chat the summary model reads for its digest: its start up to this, and its newest few messages.
 DIGEST_INPUT_CHARS = 8_000
+DIGEST_NEWEST_MESSAGES = 8
 DIGEST_MAX_TOKENS = 300
 #: Exchanges one run indexes; a longer backlog goes on in another run.
 MAX_EXCHANGES_PER_RUN = 200
@@ -315,40 +316,50 @@ async def _write_digest(db: AsyncSession, row: Any, *, not_before: int, reached:
         return None
     if await summaries.over_budget(db, settings, session):
         return None
-    rows = (
+
+    def _lines(messages: Any) -> list[tuple[int, str]]:
+        return [
+            (int(message.sequence), f"[{message.role} #{message.sequence}] {text[:2_000]}")
+            for message in messages
+            if not restates_a_shared_page(message) and (text := message_text_for_model(message.content))
+        ]
+
+    window = (
+        ChatMessage.session_id == row.session_id,
+        ChatMessage.sequence > int(not_before),
+        ChatMessage.sequence <= int(reached),
+        ChatMessage.role.in_(("user", "assistant")),
+    )
+    # Its start, up to what one call reads, and its newest few messages - read apart, however long the chat.
+    first = _lines(
+        (await db.execute(select(ChatMessage).where(*window).order_by(ChatMessage.sequence.asc()).limit(200)))
+        .scalars()
+        .all()
+    )
+    head: list[tuple[int, str]] = []
+    total = 0
+    for line in first:
+        if head and total + len(line[1]) > DIGEST_INPUT_CHARS:
+            break
+        head.append(line)
+        total += len(line[1])
+    if not head:
+        return None
+    newest = (
         (
             await db.execute(
                 select(ChatMessage)
-                .where(
-                    ChatMessage.session_id == row.session_id,
-                    ChatMessage.sequence > int(not_before),
-                    ChatMessage.sequence <= int(reached),
-                    ChatMessage.role.in_(("user", "assistant")),
-                )
-                .order_by(ChatMessage.sequence.asc())
-                .limit(400)
+                .where(*window, ChatMessage.sequence > head[-1][0])
+                .order_by(ChatMessage.sequence.desc())
+                .limit(DIGEST_NEWEST_MESSAGES)
             )
         )
         .scalars()
         .all()
     )
-    lines = [
-        (int(message.sequence), f"[{message.role} #{message.sequence}] {text[:2_000]}")
-        for message in rows
-        if not restates_a_shared_page(message) and (text := message_text_for_model(message.content))
-    ]
-    if not lines:
-        return None
-    # Its start and its newest part, when it is longer than one call reads.
-    head: list[tuple[int, str]] = []
-    total = 0
-    for line in lines:
-        if head and total + len(line[1]) > DIGEST_INPUT_CHARS:
-            break
-        head.append(line)
-        total += len(line[1])
-    tail = lines[len(head) :][-8:]
-    conversation = "\n".join(text for _seq, text in [*head, *tail])
+    tail = _lines(reversed(list(newest)))
+    lines = [*head, *tail]
+    conversation = "\n".join(text for _seq, text in lines)
     try:
         text = await summaries._complete(
             db,
@@ -365,7 +376,8 @@ async def _write_digest(db: AsyncSession, row: Any, *, not_before: int, reached:
         logger.exception("writing a chat's digest failed session_id=%s", row.session_id)
         return None
     text = str(text or "").strip()[:DIGEST_CHARS]
-    return (text, int(lines[-1][0])) if text else None
+    # Written from the chat up to where this run reached: the next is due once it has grown by enough past that.
+    return (text, int(reached)) if text else None
 
 
 async def _index_state(db: AsyncSession, session_id: str) -> tuple[int, int] | None:
@@ -506,7 +518,8 @@ async def index_chat(db: AsyncSession, row: Any, *, limit: int = MAX_EXCHANGES_P
                 }
                 texts.append((_point_id(str(row.session_id), "chunk", exchange.first, part), payload, text))
         kept_out = int(row.not_before or 0)
-        written = await _write_digest(db, row, not_before=kept_out, reached=max(start, reached))
+        # Written once a run reaches the chat's end: a long chat indexed a run at a time is not written of at each.
+        written = None if more else await _write_digest(db, row, not_before=kept_out, reached=max(start, reached))
         digest = await _digest_text(db, session, not_before=kept_out, written=written[0] if written else None)
         digest_hash = _hash(digest)
         if digest and digest_hash != row.digest_hash:

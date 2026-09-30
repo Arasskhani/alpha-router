@@ -815,6 +815,23 @@ class TestTheWrittenDigest:
         await index_chat(db_session, row)
         assert len(writer.calls) == 1
 
+    async def test_a_long_chat_s_digest_reads_its_start_and_its_newest_part_once(self, db_session, user, store, writer):
+        await self._model_on(db_session)
+        turns = [f"{'Question' if i % 2 == 0 else 'Answer'} {i + 1} about training blocks" for i in range(500)]
+        chat = await _chat(db_session, user, "Long", turns)
+        row = await recall._row_for(db_session, chat)
+        await db_session.commit()
+        while await index_chat(db_session, row):
+            pass
+        assert len(writer.calls) == 1
+        content = writer.calls[0]["content"]
+        assert "[user #1] Question 1" in content and "[assistant #500] Answer 500" in content
+        assert "#250]" not in content
+        assert row.digest_up_to == 500
+        # Nothing new said: not written again, however long the chat.
+        await index_chat(db_session, row)
+        assert len(writer.calls) == 1
+
     async def test_none_is_written_for_a_chat_with_a_summary_or_without_the_model(
         self, db_session, user, store, writer
     ):

@@ -337,12 +337,17 @@ class TestPersonal:
         assert job.extracted_sequence == 40
         assert all(turn > 20 - 6 for turn in read)  # only a few turns before 21, as context
 
-    def test_each_part_is_billed_under_its_own_key(self):
+    def test_each_call_is_billed_under_its_own_key(self):
         job = UserMemoryJob(id="j1", user_id=7, attempt_count=1)
         first = ExtractionBilling.for_user(job, "u", part="1-23").key_prefix
         second = ExtractionBilling.for_user(job, "u", part="24-51").key_prefix
-        assert first != second
-        assert ExtractionBilling.for_user(job, "u").key_prefix == "memory-extract:j1:1"
+        assert first.startswith("memory-extract:j1:1:part-1-23:") and second.startswith(
+            "memory-extract:j1:1:part-24-51:"
+        )
+        # The same job, attempt and range again - an administrator's retry, a part read again in less - is
+        # another paid call: never taken for the first one.
+        assert ExtractionBilling.for_user(job, "u", part="1-23").key_prefix != first
+        assert ExtractionBilling.for_user(job, "u").key_prefix.startswith("memory-extract:j1:1:")
 
 
 class TestProject:

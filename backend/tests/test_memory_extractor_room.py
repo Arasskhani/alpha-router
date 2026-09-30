@@ -205,3 +205,27 @@ class TestAnAnswerCutOff:
         await db_session.rollback()
         await db_session.refresh(job)
         assert job.extracted_sequence == 0
+
+
+class TestEveryCallIsPaidFor:
+    async def test_a_part_read_again_after_an_administrator_s_retry_is_recorded_again(
+        self, db_session, session_factory, job, provider
+    ):
+        from app.models.cost_accounting import UsageOperation
+
+        await handle_memory_extraction(db_session, job)
+        await db_session.commit()
+        # The job failed later and the administrator sent it back: its attempts start again and the part is read again.
+        job.extracted_sequence, job.attempt_count = 0, 1
+        await db_session.commit()
+        await handle_memory_extraction(db_session, job)
+        await db_session.commit()
+
+        assert len(provider["calls"]) == 2
+        async with session_factory() as check:
+            recorded = (
+                (await check.execute(select(UsageOperation).where(UsageOperation.operation_type == "memory_extract")))
+                .scalars()
+                .all()
+            )
+        assert len(recorded) == 2

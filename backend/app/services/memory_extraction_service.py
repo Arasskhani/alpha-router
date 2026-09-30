@@ -979,7 +979,15 @@ async def extraction_spend_this_month(db: AsyncSession) -> float:
 
 
 def _part_key(part: str | None) -> str:
-    return f":part-{part}" if part else ""
+    """The part's range, and a key of the call's own.
+
+    The job, attempt and range alone repeat: an administrator's retry starts
+    the attempts again, and a part read again in less after the extractor
+    ran out of room can keep its range. A repeated key is taken for the same
+    call and its spend is never recorded, although the provider was paid.
+    """
+    call = uuid.uuid4().hex[:10]
+    return f":part-{part}:{call}" if part else f":{call}"
 
 
 @dataclass(frozen=True)
@@ -990,11 +998,11 @@ class ExtractionBilling:
     names the project and nobody else: the window is written by several
     members and charging the last one to speak would be arbitrary.
 
-    ``key_prefix`` carries the job id and attempt so a retry — a real second
-    call to a real provider — is recorded as a second row rather than being
-    swallowed as a duplicate of the first. A job mined in parts adds the
-    part's range (``"1-40"``), for the same reason: each part, and a part read
-    again in less, is a call of its own.
+    ``key_prefix`` carries the job id, the attempt and the part's range
+    (``"1-40"``) to say where the spend came from, and a key of the call's
+    own: every call to a real provider - a retry, a part read again in less,
+    a job an administrator sent back - is recorded as a row of its own
+    rather than swallowed as a duplicate of an earlier one (``_part_key``).
     """
 
     user_id: int | None

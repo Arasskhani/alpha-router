@@ -396,6 +396,9 @@ async def _fold(
     started_at = dt.datetime.utcnow()
     response = await acompletion(**kwargs)
     text = _completion_text(response).strip()
+    # A key of the call's own: the attempts start again with every run, and a chat rewritten from its
+    # start folds its first message again - a repeated key would leave a paid call unrecorded.
+    key_prefix = f"chat-summary:{row.session_id}:{int(row.attempt_count or 0)}:{turns[0][0]}:{uuid.uuid4().hex[:10]}"
     if row.project_id:
         from app.services.metered_usage_service import PLATFORM_USERNAME
         from app.services.usage_accounting_service import SUBJECT_PLATFORM
@@ -405,7 +408,7 @@ async def _fold(
             username=PLATFORM_USERNAME,
             project_id=str(row.project_id),
             subject_type=SUBJECT_PLATFORM,
-            key_prefix=f"chat-summary:{row.session_id}:{int(row.attempt_count or 0)}:{turns[0][0]}",
+            key_prefix=key_prefix,
             operation_type=OPERATION_TYPE,
         )
     else:
@@ -417,7 +420,7 @@ async def _fold(
             username=str(username or ""),
             project_id=None,
             subject_type=None,
-            key_prefix=f"chat-summary:{row.session_id}:{int(row.attempt_count or 0)}:{turns[0][0]}",
+            key_prefix=key_prefix,
             operation_type=OPERATION_TYPE,
         )
     await record_extraction_usage(

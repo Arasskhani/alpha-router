@@ -5,11 +5,15 @@
  * It drives Chromium through the web chat and reads what each turn sends to
  * /api/chat/completions (the request is answered here, so no model is used):
  *
- *   - a chat reopened from the list goes to the model whole, however long it
- *     is (the app loads a chat's latest page only, and used to send just that);
- *   - after a Stop, the next turn still carries the whole chat;
- *   - an answer the server fitted into the model's window says so under its label;
- *   - an answer that read from earlier chats names them, each a link back to it.
+ *   - a chat reopened from the list holds its latest page; each turn sends that
+ *     page and says where it starts (history_from_sequence), and the server puts
+ *     the older messages in front (backend/tests/test_chat_history_completion.py);
+ *   - the turn starts at once: no older page is read before it;
+ *   - after a Stop, the next turn still says where its history starts;
+ *   - an answer the server fitted into the model's window says so under its
+ *     label, and the label opens what that means;
+ *   - an answer that read from earlier chats names them, each a link that opens
+ *     it - one the chat list has not loaded too.
  *
  * Run it from frontend/ against a development stack:
  *
@@ -105,6 +109,15 @@ async function seedChat(count) {
   return title;
 }
 
+/** Reads of a chat's older pages (a messages request with `before`), as they happen. */
+const olderReads = [];
+page.on("request", (request) => {
+  const url = request.url();
+  if (request.method() === "GET" && /\/api\/user\/chat-sessions\/[^/]+\/messages\?/.test(url) && url.includes("before=")) {
+    olderReads.push(url);
+  }
+});
+
 /** Each /api/chat/completions body, answered at once with a short reply - or held until released. */
 const sent = [];
 let holdNext = false;
@@ -138,6 +151,7 @@ async function openChat(title) {
 
 async function send(text) {
   const before = sent.length;
+  olderReads.length = 0;
   const box = page.locator("textarea").first();
   await box.fill(text);
   await box.press("Enter");
@@ -146,26 +160,38 @@ async function send(text) {
   return sent.at(-1);
 }
 
-function whole(body, count, extra) {
-  const messages = body.messages || [];
-  const first = messages.find((m) => m.role !== "system");
-  const text = typeof first?.content === "string" ? first.content : JSON.stringify(first?.content);
-  expect(text === FIRST, `the model's history starts with ${JSON.stringify(String(text).slice(0, 40))}, not the chat's first message`);
-  expect(messages.filter((m) => m.role !== "system").length === count + extra, `the model got ${messages.length} messages for a chat of ${count} and ${extra} new`);
-  return `${messages.length} messages`;
+/** The seeded message at a sequence, as seedChat wrote it. */
+function seeded(sequence) {
+  const i = sequence - 1;
+  return i === 0 ? FIRST : `${i % 2 === 0 ? "Question" : "Answer"} ${i}`;
+}
+
+/**
+ * The turn and the server together carry the whole chat: the turn's history
+ * starts where history_from_sequence says (the chat's first message when it
+ * says nothing), runs to the chat's last, and the server holds what is older.
+ */
+function wholeWithTheServer(body, count, extra) {
+  const messages = (body.messages || []).filter((m) => m.role !== "system");
+  const from = body.history_from_sequence ?? 1;
+  const first = typeof messages[0]?.content === "string" ? messages[0].content : JSON.stringify(messages[0]?.content);
+  expect(first === seeded(from), `the turn's history starts with ${JSON.stringify(String(first).slice(0, 40))}, not message ${from}`);
+  expect(from - 1 + messages.length === count + extra, `the turn sent messages ${from} to ${from - 1 + messages.length} of a chat of ${count} and ${extra} new`);
+  expect(olderReads.length === 0, `the turn waited on ${olderReads.length} reads of older pages`);
+  return from > 1 ? `${messages.length} sent, the server adds ${from - 1}` : `${messages.length} sent, the whole chat`;
 }
 
 console.log(`Chat memory end-to-end check against ${BASE}\n`);
 
 for (const count of [40, 60, 200]) {
-  await step(`a chat of ${count} messages reopened from the list goes to the model whole`, async () => {
+  await step(`a chat of ${count} messages reopened from the list: the turn starts at once, and with the server has it all`, async () => {
     const title = await seedChat(count);
     await openChat(title);
-    return whole(await send("What was my workout plan?"), count, 1);
+    return wholeWithTheServer(await send("What was my workout plan?"), count, 1);
   });
 }
 
-await step("after a Stop, the next turn still carries the whole chat", async () => {
+await step("after a Stop, the next turn still says where its history starts", async () => {
   const title = await seedChat(60);
   await openChat(title);
   holdNext = true;
@@ -175,11 +201,11 @@ await step("after a Stop, the next turn still carries the whole chat", async () 
   await sleep(2500);
   const body = await send("What was my workout plan?");
   const messages = (body.messages || []).filter((m) => m.role !== "system");
-  const firstText = messages[0]?.content;
-  expect(firstText === FIRST, `after the Stop the history starts with ${JSON.stringify(String(firstText).slice(0, 40))}`);
+  const from = body.history_from_sequence ?? 1;
+  expect(messages[0]?.content === seeded(from), `after the Stop the history starts with ${JSON.stringify(String(messages[0]?.content).slice(0, 40))}, not message ${from}`);
   // The stopped prompt never reached the server here (the request is answered in this script), so it may be gone.
-  expect(messages.length >= 61, `after the Stop the model got ${messages.length} messages for a chat of 60 and 1 new`);
-  return `${messages.length} messages`;
+  expect(from - 1 + messages.length >= 61, `after the Stop the turn and the server hold ${from - 1 + messages.length} messages of a chat of 60 and 1 new`);
+  return `${messages.length} sent from message ${from}`;
 });
 
 await step("an answer fitted into the model's window says so under its label", async () => {
@@ -189,8 +215,13 @@ await step("an answer fitted into the model's window says so under its label", a
   await send("And now?");
   const label = page.locator(".alpha-router-msg-context-label").last();
   await label.waitFor({ timeout: 10_000 });
-  const text = (await label.textContent()) || "";
+  const text = (await label.locator("summary").textContent()) || "";
   expect(text.includes("read as a summary; 2 more left out"), `the label reads ${JSON.stringify(text)}`);
+  const note = label.locator(".alpha-router-msg-context-note");
+  expect(!(await note.isVisible()), "the note is open before the label is");
+  await label.locator("summary").click();
+  await note.waitFor({ state: "visible", timeout: 5_000 });
+  expect(((await note.textContent()) || "").includes("the 10 oldest were sent as a summary"), "the note does not say what was summarized");
   return text;
 });
 
@@ -209,6 +240,34 @@ await step("an answer that read from an earlier chat names it, and the name open
   // Only the earlier chat (four messages) has a third one.
   await page.getByText("Answer 3").first().waitFor({ timeout: 10_000 });
   return "opened";
+});
+
+await step("the name of an earlier chat the list has not loaded opens it too", async () => {
+  const earlier = await seedChat(4);
+  const earlierId = created.at(-1);
+  const title = await seedChat(2);
+  // The chat list is served without the earlier chat, as for one older than the days it loads.
+  await page.route("**/api/user/chats?**", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    body.sessions = (body.sessions || []).filter((row) => row.id !== earlierId);
+    await route.fulfill({ response, json: body });
+  });
+  try {
+    await openChat(title);
+    expect((await page.getByText(earlier).count()) === 0, "the earlier chat is in the list");
+    nextTrailer = { recalled_chats: [{ id: earlierId, title: earlier }] };
+    await send("What was my workout plan?");
+    const label = page.locator(".alpha-router-msg-recall-label").last();
+    await label.waitFor({ timeout: 10_000 });
+    const link = label.getByRole("button", { name: earlier });
+    expect(await link.isEnabled(), "the name is a button that does nothing");
+    await link.click();
+    await page.getByText("Answer 3").first().waitFor({ timeout: 10_000 });
+    return "read by id and opened";
+  } finally {
+    await page.unroute("**/api/user/chats?**");
+  }
 });
 
 for (const id of created) {

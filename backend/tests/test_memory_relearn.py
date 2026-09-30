@@ -129,6 +129,30 @@ class TestWhatIsRead:
         plan = await plan_relearn(db_session, days=30, now=NOW)
         assert _ranges(plan) == {wiped_chat: (3, 4), changed_chat: (3, 4), never_chat: (1, 2)}
 
+    async def test_a_chat_rewritten_after_a_delete_all_is_still_read_only_from_after_it(self, db_session):
+        from app.services.user_chat_storage_service import list_session_messages, replace_session_messages
+
+        wiped = await _person(db_session, "rewrote", prefs_changed=60)
+        chat_id = await _chat(db_session, wiped, [20, 20, 3, 3])
+        db_session.add(
+            UserMemoryEvent(
+                id=str(uuid.uuid4()),
+                user_id=wiped.id,
+                event_type="purged",
+                actor="user",
+                detail={"deleted": 4, "scope": "all"},
+                created_at=_ago(5),
+            )
+        )
+        await db_session.commit()
+        # Later the person deletes the chat's last answer: the stored chat is rewritten.
+        kept, _more = await list_session_messages(db_session, wiped.id, chat_id)
+        await replace_session_messages(db_session, wiped.id, chat_id, kept[:-1])
+        await db_session.commit()
+
+        plan = await plan_relearn(db_session, days=30, now=NOW)
+        assert _ranges(plan) == {chat_id: (3, 3)}
+
 
 async def _project(db, owner: User, project_id: str, versions: list[tuple[float, bool]]) -> None:
     db.add(

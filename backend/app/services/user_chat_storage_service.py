@@ -1365,19 +1365,20 @@ async def replace_session_messages(
         return []
 
     rows: list[ChatMessage] = []
-    last_created = dt.datetime.utcnow()
     for idx, msg in enumerate(messages, start=1):
         role = str(msg.get("role") or "user")
         content = _compact_message_content_for_storage(str(msg.get("content") or ""), role)
         if len(content.encode("utf-8")) > _MAX_MESSAGE_BYTES:
             raise ValueError("Message content exceeds storage limit")
-        last_created = dt.datetime.utcnow()
         client_message_id = str(msg.get("clientMessageId") or msg.get("client_message_id") or "") or None
         previous = (
             existing_by_client_id.get(client_message_id)
             if client_message_id
             else existing_by_id.get(str(msg.get("id") or ""))
         )
+        # A message the chat already had keeps when it was said: retention, relearning's
+        # "nothing before a delete-all" and the memory jobs all go by it.
+        said_at = previous.created_at if previous is not None and previous.created_at else dt.datetime.utcnow()
         message_meta = _message_meta_from_client(msg)
         agent_run_id = None
         if previous is not None and role == "assistant":
@@ -1396,13 +1397,13 @@ async def replace_session_messages(
             client_message_id=client_message_id,
             agent_run_id=agent_run_id,
             meta=message_meta,
-            created_at=last_created,
+            created_at=said_at,
         )
         db.add(row)
         rows.append(row)
 
     session.message_count = len(rows)
-    session.last_message_at = last_created
+    session.last_message_at = dt.datetime.utcnow()
     _bump_session_revision(session)
     await db.flush()
     return [_message_to_client(r) for r in rows]

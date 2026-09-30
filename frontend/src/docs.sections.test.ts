@@ -111,6 +111,15 @@ describe("the docs", () => {
     );
   });
 
+  it("the User Manual names each of the person's memory switches", () => {
+    const html = sectionHtml(userManualSections, "chat-memory");
+    for (const term of ["Use my memories in chat", "Use my earlier chats", "Summarize my long chats"]) {
+      expect(html).toContain(term);
+    }
+    const settings = readFileSync(join(__dirname, "..", "src/components/SettingsModal.tsx"), "utf8");
+    expect(settings).toContain("Summarize my long chats");
+  });
+
   it("the Admin Guide says what the memory page decides and records", () => {
     const html = sectionHtml(docSections, "admin-memory");
     for (const term of [
@@ -122,6 +131,11 @@ describe("the docs", () => {
       "Summary model",
       "Newest messages kept word for word",
       "Monthly summary budget",
+      "Monthly summary budget per person",
+      "Summarize my long chats",
+      "Monthly indexing budget per person",
+      "Chat recall index",
+      "ids and counts",
       "chat_summary",
       "Extractor answer length",
       "256–16,000",
@@ -157,6 +171,8 @@ describe("the docs", () => {
       "Summarize long chats",
       "Newest messages kept word for word",
       "Monthly summary budget",
+      "Monthly summary budget per person",
+      "Monthly indexing budget per person",
       "Extractor answer length",
       "Allow relearning",
       "Run again",

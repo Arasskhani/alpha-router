@@ -2653,14 +2653,21 @@ export const docSections: DocSection[] = [
           <li>
             <strong>Summarize long chats</strong> — with a <strong>Summary model</strong> chosen (a cheap, fast one),
             each long chat keeps a summary of its older messages, brought up to date in the background by the
-            Knowledge worker whenever the chat has grown by about 24,000 characters past it. It keeps facts, numbers,
-            names, decisions and plans in the chat&rsquo;s language, and never folds in an answer built from pages
-            shared from the browser. It reaches the model marked as notes, not instructions. It is used only for the
-            person who may read the chat, never for private chats or rooms, not at all once summaries are switched
-            off, and goes when the chat&rsquo;s messages are rewritten, purged by retention, made private or
-            deleted. Cost is the system operation <code>chat_summary</code> (the
-            project&rsquo;s, for a project chat), never against a budget, capped by{" "}
-            <strong>Monthly summary budget</strong> (0, no limit).
+            Knowledge worker whenever the chat has grown by about 24,000 characters past it. Each stretch of the
+            chat is summarized on its own, as a part, and the parts are folded, oldest first, into the summary a turn
+            reads. It keeps facts, numbers, names, decisions and plans in the chat&rsquo;s language, and never folds
+            in an answer built from pages shared from the browser. It reaches the model marked as notes, not
+            instructions, in place of the oldest messages up to the last one it covers, found in the turn&rsquo;s
+            history by that message (a history that does not hold it does not use the summary). It is used only for
+            the person who may read the chat, never for private chats or rooms, not at all once summaries are
+            switched off, nor for the personal chats of a person who turned off{" "}
+            <strong>Summarize my long chats</strong> in Settings &rarr; Memory (turning it off deletes their
+            chats&rsquo; summaries). It goes when the chat&rsquo;s messages are rewritten, made private or deleted; a
+            retention purge takes only the parts that reach into what it purged, and the summary is folded again from
+            the rest. Cost is the system operation <code>chat_summary</code> (the project&rsquo;s, for a project
+            chat), recorded against the person but never taken from their budget, capped by{" "}
+            <strong>Monthly summary budget</strong> for everyone and{" "}
+            <strong>Monthly summary budget per person</strong> for each person&rsquo;s own chats (0, no limit).
           </li>
           <li>
             <strong>Reading a long chat in parts</strong> — the extractor reads a stretch of chat oldest first, one part
@@ -2684,7 +2691,9 @@ export const docSections: DocSection[] = [
           <li>
             <strong>Recall earlier chats</strong> (on by default once an embedding model is chosen; locked off without
             one) — each chat is indexed as it goes: every exchange (a question and its answer) and a short digest (its
-            title and summary) become vectors in the memory collection, ids only. A new turn searches the
+            title and summary; for a chat without a summary, a few sentences on what it is about, written by the
+            Summary model, again once the chat has grown by ten messages, under the same budgets) become vectors in
+            the memory collection, ids only. A new turn searches the
             person&rsquo;s <em>other</em> chats with the chat&rsquo;s title and its last three questions, checks each
             hit again in the database, and gives the model up to <strong>Pieces per turn</strong> of them within{" "}
             <strong>Characters per turn</strong>, above <strong>Minimum similarity</strong>, each marked as a record,
@@ -2702,8 +2711,17 @@ export const docSections: DocSection[] = [
           <li>
             Deleting a chat, making it private and rewriting its messages remove its vectors, and a retention purge
             removes those of what it purged; <em>Delete all my memories</em> removes every personal chat&rsquo;s and
-            keeps what was said before it out for good (a chat&rsquo;s digest is then made only of what was asked
-            since); <strong>Rebuild index</strong> starts every chat again.
+            keeps what was said before it out for good (a chat&rsquo;s digest is then made only of what was said
+            since); <strong>Rebuild index</strong> starts every chat again. The vectors go once the change has
+            committed, by the Knowledge worker, tried again with a growing wait while Qdrant is down; a turn never
+            reads a vector written before a chat&rsquo;s last such change, whatever Qdrant still holds.
+          </li>
+          <li>
+            <strong>Monthly indexing budget per person</strong> — the embeddings of each person&rsquo;s own chats
+            (their index and each turn&rsquo;s search), recorded in API Logs against the person as{" "}
+            <em>Chat recall index</em>, never taken from their budget; a project chat&rsquo;s are the
+            platform&rsquo;s. Past it, that person&rsquo;s new messages are indexed no further until the 1st; what is
+            indexed is still recalled. 0, no limit.
           </li>
           <li>
             <strong>Index earlier chats</strong> — chats from before recall was on are indexed only from here:{" "}
@@ -2748,6 +2766,12 @@ export const docSections: DocSection[] = [
             <code>memory_recall_backfill_started</code> (how many chats were queued).
           </li>
         </ul>
+        <p>
+          A chat turn&rsquo;s request details in API Logs say what it was given beside its messages: how many
+          memories, the ids of the earlier chats it read, and what was left out to fit the model&rsquo;s window with
+          the summary that stood in for it (up to which message, when it was written, its size) — ids and counts,
+          never words.
+        </p>
         <h2>Automatic project memory</h2>
         <p>
           The same pipeline mines the <strong>Chat</strong> tab of projects into shared team memory. Facts belong to the

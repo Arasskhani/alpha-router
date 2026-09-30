@@ -829,6 +829,13 @@ export const userManualSections: DocSection[] = [
             are read again as they go on. <strong>Delete all</strong> also takes your chats out of this, and what you
             said before it stays out for good.
           </li>
+          <li>
+            <strong>Summarize my long chats</strong> (on by default) — when a chat grows longer than the model can
+            read, a summary of its older part keeps what you said in view, and a few sentences on what each chat is
+            about help <strong>Use my earlier chats</strong> find it. Never private chats. Turn it off and your chats
+            are not summarized (the oldest messages of a long chat are then left out, and the answer says so); the
+            summaries already made are removed. A project chat follows the project&rsquo;s settings.
+          </li>
         </ul>
         <Note>
           Memories outlive individual chats. Prefer this for durable facts you are comfortable keeping on the server

@@ -6721,9 +6721,11 @@ export default function ChatPanel({
                 </div>
               ) : null}
               {m.role === "assistant" && m.contextFit ? (
-                <div className="alpha-router-msg-context-label" title={contextFitNote(m.contextFit)}>
-                  {contextFitLabel(m.contextFit)}
-                </div>
+                // A disclosure, not a tooltip: the explanation opens by tap and keyboard, and is read out.
+                <details className="alpha-router-msg-context-label">
+                  <summary>{contextFitLabel(m.contextFit)}</summary>
+                  <p className="alpha-router-msg-context-note">{contextFitNote(m.contextFit)}</p>
+                </details>
               ) : null}
               {m.role === "assistant" && m.recalledChats ? (
                 <div className="alpha-router-msg-recall-label">

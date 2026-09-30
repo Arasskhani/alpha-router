@@ -6864,6 +6864,17 @@ table.data-table--api-logs {
   overflow-wrap: anywhere;
 }
 
+/* What fitting left out: the label opens the explanation under it. */
+.alpha-router-msg-context-label > summary {
+  cursor: pointer;
+  width: fit-content;
+}
+.alpha-router-msg-context-note {
+  margin: 0.2rem 0 0;
+  font-weight: 400;
+  line-height: 1.4;
+}
+
 /* Each earlier chat an answer read from: a link back to it. */
 .alpha-router-msg-recall-link {
   background: none;

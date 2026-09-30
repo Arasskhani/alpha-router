@@ -25,7 +25,7 @@ export function contextFitLabel(fit: ContextFit): string {
   return `${fit.dropped} older message${fit.dropped === 1 ? "" : "s"} left out, to fit the model`;
 }
 
-/** Its tooltip. */
+/** What it means, opened from the label. */
 export function contextFitNote(fit: ContextFit): string {
   return (
     "This chat is longer than the model's context window. The newest messages were sent word for word; " +

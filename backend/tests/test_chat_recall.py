@@ -19,7 +19,7 @@ from types import SimpleNamespace
 
 import pytest
 from qdrant_client import AsyncQdrantClient
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
 from app.models.chat import ChatMessage, ChatRecallIndex, ChatSession
 from app.models.knowledge import OutboxEvent
@@ -1361,6 +1361,39 @@ async def test_a_turn_goes_to_the_model_with_what_it_recalled_and_says_where_fro
     assert ctx.recalled_chats == [{"id": workout.id, "title": "Workout"}]
     # Its request log says which, by id.
     assert ctx.memory_context == {"recalled_chats": [workout.id]}
+
+
+async def test_a_forget_that_lands_as_a_run_writes_its_digest_clears_it(db_session, session_factory, user, store):
+    """PostgreSQL row locks: the forget waits for the run's last write, then clears what it wrote."""
+    import asyncio
+
+    if db_session.bind.dialect.name != "postgresql":
+        pytest.skip("row locks")
+    chat = await _chat(db_session, user, "Workout", WORKOUT)
+    await recall._row_for(db_session, chat)
+    await db_session.commit()
+    chat_id = chat.id
+
+    async def _forget() -> None:
+        async with session_factory() as other:
+            await forget_chats(other, [chat_id])
+            await other.commit()
+
+    async with session_factory() as runner:
+        # A run's last write: its digest, on the row as it found it - not committed yet.
+        await runner.execute(
+            update(ChatRecallIndex)
+            .where(ChatRecallIndex.session_id == chat_id)
+            .values(digest_text="Made of the words the forget takes away.", digest_after=0, digest_up_to=4)
+        )
+        landing = asyncio.create_task(_forget())
+        await asyncio.sleep(0.5)
+        assert not landing.done()
+        await runner.commit()
+    await asyncio.wait_for(landing, 10)
+    async with session_factory() as check:
+        live = await check.get(ChatRecallIndex, chat_id)
+        assert (live.digest_text, live.digest_up_to, live.digest_after) == (None, None, None)
 
 
 async def test_the_knowledge_worker_indexes_a_chat(db_session, session_factory, user, store):

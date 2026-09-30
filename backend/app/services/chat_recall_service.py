@@ -855,8 +855,16 @@ async def forget_chats(db: AsyncSession, session_ids: list[str] | set[str], *, k
     ids = [str(item) for item in session_ids if item]
     if not ids:
         return
+    # Locked: an index run's last write waits for this forget (and then finds the row changed), or this waits
+    # for it and reads what it wrote (a digest among it, cleared below) - never a row read before that write.
     rows: list[Any] = list(
-        (await db.execute(select(ChatRecallIndex).where(ChatRecallIndex.session_id.in_(ids)))).scalars().all()
+        (
+            await db.execute(
+                select(ChatRecallIndex).where(ChatRecallIndex.session_id.in_(ids)).with_for_update(of=ChatRecallIndex)
+            )
+        )
+        .scalars()
+        .all()
     )
     indexed = {str(row.session_id) for row in rows}
     for session_id in ids:
@@ -894,7 +902,13 @@ async def forget_chat_starts(db: AsyncSession, purged_to: dict[str, int]) -> Non
     if not purged_to:
         return
     rows: list[Any] = list(
-        (await db.execute(select(ChatRecallIndex).where(ChatRecallIndex.session_id.in_(list(purged_to)))))
+        (
+            await db.execute(
+                select(ChatRecallIndex)
+                .where(ChatRecallIndex.session_id.in_(list(purged_to)))
+                .with_for_update(of=ChatRecallIndex)  # as in ``forget_chats``
+            )
+        )
         .scalars()
         .all()
     )

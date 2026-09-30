@@ -556,6 +556,7 @@ function MemoryPanel() {
   const [autoCapture, setAutoCapture] = useState(true);
   const [outsideChat, setOutsideChat] = useState(false);
   const [recallChats, setRecallChats] = useState(true);
+  const [summarizeChats, setSummarizeChats] = useState(true);
   const [memories, setMemories] = useState<UserMemory[]>([]);
   const [featureEnabled, setFeatureEnabled] = useState(true);
   const [extractionConfigured, setExtractionConfigured] = useState(true);
@@ -573,6 +574,7 @@ function MemoryPanel() {
     setAutoCapture(prefs.memory_auto_capture !== false);
     setOutsideChat(prefs.memory_outside_chat === true);
     setRecallChats(prefs.memory_recall_chats !== false);
+    setSummarizeChats(prefs.memory_summarize_chats !== false);
     setMemories(bundle.memories);
     setFeatureEnabled(bundle.feature_enabled);
     setExtractionConfigured(bundle.extraction_configured);
@@ -635,6 +637,26 @@ function MemoryPanel() {
       setRecallChats(checked);
       window.dispatchEvent(new CustomEvent(BROWSER_EVENT_NAMES.userPrefsSaved));
       setMessage(checked ? "New chats can read from your earlier ones." : "Each chat keeps to itself.");
+    } catch (err) {
+      setError(formatApiError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onToggleSummarizeChats(checked: boolean) {
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      await saveUserPrefs({ memory_summarize_chats: checked });
+      setSummarizeChats(checked);
+      window.dispatchEvent(new CustomEvent(BROWSER_EVENT_NAMES.userPrefsSaved));
+      setMessage(
+        checked
+          ? "Your long chats can be summarized to fit the model."
+          : "Your chats are not summarized; what was summarized is removed.",
+      );
     } catch (err) {
       setError(formatApiError(err));
     } finally {
@@ -819,6 +841,17 @@ function MemoryPanel() {
             disabled={busy || !memoryEnabled}
             label="Use my earlier chats"
             onToggle={() => void onToggleRecallChats(!recallChats)}
+          />
+        </SettingsRow>
+        <SettingsRow
+          title="Summarize my long chats"
+          hint="When a chat grows longer than the model can read, a summary of its older part keeps what was said in view. Never private chats. Turning it off removes the summaries of your chats; the oldest messages of a long chat are then left out."
+        >
+          <SettingsToggle
+            on={summarizeChats}
+            disabled={busy}
+            label="Summarize my long chats"
+            onToggle={() => void onToggleSummarizeChats(!summarizeChats)}
           />
         </SettingsRow>
         <SettingsRow

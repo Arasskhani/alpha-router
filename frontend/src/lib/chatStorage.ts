@@ -61,6 +61,8 @@ export type UserPrefs = {
   memory_outside_chat: boolean;
   /** When true, a new chat may read the related parts of the person's earlier chats. */
   memory_recall_chats: boolean;
+  /** When true, the summary model may summarize the person's long chats (and write what each is about). */
+  memory_summarize_chats: boolean;
 };
 
 export type UserChatsPayload = {
@@ -164,6 +166,7 @@ function normalizeUserPrefs(raw?: Partial<UserPrefs> | null): UserPrefs {
   const memoryAutoCapture = coercePrefsBool(raw?.memory_auto_capture, true);
   const memoryOutsideChat = coercePrefsBool(raw?.memory_outside_chat, false);
   const memoryRecallChats = coercePrefsBool(raw?.memory_recall_chats, true);
+  const memorySummarizeChats = coercePrefsBool(raw?.memory_summarize_chats, true);
   return {
     default_model: model,
     theme,
@@ -177,6 +180,7 @@ function normalizeUserPrefs(raw?: Partial<UserPrefs> | null): UserPrefs {
     memory_auto_capture: memoryAutoCapture,
     memory_outside_chat: memoryOutsideChat,
     memory_recall_chats: memoryRecallChats,
+    memory_summarize_chats: memorySummarizeChats,
   };
 }
 

@@ -147,6 +147,29 @@ describe("the Memory tab", () => {
     expect(toggle?.getAttribute("aria-pressed")).toBe("false");
   });
 
+  it("has the person's own switch for summaries of their long chats", async () => {
+    const saved: unknown[] = [];
+    vi.mocked(api).mockImplementation(async (path: string, init?: RequestInit) => {
+      if (path === "/api/user/chats/prefs" && init?.method === "PATCH") {
+        saved.push(JSON.parse(String(init.body)));
+        return { memory_summarize_chats: false } as never;
+      }
+      if (path === "/api/user/chats/prefs") return { memory_enabled: false } as never;
+      if (path.startsWith("/api/user/memories")) return { memories: [], total: 0 } as never;
+      return {} as never;
+    });
+    await openSettings();
+    await clickTab("Memory");
+    const toggle = document.querySelector<HTMLButtonElement>('button[aria-label="Summarize my long chats"]');
+    // On by default, and not tied to the memory switch.
+    expect(toggle?.getAttribute("aria-pressed")).toBe("true");
+    expect(toggle?.disabled).toBe(false);
+    await act(async () => toggle?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(saved).toEqual([{ memory_summarize_chats: false }]);
+    expect(toggle?.getAttribute("aria-pressed")).toBe("false");
+    expect(host.textContent).toContain("what was summarized is removed");
+  });
+
   it("is off, and locked, while memory is off", async () => {
     vi.mocked(api).mockImplementation(async (path: string) => {
       if (path === "/api/user/chats/prefs") return { memory_enabled: false, memory_recall_chats: true } as never;

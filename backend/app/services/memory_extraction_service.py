@@ -1143,24 +1143,33 @@ async def drop_overtaken_part(db: AsyncSession, job: Any, *, scope: str) -> bool
     return False
 
 
-async def defer_to_running_job(db: AsyncSession, job: Any) -> tuple[bool, int]:
-    """Whether another job of the same chat is mining it now, and how far the chat's other jobs have mined it.
+#: How long a job that found another job of its chat mining it waits before its stretch is read.
+HAND_OVER_SECONDS = 60
+
+
+async def another_job_is_mining(db: AsyncSession, job: Any) -> bool:
+    """Whether another job of the same chat is mining it now (running, its lease alive).
 
     A job is made while another one of the same chat is still running (a new
-    reply, relearning, an administrator's retry) and starts from what that
-    one had committed so far: without this the two would read, and bill,
-    the same parts.
+    reply, relearning, an administrator's retry); read at the same time, the
+    two would read, and bill, the same parts. The job hands its stretch over
+    to one that runs after (``memory_job_admin_service.hand_over``).
     """
     model = type(job)
     now = dt.datetime.utcnow()
-    others = (model.session_id == job.session_id, model.id != job.id)
     running = (
         await db.execute(
-            select(model.id).where(*others, model.status == "running", model.lease_expires_at > now).limit(1)
+            select(model.id)
+            .where(
+                model.session_id == job.session_id,
+                model.id != job.id,
+                model.status == "running",
+                model.lease_expires_at > now,
+            )
+            .limit(1)
         )
     ).scalar_one_or_none()
-    ahead = (await db.execute(select(func.max(model.extracted_sequence)).where(*others))).scalar_one_or_none()
-    return running is not None, int(ahead or 0)
+    return running is not None
 
 
 def smaller_part(window: ExtractionWindow | Any, max_chars: int, cause: ExtractionTruncated) -> int:
@@ -1216,6 +1225,7 @@ async def handle_memory_extraction(db: AsyncSession, job, *, completer: Any | No
                 user_id=int(job.user_id),
                 session_id=str(job.session_id),
                 watermark_sequence=int(job.watermark_sequence or 0),
+                exclude_job_id=str(job.id),
             )
             logger.info(
                 "memory extraction goes on in a follow-up job user_id=%s session_id=%s job_id=%s mined_to=%s of=%s",
@@ -1280,23 +1290,12 @@ async def _mine_next_part(db: AsyncSession, job, *, completer: Any | None, first
     if not first and await _watermark_moved(db, job, window_from=window_from):
         # "Delete all my memories" ran between two parts.
         return False
-    if first:
-        running, ahead = await defer_to_running_job(db, job)
-        if running:
-            # Another job of this chat is mining it now: this one goes on after it.
-            from app.services.memory_job_service import schedule_extraction
+    if first and await another_job_is_mining(db, job):
+        # Another job of this chat is mining it now: this one's stretch goes on after it.
+        from app.services.memory_job_admin_service import hand_over
 
-            await schedule_extraction(
-                db,
-                user_id=int(job.user_id),
-                session_id=str(job.session_id),
-                watermark_sequence=int(job.watermark_sequence or 0),
-            )
-            return False
-        if ahead > window_from:
-            # What another job of this chat mined already is not read again.
-            to = min(ahead, int(job.watermark_sequence or 0))
-            return await advance_watermark(db, job, window_from=window_from, to=to)
+        await hand_over(db, job, after_seconds=HAND_OVER_SECONDS)
+        return False
     # The first part waits for enough new turns; the rest of a long stretch is mined whatever is left.
     need = int(settings.get("extract_min_new_messages") or 2) if first else 1
     if int(job.watermark_sequence or 0) - window_from < need:

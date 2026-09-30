@@ -125,7 +125,7 @@ async def _progress(db: AsyncSession, job: Any) -> int:
     return max(int(job.extracted_sequence or 0), int(others or 0))
 
 
-async def _dispatch(db: AsyncSession, job: Any, now: dt.datetime) -> None:
+async def _dispatch(db: AsyncSession, job: Any, now: dt.datetime, *, reason: str = "admin-retry") -> None:
     if isinstance(job, UserMemoryJob):
         aggregate, event, prefix = "user_memory_job", "memory.job.ready", "user-memory"
     else:
@@ -138,9 +138,56 @@ async def _dispatch(db: AsyncSession, job: Any, now: dt.datetime) -> None:
         aggregate_id=job.id,
         event_type=event,
         payload={"job_id": job.id, "attempt": 0},
-        idempotency_key=f"{prefix}:{job.id}:dispatch:0:admin-retry:{uuid.uuid4().hex[:12]}",
+        idempotency_key=f"{prefix}:{job.id}:dispatch:0:{reason}:{uuid.uuid4().hex[:12]}",
         available_at=now,
     )
+
+
+async def hand_over(db: AsyncSession, job: Any, *, after_seconds: int) -> None:
+    """Give a job's stretch - from where it starts, as it is - to a job of the same chat that runs later.
+
+    For a job that finds another job of its chat mining it: rather than read
+    the same parts at the same time, it goes on after that one. Its own
+    starting point is kept (a relearn job starts earlier than the chat was
+    mined, on purpose): the chat's open job starts no later than it, or a new
+    job takes its stretch.
+    """
+    from app.config import get_settings
+
+    model = type(job)
+    now = dt.datetime.utcnow()
+    run_after = now + dt.timedelta(seconds=after_seconds)
+    open_job = await _open_job(db, job)
+    if open_job is None:
+        owner = {"user_id": job.user_id} if model is UserMemoryJob else {"project_id": job.project_id}
+        follow = model(
+            id=str(uuid.uuid4()),
+            **owner,
+            session_id=job.session_id,
+            status="pending",
+            watermark_sequence=int(job.watermark_sequence or 0),
+            extracted_sequence=int(job.extracted_sequence or 0),
+            run_after=run_after,
+            attempt_count=0,
+            max_attempts=get_settings().memory_job_max_attempts,
+            created_at=now,
+            updated_at=now,
+        )
+        try:
+            async with db.begin_nested():
+                db.add(follow)
+                await db.flush()
+        except IntegrityError:
+            open_job = await _open_job(db, job)
+        else:
+            await _dispatch(db, follow, run_after, reason="handed-over")
+            return
+    if open_job is not None:
+        open_job.extracted_sequence = min(int(open_job.extracted_sequence or 0), int(job.extracted_sequence or 0))
+        open_job.watermark_sequence = max(int(open_job.watermark_sequence or 0), int(job.watermark_sequence or 0))
+        open_job.run_after = max(open_job.run_after or now, run_after)
+        open_job.updated_at = now
+        await db.flush()
 
 
 async def retry_failed_jobs(db: AsyncSession, scope: str, *, job_ids: list[str] | None = None) -> dict[str, int]:

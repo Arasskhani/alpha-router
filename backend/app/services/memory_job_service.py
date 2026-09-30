@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import datetime as dt
 import logging
 import uuid
@@ -45,13 +47,31 @@ async def _latest_extracted_sequence(db: AsyncSession, user_id: int, session_id:
     return int(row or 0)
 
 
+async def _running_to(db: AsyncSession, model: Any, scope: tuple[Any, ...], *, exclude_job_id: str | None) -> int:
+    """How far the chat's jobs mining it now will have read when they are done (their watermarks)."""
+    now = dt.datetime.utcnow()
+    conditions = [*scope, model.status == "running", model.lease_expires_at > now]
+    if exclude_job_id:
+        conditions.append(model.id != exclude_job_id)
+    value = (await db.execute(select(func.max(model.watermark_sequence)).where(*conditions))).scalar_one_or_none()
+    return int(value or 0)
+
+
 async def schedule_extraction(
     db: AsyncSession,
     *,
     user_id: int,
     session_id: str,
     watermark_sequence: int,
+    exclude_job_id: str | None = None,
 ) -> UserMemoryJob | None:
+    """Queue the chat's turns up to ``watermark_sequence`` to be mined (or extend the chat's open job).
+
+    A new job starts where the chat was last mined - or, while another job of
+    the chat is mining it, where that one will stop: starting from what it
+    has committed so far would read, and bill, its parts twice.
+    ``exclude_job_id``: the running job asking for its own follow-up.
+    """
     settings = await get_memory_settings(db)
     if not settings.get("feature_enabled", True):
         return None
@@ -102,6 +122,9 @@ async def schedule_extraction(
         return existing
 
     extracted = await _latest_extracted_sequence(db, user_id, session_id)
+    scope = (UserMemoryJob.user_id == user_id, UserMemoryJob.session_id == session_id)
+    running_to = await _running_to(db, UserMemoryJob, scope, exclude_job_id=exclude_job_id)
+    extracted = min(max(extracted, running_to), int(watermark_sequence))
     job = UserMemoryJob(
         id=str(uuid.uuid4()),
         user_id=user_id,

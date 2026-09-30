@@ -74,6 +74,7 @@ async def schedule_extraction(
     project_id: str,
     session_id: str,
     watermark_sequence: int,
+    exclude_job_id: str | None = None,
 ) -> ProjectMemoryJob | None:
     settings = await get_memory_settings(db)
     if not settings.get("feature_enabled", True):
@@ -123,6 +124,12 @@ async def schedule_extraction(
         return existing
 
     extracted = await _latest_extracted_sequence(db, project_id, session_id)
+    # While another job of the chat is mining it, a new one starts where that one will stop (memory_job_service).
+    from app.services.memory_job_service import _running_to
+
+    scope = (ProjectMemoryJob.project_id == project_id, ProjectMemoryJob.session_id == session_id)
+    running_to = await _running_to(db, ProjectMemoryJob, scope, exclude_job_id=exclude_job_id)
+    extracted = min(max(extracted, running_to), int(watermark_sequence))
     job = ProjectMemoryJob(
         id=str(uuid.uuid4()),
         project_id=project_id,

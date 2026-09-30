@@ -318,24 +318,57 @@ class TestPersonal:
             .scalars()
             .all()
         )
-        assert [row.watermark_sequence for row in follow] == [40]
+        assert [(row.extracted_sequence, row.watermark_sequence) for row in follow] == [(0, 40)]
 
-    async def test_what_another_job_of_the_chat_mined_is_not_read_again(self, db_session, user, chat):
+    async def test_a_job_made_while_another_is_mining_starts_where_that_one_will_stop(self, db_session, user, chat):
+        from app.services.memory_job_service import schedule_extraction
+
         await _messages(db_session, chat, 40)
-        done = _job(UserMemoryJob, owner={"user_id": user.id}, session_id=chat.id, watermark=20, extracted=20)
-        done.status = "succeeded"
-        job = _job(UserMemoryJob, owner={"user_id": user.id}, session_id=chat.id, watermark=40)
-        db_session.add_all([done, job])
+        mining = _job(UserMemoryJob, owner={"user_id": user.id}, session_id=chat.id, watermark=20, extracted=6)
+        mining.lease_expires_at = dt.datetime.utcnow() + dt.timedelta(minutes=5)
+        db_session.add(mining)
+        await db_session.commit()
+
+        made = await schedule_extraction(db_session, user_id=user.id, session_id=chat.id, watermark_sequence=40)
+        assert made is not None and made.extracted_sequence == 20  # not 6: that job reads 7-20
+        # A running job's own follow-up starts where it stopped.
+        made.status = "succeeded"
+        await db_session.commit()
+        own = await schedule_extraction(
+            db_session, user_id=user.id, session_id=chat.id, watermark_sequence=40, exclude_job_id=mining.id
+        )
+        assert own is not None and own.extracted_sequence <= 20
+
+    async def test_relearning_reads_a_chat_mined_before_again(self, db_session, user, chat):
+        from app.models.chat import UserChatPrefs
+        from app.services.memory_relearn_service import start_relearn
+
+        now = dt.datetime.utcnow()
+        db_session.add(
+            UserChatPrefs(user_id=user.id, prefs={"memory_auto_capture": True}, updated_at=now - dt.timedelta(days=60))
+        )
+        db_session.add(SystemSetting(key="memory_relearn_enabled", value="true"))
+        await _messages(db_session, chat, 10)
+        for message in (
+            await db_session.execute(select(ChatMessage).where(ChatMessage.session_id == chat.id))
+        ).scalars():
+            message.created_at = now - dt.timedelta(days=2)
+        mined = _job(UserMemoryJob, owner={"user_id": user.id}, session_id=chat.id, watermark=10, extracted=10)
+        mined.status = "succeeded"
+        db_session.add(mined)
+        await db_session.commit()
+        assert (await start_relearn(db_session, days=30))["queued"] == 1
+        await db_session.commit()
+        job = (await db_session.execute(select(UserMemoryJob).where(UserMemoryJob.status == "pending"))).scalars().one()
+        job.status, job.lease_expires_at = "running", now + dt.timedelta(minutes=5)
         await db_session.commit()
         model = _Model()
 
         await handle_memory_extraction(db_session, job, completer=model)
         await db_session.commit()
 
-        read = sorted({turn for part in model.parts for turn in part})
-        assert read and min(turn for turn in read if turn > 20) == 21
-        assert job.extracted_sequence == 40
-        assert all(turn > 20 - 6 for turn in read)  # only a few turns before 21, as context
+        assert model.parts and min(model.parts[0]) == 1  # read again from the chat's first message
+        assert job.extracted_sequence == 10
 
     def test_each_call_is_billed_under_its_own_key(self):
         job = UserMemoryJob(id="j1", user_id=7, attempt_count=1)

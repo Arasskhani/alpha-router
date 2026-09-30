@@ -24,6 +24,7 @@ from app.services.memory_extraction_service import (
     MAX_OPS,
     MAX_PARTS_PER_RUN,
     MAX_WINDOW_CHARS,
+    HAND_OVER_SECONDS,
     MAX_WINDOW_TURNS,
     PRE_WINDOW_MESSAGES,
     ExtractionBilling,
@@ -32,9 +33,9 @@ from app.services.memory_extraction_service import (
     _first_json_object,
     _watermark_moved,
     advance_watermark,
+    another_job_is_mining,
     ask_extractor,
     contains_secret,
-    defer_to_running_job,
     drop_overtaken_part,
     extraction_budget_exhausted,
     fit_extraction_window,
@@ -613,6 +614,7 @@ async def handle_project_memory_extraction(db: AsyncSession, job, *, completer: 
                 project_id=str(job.project_id),
                 session_id=str(job.session_id),
                 watermark_sequence=int(job.watermark_sequence or 0),
+                exclude_job_id=str(job.id),
             )
             logger.info(
                 "project memory extraction goes on in a follow-up job project_id=%s session_id=%s job_id=%s "
@@ -661,21 +663,11 @@ async def _mine_next_project_part(db: AsyncSession, job, *, completer: Any | Non
     window_from = int(job.extracted_sequence or 0)
     if not first and await _watermark_moved(db, job, window_from=window_from):
         return False
-    if first:
-        running, ahead = await defer_to_running_job(db, job)
-        if running:
-            from app.services.project_memory_job_service import schedule_extraction
+    if first and await another_job_is_mining(db, job):
+        from app.services.memory_job_admin_service import hand_over
 
-            await schedule_extraction(
-                db,
-                project_id=str(job.project_id),
-                session_id=str(job.session_id),
-                watermark_sequence=int(job.watermark_sequence or 0),
-            )
-            return False
-        if ahead > window_from:
-            to = min(ahead, int(job.watermark_sequence or 0))
-            return await advance_watermark(db, job, window_from=window_from, to=to)
+        await hand_over(db, job, after_seconds=HAND_OVER_SECONDS)
+        return False
     need = int(settings.get("project_extract_min_new_messages") or 2) if first else 1
     if int(job.watermark_sequence or 0) - window_from < need:
         return False

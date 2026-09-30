@@ -70,6 +70,20 @@ class TestFitting:
         assert fit.metadata() == {"dropped": fit.dropped, "summarized": 0}
         assert LEFT_OUT_NOTE.format(count=fit.dropped) == kept[1]["content"]
 
+    async def test_a_turn_over_the_share_that_leaves_room_to_answer_is_sent_whole(self, db_session):
+        # About 3,300 tokens: over the 75% share (3,000) of a 4,000 window, with room left to answer.
+        messages = _chat(16, chars=1_000)
+        fit = await _fit(db_session, messages)
+        assert fit.tokens_before > fit.budget
+        assert fit.messages is messages and fit.dropped == 0
+
+    async def test_a_turn_that_leaves_no_room_to_answer_is_brought_down_to_the_share(self, db_session):
+        # About 3,800 tokens: past the 3,500 that leave the answer room in a 4,000 window.
+        messages = _chat(60, chars=300)
+        fit = await _fit(db_session, messages)
+        assert fit.tokens_before > WINDOW - 500
+        assert fit.dropped > 0 and fit.tokens_after <= fit.budget == WINDOW * 75 // 100
+
     async def test_a_summary_stands_in_for_what_it_covers(self, db_session):
         messages = _chat(200)
         summary = SimpleNamespace(covered=150, text="Summary of the earlier part: the user squats on Monday.")
@@ -114,9 +128,14 @@ class TestFitting:
         fit = await _fit(db_session, messages)
         assert fit.messages is messages and fit.dropped == 0
 
-    def test_the_window_comes_from_the_catalog_then_litellm(self):
+    def test_the_window_comes_from_the_catalog_then_litellm(self, monkeypatch):
         assert model_window(_model(9_000), "gpt-4o-mini", 0) == 9_000
         assert model_window(_model(None), "gpt-4o-mini", 0) == 128_000
+        # LiteLLM's max_tokens is often the longest answer, not the window: never taken for it.
+        import litellm
+
+        monkeypatch.setattr(litellm, "get_model_info", lambda _model: {"max_tokens": 8_192})
+        assert model_window(_model(None), "answer-sized", 0) is None
         assert model_window(_model(None), "house-model", 0) is None
         assert model_window(_model(None), "house-model", 50_000) == 50_000
 
@@ -170,6 +189,21 @@ async def test_a_long_chat_goes_to_the_provider_fitted_and_the_reply_says_so(db_
     assert len(sent) < len(body["messages"])
     assert sent[-1]["content"] == "What did I say first?"
     assert ctx.context_fit is not None and ctx.context_fit["dropped"] > 0
+
+    # An API client's turn through the gateway is its own: sent as it came.
+    ctx = await build_turn_context(
+        db_session,
+        body,
+        resolved,
+        user_id=user.id,
+        username=user.username,
+        source="gateway",
+        skip_budget=True,
+        alpha_router_api_key_id=None,
+    )
+    await ctx.lease.abandon("test over")
+    assert len(ctx.completion_kwargs["messages"]) == len(body["messages"])
+    assert ctx.context_fit is None
 
 
 @pytest.mark.parametrize(

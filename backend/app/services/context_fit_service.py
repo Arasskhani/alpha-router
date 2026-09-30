@@ -5,8 +5,9 @@ come back as a "context length exceeded" error - or, on OpenRouter, be cut in
 the middle without anyone saying so. Before the turn is sent, its prompt is
 measured with LiteLLM's local tokenizer against the model's window (the
 catalog's ``context_length``, else LiteLLM's own figure, else the
-administrator's default), and a prompt over its share of the window is made
-to fit:
+administrator's default). A prompt that leaves the model room to answer is
+sent as it is; one that does not is brought down to the administrator's
+share of the window:
 
 - the system messages (instructions, memories, profile, tools) stay;
 - the newest messages stay word for word, the new one always;
@@ -37,6 +38,8 @@ logger = logging.getLogger(__name__)
 CHARS_PER_TOKEN = 3
 #: The fewest messages kept word for word, the new one included.
 MIN_KEEP = 2
+#: Room left for the answer when the turn does not say how long it may be (at most an eighth of the window).
+DEFAULT_REPLY_ROOM = 4_096
 
 LEFT_OUT_NOTE = (
     "Note from the system: the {count} oldest messages of this conversation were left out to fit the "
@@ -101,8 +104,8 @@ def model_window(ai_model: Any, model: str, default_tokens: int) -> int | None:
     try:
         import litellm
 
-        info = litellm.get_model_info(model)
-        known = info.get("max_input_tokens") or info.get("max_tokens")
+        # max_input_tokens only: LiteLLM's max_tokens is, for many models, how long an answer may be.
+        known = litellm.get_model_info(model).get("max_input_tokens")
         if known:
             return int(known)
     except Exception:  # noqa: BLE001 -- a model LiteLLM does not know: fall through to the default
@@ -179,18 +182,20 @@ async def _fit(
     if not window:
         return fit
     share = int(settings.get("context_share_percent") or 75)
-    budget = window * share // 100
-    if reply_tokens:
-        budget = min(budget, max(1, window - int(reply_tokens)))
+    reply_room = int(reply_tokens) if reply_tokens else min(DEFAULT_REPLY_ROOM, window // 8)
+    # What the model takes with room left to answer: a prompt within it goes as it is.
+    limit = max(1, window - reply_room)
+    # What a prompt past it is brought down to, so the next turns do not land on the edge again.
+    budget = min(window * share // 100, limit)
     fit.window, fit.budget = window, budget
     total_chars = sum(_chars(message) for message in messages) or 1
-    if total_chars * 3 <= budget:
+    if total_chars * 3 <= limit:
         # No tokenizer makes more than three tokens of a character: this fits, without counting.
         return fit
     measured = count_prompt_tokens(provider_type=provider_type, model=model, messages=messages)
     tokens = measured or total_chars // CHARS_PER_TOKEN
     fit.tokens_before = fit.tokens_after = tokens
-    if tokens <= budget:
+    if tokens <= limit:
         return fit
     if summary is None and summary_loader is not None:
         summary = await summary_loader()

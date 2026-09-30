@@ -594,15 +594,20 @@ async def build_turn_context(  # noqa: C901 -- straight-line preparation moved o
                     messages=turn_messages,
                 )
 
-            fitted: ContextFit = await fit_turn_to_context(
-                db,
-                messages,
-                ai_model=ai_model,
-                provider_type=provider_type,
-                model=model,
-                tools=completion_kwargs.get("tools"),
-                reply_tokens=completion_kwargs.get("max_tokens"),
-                summary_loader=_summary,
+            # Alpha Router's own chat only: an API client's messages are its own, sent as it sent them.
+            fitted: ContextFit = (
+                await fit_turn_to_context(
+                    db,
+                    messages,
+                    ai_model=ai_model,
+                    provider_type=provider_type,
+                    model=model,
+                    tools=completion_kwargs.get("tools"),
+                    reply_tokens=completion_kwargs.get("max_tokens"),
+                    summary_loader=_summary,
+                )
+                if source == "alpha_router_chat"
+                else ContextFit(messages=messages)
             )
         except BaseException:
             await lease.abandon("context fitting error")

@@ -335,7 +335,7 @@ class TestUsingIt:
             resolved,
             user_id=user.id,
             username=user.username,
-            source="api",
+            source="alpha_router_chat",
             skip_budget=True,
             alpha_router_api_key_id=None,
         )

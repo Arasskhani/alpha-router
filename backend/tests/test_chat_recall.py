@@ -643,7 +643,7 @@ class TestForgetting:
         await db_session.commit()
         # The chat goes on after the delete-all.
         for sequence, (role, text) in enumerate(
-            [("user", "What about Friday for my workout?"), ("assistant", "Friday is a rest day.")], start=5
+            [("user", "What is my workout plan on Friday?"), ("assistant", "Friday is a rest day.")], start=5
         ):
             db_session.add(
                 ChatMessage(
@@ -670,6 +670,10 @@ class TestForgetting:
         )
         assert found.block and "Friday" in found.block
         assert "squats on Monday" not in found.block and "stretch every morning" not in found.block
+        # Nor the chat's title (made from what was said before) in the digest.
+        points, _ = await store.scroll(await MemoryVectorService(store).resolve_target_collection(), limit=50)
+        assert any(p.payload.get("kind") == "chat_digest" and p.payload.get("after") == 4 for p in points)
+        assert (await recall._digest_text(db_session, workout, not_before=4)) == "What is my workout plan on Friday?"
 
     async def test_what_the_store_kept_after_delete_all_is_never_recalled(self, db_session, user, store, monkeypatch):
         from app.services.user_memory_service import delete_all_memories

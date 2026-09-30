@@ -213,9 +213,10 @@ def _point_id(session_id: str, *parts: object) -> str:
 async def _digest_text(db: AsyncSession, session: Any, *, not_before: int = 0) -> str:
     """The chat's title and what it was about: its summary when it has one, else its first questions.
 
-    After a delete-all (``not_before``) only what was asked since goes in:
-    the summary, and the chat's first questions, are what was said before
-    it. With nothing asked since, there is no digest at all.
+    After a delete-all (``not_before``) only what was asked since goes in,
+    without the title: the summary, the chat's first questions and the title
+    made from them are what was said before it. With nothing asked since,
+    there is no digest at all.
     """
     body = ""
     if not not_before:
@@ -237,6 +238,9 @@ async def _digest_text(db: AsyncSession, session: Any, *, not_before: int = 0) -
         body = "\n".join(text[:300] for text in map(message_text_for_model, firsts) if text).strip()
     if not body:
         return ""
+    if not_before:
+        # The title was made from what was said before the delete-all, too.
+        return body[:DIGEST_CHARS].strip()
     return f"{session.title or 'Chat'}\n{body}"[:DIGEST_CHARS].strip()
 
 

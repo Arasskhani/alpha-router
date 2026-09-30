@@ -296,7 +296,8 @@ async def _write_digest(db: AsyncSession, row: Any, *, not_before: int, reached:
     from app.services.memory_extraction_service import restates_a_shared_page
 
     settings = await summaries._settings_on(db)
-    if settings is None or not await summaries.owner_allows_summaries(db, await db.get(ChatSession, row.session_id)):
+    session = await db.get(ChatSession, row.session_id)
+    if settings is None or not await summaries.owner_allows_summaries(db, session):
         return None
     if not not_before:
         summary = await db.get(ChatSummary, row.session_id)
@@ -305,8 +306,7 @@ async def _write_digest(db: AsyncSession, row: Any, *, not_before: int, reached:
     valid = row.digest_text and row.digest_after is not None and int(row.digest_after) == int(not_before)
     if valid and int(reached) - int(row.digest_up_to or 0) < DIGEST_REFRESH_MESSAGES:
         return None
-    cap = float(settings.get("summary_monthly_budget_usd") or 0.0)
-    if cap > 0 and await summaries.summary_spend_this_month(db) >= cap:
+    if await summaries.over_budget(db, settings, session):
         return None
     rows = (
         (
@@ -390,6 +390,40 @@ async def _vector_target(db: AsyncSession) -> tuple[Any, str, str]:
     return service, target, f"{provider}:{model}"
 
 
+#: The usage ledger's name for the embeddings of chats for recall (their index and a turn's query).
+RECALL_EMBED_OPERATION = "chat_recall_embed"
+
+
+def _embedding_subject(session: Any) -> Any:
+    """Who a chat's recall embeddings are recorded against: its owner (never charged), or the platform for a
+    project chat."""
+    from app.services.knowledge_embedding_service import EmbeddingMeteringSubject
+
+    if session.project_id:
+        return EmbeddingMeteringSubject(
+            operation_name=RECALL_EMBED_OPERATION, source="memory", client_app="chat_recall", platform=True
+        )
+    return EmbeddingMeteringSubject(
+        operation_name=RECALL_EMBED_OPERATION,
+        source="memory",
+        client_app="chat_recall",
+        user_id=int(session.user_id),
+        charge_budget=False,
+    )
+
+
+async def _over_recall_budget(db: AsyncSession, session: Any) -> bool:
+    """The owner of a personal chat has spent their monthly recall budget: it is indexed no further this month."""
+    if session.project_id:
+        return False
+    cap = float((await get_memory_settings(db)).get("recall_person_monthly_budget_usd") or 0.0)
+    if cap <= 0:
+        return False
+    from app.services.chat_summary_service import spend_this_month
+
+    return await spend_this_month(db, RECALL_EMBED_OPERATION, user_id=int(session.user_id)) >= cap
+
+
 def _owner_payload(session: Any) -> dict[str, Any]:
     if session.project_id:
         return {"scope": "project", "project_id": str(session.project_id)}
@@ -403,6 +437,9 @@ async def index_chat(db: AsyncSession, row: Any, *, limit: int = MAX_EXCHANGES_P
 
     session = await db.get(ChatSession, row.session_id)
     if not _eligible(session) or await _recall_on(db) is None or not await _owner_allows(db, session):
+        return False
+    if await _over_recall_budget(db, session):
+        logger.info("chat recall index skipped, the owner's monthly budget is spent session_id=%s", row.session_id)
         return False
     start = max(int(row.indexed_up_to or 0), int(row.not_before or 0))
     rows = (
@@ -467,13 +504,16 @@ async def index_chat(db: AsyncSession, row: Any, *, limit: int = MAX_EXCHANGES_P
                     digest,
                 )
             )
-        for index in range(0, len(texts), EMBED_BATCH):
-            batch = texts[index : index + EMBED_BATCH]
-            vectors = await embed_memory_texts(db, [text for _pid, _payload, text in batch])
-            points.extend(
-                MemoryVectorPoint(point_id=pid, dense=vector, payload=payload)
-                for (pid, payload, _text), vector in zip(batch, vectors, strict=True)
-            )
+        from app.services.knowledge_embedding_service import metered_embeddings
+
+        with metered_embeddings(_embedding_subject(session)):
+            for index in range(0, len(texts), EMBED_BATCH):
+                batch = texts[index : index + EMBED_BATCH]
+                vectors = await embed_memory_texts(db, [text for _pid, _payload, text in batch])
+                points.extend(
+                    MemoryVectorPoint(point_id=pid, dense=vector, payload=payload)
+                    for (pid, payload, _text), vector in zip(batch, vectors, strict=True)
+                )
         if points:
             if not await _unchanged(db, str(row.session_id), version):
                 logger.info("chat recall index run overtaken by a forget session_id=%s", row.session_id)
@@ -858,8 +898,11 @@ async def _hits(db: AsyncSession, *, query: str, session: Any, settings: dict[st
     from app.services.memory_embedding_service import MemoryEmbeddingUnavailable, embed_memory_texts
     from app.services.memory_vector_service import KIND_CHAT_CHUNK, KIND_CHAT_DIGEST, MemoryVectorService
 
+    from app.services.knowledge_embedding_service import metered_embeddings
+
     try:
-        vectors = await embed_memory_texts(db, [query], settings=settings)
+        with metered_embeddings(_embedding_subject(session)):
+            vectors = await embed_memory_texts(db, [query], settings=settings)
     except MemoryEmbeddingUnavailable:
         return []
     if not vectors:

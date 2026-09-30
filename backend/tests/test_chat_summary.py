@@ -549,6 +549,40 @@ class TestForgetting:
             assert (fresh.content, fresh.up_to_sequence) == ("", 0)
 
 
+class TestPersonalCap:
+    async def test_a_person_past_their_monthly_budget_has_their_chats_summarized_no_further(
+        self, db_session, user, model_on
+    ):
+        from app.models.cost_accounting import UsageOperation
+
+        db_session.add(SystemSetting(key="memory_summary_person_monthly_budget_usd", value="1"))
+        other = User(username="other", email="o@test", hashed_password="x", auth_provider="local", is_active=True)
+        db_session.add(other)
+        await db_session.commit()
+        for owner, usd in ((user, 1.0), (other, 0.2)):
+            db_session.add(
+                UsageOperation(
+                    id=str(uuid.uuid4()),
+                    user_id=owner.id,
+                    operation_type="chat_summary",
+                    source="memory",
+                    status="succeeded",
+                    idempotency_key=str(uuid.uuid4()),
+                    total_cost_usd=usd,
+                    unpriced_event_count=0,
+                    started_at=dt.datetime.utcnow(),
+                )
+            )
+        await db_session.commit()
+        model = _Model()
+        mine = await _row(db_session, await _chat(db_session, user, 60))
+        assert await handle_chat_summary(db_session, mine, completer=model) is False
+        assert model.prompts == [] and mine.up_to_sequence == 0
+        theirs = await _row(db_session, await _chat(db_session, other, 60))
+        await handle_chat_summary(db_session, theirs, completer=model)
+        assert theirs.up_to_sequence == 40
+
+
 class TestThePersonsSwitch:
     async def test_off_their_personal_chats_are_not_summarized_nor_their_summaries_used(
         self, db_session, user, model_on

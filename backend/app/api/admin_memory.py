@@ -59,6 +59,8 @@ class MemorySettingsPatch(BaseModel):
     summary_model_id: int | None = Field(default=None)
     summary_keep_recent: int | None = Field(default=None, ge=4, le=200)
     summary_monthly_budget_usd: float | None = Field(default=None, ge=0, le=1_000_000)
+    summary_person_monthly_budget_usd: float | None = Field(default=None, ge=0, le=1_000_000)
+    recall_person_monthly_budget_usd: float | None = Field(default=None, ge=0, le=1_000_000)
     recall_enabled: bool | None = None
     plan_memory_enabled: bool | None = None
     plan_ttl_days: int | None = Field(default=None, ge=7, le=365)

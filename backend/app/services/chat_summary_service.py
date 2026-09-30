@@ -478,19 +478,33 @@ async def _grown_past(db: AsyncSession, row: Any) -> bool:
     )
 
 
-async def summary_spend_this_month(db: AsyncSession) -> float:
+async def summary_spend_this_month(db: AsyncSession, *, user_id: int | None = None) -> float:
+    """What summaries (and digests) cost this month: everyone's, or one person's personal chats'."""
+    return await spend_this_month(db, OPERATION_TYPE, user_id=user_id)
+
+
+async def spend_this_month(db: AsyncSession, operation_type: str, *, user_id: int | None = None) -> float:
     from app.models.cost_accounting import UsageOperation
 
     now = dt.datetime.utcnow()
-    total = (
-        await db.execute(
-            select(func.coalesce(func.sum(UsageOperation.total_cost_usd), 0)).where(
-                UsageOperation.operation_type == OPERATION_TYPE,
-                UsageOperation.started_at >= dt.datetime(now.year, now.month, 1),
-            )
-        )
-    ).scalar_one()
-    return float(total or 0.0)
+    stmt = select(func.coalesce(func.sum(UsageOperation.total_cost_usd), 0)).where(
+        UsageOperation.operation_type == operation_type,
+        UsageOperation.started_at >= dt.datetime(now.year, now.month, 1),
+    )
+    if user_id is not None:
+        stmt = stmt.where(UsageOperation.user_id == int(user_id))
+    return float((await db.execute(stmt)).scalar_one() or 0.0)
+
+
+async def over_budget(db: AsyncSession, settings: dict[str, Any], session: Any) -> bool:
+    """Summaries have reached a monthly cap for this chat: everyone's, or its owner's (a personal chat)."""
+    cap = float(settings.get("summary_monthly_budget_usd") or 0.0)
+    if cap > 0 and await summary_spend_this_month(db) >= cap:
+        return True
+    person_cap = float(settings.get("summary_person_monthly_budget_usd") or 0.0)
+    if person_cap > 0 and session is not None and not session.project_id:
+        return await summary_spend_this_month(db, user_id=int(session.user_id)) >= person_cap
+    return False
 
 
 @dataclass(frozen=True)
@@ -769,8 +783,7 @@ async def handle_chat_summary(db: AsyncSession, row: Any, *, completer: Any | No
         session = await db.get(ChatSession, session_id)
         if settings is None or not _eligible(session) or not await owner_allows_summaries(db, session):
             return False
-        cap = float(settings.get("summary_monthly_budget_usd") or 0.0)
-        if cap > 0 and await summary_spend_this_month(db) >= cap:
+        if await over_budget(db, settings, session):
             logger.warning("chat summary skipped, monthly budget reached session_id=%s", session_id)
             return False
         model_id = int(settings["summary_model_id"])

@@ -916,6 +916,88 @@ class TestTheWrittenDigest:
         assert row.digest_text is None
 
 
+async def _spent(db, owner: User | None, operation_type: str, usd: float) -> None:
+    from app.models.cost_accounting import UsageOperation
+
+    db.add(
+        UsageOperation(
+            id=str(uuid.uuid4()),
+            user_id=owner.id if owner else None,
+            operation_type=operation_type,
+            source="memory",
+            status="succeeded",
+            idempotency_key=str(uuid.uuid4()),
+            total_cost_usd=usd,
+            unpriced_event_count=0,
+            started_at=dt.datetime.utcnow(),
+        )
+    )
+    await db.commit()
+
+
+class TestSpend:
+    async def test_a_chat_s_embeddings_are_recorded_against_its_owner_or_the_platform(
+        self, db_session, user, store, monkeypatch
+    ):
+        from app.services.knowledge_embedding_service import current_metering_subject
+
+        subjects: list = []
+
+        async def _texts(_db, texts, **_kwargs):
+            subjects.append(current_metering_subject())
+            return [_embed(text) for text in texts]
+
+        monkeypatch.setattr("app.services.memory_embedding_service.embed_memory_texts", _texts)
+        await _indexed(db_session, await _chat(db_session, user, "Workout", WORKOUT))
+        indexed = subjects[-1]
+        assert (indexed.operation_name, indexed.user_id, indexed.charge_budget) == ("chat_recall_embed", user.id, False)
+        await recall_for_turn(
+            db_session,
+            user_id=user.id,
+            chat_session_id=(await _chat(db_session, user, "New", [])).id,
+            messages=_asking("my workout plan"),
+            private_mode=False,
+            via_api_key=False,
+        )
+        asked = subjects[-1]
+        assert (asked.operation_name, asked.user_id, asked.charge_budget) == ("chat_recall_embed", user.id, False)
+        db_session.add(
+            Project(
+                id="proj-s",
+                name="Team",
+                status="active",
+                visibility="private",
+                created_by_user_id=user.id,
+                revision=1,
+                acl_version=1,
+            )
+        )
+        await db_session.flush()
+        db_session.add(ProjectMember(project_id="proj-s", user_id=user.id, role=PROJECT_ROLE_PRIMARY_OWNER))
+        await db_session.commit()
+        await _indexed(db_session, await _chat(db_session, user, "Team plan", WORKOUT, project_id="proj-s"))
+        assert subjects[-1].platform is True and subjects[-1].user_id is None
+
+    async def test_a_person_past_their_monthly_budget_has_their_chats_indexed_no_further(self, db_session, user, store):
+        db_session.add(SystemSetting(key="memory_recall_person_monthly_budget_usd", value="0.5"))
+        await db_session.commit()
+        other = await _person(db_session, "other")
+        await _spent(db_session, user, "chat_recall_embed", 0.5)
+        await _spent(db_session, other, "chat_recall_embed", 0.1)
+        mine = await _indexed(db_session, await _chat(db_session, user, "Workout", WORKOUT))
+        theirs = await _indexed(db_session, await _chat(db_session, other, "Workout", WORKOUT))
+        assert (mine.indexed_up_to, mine.chunk_count) == (0, 0)
+        assert theirs.indexed_up_to == 4
+        # What was spent last month does not count.
+        from app.models.cost_accounting import UsageOperation
+
+        for row in (await db_session.execute(select(UsageOperation))).scalars():
+            row.started_at = dt.datetime.utcnow() - dt.timedelta(days=40)
+        await db_session.commit()
+        await index_chat(db_session, mine)
+        assert mine.indexed_up_to == 4
+
+
 class TestForgetting:
     async def _found(self, db, user) -> list:
         new = await _chat(db, user, "New chat", [])

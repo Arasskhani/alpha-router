@@ -81,6 +81,8 @@ SETTING_KEYS = {
     "memory_summary_model_id": "",
     "memory_summary_keep_recent": "20",
     "memory_summary_monthly_budget_usd": "0",
+    "memory_summary_person_monthly_budget_usd": "0",
+    "memory_recall_person_monthly_budget_usd": "0",
     "memory_recall_enabled": "true",
     "memory_plan_enabled": "true",
     "memory_plan_ttl_days": "90",
@@ -270,6 +272,14 @@ def parse_memory_settings(raw: dict[str, str]) -> dict[str, Any]:
         "summary_monthly_budget_usd": _as_float(
             raw.get("memory_summary_monthly_budget_usd"), 0.0, minimum=0.0, maximum=1_000_000.0
         ),
+        # Per person, their personal chats: summaries and digests; 0 = uncapped.
+        "summary_person_monthly_budget_usd": _as_float(
+            raw.get("memory_summary_person_monthly_budget_usd"), 0.0, minimum=0.0, maximum=1_000_000.0
+        ),
+        # Per person, the embeddings of their personal chats for recall; 0 = uncapped.
+        "recall_person_monthly_budget_usd": _as_float(
+            raw.get("memory_recall_person_monthly_budget_usd"), 0.0, minimum=0.0, maximum=1_000_000.0
+        ),
         # A new turn reads the related parts of the person's earlier chats; needs an embedding model.
         "recall_enabled": _as_bool(raw.get("memory_recall_enabled"), True),
         # Ongoing plans and routines (a workout plan, a diet, a current project), kept while they are mentioned.
@@ -401,6 +411,8 @@ def _raw_from_values(values: dict[str, Any]) -> dict[str, str]:
         "memory_summary_model_id": "" if not values.get("summary_model_id") else str(values["summary_model_id"]),
         "memory_summary_keep_recent": str(values["summary_keep_recent"]),
         "memory_summary_monthly_budget_usd": str(values["summary_monthly_budget_usd"]),
+        "memory_summary_person_monthly_budget_usd": str(values["summary_person_monthly_budget_usd"]),
+        "memory_recall_person_monthly_budget_usd": str(values["recall_person_monthly_budget_usd"]),
         "memory_recall_enabled": "true" if values["recall_enabled"] else "false",
         "memory_plan_enabled": "true" if values["plan_memory_enabled"] else "false",
         "memory_plan_ttl_days": str(values["plan_ttl_days"]),
@@ -456,6 +468,8 @@ async def update_memory_settings(db: AsyncSession, updates: dict[str, Any]) -> d
         "summary_model_id": "memory_summary_model_id",
         "summary_keep_recent": "memory_summary_keep_recent",
         "summary_monthly_budget_usd": "memory_summary_monthly_budget_usd",
+        "summary_person_monthly_budget_usd": "memory_summary_person_monthly_budget_usd",
+        "recall_person_monthly_budget_usd": "memory_recall_person_monthly_budget_usd",
         "recall_enabled": "memory_recall_enabled",
         "plan_memory_enabled": "memory_plan_enabled",
         "plan_ttl_days": "memory_plan_ttl_days",

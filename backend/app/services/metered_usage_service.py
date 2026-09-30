@@ -54,6 +54,8 @@ class MeteredUsageCall:
     #: The catalog row whose pricing prices the call. Left ``None`` the quote
     #: falls back to the provider's or LiteLLM's own figure.
     pricing_model: AIModel | None = None
+    #: False: recorded against the user without moving their budget (``log_usage(charge_budget=False)``).
+    charge_budget: bool = True
 
 
 async def start_metered_usage(
@@ -74,6 +76,7 @@ async def start_metered_usage(
     reserve_budget: bool = True,
     platform: bool = False,
     pricing_model: AIModel | None = None,
+    charge_budget: bool = True,
 ) -> MeteredUsageCall:
     """Reserve a conservative hold before one external metered call.
 
@@ -152,6 +155,7 @@ async def start_metered_usage(
         client_app=client_app[:128],
         metadata=dict(metadata or {}),
         pricing_model=pricing_model,
+        charge_budget=charge_budget,
     )
 
 
@@ -213,6 +217,7 @@ async def finish_metered_usage(
                         operation_type=call.operation_name,
                         operation_idempotency_key=f"metered:{call.id}",
                         subject_type=call.subject_type,
+                        charge_budget=call.charge_budget,
                     )
                     await db.commit()
                 return True

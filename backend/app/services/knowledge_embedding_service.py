@@ -45,6 +45,8 @@ class EmbeddingMeteringSubject:
     user_id: int | None = None
     alpha_router_api_key_id: int | None = None
     username: str | None = None
+    #: False: recorded against the person, their budget neither held nor charged (work done on their behalf).
+    charge_budget: bool = True
 
 
 #: A knowledge-index build spans every document in a release, published by
@@ -254,6 +256,8 @@ class CatalogKnowledgeEmbeddingBackend:
                 metadata={"inputs": len(bounded), "dimensions": dimensions},
                 platform=subject.platform,
                 pricing_model=resolved.catalog_model,
+                reserve_budget=subject.charge_budget,
+                charge_budget=subject.charge_budget,
             )
             if subject is not None
             else None

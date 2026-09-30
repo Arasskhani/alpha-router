@@ -164,6 +164,13 @@ async def _defaults_and_validation() -> None:
         cleared = await update_memory_settings(db, {"extraction_model_id": None})
         assert cleared["extraction_model_id"] is None
 
+        # Per person, each month: summaries of their chats, and their chats' recall embeddings (0 = no cap).
+        assert (cleared["summary_person_monthly_budget_usd"], cleared["recall_person_monthly_budget_usd"]) == (0.0, 0.0)
+        capped = await update_memory_settings(
+            db, {"summary_person_monthly_budget_usd": 2.5, "recall_person_monthly_budget_usd": 0.25}
+        )
+        assert (capped["summary_person_monthly_budget_usd"], capped["recall_person_monthly_budget_usd"]) == (2.5, 0.25)
+
         from app.services.secret_crypto import encrypt_secret
 
         embed_conn = Connection(

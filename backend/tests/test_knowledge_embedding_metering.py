@@ -219,3 +219,27 @@ async def test_an_index_build_embeds_under_the_platform_subject():
     assert all(subject is PLATFORM_INDEXING_SUBJECT for subject in RecordingBackend.subjects)
     # And the block closed behind it.
     assert embeddings.current_metering_subject() is None
+
+
+async def test_work_done_on_a_person_s_behalf_is_recorded_against_them_and_charged_to_nobody(
+    db_session, user, embedding_model, ledger, provider
+):
+    """Recall indexes a person's chats for them: the spend is theirs to see, not taken from their chat budget."""
+    user.budget_used_usd = 0.0
+    await db_session.commit()
+    subject = EmbeddingMeteringSubject(
+        operation_name="chat_recall_embed",
+        source="memory",
+        client_app="chat_recall",
+        user_id=user.id,
+        charge_budget=False,
+    )
+    with metered_embeddings(subject):
+        await _embed(db_session, ["my workout plan"])
+    log = (await db_session.execute(select(RequestLog))).scalars().one()
+    assert log.user_id == user.id and log.total_cost_usd == pytest.approx(37 * PROMPT_RATE)
+    operation = (await db_session.execute(select(UsageOperation))).scalars().one()
+    assert operation.user_id == user.id and operation.operation_type == "chat_recall_embed"
+    assert (await db_session.execute(select(func.count()).select_from(BudgetReservation))).scalar_one() == 0
+    await db_session.refresh(user)
+    assert float(user.budget_used_usd or 0) == 0.0

@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("../api", () => ({ api: vi.fn() }));
 
 import { api } from "../api";
-import { fetchSessionMessagesFromServer, overlayLatestPage, type ChatMessage } from "./chatStorage";
+import { fetchChatSessionById, fetchSessionMessagesFromServer, overlayLatestPage, type ChatMessage } from "./chatStorage";
 
 const mockedApi = vi.mocked(api);
 
@@ -84,5 +84,19 @@ describe("overlayLatestPage", () => {
     expect(overlayLatestPage(local(5, 20), page)).toBe(page);
     const here = local(1, 3);
     expect(overlayLatestPage(here, [])).toBe(here);
+  });
+});
+
+describe("a chat an answer read from, when the list has not loaded it", () => {
+  it("is read by id", async () => {
+    mockedApi.mockResolvedValueOnce({ id: "s-old", title: "Workout", model: "model::1", messageCount: 12, revision: 4 });
+    const found = await fetchChatSessionById("s-old");
+    expect(mockedApi).toHaveBeenCalledWith("/api/user/chat-sessions/s-old");
+    expect(found).toMatchObject({ id: "s-old", title: "Workout", messageCount: 12, messages: [] });
+  });
+
+  it("is nothing when it cannot be read", async () => {
+    mockedApi.mockRejectedValueOnce(new Error("Session not found"));
+    expect(await fetchChatSessionById("s-gone")).toBeNull();
   });
 });

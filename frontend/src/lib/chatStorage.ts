@@ -1644,6 +1644,16 @@ export async function fetchUserChatsFromServer(
   };
 }
 
+/** One of the person's own chats, by id, when the list has not loaded it (null when it cannot be read). */
+export async function fetchChatSessionById(sessionId: string): Promise<ChatSession | null> {
+  try {
+    const raw = await api<Record<string, unknown>>(`/api/user/chat-sessions/${encodeURIComponent(sessionId)}`);
+    return mapApiSession(raw);
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchProjectChatById(
   projectId: string,
   sessionId: string,

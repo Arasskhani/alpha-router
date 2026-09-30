@@ -37,6 +37,7 @@ import {
   clearLocalChatStorage,
   DEFAULT_CHAT_TITLE,
   fetchUserChatsFromServer,
+  fetchChatSessionById,
   fetchProjectChatById,
   fetchProjectChatSync,
   hydrateUserPrefsFromServer,
@@ -2996,6 +2997,29 @@ export default function ChatPanel({
     onProjectChatFocus?.();
     activateSessionFromRef(id);
     syncProjectSessionQuery(id);
+  }
+
+  /**
+   * Open a chat an answer read from. The list holds only the last days of
+   * chats, so one it has not loaded is read by id and put in it first.
+   */
+  async function openRecalledChat(id: string) {
+    if (!sessionsRef.current.some((row) => row.id === id)) {
+      const fetched =
+        isProjectChat && projectId ? await fetchProjectChatById(projectId, id) : await fetchChatSessionById(id);
+      if (!fetched) {
+        setChatError("That chat could not be opened. It may have been deleted.");
+        return;
+      }
+      if (!sessionsRef.current.some((row) => row.id === id)) {
+        const next = isProjectChat
+          ? sortProjectSessions([fetched, ...sessionsRef.current])
+          : [...sessionsRef.current, fetched];
+        sessionsRef.current = next;
+        setSessions(next);
+      }
+    }
+    selectSession(id);
   }
 
   async function togglePinSession(session: ChatSession) {
@@ -6710,8 +6734,7 @@ export default function ChatPanel({
                       <button
                         type="button"
                         className="alpha-router-msg-recall-link"
-                        disabled={!sessions.some((s) => s.id === chat.id)}
-                        onClick={() => selectSession(chat.id)}
+                        onClick={() => void openRecalledChat(chat.id)}
                       >
                         {chat.title || "Untitled chat"}
                       </button>

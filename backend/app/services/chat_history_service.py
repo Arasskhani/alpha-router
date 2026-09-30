@@ -107,15 +107,16 @@ def message_text_for_model(content: Any) -> str:
     return text
 
 
-async def older_chat_messages(
+async def _read_older(
     db: AsyncSession,
     session_id: str,
     *,
     before_sequence: int,
     limit: int = MAX_COMPLETED_MESSAGES,
     max_chars: int | None = None,
-) -> list[dict[str, str]]:
-    """The chat's user and assistant messages older than ``before_sequence``, oldest first, as the model reads them.
+) -> tuple[list[dict[str, str]], bool]:
+    """The chat's user and assistant messages older than ``before_sequence``, oldest first, as the model reads them;
+    and whether the character budget cut them short.
 
     Read newest first, a batch at a time, up to ``limit`` messages and
     ``max_chars`` characters (``MAX_COMPLETED_CHARS``): the ones nearest the
@@ -144,14 +145,14 @@ async def older_chat_messages(
             if not text:
                 continue
             if total + len(text) > budget:
-                return list(reversed(newest_first))
+                return list(reversed(newest_first)), True
             newest_first.append({"role": str(role), "content": text})
             total += len(text)
         read += len(rows)
         if len(rows) < READ_BATCH:
             break
         upper = int(rows[-1][0])
-    return list(reversed(newest_first))
+    return list(reversed(newest_first)), False
 
 
 async def complete_chat_history(
@@ -169,11 +170,13 @@ async def complete_chat_history(
     A failure to read leaves the turn as it came (in a savepoint, so it
     does not take the turn's transaction with it).
     """
+    from app.services.observability import observe_chat_history_completion
+
     if not history_from_sequence or int(history_from_sequence) <= 1 or not chat_session_id:
         return messages, 0
     try:
         async with db.begin_nested():
-            return await _complete(
+            completed, added, outcome = await _complete(
                 db,
                 user=user,
                 chat_session_id=chat_session_id,
@@ -182,7 +185,10 @@ async def complete_chat_history(
             )
     except Exception:
         logger.exception("completing a turn's history failed session_id=%s; sent as it came", chat_session_id)
+        observe_chat_history_completion("failed")
         return messages, 0
+    observe_chat_history_completion(outcome, added=added)
+    return completed, added
 
 
 async def _complete(
@@ -192,23 +198,24 @@ async def _complete(
     chat_session_id: str,
     messages: list[dict],
     history_from_sequence: int,
-) -> tuple[list[dict], int]:
+) -> tuple[list[dict], int, str]:
+    """The completed messages, how many were put in front, and the outcome for the metric."""
     from app.services.chat_session_access import resolve_owned_chat_session
     from app.services.memory_settings_service import get_memory_settings
 
     settings = await get_memory_settings(db)
     if not settings.get("history_completion_enabled", True):
-        return messages, 0
+        return messages, 0, "off"
     try:
         session = await resolve_owned_chat_session(db, user=user, chat_session_id=chat_session_id)
     except HTTPException:
         # Not this person's chat: the turn's own checks answer for that, as before.
-        return messages, 0
+        return messages, 0, "refused"
     if session is None or bool(session.private_mode):
-        return messages, 0
-    older = await older_chat_messages(db, str(session.id), before_sequence=int(history_from_sequence))
+        return messages, 0, "refused"
+    older, capped = await _read_older(db, str(session.id), before_sequence=int(history_from_sequence))
     if not older:
-        return messages, 0
+        return messages, 0, "nothing_older"
     lead = 0
     while lead < len(messages) and str((messages[lead] or {}).get("role") or "") == "system":
         lead += 1
@@ -218,4 +225,4 @@ async def _complete(
         len(older),
         history_from_sequence,
     )
-    return [*messages[:lead], *older, *messages[lead:]], len(older)
+    return [*messages[:lead], *older, *messages[lead:]], len(older), "capped" if capped else "completed"

@@ -212,6 +212,19 @@ _MEMORY_INJECTED = Histogram(
     buckets=(0, 1, 2, 4, 6, 8, 12, 20, 30),
     **_metric_kwargs,
 )
+_CHAT_HISTORY_COMPLETED = PrometheusCounter(
+    "alpharouter_chat_history_completed_total",
+    "Turns whose older messages the server was asked to put in front, by bounded outcome.",
+    ("outcome",),
+    **_metric_kwargs,
+)
+_CHAT_HISTORY_ADDED = Histogram(
+    "alpharouter_chat_history_completed_messages",
+    "Older messages the server put in front of one turn.",
+    (),
+    buckets=(1, 10, 50, 100, 250, 500, 1000, 2500, 5000),
+    **_metric_kwargs,
+)
 _MEMORY_EMBEDDING_BACKLOG = Gauge(
     "alpharouter_memory_embedding_backlog",
     "Pending or failed memory embeddings awaiting index.",
@@ -337,6 +350,16 @@ def observe_memory_extract_job(*, outcome: str, duration_seconds: float | None =
         _MEMORY_EXTRACT_DURATION.labels(scope=scope_label).observe(max(0.0, float(duration_seconds)))
     if label == "failed":
         increment("memory_extract_failed")
+
+
+_CHAT_HISTORY_OUTCOMES = frozenset({"completed", "capped", "nothing_older", "off", "refused", "failed"})
+
+
+def observe_chat_history_completion(outcome: str, *, added: int = 0) -> None:
+    """A turn that said where its history starts: what the server did about the older messages."""
+    _CHAT_HISTORY_COMPLETED.labels(outcome=_bounded_label(outcome, _CHAT_HISTORY_OUTCOMES)).inc()
+    if added > 0:
+        _CHAT_HISTORY_ADDED.observe(int(added))
 
 
 def observe_memory_item(op: str, *, scope: str = "user") -> None:

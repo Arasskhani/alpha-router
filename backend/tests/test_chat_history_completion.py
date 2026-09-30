@@ -151,7 +151,7 @@ class TestCompletion:
         async def _broken(db, *_args, **_kwargs):
             await db.execute(text("SELECT no_such_column FROM chat_messages"))
 
-        monkeypatch.setattr(chat_history_service, "older_chat_messages", _broken)
+        monkeypatch.setattr(chat_history_service, "_read_older", _broken)
         db_session.add(SystemSetting(key="turn_marker", value="kept"))
         sent = _page(30, 11)
         messages, added = await complete_chat_history(
@@ -160,6 +160,42 @@ class TestCompletion:
         assert (messages, added) == (sent, 0)
         await db_session.commit()  # the turn's own transaction goes on (on PostgreSQL too)
         assert (await db_session.get(SystemSetting, "turn_marker")).value == "kept"
+
+    async def test_each_turn_s_outcome_is_counted(self, db_session, user, monkeypatch):
+        from app.services import chat_history_service
+        from app.services.observability import prometheus_payload
+
+        def _count(outcome: str) -> float:
+            text = prometheus_payload()[0].decode()
+            for line in text.splitlines():
+                if line.startswith(f'alpharouter_chat_history_completed_total{{outcome="{outcome}"}}'):
+                    return float(line.rsplit(" ", 1)[1])
+            return 0.0
+
+        session_id = await _chat(db_session, user, 30)
+        before = {name: _count(name) for name in ("completed", "capped", "off", "refused")}
+        await complete_chat_history(
+            db_session, user=user, chat_session_id=session_id, messages=_page(30, 11), history_from_sequence=11
+        )
+        await complete_chat_history(
+            db_session, user=user, chat_session_id="no-such-chat", messages=_page(30, 11), history_from_sequence=11
+        )
+        monkeypatch.setattr(chat_history_service, "MAX_COMPLETED_CHARS", 30)
+        await complete_chat_history(
+            db_session, user=user, chat_session_id=session_id, messages=_page(30, 11), history_from_sequence=11
+        )
+        db_session.add(SystemSetting(key="memory_history_completion_enabled", value="false"))
+        await db_session.commit()
+        await complete_chat_history(
+            db_session, user=user, chat_session_id=session_id, messages=_page(30, 11), history_from_sequence=11
+        )
+        after = {name: _count(name) for name in before}
+        assert {name: after[name] - before[name] for name in before} == {
+            "completed": 1,
+            "capped": 1,
+            "off": 1,
+            "refused": 1,
+        }
 
 
 class TestTheModelsReading:

@@ -43,6 +43,8 @@ type MemorySettings = {
   summary_model_id: number | null;
   summary_keep_recent: number;
   summary_monthly_budget_usd: number;
+  summary_person_monthly_budget_usd: number;
+  recall_person_monthly_budget_usd: number;
   recall_enabled: boolean;
   recall_max_items: number;
   recall_max_chars: number;
@@ -1058,6 +1060,19 @@ export default function MemoryAdmin() {
                   onChange={(n) => patch({ summary_monthly_budget_usd: n })}
                 />
               </FieldRow>
+              <FieldRow
+                title="Monthly summary budget per person"
+                hint="US dollars, for each person's own chats (project chats count toward the budget above only). 0 means no limit; past it, that person's chats are summarized no further until the 1st."
+              >
+                <NumberInput
+                  id="memory-summary-person-budget"
+                  value={settings.summary_person_monthly_budget_usd}
+                  step="0.5"
+                  min={0}
+                  disabled={readOnly}
+                  onChange={(n) => patch({ summary_person_monthly_budget_usd: n })}
+                />
+              </FieldRow>
             </div>
           </section>
 
@@ -1119,6 +1134,19 @@ export default function MemoryAdmin() {
                   min={0}
                   disabled={readOnly}
                   onChange={(n) => patch({ recall_min_similarity: n })}
+                />
+              </FieldRow>
+              <FieldRow
+                title="Monthly indexing budget per person"
+                hint="US dollars, for the embeddings of each person's own chats, which API Logs records against them as “Chat recall index”. 0 means no limit; past it, that person's new messages are indexed no further until the 1st, and what is indexed is still recalled."
+              >
+                <NumberInput
+                  id="memory-recall-person-budget"
+                  value={settings.recall_person_monthly_budget_usd}
+                  step="0.1"
+                  min={0}
+                  disabled={readOnly}
+                  onChange={(n) => patch({ recall_person_monthly_budget_usd: n })}
                 />
               </FieldRow>
               <FieldRow

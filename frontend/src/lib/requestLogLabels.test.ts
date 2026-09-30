@@ -8,6 +8,12 @@ describe("operationTypeLabel", () => {
     expect(operationTypeLabel("transcription")).toBe("Transcription");
   });
 
+  it("names the work memory does for a person in words", () => {
+    expect(operationTypeLabel("memory_extract")).toBe("Memory learning");
+    expect(operationTypeLabel("chat_summary")).toBe("Chat summary");
+    expect(operationTypeLabel("chat_recall_embed")).toBe("Chat recall index");
+  });
+
   it("passes an unknown kind through rather than hiding it", () => {
     expect(operationTypeLabel("rerank")).toBe("Rerank");
     expect(operationTypeLabel("something_new")).toBe("Something_new");

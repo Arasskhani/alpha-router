@@ -195,6 +195,9 @@ export function operationTypeLabel(value: string | null | undefined): string {
     transcription: "Transcription",
     embedding: "Embedding",
     rerank: "Rerank",
+    memory_extract: "Memory learning",
+    chat_summary: "Chat summary",
+    chat_recall_embed: "Chat recall index",
   };
   return labels[key] || (key ? key.charAt(0).toUpperCase() + key.slice(1) : "—");
 }

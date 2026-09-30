@@ -52,6 +52,8 @@ const SETTINGS = {
   summary_model_id: null as number | null,
   summary_keep_recent: 20,
   summary_monthly_budget_usd: 0,
+  summary_person_monthly_budget_usd: 0,
+  recall_person_monthly_budget_usd: 0,
   recall_enabled: true,
   recall_max_items: 4,
   recall_max_chars: 3000,
@@ -424,6 +426,32 @@ describe("long chats", () => {
     const body = JSON.parse(String((patchCall?.[1] as RequestInit).body));
     expect(body.context_fit_enabled).toBe(false);
     expect(body.summary_keep_recent).toBe(30);
+  });
+
+  it("has a budget per person for summaries and one for indexing, sent on Save", async () => {
+    answerWith({ extraction_model_id: 7, summary_model_id: 7, embedding_model: "openai:text-embedding-3-small" });
+    await render();
+    for (const [id, value] of [
+      ["#memory-summary-person-budget", "2.5"],
+      ["#memory-recall-person-budget", "0.3"],
+    ] as const) {
+      const input = host.querySelector<HTMLInputElement>(id);
+      expect(input?.value).toBe("0");
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, value);
+        input?.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    }
+    expect(host.textContent).toContain("Monthly summary budget per person");
+    expect(host.textContent).toContain("Monthly indexing budget per person");
+    const form = host.querySelector<HTMLFormElement>("#memory-settings-form");
+    await act(async () => {
+      form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    const patchCall = vi.mocked(api).mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === "PATCH");
+    const body = JSON.parse(String((patchCall?.[1] as RequestInit).body));
+    expect(body.summary_person_monthly_budget_usd).toBe(2.5);
+    expect(body.recall_person_monthly_budget_usd).toBe(0.3);
   });
 
   it("describes what a summary does once a model is chosen", async () => {

@@ -297,6 +297,37 @@ def test_project_member_can_reference_project_media():
         try:
             async with factory() as db:
                 owner = await _user(db, "owner")
+                member = await _user(db, "member")
+                await _project(db, owner, (member, PROJECT_ROLE_CONTRIBUTOR))
+                asset = _project_media(db, owner)
+                session = await _session(db, member, id="proj-chat", project_id=PROJ)
+                await db.flush()
+                with patch(
+                    "app.services.attachment_from_media_service.get_transfer_limits",
+                    AsyncMock(return_value=TRANSFER),
+                ):
+                    out = await attachments_from_existing_media(
+                        db,
+                        member,
+                        [asset.id],
+                        chat_session_id=session.id,
+                    )
+                assert out[0]["url"] == f"/api/projects/{PROJ}/media/{asset.id}/download"
+                assert "data_url" not in out[0]
+        finally:
+            await engine.dispose()
+
+    _run(run())
+
+
+def test_a_viewer_attaches_nothing_to_a_project_chat_even_one_they_started():
+    """A viewer cannot write in the project's chats: one they started as a contributor is no exception."""
+
+    async def run():
+        factory, engine = await _factory()
+        try:
+            async with factory() as db:
+                owner = await _user(db, "owner")
                 viewer = await _user(db, "viewer")
                 await _project(db, owner, (viewer, PROJECT_ROLE_VIEWER))
                 asset = _project_media(db, owner)
@@ -306,14 +337,9 @@ def test_project_member_can_reference_project_media():
                     "app.services.attachment_from_media_service.get_transfer_limits",
                     AsyncMock(return_value=TRANSFER),
                 ):
-                    out = await attachments_from_existing_media(
-                        db,
-                        viewer,
-                        [asset.id],
-                        chat_session_id=session.id,
-                    )
-                assert out[0]["url"] == f"/api/projects/{PROJ}/media/{asset.id}/download"
-                assert "data_url" not in out[0]
+                    with pytest.raises(HTTPException) as refused:
+                        await attachments_from_existing_media(db, viewer, [asset.id], chat_session_id=session.id)
+                assert refused.value.status_code == 404
         finally:
             await engine.dispose()
 

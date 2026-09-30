@@ -652,6 +652,8 @@ async def maybe_schedule_chat_index(
 async def _schedule_chat_index(db: AsyncSession, *, session: Any, latest_sequence: int, delay_seconds: int) -> bool:
     if await _recall_on(db) is None or not _eligible(session) or not await _owner_allows(db, session):
         return False
+    if await _over_recall_budget(db, session):
+        return False
     row = await _row_for(db, session)
     now = dt.datetime.utcnow()
     if _busy(row, now):
@@ -703,9 +705,10 @@ async def finish_chat_index(db: AsyncSession, row: Any, *, error: Exception | No
     now = dt.datetime.utcnow()
     if error is None:
         row.last_error = None
-        if more or await _finished_beyond(db, row):
+        if (more or await _finished_beyond(db, row)) and await _may_run(db, row):
             # More than one run reads, or a reply finished while this run held the row (its own queuing saw
-            # the row busy and let it be): run again.
+            # the row busy and let it be): run again - unless what stopped this run (a switch, the owner's
+            # budget) would stop the next one too; the chat's next reply queues it again.
             row.attempt_count = 0
             await _queue(db, row, now + dt.timedelta(seconds=5))
             return "pending"
@@ -723,6 +726,14 @@ async def finish_chat_index(db: AsyncSession, row: Any, *, error: Exception | No
         return "failed"
     await _queue(db, row, now + dt.timedelta(seconds=min(3600, 30 * (2 ** int(row.attempt_count or 0)))))
     return "retry"
+
+
+async def _may_run(db: AsyncSession, row: Any) -> bool:
+    """Whether a run for this row could index anything now: recall on, the owner allowing it, their budget left."""
+    session = await db.get(ChatSession, row.session_id)
+    if not _eligible(session) or await _recall_on(db) is None or not await _owner_allows(db, session):
+        return False
+    return not await _over_recall_budget(db, session)
 
 
 async def _finished_beyond(db: AsyncSession, row: Any) -> bool:

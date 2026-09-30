@@ -995,10 +995,16 @@ class TestSpend:
         other = await _person(db_session, "other")
         await _spent(db_session, user, "chat_recall_embed", 0.5)
         await _spent(db_session, other, "chat_recall_embed", 0.1)
-        mine = await _indexed(db_session, await _chat(db_session, user, "Workout", WORKOUT))
+        my_chat = await _chat(db_session, user, "Workout", WORKOUT)
+        mine = await _indexed(db_session, my_chat)
         theirs = await _indexed(db_session, await _chat(db_session, other, "Workout", WORKOUT))
         assert (mine.indexed_up_to, mine.chunk_count) == (0, 0)
         assert theirs.indexed_up_to == 4
+        # Left idle, not queued again every few seconds; nor queued by a reply while the budget is spent.
+        from app.services.chat_recall_service import finish_chat_index
+
+        assert await finish_chat_index(db_session, mine, error=None) == "idle"
+        assert not await maybe_schedule_chat_index(db_session, session=my_chat, latest_sequence=4)
         # What was spent last month does not count.
         from app.models.cost_accounting import UsageOperation
 

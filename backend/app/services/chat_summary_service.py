@@ -181,6 +181,8 @@ async def _schedule_summary(db: AsyncSession, *, session: Any, latest_sequence: 
     settings = await _settings_on(db)
     if settings is None or not _eligible(session) or not await owner_allows_summaries(db, session):
         return
+    if await over_budget(db, settings, session):
+        return
     keep = int(settings.get("summary_keep_recent") or 20)
     target = int(latest_sequence) - keep
     if target <= 0:
@@ -440,9 +442,10 @@ async def finish_summary(db: AsyncSession, row: Any, *, error: Exception | None,
     now = dt.datetime.utcnow()
     if error is None:
         row.last_error = None
-        if more or await _grown_past(db, row):
+        if (more or await _grown_past(db, row)) and await _may_run(db, row):
             # More than one run folds, or the chat grew by a part while this run held the row (its own queuing
-            # saw the row busy and let it be): run again.
+            # saw the row busy and let it be): run again - unless what stopped this run (a switch, a budget)
+            # would stop the next one too; the chat's next reply queues it again.
             row.attempt_count = 0
             await _queue(db, row, now + dt.timedelta(seconds=5))
         else:
@@ -460,6 +463,15 @@ async def finish_summary(db: AsyncSession, row: Any, *, error: Exception | None,
         return "failed"
     await _queue(db, row, now + dt.timedelta(seconds=min(3600, 30 * (2 ** int(row.attempt_count or 0)))))
     return "retry"
+
+
+async def _may_run(db: AsyncSession, row: Any) -> bool:
+    """Whether a run for this row could summarize anything now: summaries on, the owner allowing it, budget left."""
+    settings = await _settings_on(db)
+    session = await db.get(ChatSession, row.session_id)
+    if settings is None or not _eligible(session) or not await owner_allows_summaries(db, session):
+        return False
+    return not await over_budget(db, settings, session)
 
 
 async def _grown_past(db: AsyncSession, row: Any) -> bool:

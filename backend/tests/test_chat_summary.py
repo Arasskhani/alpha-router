@@ -575,9 +575,16 @@ class TestPersonalCap:
             )
         await db_session.commit()
         model = _Model()
-        mine = await _row(db_session, await _chat(db_session, user, 60))
+        mine_chat = await _chat(db_session, user, 60)
+        mine = await _row(db_session, mine_chat)
         assert await handle_chat_summary(db_session, mine, completer=model) is False
         assert model.prompts == [] and mine.up_to_sequence == 0
+        # The run leaves the chat idle, not queued again every few seconds until the month is over; nor does
+        # a reply queue it while the budget is spent.
+        assert await finish_summary(db_session, mine, error=None) == "idle"
+        await db_session.commit()
+        await maybe_schedule_summary(db_session, session=mine_chat, latest_sequence=60)
+        assert await _events(db_session) == []
         theirs = await _row(db_session, await _chat(db_session, other, 60))
         await handle_chat_summary(db_session, theirs, completer=model)
         assert theirs.up_to_sequence == 40

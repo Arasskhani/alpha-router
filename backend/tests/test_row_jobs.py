@@ -142,3 +142,55 @@ async def test_two_deliveries_at_once_never_both_take_the_row(db_session, sessio
         also = await asyncio.wait_for(racing, timeout=10)
         await second.commit()
     assert taken is not None and also is None
+
+
+async def test_the_work_runs_only_while_the_row_is_still_the_worker_s(db_session, session_factory, user):
+    from app.services.knowledge_job_handlers import KnowledgeJobContext
+    from app.services.knowledge_queue import QueueMessage
+    from app.services.knowledge_worker_service import KnowledgeWorker
+    from tests.test_memory_worker_dispatch import FakeRedis
+
+    session_id = await _chat(db_session, user)
+    db_session.add(_summary_row(session_id, user.id, status="pending", lease_in=None, attempts=0))
+    await db_session.commit()
+    handled: list[str] = []
+
+    async def _claim_then_lose_it(db, *, session_id: str, worker_id: str):
+        row = await summaries.claim_summary(db, session_id=session_id, worker_id=worker_id)
+        # Taken over between the claim and the work (a lease that ran out, another worker).
+        row.worker_id = "worker-2"
+        return row
+
+    async def _handle(_db, row):
+        handled.append(row.session_id)
+        return False
+
+    async def _nothing(*_args, **_kwargs):
+        return None
+
+    worker = KnowledgeWorker(
+        session_factory=session_factory,
+        redis=FakeRedis(),
+        consumer_name="worker-1",
+        context=KnowledgeJobContext(qdrant=None),
+    )
+    message = QueueMessage(
+        stream_id="1-0",
+        event_id="e1",
+        event_type=summaries.EVENT_TYPE,
+        aggregate_type=summaries.AGGREGATE_TYPE,
+        aggregate_id=session_id,
+        payload={"session_id": session_id},
+    )
+    await worker._process_row_job(
+        message,
+        model=ChatSummary,
+        key=session_id,
+        claim=_claim_then_lose_it,
+        redeliver=_nothing,
+        heartbeat=summaries.heartbeat_summary,
+        handle=_handle,
+        finish=summaries.finish_summary,
+        lease_seconds=60,
+    )
+    assert handled == []

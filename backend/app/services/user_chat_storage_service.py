@@ -1048,9 +1048,9 @@ async def delete_chat_session(db: AsyncSession, user_id: int, session_id: str) -
         return False
     await db.delete(row)
     await db.flush()
-    from app.services.chat_recall_service import drop_chat_vectors
+    from app.services.chat_recall_service import queue_vector_drop
 
-    await drop_chat_vectors([session_id])
+    await queue_vector_drop(db, session_id, below=None)
     return True
 
 

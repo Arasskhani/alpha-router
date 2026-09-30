@@ -152,6 +152,17 @@ async def _live_answer(db, chat: ChatSession, owner: User, *, content: str = "",
     return row
 
 
+async def _drain_drops(db) -> list[str]:
+    """Run the queued deletions of chat points, as the knowledge worker does once the forget has committed."""
+    stmt = select(OutboxEvent).where(OutboxEvent.event_type == recall.DROP_EVENT_TYPE, OutboxEvent.status == "pending")
+    outcomes = []
+    for event in list((await db.execute(stmt)).scalars().all()):
+        event.status = "processed"
+        outcomes.append(await recall.handle_vector_drop(db, dict(event.payload_json)))
+        await db.commit()
+    return outcomes
+
+
 async def _queued_index(db) -> list[str]:
     stmt = select(OutboxEvent.aggregate_id).where(OutboxEvent.event_type == "chat_index.job.ready")
     return list((await db.execute(stmt)).scalars().all())
@@ -1019,6 +1030,8 @@ class TestForgetting:
         assert await self._found(db_session, user)
         await delete_chat_session(db_session, user.id, workout.id)
         await db_session.commit()
+        # The deletion is queued with it, and runs once it has committed.
+        assert await _drain_drops(db_session) == ["succeeded"]
         points, _ = await store.scroll(await MemoryVectorService(store).resolve_target_collection(), limit=50)
         assert all(p.payload.get("session_id") != workout.id for p in points)
 
@@ -1087,10 +1100,11 @@ class TestForgetting:
             raise ConnectionError("vector store down")
 
         # The store is down while the person deletes everything: the vectors stay in it.
-        monkeypatch.setattr(MemoryVectorService, "delete_sessions", _unreachable)
+        monkeypatch.setattr(MemoryVectorService, "delete_chat_points", _unreachable)
         monkeypatch.setattr(MemoryVectorService, "delete_user", _unreachable)
         await delete_all_memories(db_session, user.id)
         await db_session.commit()
+        assert await _drain_drops(db_session) == ["retry"]
         points, _ = await store.scroll(await MemoryVectorService(store).resolve_target_collection(), limit=50)
         assert any(p.payload.get("session_id") == workout.id for p in points)
         assert await self._found(db_session, user) == []
@@ -1142,13 +1156,9 @@ class TestForgetting:
         workout_id = workout.id  # the run rolls its session back: its objects expire
         real_upsert = MemoryVectorService.upsert
 
-        async def _nothing(_ids):
-            return None
-
         async def _upsert_then_forgotten(self, **kwargs):
             await real_upsert(self, **kwargs)
             # The chat is rewritten just after the store took the vectors (and before the run's row write).
-            monkeypatch.setattr(recall, "drop_chat_vectors", _nothing)
             async with session_factory() as other:
                 await forget_chats(other, [workout_id])
                 await other.commit()
@@ -1169,6 +1179,7 @@ class TestForgetting:
         await db_session.commit()
         await save_user_prefs(db_session, user.id, {switch: False})
         await db_session.commit()
+        assert await _drain_drops(db_session) == ["succeeded"]
         points, _ = await store.scroll(await MemoryVectorService(store).resolve_target_collection(), limit=50)
         assert all(p.payload.get("session_id") != workout.id for p in points)
         await db_session.refresh(row)
@@ -1197,6 +1208,7 @@ class TestForgetting:
         with patch("app.services.retention_policy_service.append_governance_audit_event"):
             await purge_expired_chat_messages(db_session, retention_days=30)
         await db_session.commit()
+        assert await _drain_drops(db_session) == ["succeeded"]
 
         points, _ = await store.scroll(await MemoryVectorService(store).resolve_target_collection(), limit=50)
         mine = [p.payload for p in points if p.payload.get("session_id") == workout.id]
@@ -1204,16 +1216,61 @@ class TestForgetting:
         assert all(p["kind"] == KIND_CHAT_CHUNK for p in mine)  # the digest was made of the start
         await db_session.refresh(row)
         assert (row.indexed_up_to, row.chunk_count, row.digest_hash) == (8, 2, None)
+        # What the purge left is still recalled: current under its generation.
+        assert all(p["gen"] == row.generation == 1 for p in mine)
+        found = await recall_for_turn(
+            db_session,
+            user_id=user.id,
+            chat_session_id=(await _chat(db_session, user, "New", [])).id,
+            messages=_asking("What about Friday, a rest day?"),
+            private_mode=False,
+            via_api_key=False,
+        )
+        assert found.chats and "Friday is a rest day." in found.block
 
     async def test_a_rewritten_chat_is_indexed_again_from_what_is_left(self, db_session, user, store):
         workout = await _chat(db_session, user, "Workout", WORKOUT)
         row = await _indexed(db_session, workout)
         await forget_chats(db_session, [workout.id])
         await db_session.commit()
-        assert (row.indexed_up_to, row.not_before, row.chunk_count) == (0, 0, 0)
+        assert (row.indexed_up_to, row.not_before, row.chunk_count, row.generation) == (0, 0, 0, 1)
+        # Nothing written before the forget is recalled, even while the store still holds it.
         assert await self._found(db_session, user) == []
         await index_chat(db_session, row)
         assert await self._found(db_session, user)
+        # The queued deletion takes only what was written before the forget.
+        assert await _drain_drops(db_session) == ["succeeded"]
+        points, _ = await store.scroll(await MemoryVectorService(store).resolve_target_collection(), limit=50)
+        assert {p.payload["gen"] for p in points if p.payload.get("session_id") == workout.id} == {1}
+        assert await self._found(db_session, user)
+
+    async def test_a_deletion_the_store_was_down_for_is_tried_again_later(self, db_session, user, store, monkeypatch):
+        workout = await _chat(db_session, user, "Workout", WORKOUT)
+        await _indexed(db_session, workout)
+        real = MemoryVectorService.delete_chat_points
+
+        async def _down(*_args, **_kwargs):
+            raise ConnectionError("vector store down")
+
+        monkeypatch.setattr(MemoryVectorService, "delete_chat_points", _down)
+        await forget_chats(db_session, [workout.id])
+        await db_session.commit()
+        stmt = select(OutboxEvent).where(OutboxEvent.event_type == recall.DROP_EVENT_TYPE)
+        first = (await db_session.execute(stmt)).scalars().one()
+        assert first.payload_json["below"] == 1 and first.payload_json["attempt"] == 0
+        assert await _drain_drops(db_session) == ["retry"]
+        again = [e for e in (await db_session.execute(stmt)).scalars() if e.status == "pending"]
+        assert len(again) == 1 and again[0].payload_json["attempt"] == 1
+        assert again[0].available_at > dt.datetime.utcnow()
+        # The store is back when it is tried again: the points go.
+        monkeypatch.setattr(MemoryVectorService, "delete_chat_points", real)
+        assert await _drain_drops(db_session) == ["succeeded"]
+        points, _ = await store.scroll(await MemoryVectorService(store).resolve_target_collection(), limit=50)
+        assert all(p.payload.get("session_id") != workout.id for p in points)
+        # And a deletion that keeps failing is given up after its last try.
+        monkeypatch.setattr(MemoryVectorService, "delete_chat_points", _down)
+        last = {**first.payload_json, "attempt": recall.DROP_MAX_ATTEMPTS - 1}
+        assert await recall.handle_vector_drop(db_session, last) == "dead"
 
 
 async def test_a_turn_goes_to_the_model_with_what_it_recalled_and_says_where_from(db_session, user, store, monkeypatch):
@@ -1293,6 +1350,31 @@ async def test_the_knowledge_worker_indexes_a_chat(db_session, session_factory, 
     async with session_factory() as other:
         row = await other.get(ChatRecallIndex, chat.id)
         assert (row.status, row.indexed_up_to, row.chunk_count) == ("idle", 4, 2)
+
+
+async def test_the_knowledge_worker_deletes_a_forgotten_chat_s_points(db_session, session_factory, user, store):
+    from app.services.knowledge_job_handlers import KnowledgeJobContext
+    from app.services.knowledge_queue import ensure_consumer_group, read_new_messages
+    from app.services.knowledge_worker_service import KnowledgeWorker
+    from app.services.outbox_service import relay_outbox_once
+    from tests.test_memory_worker_dispatch import FakeRedis
+
+    chat = await _chat(db_session, user, "Workout", WORKOUT)
+    await _indexed(db_session, chat)
+    await forget_chats(db_session, [chat.id])
+    await db_session.commit()
+    redis = FakeRedis()
+    await relay_outbox_once(session_factory, redis, worker_id="scheduler-1")
+    await ensure_consumer_group(redis)
+    messages = await read_new_messages(redis, consumer_name="worker-1")
+    assert [message.event_type for message in messages] == [recall.DROP_EVENT_TYPE]
+    worker = KnowledgeWorker(
+        session_factory=session_factory, redis=redis, consumer_name="worker-1", context=KnowledgeJobContext(qdrant=None)
+    )
+    result = await worker.process_message(messages[0])
+    assert result.outcome == "succeeded" and redis.acked == [messages[0].stream_id]
+    points, _ = await store.scroll(await MemoryVectorService(store).resolve_target_collection(), limit=50)
+    assert all(p.payload.get("session_id") != chat.id for p in points)
 
 
 async def test_the_trailer_and_the_stored_answer_name_the_chats_read_from(monkeypatch, db_session, user):

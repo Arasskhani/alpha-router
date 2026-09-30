@@ -228,42 +228,73 @@ class MemoryVectorService:
             wait=True,
         )
 
-    async def delete_sessions(self, *, collection_name: str, session_ids: Sequence[str]) -> None:
-        """Every chat point (exchanges and digest) of these chats."""
-        ids = [str(item) for item in session_ids if item]
-        if not ids:
-            return
-        await self.client.delete(
-            validate_collection_name(collection_name),
-            models.FilterSelector(
-                filter=models.Filter(
-                    must=[
-                        models.FieldCondition(key="session_id", match=models.MatchAny(any=ids)),
-                        models.FieldCondition(
-                            key="kind", match=models.MatchAny(any=[KIND_CHAT_CHUNK, KIND_CHAT_DIGEST])
-                        ),
+    async def delete_chat_points(
+        self, *, collection_name: str, session_id: str, below_generation: int | None, up_to: int | None = None
+    ) -> None:
+        """A chat's points written under a generation before ``below_generation`` (every one when None).
+
+        With ``up_to`` (a retention purge): its exchanges that begin at or
+        before that sequence, whatever their generation (no later run can
+        index purged messages), and its digest from before the generation.
+        A point without a generation was written before generations existed.
+        """
+        session = models.FieldCondition(key="session_id", match=models.MatchValue(value=str(session_id)))
+        older: list[Any] = []
+        if below_generation is not None:
+            older = [
+                models.Filter(
+                    should=[
+                        models.FieldCondition(key="gen", range=models.Range(lt=int(below_generation))),
+                        models.IsEmptyCondition(is_empty=models.PayloadField(key="gen")),
                     ]
                 )
-            ),
-            wait=True,
+            ]
+        if up_to is None:
+            selector = models.Filter(
+                must=[
+                    session,
+                    models.FieldCondition(key="kind", match=models.MatchAny(any=[KIND_CHAT_CHUNK, KIND_CHAT_DIGEST])),
+                    *older,
+                ]
+            )
+        else:
+            selector = models.Filter(
+                must=[session],
+                should=[
+                    models.Filter(
+                        must=[
+                            models.FieldCondition(key="kind", match=models.MatchValue(value=KIND_CHAT_CHUNK)),
+                            models.FieldCondition(key="from_seq", range=models.Range(lte=int(up_to))),
+                        ]
+                    ),
+                    models.Filter(
+                        must=[
+                            models.FieldCondition(key="kind", match=models.MatchValue(value=KIND_CHAT_DIGEST)),
+                            *older,
+                        ]
+                    ),
+                ],
+            )
+        await self.client.delete(
+            validate_collection_name(collection_name), models.FilterSelector(filter=selector), wait=True
         )
 
-    async def delete_session_start(self, *, collection_name: str, session_id: str, up_to: int) -> None:
-        """A chat's exchanges that begin at or before sequence ``up_to``, and its digest (a retention purge)."""
-        await self.client.delete(
+    async def retag_chat_points(self, *, collection_name: str, session_id: str, generation: int) -> None:
+        """The chat's points from an earlier generation carried into ``generation`` (what a purge left is current)."""
+        await self.client.set_payload(
             validate_collection_name(collection_name),
-            models.FilterSelector(
+            payload={"gen": int(generation)},
+            points=models.FilterSelector(
                 filter=models.Filter(
-                    must=[models.FieldCondition(key="session_id", match=models.MatchValue(value=str(session_id)))],
-                    should=[
+                    must=[
+                        models.FieldCondition(key="session_id", match=models.MatchValue(value=str(session_id))),
                         models.Filter(
-                            must=[
-                                models.FieldCondition(key="kind", match=models.MatchValue(value=KIND_CHAT_CHUNK)),
-                                models.FieldCondition(key="from_seq", range=models.Range(lte=int(up_to))),
+                            should=[
+                                models.FieldCondition(key="gen", range=models.Range(lt=int(generation))),
+                                models.IsEmptyCondition(is_empty=models.PayloadField(key="gen")),
                             ]
                         ),
-                        models.FieldCondition(key="kind", match=models.MatchValue(value=KIND_CHAT_DIGEST)),
-                    ],
+                    ]
                 )
             ),
             wait=True,

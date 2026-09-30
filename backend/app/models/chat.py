@@ -400,6 +400,9 @@ class ChatRecallIndex(Base):
     #: The last sequence it was written from, and the ``not_before`` it was written under (valid only while equal).
     digest_up_to = Column(Integer, nullable=True)
     digest_after = Column(Integer, nullable=True)
+    #: Raised by every forget; each point carries the one it was written under, and a forget's deletion (queued,
+    #: retried, run after it commits) takes the points written under an earlier one, never those written since.
+    generation = Column(Integer, nullable=False, default=0, server_default="0")
     embedding_model = Column(String(255), nullable=True)
     #: idle | pending | running | failed
     status = Column(String(16), nullable=False, default="idle")

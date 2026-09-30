@@ -533,9 +533,9 @@ async def delete_project_chat_session(
         return None
     await db.delete(row)
     await db.flush()
-    from app.services.chat_recall_service import drop_chat_vectors
+    from app.services.chat_recall_service import queue_vector_drop
 
-    await drop_chat_vectors([session_id])
+    await queue_vector_drop(db, session_id, below=None)
     return True
 
 

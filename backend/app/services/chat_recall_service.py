@@ -47,6 +47,9 @@ from app.services.outbox_service import enqueue_outbox_event
 logger = logging.getLogger(__name__)
 
 EVENT_TYPE = "chat_index.job.ready"
+#: A queued deletion of a chat's points from the store (``queue_vector_drop``), run by the knowledge worker.
+DROP_EVENT_TYPE = "chat_recall.vectors.drop"
+DROP_MAX_ATTEMPTS = 8
 AGGREGATE_TYPE = "chat_recall_index"
 #: A stable namespace for the point ids, so indexing an exchange again replaces its vector.
 POINT_NAMESPACE = uuid.UUID("5b2f3f0e-8d9c-4c4f-9a3e-7c1c2b6c1a55")
@@ -361,12 +364,16 @@ async def _write_digest(db: AsyncSession, row: Any, *, not_before: int, reached:
     return (text, int(lines[-1][0])) if text else None
 
 
-async def _kept_out_before(db: AsyncSession, session_id: str) -> int | None:
-    """What of the chat is never to be recalled (up to this sequence); None for a chat with no index at all."""
-    value = (
-        await db.execute(select(ChatRecallIndex.not_before).where(ChatRecallIndex.session_id == session_id))
-    ).scalar_one_or_none()
-    return None if value is None else int(value)
+async def _index_state(db: AsyncSession, session_id: str) -> tuple[int, int] | None:
+    """What of the chat is never to be recalled (up to this sequence) and its generation; None with no index."""
+    found = (
+        await db.execute(
+            select(ChatRecallIndex.not_before, ChatRecallIndex.generation).where(
+                ChatRecallIndex.session_id == session_id
+            )
+        )
+    ).first()
+    return None if found is None else (int(found[0] or 0), int(found[1] or 0))
 
 
 async def _vector_target(db: AsyncSession) -> tuple[Any, str, str]:
@@ -472,8 +479,10 @@ async def index_chat(db: AsyncSession, row: Any, *, limit: int = MAX_EXCHANGES_P
         exchanges, more = exchanges[:limit], True
     # How far this run reaches: the end of its last exchange, or of the rows when it stops at the end of the chat.
     reached = exchanges[-1].last if exchanges and more else last_row
-    # The row as this run found it: a forget (a rewrite, a purge, a delete-all) stamps it anew.
+    # The row as this run found it: a forget (a rewrite, a purge, a delete-all) stamps it anew, and raises its
+    # generation - what this run writes under the one it found is deleted after that forget commits.
     version = row.updated_at
+    generation = int(row.generation or 0)
     session_id = str(row.session_id)
     service, target, model_name = await _vector_target(db)
     try:
@@ -489,6 +498,7 @@ async def index_chat(db: AsyncSession, row: Any, *, limit: int = MAX_EXCHANGES_P
                     "from_seq": exchange.first,
                     "to_seq": exchange.last,
                     "part": part,
+                    "gen": generation,
                 }
                 texts.append((_point_id(str(row.session_id), "chunk", exchange.first, part), payload, text))
         kept_out = int(row.not_before or 0)
@@ -500,7 +510,13 @@ async def index_chat(db: AsyncSession, row: Any, *, limit: int = MAX_EXCHANGES_P
                 (
                     _point_id(str(row.session_id), "digest"),
                     # "after": the digest was built from nothing said up to this sequence.
-                    {**owner, "kind": KIND_CHAT_DIGEST, "session_id": str(row.session_id), "after": kept_out},
+                    {
+                        **owner,
+                        "kind": KIND_CHAT_DIGEST,
+                        "session_id": str(row.session_id),
+                        "after": kept_out,
+                        "gen": generation,
+                    },
                     digest,
                 )
             )
@@ -734,19 +750,84 @@ async def _finished_beyond(db: AsyncSession, row: Any) -> bool:
 # ── Forgetting ─────────────────────────────────────────────────────────────
 
 
-async def drop_chat_vectors(session_ids: list[str]) -> None:
-    """The chats' vectors out of the store (best effort: a store that is down leaves them, filtered by the recheck)."""
-    try:
-        from app.services.memory_vector_service import MemoryVectorService
+async def queue_vector_drop(
+    db: AsyncSession,
+    session_id: str,
+    *,
+    below: int | None,
+    up_to: int | None = None,
+    attempt: int = 0,
+    delay_seconds: int = 0,
+) -> None:
+    """Queue the deletion of a chat's points from the store, to run once this transaction commits.
 
+    ``below``: only the points written under an earlier generation (None:
+    every one - the chat is gone); ``up_to``: a retention purge's exchanges
+    and digest only. Retried with a growing wait while the store is down.
+    """
+    now = dt.datetime.utcnow()
+    await enqueue_outbox_event(
+        db,
+        aggregate_type=AGGREGATE_TYPE,
+        aggregate_id=str(session_id),
+        event_type=DROP_EVENT_TYPE,
+        payload={"session_id": str(session_id), "below": below, "up_to": up_to, "attempt": int(attempt)},
+        idempotency_key=f"chat-recall-drop:{session_id}:{uuid.uuid4().hex[:12]}",
+        available_at=now + dt.timedelta(seconds=max(0, int(delay_seconds))),
+    )
+
+
+async def handle_vector_drop(db: AsyncSession, payload: dict[str, Any]) -> str:
+    """Delete the points a queued drop names: "succeeded", "retry" (queued again, later) or "dead" (given up).
+
+    After a retention purge, the chat's exchange count is read again from the store.
+    """
+    from app.services.memory_vector_service import MemoryVectorService
+
+    session_id = str(payload.get("session_id") or "")
+    if not session_id:
+        return "dead"
+    below = payload.get("below")
+    up_to = payload.get("up_to")
+    attempt = int(payload.get("attempt") or 0)
+    try:
         service = MemoryVectorService()
         try:
             collection = await service.resolve_target_collection()
-            await service.delete_sessions(collection_name=collection, session_ids=session_ids)
+            await service.delete_chat_points(
+                collection_name=collection,
+                session_id=session_id,
+                below_generation=None if below is None else int(below),
+                up_to=None if up_to is None else int(up_to),
+            )
+            if up_to is not None and below is not None:
+                # What the purge left of the chat is still its index: current under the purge's generation.
+                await service.retag_chat_points(
+                    collection_name=collection, session_id=session_id, generation=int(below)
+                )
+            count = await service.count_session_chunks(collection_name=collection, session_id=session_id)
         finally:
             await service.close()
     except Exception:
-        logger.exception("Removing chat recall vectors failed for %s chats", len(session_ids))
+        logger.exception("Removing chat recall vectors failed session_id=%s attempt=%s", session_id, attempt)
+        if attempt + 1 >= DROP_MAX_ATTEMPTS:
+            return "dead"
+        await queue_vector_drop(
+            db,
+            session_id,
+            below=below,
+            up_to=up_to,
+            attempt=attempt + 1,
+            delay_seconds=min(3600, 30 * (2**attempt)),
+        )
+        return "retry"
+    await db.execute(
+        update(ChatRecallIndex)
+        .where(ChatRecallIndex.session_id == session_id)
+        .values(chunk_count=count)
+        .execution_options(synchronize_session=False)
+    )
+    return "succeeded"
 
 
 async def forget_chats(db: AsyncSession, session_ids: list[str] | set[str], *, keep_out_before: bool = False) -> None:
@@ -759,11 +840,17 @@ async def forget_chats(db: AsyncSession, session_ids: list[str] | set[str], *, k
     ids = [str(item) for item in session_ids if item]
     if not ids:
         return
-    await drop_chat_vectors(ids)
     rows: list[Any] = list(
         (await db.execute(select(ChatRecallIndex).where(ChatRecallIndex.session_id.in_(ids)))).scalars().all()
     )
+    indexed = {str(row.session_id) for row in rows}
+    for session_id in ids:
+        if session_id not in indexed:
+            await queue_vector_drop(db, session_id, below=None)
     for row in rows:
+        # What was written before this goes, once it commits; what is indexed after it stays.
+        row.generation = int(row.generation or 0) + 1
+        await queue_vector_drop(db, str(row.session_id), below=int(row.generation))
         if keep_out_before:
             latest = (
                 await db.execute(select(func.max(ChatMessage.sequence)).where(ChatMessage.session_id == row.session_id))
@@ -785,28 +872,12 @@ async def forget_chat_starts(db: AsyncSession, purged_to: dict[str, int]) -> Non
     a few messages from every long chat, and forgetting the whole chat each
     time would embed it all again on its next reply and leave a quiet one
     out of recall for good. The digest goes (it is made of the chat's start)
-    and is made again from what is left. With the store down the vectors
-    stay, and their words - re-read from the chat - are gone with the
-    messages.
+    and is made again from what is left. The points go once the purge
+    commits (queued, retried while the store is down); their words -
+    re-read from the chat - are gone with the messages at once.
     """
     if not purged_to:
         return
-    counts: dict[str, int] = {}
-    try:
-        from app.services.memory_vector_service import MemoryVectorService
-
-        service = MemoryVectorService()
-        try:
-            collection = await service.resolve_target_collection()
-            for session_id, up_to in purged_to.items():
-                await service.delete_session_start(collection_name=collection, session_id=session_id, up_to=up_to)
-                counts[session_id] = await service.count_session_chunks(
-                    collection_name=collection, session_id=session_id
-                )
-        finally:
-            await service.close()
-    except Exception:
-        logger.exception("Removing purged chat recall vectors failed for %s chats", len(purged_to))
     rows: list[Any] = list(
         (await db.execute(select(ChatRecallIndex).where(ChatRecallIndex.session_id.in_(list(purged_to)))))
         .scalars()
@@ -817,8 +888,10 @@ async def forget_chat_starts(db: AsyncSession, purged_to: dict[str, int]) -> Non
         row.digest_hash = None
         # The written digest may tell what the purged messages said: written again from what is left.
         row.digest_text = row.digest_up_to = row.digest_after = None
-        if str(row.session_id) in counts:
-            row.chunk_count = counts[str(row.session_id)]
+        row.generation = int(row.generation or 0) + 1
+        await queue_vector_drop(
+            db, str(row.session_id), below=int(row.generation), up_to=int(purged_to[str(row.session_id)])
+        )
         # A new stamp: an index run in flight, which may have read the purged messages, writes nothing.
         row.updated_at = now
     await db.flush()
@@ -1040,10 +1113,12 @@ async def _recalled_from(db: AsyncSession, hits: list[Any], *, session: Any, use
                 continue
         elif chat.project_id or int(chat.user_id) != user_id:
             continue
-        # Nothing said before a delete-all, whatever the store still holds (a drop that failed, a run it overtook).
-        kept_out = await _kept_out_before(db, other)
-        if kept_out is None:
+        # Nothing said before a delete-all, and nothing written before the chat's last forget, whatever the store
+        # still holds (a deletion not run yet, one the store was down for, a run it overtook).
+        state = await _index_state(db, other)
+        if state is None or int(hit.payload.get("gen") or 0) < state[1]:
             continue
+        kept_out = state[0]
         words = (await _words(db, hit, chat, not_before=kept_out)).strip()
         if not words:
             continue

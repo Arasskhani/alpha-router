@@ -98,6 +98,8 @@ class KnowledgeWorker:
             return await self._process_summary_job(message)
         if message.event_type == "chat_index.job.ready":
             return await self._process_chat_index_job(message)
+        if message.event_type == "chat_recall.vectors.drop":
+            return await self._process_vector_drop(message)
         if message.event_type != "knowledge.job.ready":
             error = f"Unsupported Knowledge event type: {message.event_type}"
             await publish_dead_letter(self.redis, message, error=error)
@@ -273,6 +275,18 @@ class KnowledgeWorker:
             finish=recall.finish_chat_index,
             lease_seconds=recall.LEASE_SECONDS,
         )
+
+    async def _process_vector_drop(self, message: QueueMessage) -> JobProcessResult:
+        """Delete a forgotten chat's points from the store (``chat_recall_service.handle_vector_drop``)."""
+        from app.services import chat_recall_service as recall
+
+        async with self.session_factory() as db:
+            outcome = await recall.handle_vector_drop(db, dict(message.payload or {}))
+            await db.commit()
+        if outcome == "dead":
+            await publish_dead_letter(self.redis, message, error="chat recall vectors could not be deleted")
+        await acknowledge_message(self.redis, message.stream_id)
+        return JobProcessResult(outcome=outcome, job_id=str(message.aggregate_id or "") or None)
 
     async def _process_row_job(
         self,

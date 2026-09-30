@@ -308,10 +308,11 @@ async def forget_summary_starts(db: AsyncSession, purged_to: dict[str, int]) -> 
     """A retention purge took each chat's oldest messages, up to a sequence: its summary forgets them.
 
     The parts that reach into what was purged go; the rest stay. The running
-    summary goes at once (it holds what the purged messages said), and the
-    job summarizes what is left of the parts that went and folds the summary
-    again from the parts - not the whole chat, every night. A run in flight
-    writes nothing (the row's new stamp).
+    summary goes at once (it holds what the purged messages said). On the
+    chat's next reply the job summarizes what is left of the parts that went
+    and folds the summary again from the parts - not the whole chat, and not
+    for a chat nobody writes in any more: a purge runs every night. A run in
+    flight writes nothing (the row's new stamp).
     """
     if not purged_to:
         return
@@ -327,7 +328,6 @@ async def forget_summary_starts(db: AsyncSession, purged_to: dict[str, int]) -> 
         .all()
     )
     now = dt.datetime.utcnow()
-    queue = await _settings_on(db) is not None
     for row in rows:
         row.content = ""
         row.up_to_sequence = 0
@@ -335,9 +335,6 @@ async def forget_summary_starts(db: AsyncSession, purged_to: dict[str, int]) -> 
         row.first_message_hash = None
         row.last_message_hash = None
         row.updated_at = now
-        if queue and not _busy(row, now):
-            row.attempt_count = 0
-            await _queue(db, row, now + dt.timedelta(seconds=DEBOUNCE_SECONDS))
     await db.flush()
 
 

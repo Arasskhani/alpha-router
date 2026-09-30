@@ -487,6 +487,8 @@ class TestForgetting:
         chat = await _chat(db_session, user, 60)
         row = await _row(db_session, chat)
         await handle_chat_summary(db_session, row, completer=_Model())
+        assert await finish_summary(db_session, row, error=None) == "idle"
+        await db_session.commit()
         before = [(p.from_sequence, p.to_sequence, p.content) for p in await _parts(db_session, chat)]
         assert len(before) == 2 and before[0][1] > 10
         old = dt.datetime.utcnow() - dt.timedelta(days=400)
@@ -507,8 +509,12 @@ class TestForgetting:
         row = await db_session.get(ChatSummary, chat.id)
         await db_session.refresh(row)
         assert (row.content, row.up_to_sequence, row.covered_count, row.first_message_hash) == ("", 0, 0, None)
-        assert row.status == "pending" and len(await _events(db_session)) == 1
         assert [(p.from_sequence, p.to_sequence, p.content) for p in await _parts(db_session, chat)] == before[1:]
+        # Nothing is spent on it until the chat goes on (a purge runs every night, dormant chats too).
+        assert row.status == "idle" and await _events(db_session) == []
+        await maybe_schedule_summary(db_session, session=chat, latest_sequence=60)
+        await db_session.commit()
+        assert row.status == "pending" and len(await _events(db_session)) == 1
 
         # The next run reads again only what is left of that part, then folds the summary from the parts.
         row.status = "running"

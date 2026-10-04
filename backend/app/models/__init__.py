@@ -62,6 +62,7 @@ from app.models.evaluation import (
     EvaluationRun,
 )
 from app.models.extension import ExtensionEvent, ExtensionSession
+from app.models.feature_access import FeatureAccessRule
 from app.models.governance import GovernanceAuditEvent
 from app.models.knowledge import (
     ConnectorSyncRun,
@@ -198,6 +199,7 @@ __all__ = [
     "ProjectUserPref",
     "ExtensionEvent",
     "ExtensionSession",
+    "FeatureAccessRule",
     "ReconciliationRun",
     "ReportSchedule",
     "RequestLog",

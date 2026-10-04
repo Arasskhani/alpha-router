@@ -30,6 +30,8 @@ import {
 } from "../lib/userMemories";
 import { EMPTY_WORK_PROFILE, fetchWorkProfile, type WorkProfile } from "../lib/workProfile";
 import { useConfirm } from "../context/ConfirmContext";
+import { useCachedSession } from "../hooks/useCachedSession";
+import { sectionEnabled } from "../lib/userPanelNav";
 import ExtensionPanel from "./ExtensionPanel";
 import Modal from "./Modal";
 import PersonalApiKeyPanel from "./PersonalApiKeyPanel";
@@ -551,6 +553,8 @@ function WorkProfilePanel() {
 }
 
 function MemoryPanel() {
+  // The source chat opens in Chat; with Chat closed (Feature Access) the link would only say so.
+  const chatOpen = sectionEnabled(useCachedSession(), "chat");
   const { confirm } = useConfirm();
   const [memoryEnabled, setMemoryEnabled] = useState(true);
   const [autoCapture, setAutoCapture] = useState(true);
@@ -891,7 +895,7 @@ function MemoryPanel() {
                 <>
                   <span className="settings-memory-chip">{item.category || "other"}</span>
                   {relativeTime(item.created_at) ? <span>{relativeTime(item.created_at)}</span> : null}
-                  {item.source_session_id ? (
+                  {item.source_session_id && chatOpen ? (
                     <a href={`/app/chat?session=${encodeURIComponent(item.source_session_id)}`}>
                       {item.source_session_title || "Open source chat"}
                     </a>

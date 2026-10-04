@@ -14,12 +14,20 @@ type Props = {
   disabled?: boolean;
   /** id for the search field, so a <label htmlFor> can name it. */
   inputId?: string;
+  /** Where to search; another admin page passes its own endpoint (same response shape). */
+  searchPath?: string;
 };
 
 const OWNER_USERS_PATH = "/api/admin/api-keys/owner-users";
 const MIN_SEARCH = 2;
 
-export default function UserOwnerSelect({ value, onChange, disabled, inputId }: Props) {
+export default function UserOwnerSelect({
+  value,
+  onChange,
+  disabled,
+  inputId,
+  searchPath = OWNER_USERS_PATH,
+}: Props) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const [users, setUsers] = useState<OwnerUser[]>([]);
@@ -34,13 +42,13 @@ export default function UserOwnerSelect({ value, onChange, disabled, inputId }: 
       return;
     }
     if (selected?.id === value) return;
-    api<OwnerUser[]>(`${OWNER_USERS_PATH}?user_id=${value}`)
+    api<OwnerUser[]>(`${searchPath}?user_id=${value}`)
       .then((rows) => {
         const hit = rows.find((u) => u.id === value);
         if (hit) setSelected(hit);
       })
       .catch(() => {});
-  }, [value, selected?.id]);
+  }, [value, selected?.id, searchPath]);
 
   useEffect(() => {
     if (!open) return;
@@ -56,7 +64,7 @@ export default function UserOwnerSelect({ value, onChange, disabled, inputId }: 
       const qs = new URLSearchParams();
       if (term.length >= MIN_SEARCH) qs.set("q", term);
       const suffix = qs.size ? `?${qs}` : "";
-      api<OwnerUser[]>(`${OWNER_USERS_PATH}${suffix}`)
+      api<OwnerUser[]>(`${searchPath}${suffix}`)
         .then((rows) => {
           if (!stale) setUsers(rows);
         })
@@ -73,7 +81,7 @@ export default function UserOwnerSelect({ value, onChange, disabled, inputId }: 
       stale = true;
       window.clearTimeout(t);
     };
-  }, [query, open]);
+  }, [query, open, searchPath]);
 
   useEffect(() => {
     if (!open) return;

@@ -125,7 +125,7 @@ const MENU_PATH_PREFIXES: Record<MenuKey, string[]> = {
   database: ["/admin/database"],
   // The Chat experience section: who may use each chat tool, how the one tool
   // with settings of its own behaves, and what the assistant remembers.
-  chat_tools: ["/admin/chat-tools", "/admin/code-interpreter", "/admin/browser-extension"],
+  chat_tools: ["/admin/chat-tools", "/admin/code-interpreter", "/admin/browser-extension", "/admin/feature-access"],
   memory: ["/admin/memory"],
   agents: [
     "/admin/agents",

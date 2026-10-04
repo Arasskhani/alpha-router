@@ -19174,3 +19174,60 @@ p.error,
   margin: 0;
   color: var(--muted);
 }
+
+/* Feature Access — who may use the web Chat and Projects. */
+.feature-access-section__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+.feature-access-table__kind {
+  display: block;
+  font-size: 0.8rem;
+}
+.feature-access-table__actions {
+  text-align: right;
+  white-space: nowrap;
+}
+.feature-access-table.data-table td,
+.feature-access-table.data-table th {
+  word-break: normal;
+  overflow-wrap: anywhere;
+}
+.badge-denied {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, var(--surface));
+}
+.badge-allowed {
+  color: #059669;
+  background: color-mix(in srgb, #059669 12%, var(--surface));
+}
+.feature-access-form__effect {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0.25rem 0 0.75rem;
+  padding: 0;
+  border: 0;
+}
+.feature-access-form__effect legend {
+  margin-bottom: 0.35rem;
+  font-weight: 600;
+}
+.feature-access-form__hint {
+  margin: -0.35rem 0 0.75rem;
+}
+.feature-access-check {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+.feature-access-check li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}

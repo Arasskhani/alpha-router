@@ -52,8 +52,11 @@ describe("the nav and the permission map agree", () => {
       "/admin/chat-tools",
       "/admin/code-interpreter",
       "/admin/browser-extension",
+      "/admin/feature-access",
       "/admin/memory",
     ]);
+    // Feature Access decides who may use the web Chat and Projects: kept by the Chat Tools administrators.
+    expect(pathToMenu("/admin/feature-access")).toBe("chat_tools");
     const data = adminNavSections.find((section) => section.categoryKey === "data_reports");
     expect(data?.items.map((item) => item.to)).not.toContain("/admin/memory");
   });

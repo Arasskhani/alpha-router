@@ -39,6 +39,7 @@ export const adminNavSections: NavSection[] = [
       { to: "/admin/chat-tools", label: "Chat Tools", menuKey: "chat_tools" },
       { to: "/admin/code-interpreter", label: "Code Interpreter", menuKey: "chat_tools" },
       { to: "/admin/browser-extension", label: "Browser Extension", menuKey: "chat_tools" },
+      { to: "/admin/feature-access", label: "Feature Access", menuKey: "chat_tools" },
       { to: "/admin/memory", label: "Memory", menuKey: "memory" },
     ],
   },

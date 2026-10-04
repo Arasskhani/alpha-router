@@ -20,13 +20,14 @@ const sources = walk(join(__dirname)).map((path) => ({ path, text: readFileSync(
 const cardTables = sources.filter((s) => s.text.includes("data-table--cards"));
 
 describe("card tables", () => {
-  it("are the list pages, the Models table view, Chat Tools, the slowest models and scheduled reports", () => {
+  it("are the list pages, the Models table view, Chat Tools, Feature Access, the slowest models and scheduled reports", () => {
     const names = cardTables.map((s) => s.path.split(/[\\/]/).pop()).sort();
     expect(names).toEqual([
       "ApiKeys.tsx",
       "ChatTools.tsx",
       "Connections.tsx",
       "DeletedUsers.tsx",
+      "FeatureAccess.tsx",
       "Groups.tsx",
       "Models.tsx",
       "OperationsSlowModelsTable.tsx",

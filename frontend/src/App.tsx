@@ -42,6 +42,7 @@ const GroupActivity = lazy(() => import("./pages/admin/GroupActivity"));
 const Docs = lazy(() => import("./pages/admin/Docs"));
 const RetentionPolicy = lazy(() => import("./pages/admin/RetentionPolicy"));
 const MemoryAdmin = lazy(() => import("./pages/admin/Memory"));
+const FeatureAccess = lazy(() => import("./pages/admin/FeatureAccess"));
 const StorageManagement = lazy(() => import("./pages/admin/StorageManagement"));
 const MyActivity = lazy(() => import("./pages/MyActivity"));
 const MediaLibrary = lazy(() => import("./pages/MediaLibrary"));
@@ -140,6 +141,7 @@ export default function App() {
         <Route path="chat-tools" element={<ChatTools />} />
         <Route path="code-interpreter" element={<CodeInterpreter />} />
         <Route path="browser-extension" element={<BrowserExtension />} />
+        <Route path="feature-access" element={<FeatureAccess />} />
         <Route path="database" element={<DatabaseMonitor />} />
         <Route path="agents" element={<AgentsOverview />} />
         <Route path="agents/studio" element={<AgentStudio />} />

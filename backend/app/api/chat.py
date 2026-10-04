@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.background import BackgroundTask
 
 from app.api.deps import get_current_user, require_active_user
+from app.api.feature_gate import require_chat_feature_for
 from app.branding import CHAT_CLIENT_APP, EXTENSION_CLIENT_APP
 from app.config import get_settings
 from app.database import get_db
@@ -704,6 +705,7 @@ async def chat_session_title(
     db: AsyncSession = Depends(get_db),
 ):
     """Short overview title from conversation start (not the first user message verbatim)."""
+    await require_chat_feature_for(db, request, user, chat_session_id=body.chat_session_id)
     title = await generate_chat_title(
         db,
         user,
@@ -756,6 +758,8 @@ async def chat_completions(
     user: User = Depends(require_active_user),
     db: AsyncSession = Depends(get_db),
 ):
+    # A project chat needs Projects, any other web chat needs Chat; the extension has its own access.
+    await require_chat_feature_for(db, request, user, chat_session_id=body.chat_session_id, project_id=body.project_id)
     tools = body.tools.model_dump() if body.tools else {}
     payload = {
         "model": body.model,
@@ -859,6 +863,7 @@ async def chat_completions(
 
 @router.post("/voice")
 async def voice_message(
+    request: Request,
     file: UploadFile = File(...),
     chat_session_id: str | None = Form(None),
     language: str | None = Form(None),
@@ -878,6 +883,7 @@ async def voice_message(
     liability, so it is no longer stored. Recordings kept before this change
     stay in Media until their owner or the retention policy removes them.
     """
+    await require_chat_feature_for(db, request, user, chat_session_id=chat_session_id)
     await assert_tool_for_user(db, "speech_to_text", user_id=user.id)
     await resolve_owned_chat_session(db, user=user, chat_session_id=chat_session_id)
     budget, usage = await get_user_budget_state(db, user)
@@ -989,6 +995,7 @@ async def attachment_policy(
 
 @router.post("/attachments/process")
 async def process_attachments(
+    request: Request,
     files: list[UploadFile] = File(...),
     chat_session_id: str | None = Form(None),
     project_id: str | None = Form(None),
@@ -996,6 +1003,7 @@ async def process_attachments(
     db: AsyncSession = Depends(get_db),
 ):
     """Validate, store, and extract content from chat attachments."""
+    await require_chat_feature_for(db, request, user, chat_session_id=chat_session_id, project_id=project_id)
     await ensure_budget_period(db, user)
     if not files:
         raise HTTPException(status_code=400, detail="No files uploaded.")
@@ -1103,11 +1111,13 @@ async def process_attachments(
 
 @router.post("/attachments/from-media")
 async def attachments_from_media(
+    request: Request,
     body: AttachFromMediaIn,
     user: User = Depends(require_active_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Reference existing Media library files as chat attachments (no second persist)."""
+    await require_chat_feature_for(db, request, user, chat_session_id=body.chat_session_id, project_id=body.project_id)
     await ensure_budget_period(db, user)
     attachments = await attachments_from_existing_media(
         db,

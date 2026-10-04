@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_active_user
+from app.api.feature_gate import require_session_section, require_web_chat
 from app.branding import REPLACE_MESSAGES_HEADER
 from app.config import get_settings
 from app.database import get_db, get_read_db
@@ -144,7 +145,7 @@ def _private_mode_conflict(exc: PrivateModePersistenceError) -> HTTPException:
     return HTTPException(status_code=409, detail=str(exc))
 
 
-@router.get("")
+@router.get("", dependencies=[Depends(require_web_chat)])
 async def list_user_chats(
     limit: int = Query(100, ge=1, le=200),
     offset: int = Query(0, ge=0),
@@ -197,7 +198,7 @@ async def list_user_chats(
     return out
 
 
-@router.get("/search-messages")
+@router.get("/search-messages", dependencies=[Depends(require_web_chat)])
 async def search_user_chat_messages(
     q: str = Query(..., min_length=2),
     limit: int = Query(20, ge=1, le=20),
@@ -211,12 +212,12 @@ async def search_user_chat_messages(
     return {"results": await search_chat_messages(db, user.id, q=q, limit=limit)}
 
 
-@router.get("/folders")
+@router.get("/folders", dependencies=[Depends(require_web_chat)])
 async def get_chat_folders(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_read_db)):
     return {"folders": await list_chat_folders(db, user.id)}
 
 
-@router.post("/folders")
+@router.post("/folders", dependencies=[Depends(require_web_chat)])
 async def post_chat_folder(
     body: ChatFolderCreateIn,
     user: User = Depends(require_active_user),
@@ -227,7 +228,7 @@ async def post_chat_folder(
     return folder
 
 
-@router.patch("/folders/{folder_id}")
+@router.patch("/folders/{folder_id}", dependencies=[Depends(require_web_chat)])
 async def patch_chat_folder(
     folder_id: str,
     body: ChatFolderPatchIn,
@@ -242,7 +243,7 @@ async def patch_chat_folder(
     return folder
 
 
-@router.delete("/folders/{folder_id}")
+@router.delete("/folders/{folder_id}", dependencies=[Depends(require_web_chat)])
 async def remove_chat_folder(
     folder_id: str,
     user: User = Depends(require_active_user),
@@ -255,7 +256,7 @@ async def remove_chat_folder(
     return {"ok": True}
 
 
-@router.post("/sessions")
+@router.post("/sessions", dependencies=[Depends(require_web_chat)])
 async def post_chat_session(
     body: ChatSessionCreateIn,
     user: User = Depends(require_active_user),
@@ -270,7 +271,7 @@ async def post_chat_session(
         raise HTTPException(status_code=413, detail=str(exc)) from exc
 
 
-@router.patch("/sessions/{session_id}")
+@router.patch("/sessions/{session_id}", dependencies=[Depends(require_session_section)])
 async def patch_chat_session(
     session_id: str,
     body: ChatSessionPatchIn,
@@ -302,7 +303,7 @@ async def patch_chat_session(
     return session
 
 
-@router.post("/sessions/{session_id}/private-mode")
+@router.post("/sessions/{session_id}/private-mode", dependencies=[Depends(require_session_section)])
 async def enable_private_mode(
     session_id: str,
     user: User = Depends(require_active_user),
@@ -327,7 +328,7 @@ async def enable_private_mode(
     return result
 
 
-@router.delete("/sessions/{session_id}")
+@router.delete("/sessions/{session_id}", dependencies=[Depends(require_session_section)])
 async def remove_chat_session(
     session_id: str,
     user: User = Depends(require_active_user),
@@ -340,7 +341,12 @@ async def remove_chat_session(
     return {"ok": True}
 
 
-messages_router = APIRouter(prefix="/api/user/chat-sessions", tags=["user-chats"])
+#: Every route here is about one chat, personal or in a project: the gate looks at which.
+messages_router = APIRouter(
+    prefix="/api/user/chat-sessions",
+    tags=["user-chats"],
+    dependencies=[Depends(require_session_section)],
+)
 
 
 @messages_router.get("/{session_id}")

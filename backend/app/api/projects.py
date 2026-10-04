@@ -16,6 +16,7 @@ from app.api.admin import (
     activity_explore_opts,
 )
 from app.api.deps import get_bearer_token, get_current_user, require_active_user
+from app.api.feature_gate import require_web_projects
 from app.config import get_settings
 from app.database import get_db
 from app.models.project import Project
@@ -123,7 +124,8 @@ from app.services.upload_file_policy import UploadPolicyError, check_content, cl
 from app.services.upload_screening import UploadRejected, screen_upload
 from app.services.user_role_service import primary_role_for_user
 
-router = APIRouter(prefix="/api/projects", tags=["projects"])
+#: Feature Access: an account Projects is turned off for reaches none of it, its project chats included.
+router = APIRouter(prefix="/api/projects", tags=["projects"], dependencies=[Depends(require_web_projects)])
 
 
 # ---------------------------------------------------------------------------

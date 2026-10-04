@@ -238,6 +238,7 @@ describe("Feature Access in the guides", () => {
     expect(html).toContain("deny wins");
     expect(html).toContain("project chats keep working");
     expect(html).toContain("Nothing is deleted.");
+    expect(html).toContain("kept, not revoked");
     for (const action of ["feature_access_rule_added", "feature_access_rule_changed", "feature_access_rule_removed"]) {
       expect(html).toContain(action);
     }

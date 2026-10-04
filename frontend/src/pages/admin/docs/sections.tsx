@@ -2580,9 +2580,10 @@ export const docSections: DocSection[] = [
       <>
         <h2>Feature Access</h2>
         <p>
-          Path: <code>/admin/feature-access</code>. Who may use the web <strong>Chat</strong> and{" "}
-          <strong>Projects</strong>, set for a user, a group or a department the way a plan is assigned. Both are open
-          to everyone until a rule closes them, so nothing changes for anybody on upgrade.
+          Path: <code>/admin/feature-access</code>. Who may use the web <strong>Chat</strong>,{" "}
+          <strong>Projects</strong> and <strong>personal API keys</strong>, set for a user, a group or a department
+          the way a plan is assigned. All three are open to everyone until a rule closes them, so nothing changes for
+          anybody on upgrade.
         </p>
         <h3>Rules and how they combine</h3>
         <ul>
@@ -2623,12 +2624,21 @@ export const docSections: DocSection[] = [
             included — also for projects the person is already a member of. Their personal chat is unaffected.
           </li>
           <li>
-            <strong>Nothing is deleted.</strong> Chats, projects and memories are hidden while the section is off and
-            are all there when it is given back.
+            <strong>API keys off</strong>: the person cannot make a personal API key in Settings, and the personal
+            keys they already have are refused at the gateway (<code>/v1/...</code>) with <code>403</code> and{" "}
+            <code>feature_not_enabled</code>. The keys are <strong>kept, not revoked</strong>: they work again when the
+            section is given back, and the person can still see and revoke them. Keys issued on{" "}
+            <a href="#admin-api-keys">API Keys</a> are not personal keys and are not affected; an administrator&apos;s
+            own keys always work.
           </li>
           <li>
-            The <strong>browser extension</strong> and <strong>API keys</strong> are not affected. Who may use the
-            extension is set on <a href="#admin-chat-tools">Chat Tools</a>.
+            <strong>Nothing is deleted.</strong> Chats, projects, memories and keys are hidden or refused while the
+            section is off and are all there when it is given back.
+          </li>
+          <li>
+            Chat and Projects do not touch the <strong>browser extension</strong> or <strong>API keys</strong>, and
+            closing API keys does not touch the web Chat. Who may use the extension is set on{" "}
+            <a href="#admin-chat-tools">Chat Tools</a>.
           </li>
         </ul>
         <h3>Who may change it</h3>

@@ -1669,15 +1669,15 @@ export const userManualSections: DocSection[] = [
 
   {
     id: "user-feature-access",
-    title: "When Chat or Projects is missing",
+    title: "When Chat, Projects or API keys are missing",
     group: "Account",
     content: (
       <>
-        <h2>When Chat or Projects is missing</h2>
+        <h2>When Chat, Projects or API keys are missing</h2>
         <p>
-          Your administrator can turn <strong>Chat</strong> or <strong>Projects</strong> off for your account, your
-          group or your department. The section then leaves your menu, and opening it by its address says it
-          isn&apos;t enabled for you.
+          Your administrator can turn <strong>Chat</strong>, <strong>Projects</strong> or your{" "}
+          <strong>personal API key</strong> off for your account, your group or your department. A section then
+          leaves your menu, and opening it by its address says it isn&apos;t enabled for you.
         </p>
         <ul>
           <li>
@@ -1685,6 +1685,10 @@ export const userManualSections: DocSection[] = [
             memory doesn&apos;t learn from your personal chats meanwhile.
           </li>
           <li>With <strong>Projects</strong> off you keep your personal chat.</li>
+          <li>
+            With <strong>API keys</strong> off you cannot make a key in Settings, and a key you have is refused until
+            they turn it back on. It is not deleted, and you can still revoke it.
+          </li>
           <li>
             Nothing is deleted: your chats and projects are there again when your administrator turns the section back
             on.

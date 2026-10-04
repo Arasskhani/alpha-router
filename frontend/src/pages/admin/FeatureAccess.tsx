@@ -196,6 +196,10 @@ function AddRuleModal({
   return (
     <Modal open={open} title="Add a rule" onClose={onClose} panelClassName="modal-panel--md">
       <form onSubmit={submit} className="feature-access-form">
+        <p className="muted-text feature-access-form__intro">
+          One rule per section and subject: if this user, group or department already has one here, saving replaces
+          it.
+        </p>
         <label htmlFor="feature-access-section">Section</label>
         <select
           id="feature-access-section"
@@ -348,11 +352,12 @@ function AddRuleModal({
   );
 }
 
-function CheckUser() {
+function CheckUser({ version }: { version: number }) {
   const [userId, setUserId] = useState<number | null>(null);
   const [result, setResult] = useState<FeatureCheck | null>(null);
   const [err, setErr] = useState("");
 
+  // Asked again when the person changes and whenever a rule is saved or removed (`version`).
   useEffect(() => {
     if (!userId) return;
     let cancelled = false;
@@ -363,12 +368,14 @@ function CheckUser() {
         setErr("");
       })
       .catch((ex) => {
-        if (!cancelled) setErr(formatApiError(ex));
+        if (cancelled) return;
+        setResult(null);
+        setErr(formatApiError(ex));
       });
     return () => {
       cancelled = true;
     };
-  }, [userId]);
+  }, [userId, version]);
 
   return (
     <section className="settings-section" aria-labelledby="feature-access-check-title">
@@ -381,8 +388,10 @@ function CheckUser() {
         inputId="feature-access-check-user"
         value={userId}
         onChange={(u) => {
+          // Never show one person's answer under another's name while the new one loads.
           setUserId(u?.id ?? null);
-          if (!u) setResult(null);
+          setResult(null);
+          setErr("");
         }}
         searchPath={USER_OPTIONS_PATH}
       />
@@ -391,7 +400,7 @@ function CheckUser() {
           {err}
         </p>
       ) : null}
-      {userId && result ? (
+      {userId && result && result.user.id === userId ? (
         <ul className="feature-access-check" aria-live="polite">
           {result.features.map((decision) => (
             <li key={decision.feature}>
@@ -423,11 +432,13 @@ export default function FeatureAccess() {
   const [adding, setAdding] = useState<FeatureKey | null>(null);
   const [removing, setRemoving] = useState<FeatureRule | null>(null);
   const [removeBusy, setRemoveBusy] = useState(false);
+  const [version, setVersion] = useState(0);
 
   const load = useCallback(async (message?: string) => {
     try {
       const data = await api<{ features: FeatureOverview[] }>(BASE);
       setFeatures(data.features);
+      setVersion((v) => v + 1);
       setError("");
       if (message) setNotice(message);
     } catch (err) {
@@ -465,6 +476,7 @@ export default function FeatureAccess() {
       setRemoving(null);
       await load(`Rule for ${label} removed.`);
     } catch (err) {
+      setNotice("");
       setError(formatApiError(err));
       setRemoving(null);
     } finally {
@@ -510,6 +522,12 @@ export default function FeatureAccess() {
         </p>
       ) : null}
 
+      {features === null && loading ? (
+        <p className="muted-text" aria-busy="true">
+          Loading…
+        </p>
+      ) : null}
+
       {features?.map((feature) => (
         <section key={feature.key} className="settings-section" aria-labelledby={`feature-access-${feature.key}`}>
           <div className="feature-access-section__head">
@@ -534,7 +552,7 @@ export default function FeatureAccess() {
         </section>
       ))}
 
-      <CheckUser />
+      <CheckUser version={version} />
 
       {features ? (
         <AddRuleModal
@@ -550,7 +568,7 @@ export default function FeatureAccess() {
         />
       ) : null}
 
-      <Modal open={removing !== null} title="Remove rule" onClose={() => setRemoving(null)}>
+      <Modal open={removing !== null} title="Remove rule" onClose={() => (removeBusy ? undefined : setRemoving(null))}>
         {removing ? (
           <>
             <p>

@@ -183,6 +183,60 @@ describe("the Feature Access page", () => {
   });
 });
 
+describe("adding for a user or a group, and checking a person", () => {
+  it("offers Allow for a user and not for a group", async () => {
+    serve({
+      "/api/admin/feature-access": overview(),
+      "/api/admin/feature-access/options": { groups: [{ id: 3, name: "Interns", source: "local", member_count: 2 }], departments: [] },
+      "/api/admin/feature-access/user-options": [],
+    });
+    await render();
+    await act(async () => {
+      [...host.querySelectorAll("button")].filter((b) => b.textContent === "Add rule")[0].click();
+    });
+    expect(document.querySelector<HTMLInputElement>("input[value=allow]")?.disabled).toBe(false);
+    const kind = document.getElementById("feature-access-target-type") as HTMLSelectElement;
+    await act(async () => {
+      kind.value = "group";
+      kind.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(document.getElementById("feature-access-group")?.textContent).toContain("Interns (2 members)");
+    expect(document.querySelector<HTMLInputElement>("input[value=allow]")?.disabled).toBe(true);
+    expect(document.body.textContent).toContain("saving replaces it");
+  });
+
+  it("shows what a picked person gets and why", async () => {
+    serve({
+      "/api/admin/feature-access": overview([rule()]),
+      "/api/admin/feature-access/user-options": [{ id: 5, username: "sara", email: "sara@x", display_name: "Sara" }],
+      "/api/admin/feature-access/check": {
+        user: { id: 5, label: "Sara", department: null },
+        features: [
+          { feature: "chat", title: "Chat", allowed: false, reason: "group_deny", rule_id: 7, via: "Interns" },
+          { feature: "projects", title: "Projects", allowed: true, reason: "default", rule_id: null, via: null },
+        ],
+      },
+    });
+    await render();
+    const input = document.getElementById("feature-access-check-user") as HTMLInputElement;
+    await act(async () => {
+      input.focus();
+      input.dispatchEvent(new FocusEvent("focus"));
+    });
+    await act(async () => {
+      await new Promise((done) => setTimeout(done, 250));
+    });
+    const option = [...document.querySelectorAll<HTMLButtonElement>(".user-owner-select__item")][0];
+    await act(async () => {
+      option.click();
+    });
+    const result = host.querySelector(".feature-access-check");
+    expect(result?.textContent).toContain("Closed");
+    expect(result?.textContent).toContain("Denied for the group “Interns”.");
+    expect(calls.some((c) => c.path === "/api/admin/feature-access/check?user_id=5")).toBe(true);
+  });
+});
+
 describe("its wording", () => {
   it("summarizes a section", () => {
     expect(featureSummary({ deny_count: 0, allow_count: 0 })).toBe("Open to everyone.");

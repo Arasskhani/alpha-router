@@ -19231,3 +19231,6 @@ p.error,
   gap: 0.5rem;
   flex-wrap: wrap;
 }
+.feature-access-form__intro {
+  margin: 0 0 0.75rem;
+}

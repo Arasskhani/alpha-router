@@ -1279,9 +1279,14 @@ async def _mine_next_part(db: AsyncSession, job, *, completer: Any | None, first
     # ignored for the rest of that window. The project twin re-checks the same
     # way (handle_project_memory_extraction -> load_project_memory_flags).
     prefs = await load_user_prefs(db, job.user_id)
-    if not prefs.get("memory_auto_capture", True):
+    from app.services.feature_access_service import FEATURE_CHAT, feature_enabled_for_user_id
+
+    chat_open = await feature_enabled_for_user_id(db, int(job.user_id), FEATURE_CHAT)
+    if not prefs.get("memory_auto_capture", True) or not chat_open:
         # Claim the window anyway: it was read under a permission the user has
         # since withdrawn, and re-mining it later would leak the same turns.
+        # The same for a Chat that Feature Access closed: what was said while
+        # it was closed is not learned when it opens again.
         await advance_watermark(
             db, job, window_from=int(job.extracted_sequence or 0), to=int(job.watermark_sequence or 0)
         )

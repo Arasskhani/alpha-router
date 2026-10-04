@@ -126,7 +126,12 @@ async def _owner_allows(db: AsyncSession, session: Any) -> bool:
             return False
         memory_enabled, _auto = await load_project_memory_flags(db, str(session.project_id))
         return bool(memory_enabled)
-    return person_allows_recall(await _person_prefs(db, int(session.user_id)))
+    if not person_allows_recall(await _person_prefs(db, int(session.user_id))):
+        return False
+    from app.services.feature_access_service import FEATURE_CHAT, feature_enabled_for_user_id
+
+    # Feature Access closed the owner's Chat: their personal chats are neither indexed nor recalled meanwhile.
+    return await feature_enabled_for_user_id(db, int(session.user_id), FEATURE_CHAT)
 
 
 def person_allows_recall(prefs: dict[str, Any]) -> bool:

@@ -153,8 +153,13 @@ async def owner_allows_summaries(db: AsyncSession, session: Any) -> bool:
         return True
     from app.services.user_chat_storage_service import load_user_prefs
 
+    from app.services.feature_access_service import FEATURE_CHAT, feature_enabled_for_user_id
+
     prefs = await load_user_prefs(db, int(session.user_id))
-    return bool(prefs.get("memory_summarize_chats", True))
+    if not prefs.get("memory_summarize_chats", True):
+        return False
+    # Feature Access closed the owner's Chat: their personal chats are not summarized meanwhile.
+    return await feature_enabled_for_user_id(db, int(session.user_id), FEATURE_CHAT)
 
 
 async def _unsummarized_chars(db: AsyncSession, session_id: str, *, after: int, upto: int) -> int:

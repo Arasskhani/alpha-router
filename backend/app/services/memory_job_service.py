@@ -18,6 +18,7 @@ from app.models.chat import ChatMessage, ChatSession, UserMemoryJob, is_member_c
 from app.services.chat_markers import is_whole_reply
 from app.services.memory_settings_service import get_memory_settings
 from app.services.outbox_service import enqueue_outbox_event
+from app.services.feature_access_service import FEATURE_CHAT, feature_enabled_for_user_id
 from app.services.user_chat_storage_service import load_user_prefs
 
 logger = logging.getLogger(__name__)
@@ -91,6 +92,9 @@ async def schedule_extraction(
     if session.project_id:
         # Project threads are shared with teammates: they feed project memory
         # only, never the session creator's personal memory.
+        return None
+    if not await feature_enabled_for_user_id(db, user_id, FEATURE_CHAT):
+        # Feature Access closed the person's Chat: nothing more is learned from their personal chats.
         return None
 
     now = dt.datetime.utcnow()

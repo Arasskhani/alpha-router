@@ -8,8 +8,9 @@ order, as the administrator sees them on the Feature Access page:
 3. Otherwise a ``deny`` on any of their groups or on their department does.
 4. Otherwise the section is open.
 
-A section with no rules at all costs one small query and no role lookup,
-which is the case for nearly every request on nearly every deployment.
+A person no rule names - on them, their groups or their department - costs
+one small query and no role lookup, which is the case for nearly every
+request on nearly every deployment.
 
 This governs the web app only. The browser extension has its own access
 (Chat Tools) and a personal API key goes through the gateway; neither asks.
@@ -22,7 +23,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.feature_access import FEATURE_CHAT, FEATURE_PROJECTS, FEATURES, FeatureAccessRule
@@ -79,16 +80,36 @@ def validate_feature(feature: str) -> str:
     return key
 
 
-async def _rules(db: AsyncSession, features: Iterable[str]) -> list[FeatureAccessRule]:
-    wanted = list(features)
-    return list(
-        (await db.execute(select(FeatureAccessRule).where(FeatureAccessRule.feature.in_(wanted)))).scalars().all()
+async def _rules_for(db: AsyncSession, features: Iterable[str], user: User) -> list[FeatureAccessRule]:
+    """The rules that can apply to this person: on them, on one of their groups, or on their department.
+
+    Filtered in SQL for the person and their groups; department rules are few
+    and are matched here, whatever their case and spacing.
+    """
+    user_id = int(user.id)
+    their_groups = select(user_group_members.c.group_id).where(user_group_members.c.user_id == user_id)
+    rows = (
+        (
+            await db.execute(
+                select(FeatureAccessRule).where(
+                    FeatureAccessRule.feature.in_(list(features)),
+                    or_(
+                        FeatureAccessRule.user_id == user_id,
+                        FeatureAccessRule.group_id.in_(their_groups),
+                        FeatureAccessRule.department.is_not(None),
+                    ),
+                )
+            )
+        )
+        .scalars()
+        .all()
     )
-
-
-async def _group_ids(db: AsyncSession, user_id: int) -> set[int]:
-    rows = await db.execute(select(user_group_members.c.group_id).where(user_group_members.c.user_id == user_id))
-    return {int(value) for value in rows.scalars().all()}
+    department = normalize_department(str(user.department) if user.department is not None else None)
+    return [
+        rule
+        for rule in rows
+        if rule.department is None or (department and normalize_department(str(rule.department)) == department)
+    ]
 
 
 async def _group_name(db: AsyncSession, group_id: int) -> str:
@@ -104,49 +125,37 @@ async def decide_all(
     """The decision for each of ``features``, loading the person's roles and groups at most once."""
 
     wanted = [validate_feature(feature) for feature in features]
-    rules = await _rules(db, wanted)
+    rules = await _rules_for(db, wanted, user)
     if not rules:
+        # No rule names this person, their groups or their department: open, and no role lookup.
         return {feature: FeatureDecision(feature, True, REASON_DEFAULT) for feature in wanted}
 
     user_id = int(user.id)
     if user_is_admin_panel(await get_user_role_slugs(db, user_id)):
         return {feature: FeatureDecision(feature, True, REASON_ADMIN) for feature in wanted}
 
-    group_ids: set[int] | None = None
-    department = normalize_department(str(user.department) if user.department is not None else None)
     out: dict[str, FeatureDecision] = {}
     for feature in wanted:
         mine = [rule for rule in rules if rule.feature == feature]
-        own = next((rule for rule in mine if rule.user_id is not None and int(rule.user_id) == user_id), None)
+        own = next((rule for rule in mine if rule.user_id is not None), None)
         if own is not None:
             allowed = str(own.effect) == "allow"
             out[feature] = FeatureDecision(
                 feature, allowed, REASON_USER_ALLOW if allowed else REASON_USER_DENY, int(own.id)
             )
             continue
-        decision: FeatureDecision | None = None
-        group_rules = [rule for rule in mine if rule.group_id is not None and str(rule.effect) == "deny"]
-        if group_rules:
-            if group_ids is None:
-                group_ids = await _group_ids(db, user_id)
-            hit = next((rule for rule in group_rules if int(rule.group_id) in group_ids), None)
-            if hit is not None:
-                via = await _group_name(db, int(hit.group_id))
-                decision = FeatureDecision(feature, False, REASON_GROUP_DENY, int(hit.id), via)
-        if decision is None and department:
-            hit = next(
-                (
-                    rule
-                    for rule in mine
-                    if rule.department is not None
-                    and str(rule.effect) == "deny"
-                    and normalize_department(str(rule.department)) == department
-                ),
-                None,
+        group_hit = next((rule for rule in mine if rule.group_id is not None and str(rule.effect) == "deny"), None)
+        if group_hit is not None:
+            via = await _group_name(db, int(group_hit.group_id))
+            out[feature] = FeatureDecision(feature, False, REASON_GROUP_DENY, int(group_hit.id), via)
+            continue
+        dept_hit = next((rule for rule in mine if rule.department is not None and str(rule.effect) == "deny"), None)
+        if dept_hit is not None:
+            out[feature] = FeatureDecision(
+                feature, False, REASON_DEPARTMENT_DENY, int(dept_hit.id), str(dept_hit.department)
             )
-            if hit is not None:
-                decision = FeatureDecision(feature, False, REASON_DEPARTMENT_DENY, int(hit.id), str(hit.department))
-        out[feature] = decision or FeatureDecision(feature, True, REASON_DEFAULT)
+            continue
+        out[feature] = FeatureDecision(feature, True, REASON_DEFAULT)
     return out
 
 

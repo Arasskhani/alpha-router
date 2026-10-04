@@ -63,6 +63,22 @@ class TestWithNoRules:
         monkeypatch.setattr(svc, "get_user_role_slugs", boom)
         assert (await decide(db_session, user, "chat")).allowed
 
+    async def test_rules_for_other_people_read_no_roles_either(self, db_session, user, admin, monkeypatch):
+        """Only a rule that names this person, a group of theirs or their department costs a role lookup."""
+        import app.services.feature_access_service as svc
+
+        group = await _group(db_session, "Others")
+        await _rule(db_session, "chat", user_id=admin.id)
+        await _rule(db_session, "chat", group_id=group.id)
+        await _rule(db_session, "projects", department="Elsewhere")
+
+        async def boom(*_a, **_k):
+            raise AssertionError("roles were read though no rule names this person")
+
+        monkeypatch.setattr(svc, "get_user_role_slugs", boom)
+        decisions = await decide_all(db_session, user)
+        assert all(d.allowed and d.reason == REASON_DEFAULT for d in decisions.values())
+
 
 class TestDeny:
     async def test_a_user_rule_closes_the_section_for_that_person_only(self, db_session, user, admin):

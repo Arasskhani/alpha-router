@@ -19,6 +19,9 @@ const USER_SIDEBAR_NAV: NavItem[] = [
 /** The web sections Feature Access can close for an account. */
 export type WebSection = "chat" | "projects";
 
+/** Everything Feature Access can close: the web sections, and the person's own API keys. */
+export type GovernedFeature = WebSection | "api_keys";
+
 const SECTION_PATHS: Record<WebSection, string> = { chat: "/app/chat", projects: "/app/projects" };
 
 /** Any session shape: only its `features` block is read. */
@@ -28,7 +31,7 @@ type SectionSession = object | null | undefined;
  * Whether this account may open a web section (`/api/auth/session.features.chat` / `.projects`).
  * Missing means open: an older server does not send it.
  */
-export function sectionEnabled(session: SectionSession, section: WebSection): boolean {
+export function sectionEnabled(session: SectionSession, section: GovernedFeature): boolean {
   const features = (session as { features?: Record<string, unknown> | null } | null | undefined)?.features;
   return features?.[section] !== false;
 }

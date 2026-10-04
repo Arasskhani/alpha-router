@@ -502,13 +502,14 @@ export default function FeatureAccess() {
       }
     >
       <p className="muted-text">
-        Who may use the web Chat and Projects. Both are open to everyone until you add a rule. Deny turns a section off
-        for a user, a group or a department; Allow gives it back to one person inside a denied group or department. A
-        rule on a person beats their groups and department, a deny on any group or department wins over the rest, and
-        administrators always have both. Project chats follow Projects, so a person without Chat keeps them. The browser
-        extension and API keys are not affected — the extension&apos;s access is on{" "}
-        <Link to="/admin/chat-tools">Chat Tools</Link>. Nothing is deleted when a section is turned off, and changes are
-        recorded in <Link to="/admin/admin-logs">Admin Logs</Link>.
+        Who may use the web Chat, Projects and personal API keys. All three are open to everyone until you add a
+        rule. Deny turns one off for a user, a group or a department; Allow gives it back to one person inside a
+        denied group or department. A rule on a person beats their groups and department, a deny on any group or
+        department wins over the rest, and administrators always have everything. Project chats follow Projects, so a
+        person without Chat keeps them. Closing API keys stops a person making a personal key and refuses the keys
+        they have (kept, not revoked); keys issued on <Link to="/admin/api-keys">API Keys</Link> are not affected. The
+        browser extension&apos;s access is on <Link to="/admin/chat-tools">Chat Tools</Link>. Nothing is deleted when
+        a section is turned off, and changes are recorded in <Link to="/admin/admin-logs">Admin Logs</Link>.
       </p>
 
       {error ? (

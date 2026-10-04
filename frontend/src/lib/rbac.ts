@@ -25,7 +25,7 @@ export type SessionRbac = {
   menus?: MenuKey[] | null;
   categories?: CategoryKey[] | null;
   /** Server feature flags (Phase 4.5). Missing = feature on, for older backends. */
-  features?: { agents_platform?: boolean; chat?: boolean; projects?: boolean } | null;
+  features?: { agents_platform?: boolean; chat?: boolean; projects?: boolean; api_keys?: boolean } | null;
 };
 
 /**

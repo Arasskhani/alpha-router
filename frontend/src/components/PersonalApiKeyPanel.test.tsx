@@ -10,9 +10,12 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const session = vi.hoisted(() => ({ features: {} as Record<string, boolean> }));
 vi.mock("../api", () => ({
   api: vi.fn(),
   formatApiError: (e: unknown) => String(e),
+  getCachedSession: () => ({ role: "user", features: session.features }),
+  onSessionReady: () => () => undefined,
 }));
 const confirmMock = vi.fn(async () => true);
 vi.mock("../context/ConfirmContext", () => ({
@@ -47,6 +50,7 @@ let writeText: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   vi.mocked(api).mockReset();
+  session.features = {};
   confirmMock.mockClear();
   confirmMock.mockResolvedValue(true);
   writeText = vi.fn(async () => undefined);
@@ -282,5 +286,26 @@ describe("the key is shown once, and the dialog acts like it", () => {
       expect(confirmMock).not.toHaveBeenCalled();
       expect(secretOnScreen()).toBe(false);
     });
+  });
+});
+
+describe("with API keys closed by Feature Access", () => {
+  it("makes no key and says why", async () => {
+    session.features = { api_keys: false };
+    answerWith();
+    await render();
+    expect(document.body.textContent).toContain("API keys aren't enabled for your account");
+    expect(button("Create API key")?.disabled).toBe(true);
+    expect(document.body.textContent).not.toContain("Ask an administrator to assign a monthly budget plan");
+  });
+
+  it("keeps the existing key revocable and says it is refused meanwhile", async () => {
+    session.features = { api_keys: false };
+    answerWith({
+      keys: [{ id: 3, name: "Mine", prefix: "ar_abc", created_at: "2026-10-01T00:00:00", last_used_at: null, url: "https://x/v1" }],
+    });
+    await render();
+    expect(document.body.textContent).toContain("Your key is kept but refused");
+    expect(button("Revoke")?.disabled).toBe(false);
   });
 });

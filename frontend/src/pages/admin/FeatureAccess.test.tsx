@@ -101,6 +101,19 @@ describe("the Feature Access page", () => {
     expect(host.textContent).toContain("No rules yet.");
   });
 
+  it("draws every section the server governs, API keys among them", async () => {
+    const data = overview();
+    data.features.push({ key: "api_keys", title: "API keys", rules: [], deny_count: 0, allow_count: 0 });
+    serve({ "/api/admin/feature-access": data });
+    await render();
+    expect([...host.querySelectorAll("h2")].map((h) => h.textContent)).toEqual([
+      "Chat",
+      "Projects",
+      "API keys",
+      "Check a user",
+    ]);
+  });
+
   it("lists rules with who, access, note and who added them", async () => {
     serve({
       "/api/admin/feature-access": overview(

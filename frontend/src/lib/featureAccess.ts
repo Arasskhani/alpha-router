@@ -1,6 +1,6 @@
 /** Types and wording for the Feature Access admin page (`/api/admin/feature-access`). */
 
-export type FeatureKey = "chat" | "projects";
+export type FeatureKey = "chat" | "projects" | "api_keys";
 export type RuleTarget = "user" | "group" | "department";
 
 export type FeatureRule = {

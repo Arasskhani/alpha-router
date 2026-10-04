@@ -1,6 +1,8 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { api, formatApiError } from "../api";
 import { useConfirm } from "../context/ConfirmContext";
+import { useCachedSession } from "../hooks/useCachedSession";
+import { sectionEnabled } from "../lib/userPanelNav";
 import Modal from "./Modal";
 
 type PersonalKey = {
@@ -121,6 +123,8 @@ function SecretField({ label, value, onCopied }: { label: string; value: string;
 
 export default function PersonalApiKeyPanel() {
   const { confirm } = useConfirm();
+  // Feature Access: with API keys closed for this account no key is made, and a key it has is refused.
+  const keysOpen = sectionEnabled(useCachedSession(), "api_keys");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -277,6 +281,13 @@ export default function PersonalApiKeyPanel() {
         </div>
       )}
 
+      {!keysOpen ? (
+        <p className="docs-callout docs-callout-warn personal-api-key-panel__closed" role="status">
+          API keys aren&apos;t enabled for your account: your administrator turned them off.
+          {activeKey ? " Your key is kept but refused until they turn them back on; you can still revoke it." : ""}
+        </p>
+      ) : null}
+
       {error && <p className="settings-error" role="alert">{error}</p>}
       {message && <p className="settings-success">{message}</p>}
 
@@ -312,7 +323,7 @@ export default function PersonalApiKeyPanel() {
         <div className="settings-list">
           <div className="settings-row-block">
             <div className="personal-api-key-create">
-              {!hasBudget && (
+              {keysOpen && !hasBudget && (
                 <p className="settings-hint">
                   Ask an administrator to assign a monthly budget plan before creating a key.
                 </p>
@@ -320,7 +331,7 @@ export default function PersonalApiKeyPanel() {
               <button
                 type="button"
                 className="btn btn-sm btn-primary"
-                disabled={!hasBudget || saving}
+                disabled={!keysOpen || !hasBudget || saving}
                 onClick={openCreateDialog}
               >
                 Create API key

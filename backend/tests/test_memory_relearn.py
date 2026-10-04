@@ -96,6 +96,19 @@ class TestWhatIsRead:
         week = await plan_relearn(db_session, days=7, now=NOW)
         assert _ranges(week) == {long_chat: (5, 6)}
 
+    async def test_nobody_whose_chat_feature_access_closed(self, db_session):
+        """Relearn reads nothing of theirs while Chat is closed, and counts none of it."""
+        from app.models.feature_access import FeatureAccessRule
+
+        ana = await _person(db_session, "ana", prefs_changed=60)
+        hers = await _chat(db_session, ana, [2, 2])
+        closed = await _person(db_session, "closed", prefs_changed=60)
+        await _chat(db_session, closed, [2, 2])
+        db_session.add(FeatureAccessRule(feature="chat", effect="deny", user_id=closed.id))
+        await db_session.commit()
+        plan = await plan_relearn(db_session, days=30, now=NOW)
+        assert _ranges(plan) == {hers: (1, 2)}
+
     async def test_nothing_before_a_delete_all_or_a_settings_change(self, db_session):
         wiped = await _person(db_session, "wiped", prefs_changed=60)
         wiped_chat = await _chat(db_session, wiped, [20, 20, 3, 3])

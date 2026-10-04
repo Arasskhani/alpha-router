@@ -161,6 +161,12 @@ async def _personal_bounds(db: AsyncSession, user_ids: set[int]) -> dict[int, dt
         if isinstance(detail, dict) and detail.get("scope") == "all":
             current = bounds.get(int(user_id))
             bounds[int(user_id)] = created_at if current is None else max(current, created_at)
+    from app.services.feature_access_service import FEATURE_CHAT, feature_enabled_for_user_id
+
+    for user_id in user_ids:
+        # Chat closed by Feature Access: nothing of theirs is relearned (nor counted) meanwhile.
+        if not await feature_enabled_for_user_id(db, int(user_id), FEATURE_CHAT):
+            learning_off.add(int(user_id))
     for user_id in learning_off:
         bounds.pop(user_id, None)
     return {user_id: bounds.get(user_id) for user_id in user_ids if user_id not in learning_off}

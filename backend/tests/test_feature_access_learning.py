@@ -59,8 +59,8 @@ class TestMemory:
         await _close_chat(db_session, user)
         assert await schedule_extraction(db_session, user_id=user.id, session_id=later.id, watermark_sequence=2) is None
 
-    async def test_a_job_queued_before_the_section_closed_learns_nothing(self, db_session, user, monkeypatch):
-        """The run re-reads it, as it re-reads the person's own switch, and claims the window."""
+    async def test_a_job_queued_before_the_section_closed_learns_nothing_now(self, db_session, user, monkeypatch):
+        """The run re-reads it, and leaves the window for when Chat is open again: nothing is claimed."""
         from app.services import memory_extraction_service as extraction
 
         db_session.add(SystemSetting(key="memory_extraction_model_id", value="1"))
@@ -77,7 +77,7 @@ class TestMemory:
         monkeypatch.setattr(extraction, "_mine_window", never, raising=False)
         assert await extraction._mine_next_part(db_session, job, completer=None, first=True) is False
         await db_session.refresh(job)
-        assert int(job.extracted_sequence or 0) == 4
+        assert int(job.extracted_sequence or 0) == 0
 
 
 class TestSummaryAndRecall:

@@ -81,6 +81,13 @@ def _refused(resp, feature: str) -> None:
     assert detail["feature"] == feature
 
 
+def _is_feature_refusal(resp) -> bool:
+    if resp.status_code != 403:
+        return False
+    detail = resp.json().get("detail")
+    return isinstance(detail, dict) and detail.get("code") == FEATURE_FORBIDDEN_CODE
+
+
 def _turn(**extra) -> dict:
     return {"model": "vendor/model", "messages": [{"role": "user", "content": "hi"}], **extra}
 
@@ -130,6 +137,49 @@ class TestChatOff:
             headers=headers,
         )
         _refused(resp, "chat")
+
+    async def test_a_project_id_alone_does_not_make_a_personal_turn_a_project_one(self, client, db_session, user):
+        """No stored chat: only a turn saved in a project the person may write in counts as the project's."""
+        mine = await _project(db_session, user)
+        headers = _sign_in(client, user)
+        await _deny(db_session, "chat", user)
+        unsaved = await client.post(
+            "/api/chat/completions", json=_turn(project_id=mine, persist_chat=False), headers=headers
+        )
+        _refused(unsaved, "chat")
+        elsewhere = await client.post(
+            "/api/chat/completions", json=_turn(project_id="not-a-project", persist_chat=True), headers=headers
+        )
+        _refused(elsewhere, "chat")
+        saved = await client.post(
+            "/api/chat/completions", json=_turn(project_id=mine, persist_chat=True), headers=headers
+        )
+        assert not _is_feature_refusal(saved), saved.text
+
+    async def test_a_new_project_chat_can_be_titled_and_dictated_before_it_is_stored(self, client, db_session, user):
+        mine = await _project(db_session, user)
+        headers = _sign_in(client, user)
+        await _deny(db_session, "chat", user)
+        title = await client.post(
+            "/api/chat/session-title",
+            json={"model": "vendor/model", "messages": [{"role": "user", "content": "hi"}], "project_id": mine},
+            headers=headers,
+        )
+        assert not _is_feature_refusal(title), title.text
+        voice = await client.post(
+            "/api/chat/voice",
+            data={"project_id": mine, "chat_session_id": "not-stored-yet"},
+            files={"file": ("v.webm", b"\x1a\x45\xdf\xa3", "audio/webm")},
+            headers=headers,
+        )
+        assert not _is_feature_refusal(voice), voice.text
+
+    async def test_a_chat_not_stored_yet_is_left_to_the_route(self, client, db_session, user):
+        """The web app asks whether a new chat is on the server yet: 404 lets it create it, 403 would not."""
+        await _deny(db_session, "chat", user)
+        _sign_in(client, user)
+        resp = await client.get("/api/user/chat-sessions/not-stored-yet/messages")
+        assert resp.status_code == 404, resp.text
 
     async def test_preferences_stay_reachable(self, client, db_session, user):
         """Settings reads them on every page; closing Chat must not break the rest of the app."""

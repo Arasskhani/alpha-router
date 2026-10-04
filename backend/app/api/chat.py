@@ -640,6 +640,8 @@ class ChatTitleIn(BaseModel):
     #: The chat being titled, so a chat that holds an answer about a shared page is titled only by a model
     #: that may have page content.
     chat_session_id: str | None = Field(None, max_length=64)
+    #: The project of a project chat not stored yet, so Feature Access can tell it from a personal one.
+    project_id: str | None = Field(None, max_length=64)
 
 
 class EnhancePromptIn(BaseModel):
@@ -705,7 +707,7 @@ async def chat_session_title(
     db: AsyncSession = Depends(get_db),
 ):
     """Short overview title from conversation start (not the first user message verbatim)."""
-    await require_chat_feature_for(db, request, user, chat_session_id=body.chat_session_id)
+    await require_chat_feature_for(db, request, user, chat_session_id=body.chat_session_id, project_id=body.project_id)
     title = await generate_chat_title(
         db,
         user,
@@ -759,7 +761,15 @@ async def chat_completions(
     db: AsyncSession = Depends(get_db),
 ):
     # A project chat needs Projects, any other web chat needs Chat; the extension has its own access.
-    await require_chat_feature_for(db, request, user, chat_session_id=body.chat_session_id, project_id=body.project_id)
+    # A turn with a project id but no stored chat is a project turn only when it is saved there.
+    await require_chat_feature_for(
+        db,
+        request,
+        user,
+        chat_session_id=body.chat_session_id,
+        project_id=body.project_id,
+        unsaved_is_project=bool(body.persist_chat),
+    )
     tools = body.tools.model_dump() if body.tools else {}
     payload = {
         "model": body.model,
@@ -866,6 +876,7 @@ async def voice_message(
     request: Request,
     file: UploadFile = File(...),
     chat_session_id: str | None = Form(None),
+    project_id: str | None = Form(None),
     language: str | None = Form(None),
     duration_seconds: float | None = Form(None),
     user: User = Depends(require_active_user),
@@ -883,7 +894,7 @@ async def voice_message(
     liability, so it is no longer stored. Recordings kept before this change
     stay in Media until their owner or the retention policy removes them.
     """
-    await require_chat_feature_for(db, request, user, chat_session_id=chat_session_id)
+    await require_chat_feature_for(db, request, user, chat_session_id=chat_session_id, project_id=project_id)
     await assert_tool_for_user(db, "speech_to_text", user_id=user.id)
     await resolve_owned_chat_session(db, user=user, chat_session_id=chat_session_id)
     budget, usage = await get_user_budget_state(db, user)

@@ -139,6 +139,27 @@ class TestRules:
             )
         ).status_code == 422
 
+    async def test_saving_a_rule_as_it_was_records_nothing(self, client, admin, user, session_factory):
+        headers = _sign_in(client, admin)
+        body = {"feature": "chat", "target_type": "user", "target": user.id, "note": "n"}
+        assert (await client.post(f"{BASE}/rules", json=body, headers=headers)).status_code == 201
+        assert (await client.post(f"{BASE}/rules", json=body, headers=headers)).status_code == 200
+        assert [e.action for e in await _trail(session_factory)] == ["feature_access_rule_added"]
+
+    async def test_a_rule_saved_meanwhile_by_someone_else_is_a_conflict(self, client, admin, user, monkeypatch):
+        """Two administrators adding the same subject at once: the second is told, not answered with a 500."""
+        import app.api.admin_feature_access as api_module
+
+        async def nobody_yet(*_a, **_k):
+            return None
+
+        headers = _sign_in(client, admin)
+        body = {"feature": "chat", "target_type": "user", "target": user.id}
+        assert (await client.post(f"{BASE}/rules", json=body, headers=headers)).status_code == 201
+        monkeypatch.setattr(api_module, "_existing", nobody_yet)
+        resp = await client.post(f"{BASE}/rules", json=body, headers=headers)
+        assert resp.status_code == 409, resp.text
+
 
 class TestCheck:
     async def test_says_what_a_person_gets_and_why(self, client, admin, user, db_session):

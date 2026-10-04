@@ -15,6 +15,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin import _owner_picker_payload, _query_owner_picker_users
@@ -181,9 +182,20 @@ async def save_feature_access_rule(
         db.add(rule)
         response.status_code = 201
     else:
+        if str(rule.effect) == body.effect and (rule.note or None) == note:
+            # Saved as it was: nothing changed, so nothing goes in the trail.
+            return await _rule_view(db, rule)
         rule.effect = body.effect  # type: ignore[assignment]
         rule.note = note  # type: ignore[assignment]
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError:
+        # Another administrator saved a rule for the same subject a moment ago.
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Someone saved a rule for this subject just now. Refresh the page and try again.",
+        ) from None
     view = await _rule_view(db, rule)
     await log_security_event(
         db,

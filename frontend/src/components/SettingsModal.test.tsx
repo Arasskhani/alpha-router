@@ -30,6 +30,7 @@ vi.mock("../api", () => ({
   formatApiError: (e: unknown) => String(e),
   getCachedSession: () => null,
   onSessionReady: () => () => undefined,
+  bootstrapSession: vi.fn(async () => null),
 }));
 vi.mock("../context/ConfirmContext", () => ({ useConfirm: () => ({ confirm: vi.fn(), prompt: vi.fn() }) }));
 vi.mock("../lib/replyReadyNotify", () => ({ requestReplyNotifyPermission: vi.fn() }));

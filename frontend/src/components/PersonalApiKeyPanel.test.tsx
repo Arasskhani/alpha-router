@@ -15,6 +15,7 @@ vi.mock("../api", () => ({
   api: vi.fn(),
   formatApiError: (e: unknown) => String(e),
   getCachedSession: () => ({ role: "user", features: session.features }),
+  bootstrapSession: vi.fn(async () => ({ role: "user", features: session.features })),
   onSessionReady: () => () => undefined,
 }));
 const confirmMock = vi.fn(async () => true);
@@ -22,7 +23,7 @@ vi.mock("../context/ConfirmContext", () => ({
   useConfirm: () => ({ confirm: confirmMock, prompt: vi.fn() }),
 }));
 
-import { api } from "../api";
+import { api, bootstrapSession } from "../api";
 import PersonalApiKeyPanel from "./PersonalApiKeyPanel";
 
 const BUDGET = { monthly_budget_usd: 15, used_usd: 0.95, remaining_usd: 14.05 };
@@ -297,6 +298,8 @@ describe("with API keys closed by Feature Access", () => {
     expect(document.body.textContent).toContain("API keys aren't enabled for your account");
     expect(button("Create API key")?.disabled).toBe(true);
     expect(document.body.textContent).not.toContain("Ask an administrator to assign a monthly budget plan");
+    // Opening the panel reads the session again, so a section reopened meanwhile shows.
+    expect(vi.mocked(bootstrapSession)).toHaveBeenCalledWith(true);
   });
 
   it("keeps the existing key revocable and says it is refused meanwhile", async () => {

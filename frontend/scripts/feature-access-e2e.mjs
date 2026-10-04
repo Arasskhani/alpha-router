@@ -214,32 +214,46 @@ await step("a project chat still answers", async () => {
 });
 
 await step("API keys closed: no new key, and the key the user has is refused, then works again", async () => {
-  const made = await person.page.request.post(`${BASE}/api/user/api-keys`, {
-    headers: person.headers,
-    data: { name: "FA check" },
-  });
-  expect(made.ok(), `making a personal key answered ${made.status()}`);
-  const key = (await made.json()).api_key;
-  const bearer = { Authorization: `Bearer ${key}` };
-  const before = await person.page.request.get(`${BASE}/v1/models`, { headers: bearer });
-  expect(before.status() === 200, `the key answered ${before.status()} before`);
-  const added = await api("/api/admin/feature-access/rules", {
-    method: "POST",
-    data: { feature: "api_keys", target_type: "user", target: userId },
-  });
-  expect(added.status() === 201, `adding the API keys rule answered ${added.status()}`);
-  const refused = await person.page.request.get(`${BASE}/v1/models`, { headers: bearer });
-  expect(refused.status() === 403, `the key answered ${refused.status()} while closed`);
-  expect((await refused.json()).detail?.code === "feature_not_enabled", "the refusal has no feature_not_enabled code");
-  const another = await person.page.request.post(`${BASE}/api/user/api-keys`, {
-    headers: person.headers,
-    data: { name: "Another" },
-  });
-  expect(another.status() === 403, `making a key while closed answered ${another.status()}`);
-  const rule = (await added.json()).id;
-  await api(`/api/admin/feature-access/rules/${rule}`, { method: "DELETE" });
-  const again = await person.page.request.get(`${BASE}/v1/models`, { headers: bearer });
-  expect(again.status() === 200, `the key answered ${again.status()} after the section opened`);
+  let keyId = null;
+  let ruleId = null;
+  try {
+    const made = await person.page.request.post(`${BASE}/api/user/api-keys`, {
+      headers: person.headers,
+      data: { name: "FA check" },
+    });
+    expect(made.ok(), `making a personal key answered ${made.status()}`);
+    const created = await made.json();
+    keyId = created.id;
+    const bearer = { Authorization: `Bearer ${created.api_key}` };
+    const before = await person.page.request.get(`${BASE}/v1/models`, { headers: bearer });
+    expect(before.status() === 200, `the key answered ${before.status()} before`);
+    const added = await api("/api/admin/feature-access/rules", {
+      method: "POST",
+      data: { feature: "api_keys", target_type: "user", target: userId },
+    });
+    expect(added.status() === 201, `adding the API keys rule answered ${added.status()}`);
+    ruleId = (await added.json()).id;
+    const refused = await person.page.request.get(`${BASE}/v1/models`, { headers: bearer });
+    expect(refused.status() === 403, `the key answered ${refused.status()} while closed`);
+    expect((await refused.json()).detail?.code === "feature_not_enabled", "the refusal has no feature_not_enabled code");
+    const another = await person.page.request.post(`${BASE}/api/user/api-keys`, {
+      headers: person.headers,
+      data: { name: "Another" },
+    });
+    expect(another.status() === 403, `making a key while closed answered ${another.status()}`);
+    await api(`/api/admin/feature-access/rules/${ruleId}`, { method: "DELETE" });
+    ruleId = null;
+    const again = await person.page.request.get(`${BASE}/v1/models`, { headers: bearer });
+    expect(again.status() === 200, `the key answered ${again.status()} after the section opened`);
+  } finally {
+    // Nothing of this step is left behind, whatever failed: the rule, then the key.
+    if (ruleId) await api(`/api/admin/feature-access/rules/${ruleId}`, { method: "DELETE" }).catch(() => undefined);
+    if (keyId) {
+      await person.page.request
+        .delete(`${BASE}/api/user/api-keys/${keyId}`, { headers: person.headers })
+        .catch(() => undefined);
+    }
+  }
 });
 
 await step("with Projects closed too the user starts in Media", async () => {

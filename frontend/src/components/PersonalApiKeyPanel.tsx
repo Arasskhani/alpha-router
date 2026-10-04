@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
-import { api, formatApiError } from "../api";
+import { api, bootstrapSession, formatApiError } from "../api";
 import { useConfirm } from "../context/ConfirmContext";
 import { useCachedSession } from "../hooks/useCachedSession";
 import { sectionEnabled } from "../lib/userPanelNav";
@@ -160,6 +160,8 @@ export default function PersonalApiKeyPanel() {
 
   useEffect(() => {
     void load();
+    // Read the session again on opening: an administrator may have reopened API keys since it was read.
+    void bootstrapSession(true).catch(() => undefined);
   }, [load]);
 
   function openCreateDialog() {

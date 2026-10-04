@@ -124,8 +124,11 @@ await step("the page is under Chat experience", async () => {
   const link = admin.page.getByRole("link", { name: "Feature Access" }).first();
   expect(await link.isVisible(), "no Feature Access link in the admin menu");
   await admin.page.locator(".feature-access-section__head").first().waitFor({ timeout: 20_000 });
-  const chat = admin.page.locator("section", { has: admin.page.getByRole("heading", { name: "Chat", level: 2 }) });
-  expect((await chat.textContent()).includes("Open to everyone"), "Chat is not shown open");
+  for (const name of ["Chat", "Projects"]) {
+    const section = admin.page.locator("section", { has: admin.page.getByRole("heading", { name, level: 2 }) });
+    // A stack may hold rules already: the section says who it is open to either way.
+    expect((await section.textContent()).includes("Open to everyone"), `${name} does not say who it is open to`);
+  }
 });
 
 await step("an administrator closes Chat for one user on the page", async () => {
@@ -190,11 +193,21 @@ await step("a project chat still answers", async () => {
       messages: [{ role: "user", content: "hello from the project" }],
       chat_session_id: chat.id,
       project_id: project.id,
+      // As the web app sends a project turn: saved in the project chat.
+      persist_chat: true,
     },
   });
   expect(turn.status() === 200, `the project turn answered ${turn.status()}: ${(await turn.text()).slice(0, 160)}`);
+  // And through the page itself: a message typed in a new project chat is answered, not refused.
   await person.page.goto(`${BASE}/app/projects/${project.id}`);
-  await person.page.locator("textarea").first().waitFor({ timeout: 20_000 });
+  const box = person.page.locator("textarea").first();
+  await box.waitFor({ timeout: 20_000 });
+  await sleep(1500); // the composer settles on the project chat and its model first
+  const answered = person.page.waitForResponse((r) => r.url().endsWith("/api/chat/completions"), { timeout: 30_000 });
+  await box.fill("hello from the page");
+  await box.press("Enter");
+  const response = await answered;
+  expect(response.status() === 200, `the page's project turn answered ${response.status()}`);
   return `model ${model}`;
 });
 

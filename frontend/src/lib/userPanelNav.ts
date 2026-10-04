@@ -28,7 +28,8 @@ const SECTION_PATHS: Record<WebSection, string> = { chat: "/app/chat", projects:
 type SectionSession = object | null | undefined;
 
 /**
- * Whether this account may open a web section (`/api/auth/session.features.chat` / `.projects`).
+ * Whether this account may use what Feature Access governs (`/api/auth/session.features.chat`,
+ * `.projects`, `.api_keys`).
  * Missing means open: an older server does not send it.
  */
 export function sectionEnabled(session: SectionSession, section: GovernedFeature): boolean {

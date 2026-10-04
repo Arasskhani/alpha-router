@@ -418,10 +418,11 @@ function CheckUser({ version }: { version: number }) {
 }
 
 /**
- * Feature Access: turn the web Chat or Projects off for a user, a group or a
- * department, the way a plan is assigned. Both are open until a rule closes
- * them. A rule on a person beats their groups and department; among groups
- * and departments a deny wins; administrators always have both.
+ * Feature Access: turn the web Chat, Projects or personal API keys off for a
+ * user, a group or a department, the way a plan is assigned. All are open
+ * until a rule closes them. A rule on a person beats their groups and
+ * department; among groups and departments a deny wins; administrators always
+ * have everything.
  */
 export default function FeatureAccess() {
   const readOnly = useReadOnly();

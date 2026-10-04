@@ -2601,7 +2601,7 @@ export const docSections: DocSection[] = [
             <strong>deny wins</strong>.
           </li>
           <li>
-            <strong>Administrators</strong> — anyone with an admin-panel role — always have both sections, whatever
+            <strong>Administrators</strong> — anyone with an admin-panel role — always have every section, whatever
             the rules say.
           </li>
           <li>One rule per section and subject: saving again for the same subject changes its access and note.</li>

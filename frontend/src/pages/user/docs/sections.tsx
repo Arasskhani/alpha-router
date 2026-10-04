@@ -1676,8 +1676,9 @@ export const userManualSections: DocSection[] = [
         <h2>When Chat, Projects or API keys are missing</h2>
         <p>
           Your administrator can turn <strong>Chat</strong>, <strong>Projects</strong> or your{" "}
-          <strong>personal API key</strong> off for your account, your group or your department. A section then
-          leaves your menu, and opening it by its address says it isn&apos;t enabled for you.
+          <strong>personal API key</strong> off for your account, your group or your department. Chat or Projects
+          then leaves your menu, and opening it by its address says it isn&apos;t enabled for you; Settings says so
+          for your API key.
         </p>
         <ul>
           <li>

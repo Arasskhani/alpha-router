@@ -1,4 +1,4 @@
-"""Decide whether one account may use the web Chat or Projects.
+"""Decide whether one account may use the web Chat, Projects or its personal API keys.
 
 The rules (:class:`app.models.feature_access.FeatureAccessRule`) and their
 order, as the administrator sees them on the Feature Access page:

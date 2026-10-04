@@ -1,4 +1,4 @@
-"""Feature Access: the admin page that turns the web Chat or Projects off for some people.
+"""Feature Access: the admin page that turns the web Chat, Projects or personal API keys off for some people.
 
 Under Chat experience, behind the same menu as Chat Tools: like a tool ACL it
 decides who may use a part of the chat, and the same administrators keep it.

@@ -132,6 +132,12 @@ async def require_session_section(
     """
     if _from_extension(request):
         return
-    stored, in_project = await _stored_chat_project(db, session_id)
+    await require_stored_chat_section(db, user, session_id)
+
+
+async def require_stored_chat_section(db: AsyncSession, user: User, chat_session_id: str | None) -> None:
+    """The section of a stored chat, when there is one: for a route that reaches a chat through
+    something else (an agent run, a handoff). A chat not stored, or none, is left to the route."""
+    stored, in_project = await _stored_chat_project(db, chat_session_id)
     if stored:
         await require_feature(db, user, FEATURE_PROJECTS if in_project else FEATURE_CHAT)

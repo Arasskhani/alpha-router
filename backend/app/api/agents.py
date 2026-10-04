@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_active_user
+from app.api.feature_gate import require_stored_chat_section
 from app.config import get_settings
 from app.database import get_db
 from app.models.agent import Agent, AgentHandoffEvent, AgentVersion
@@ -136,6 +137,8 @@ async def get_citation_detail(
     run = await db.get(AgentRun, run_id)
     if run is None or run.user_id != user.id:
         raise HTTPException(404, "Citation not found")
+    # A citation belongs to the chat its run answered in: Feature Access governs it like that chat.
+    await require_stored_chat_section(db, user, str(run.chat_session_id) if run.chat_session_id else None)
     citation = (
         await db.execute(
             select(AgentCitation).where(
@@ -232,6 +235,7 @@ async def list_pending_handoffs(
     session = await db.get(ChatSession, session_id)
     if session is None or int(session.user_id) != int(user.id):
         raise HTTPException(404, "Chat session not found")
+    await require_stored_chat_section(db, user, session_id)
     rows = (
         (
             await db.execute(
@@ -277,6 +281,10 @@ async def accept_handoff(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_active_user),
 ):
+    found = await db.get(AgentHandoffEvent, event_id)
+    if found is not None:
+        # A handoff is offered in a chat: Feature Access governs it like that chat.
+        await require_stored_chat_section(db, user, str(found.session_id) if found.session_id else None)
     subject = await resolve_resource_access_subject(db, user_id=user.id)
     try:
         event = await accept_agent_handoff(
@@ -317,6 +325,10 @@ async def decline_handoff(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_active_user),
 ):
+    found = await db.get(AgentHandoffEvent, event_id)
+    if found is not None:
+        # A handoff is offered in a chat: Feature Access governs it like that chat.
+        await require_stored_chat_section(db, user, str(found.session_id) if found.session_id else None)
     subject = await resolve_resource_access_subject(db, user_id=user.id)
     try:
         event = await decline_agent_handoff(

@@ -252,3 +252,18 @@ class TestTheSession:
         _sign_in(client, admin)
         features = (await client.get("/api/auth/session")).json()["features"]
         assert features["chat"] is True and features["projects"] is True
+
+
+class TestAgentRoutesAboutAChat:
+    async def test_handoffs_in_a_personal_chat_follow_chat(self, client, db_session, user):
+        personal = await _chat(db_session, user)
+        _sign_in(client, user)
+        assert (await client.get("/api/agents/handoffs/pending", params={"session_id": personal})).status_code == 200
+        await _deny(db_session, "chat", user)
+        _refused(await client.get("/api/agents/handoffs/pending", params={"session_id": personal}), "chat")
+
+    async def test_handoffs_in_a_project_chat_follow_projects(self, client, db_session, user):
+        in_project = await _chat(db_session, user, await _project(db_session, user))
+        await _deny(db_session, "chat", user)
+        _sign_in(client, user)
+        assert (await client.get("/api/agents/handoffs/pending", params={"session_id": in_project})).status_code == 200

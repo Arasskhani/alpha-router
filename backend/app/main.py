@@ -19,6 +19,7 @@ from app.api import (
     admin_agent_governance,
     admin_agents,
     admin_chat_tools,
+    admin_feature_access,
     admin_extension,
     admin_knowledge,
     admin_logs,
@@ -780,6 +781,7 @@ if settings.agents_platform_enabled:
     app.include_router(admin_agents.router)
     app.include_router(admin_knowledge.router)
 app.include_router(admin_chat_tools.router)
+app.include_router(admin_feature_access.router)
 app.include_router(admin_extension.router)
 app.include_router(admin_logs.router)
 app.include_router(sign_in_activity.router)

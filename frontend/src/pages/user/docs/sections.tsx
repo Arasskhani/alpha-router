@@ -1667,6 +1667,37 @@ export const userManualSections: DocSection[] = [
     ),
   },
 
+  {
+    id: "user-feature-access",
+    title: "When Chat or Projects is missing",
+    group: "Account",
+    content: (
+      <>
+        <h2>When Chat or Projects is missing</h2>
+        <p>
+          Your administrator can turn <strong>Chat</strong> or <strong>Projects</strong> off for your account, your
+          group or your department. The section then leaves your menu, and opening it by its address says it
+          isn&apos;t enabled for you.
+        </p>
+        <ul>
+          <li>
+            With <strong>Chat</strong> off you start in Projects, and your project chats keep working there. Your
+            memory doesn&apos;t learn from your personal chats meanwhile.
+          </li>
+          <li>With <strong>Projects</strong> off you keep your personal chat.</li>
+          <li>
+            Nothing is deleted: your chats and projects are there again when your administrator turns the section back
+            on.
+          </li>
+          <li>
+            The <a href="#extension-install">browser extension</a> follows its own access, not this.
+          </li>
+        </ul>
+        <Note>Ask your administrator if you need a section you don&apos;t see.</Note>
+      </>
+    ),
+  },
+
   // ── Legal ─────────────────────────────────────────────────────────────────
   {
     id: "copyright",

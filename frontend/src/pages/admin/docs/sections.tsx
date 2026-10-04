@@ -1077,7 +1077,7 @@ export const docSections: DocSection[] = [
             </tr>
             <tr>
               <td>Chat experience</td>
-              <td>Chat Tools, Code Interpreter, Browser Extension</td>
+              <td>Chat Tools, Code Interpreter, Browser Extension, Feature Access, Memory</td>
             </tr>
             <tr>
               <td>People &amp; access</td>
@@ -1093,7 +1093,7 @@ export const docSections: DocSection[] = [
             </tr>
             <tr>
               <td>Data &amp; reports</td>
-              <td>Storage Management, Retention Policy, Memory, Reports, Projects, API Logs, Admin Logs, Sign-in Activity</td>
+              <td>Storage Management, Retention Policy, Reports, Projects, API Logs, Admin Logs, Sign-in Activity</td>
             </tr>
             <tr>
               <td>Developer</td>
@@ -2568,6 +2568,76 @@ export const docSections: DocSection[] = [
           Every change on this page is written to the administrative audit trail with the values before and after:
           the concurrency limits, the workspace limits, and the off switch. Pinning a model&apos;s compatibility on{" "}
           <a href="#admin-models">Models</a> is recorded too.
+        </p>
+      </>
+    ),
+  },
+  {
+    id: "admin-feature-access",
+    title: "Feature Access",
+    group: "Chat experience",
+    content: (
+      <>
+        <h2>Feature Access</h2>
+        <p>
+          Path: <code>/admin/feature-access</code>. Who may use the web <strong>Chat</strong> and{" "}
+          <strong>Projects</strong>, set for a user, a group or a department the way a plan is assigned. Both are open
+          to everyone until a rule closes them, so nothing changes for anybody on upgrade.
+        </p>
+        <h3>Rules and how they combine</h3>
+        <ul>
+          <li>
+            <strong>Deny</strong> turns a section off for a user, a group or a department. A department matches each
+            user&apos;s Department field whatever its case or spacing.
+          </li>
+          <li>
+            <strong>Allow</strong> exists for one person only: it gives a section back to someone inside a denied group
+            or department. A group or department allow would change nothing, since a section is open unless a rule
+            closes it, so the page does not offer one.
+          </li>
+          <li>
+            A rule on the <strong>person</strong> beats their groups and department. Among groups and departments a{" "}
+            <strong>deny wins</strong>.
+          </li>
+          <li>
+            <strong>Administrators</strong> — anyone with an admin-panel role — always have both sections, whatever
+            the rules say.
+          </li>
+          <li>One rule per section and subject: saving again for the same subject changes its access and note.</li>
+        </ul>
+        <p>
+          <strong>Check a user</strong> at the bottom of the page shows what one person gets and which rule decided
+          it.
+        </p>
+        <h3>What turning a section off does</h3>
+        <ul>
+          <li>
+            <strong>Chat off</strong>: the Chat menu goes, the person starts in Projects (or Media), and the personal
+            chat list, its folders and chats are refused by the server with <code>403</code> and the code{" "}
+            <code>feature_not_enabled</code>. Their <strong>project chats keep working</strong>: a chat in a project
+            follows Projects. Memory, chat summaries and the recall index stop learning from their personal chats
+            until Chat is given back; what was already learned stays.
+          </li>
+          <li>
+            <strong>Projects off</strong>: the Projects menu goes and every project route is refused, project chats
+            included — also for projects the person is already a member of. Their personal chat is unaffected.
+          </li>
+          <li>
+            <strong>Nothing is deleted.</strong> Chats, projects and memories are hidden while the section is off and
+            are all there when it is given back.
+          </li>
+          <li>
+            The <strong>browser extension</strong> and <strong>API keys</strong> are not affected. Who may use the
+            extension is set on <a href="#admin-chat-tools">Chat Tools</a>.
+          </li>
+        </ul>
+        <h3>Who may change it</h3>
+        <p>
+          The page is part of the Chat Tools menu: whoever may open Chat Tools may open it, and a read-only
+          administrator sees the rules without being able to change them. Every change is written to the
+          administrative audit trail as <code>feature_access_rule_added</code>, <code>feature_access_rule_changed</code>{" "}
+          or <code>feature_access_rule_removed</code> and is visible in{" "}
+          <a href="#admin-activity-logs">Admin Logs</a>.
         </p>
       </>
     ),

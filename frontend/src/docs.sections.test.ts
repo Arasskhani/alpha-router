@@ -230,3 +230,24 @@ describe("the docs", () => {
     ).toContain("margin: 0");
   });
 });
+
+describe("Feature Access in the guides", () => {
+  it("the Admin Guide says how rules combine and what turning a section off does", () => {
+    const html = sectionHtml(docSections as Section[], "admin-feature-access");
+    expect(html).toContain("/admin/feature-access");
+    expect(html).toContain("deny wins");
+    expect(html).toContain("project chats keep working");
+    expect(html).toContain("Nothing is deleted.");
+    for (const action of ["feature_access_rule_added", "feature_access_rule_changed", "feature_access_rule_removed"]) {
+      expect(html).toContain(action);
+    }
+    const section = (docSections as Section[]).find((s) => s.id === "admin-feature-access");
+    expect(section?.group).toBe("Chat experience");
+  });
+
+  it("the User Manual tells a person what they keep", () => {
+    const html = sectionHtml(userManualSections as Section[], "user-feature-access");
+    expect(html).toContain("project chats keep working");
+    expect(html).toContain("Nothing is deleted");
+  });
+});

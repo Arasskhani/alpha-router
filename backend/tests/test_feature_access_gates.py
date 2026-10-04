@@ -126,6 +126,18 @@ class TestChatOff:
         resp = await client.get(f"/api/user/chat-sessions/{in_project}/messages")
         assert resp.status_code == 200, resp.text
 
+    async def test_a_turn_in_a_stored_project_chat_is_not_refused(self, client, db_session, user):
+        project_id = await _project(db_session, user)
+        in_project = await _chat(db_session, user, project_id)
+        await _deny(db_session, "chat", user)
+        headers = _sign_in(client, user)
+        resp = await client.post(
+            "/api/chat/completions",
+            json=_turn(chat_session_id=in_project, project_id=project_id),
+            headers=headers,
+        )
+        assert not _is_feature_refusal(resp), resp.text
+
     async def test_a_project_id_does_not_carry_a_personal_chat_past_it(self, client, db_session, user):
         project_id = await _project(db_session, user)
         personal = await _chat(db_session, user)

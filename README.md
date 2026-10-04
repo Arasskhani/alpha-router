@@ -23,7 +23,7 @@ run the same Compose stack on Linux or any other Docker-capable environment.
 ## Features
 
 - **Chat** — streaming conversations, attachments, prompt queue, private mode,
-  and import/export (Alpharouter, ChatGPT, and Open WebUI JSON)
+  and import/export
 - **Specialist Agents** — five seeded domain Agents (IT, HR, Legal, Finance,
   Marketing) with Knowledge Bases, ACL, maker-checker approvals, and evaluation
   publish gates

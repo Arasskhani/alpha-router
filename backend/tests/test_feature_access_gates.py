@@ -186,3 +186,19 @@ class TestNotGated:
         _sign_in(client, admin)
         assert (await client.get("/api/user/chats/folders")).status_code == 200
         assert (await client.get("/api/projects")).status_code == 200
+
+
+class TestTheSession:
+    async def test_tells_the_web_app_which_sections_to_show(self, client, db_session, user):
+        _sign_in(client, user)
+        features = (await client.get("/api/auth/session")).json()["features"]
+        assert features["chat"] is True and features["projects"] is True
+        await _deny(db_session, "projects", user)
+        features = (await client.get("/api/auth/session")).json()["features"]
+        assert features["chat"] is True and features["projects"] is False
+
+    async def test_an_administrator_sees_both(self, client, db_session, admin):
+        await _deny(db_session, "chat", admin)
+        _sign_in(client, admin)
+        features = (await client.get("/api/auth/session")).json()["features"]
+        assert features["chat"] is True and features["projects"] is True

@@ -40,6 +40,7 @@ from app.services.oidc_client import (
     validate_issuer_url,
     verify_state_cookie,
 )
+from app.services.feature_access_service import decide_all
 from app.services.rbac import primary_role_slug, session_payload_for_slugs
 from app.services.saml_sp import (
     login_redirect_url,
@@ -91,6 +92,7 @@ class TwoFaLoginRequest(BaseModel):
 @router.get("/session")
 async def auth_session(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     slugs = await get_user_role_slugs(db, user.id)
+    sections = await decide_all(db, user)
     return {
         "username": user.username,
         "display_name": user.display_name,
@@ -103,6 +105,9 @@ async def auth_session(user: User = Depends(get_current_user), db: AsyncSession 
             "agents_platform": bool(settings.agents_platform_enabled),
             "pwa_service_worker": bool(settings.pwa_service_worker_enabled),
             "pwa_install_prompt": bool(settings.pwa_install_prompt_enabled),
+            # Feature Access: whether this account may open the web Chat and Projects.
+            "chat": sections["chat"].allowed,
+            "projects": sections["projects"].allowed,
         },
     }
 

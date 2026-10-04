@@ -12,6 +12,8 @@
  *     feature_not_enabled) - while a turn in a project chat is answered;
  *   - Projects closed as well: the user starts in Media and /app/projects says
  *     it is not enabled; the server refuses /api/projects;
+ *   - API keys closed: no new personal key, and the user's key is refused at
+ *     the gateway (kept: it works again when the section opens);
  *   - both rules removed on the page: Chat is back;
  *   - the page fits a phone's width.
  *
@@ -209,6 +211,35 @@ await step("a project chat still answers", async () => {
   const response = await answered;
   expect(response.status() === 200, `the page's project turn answered ${response.status()}`);
   return `model ${model}`;
+});
+
+await step("API keys closed: no new key, and the key the user has is refused, then works again", async () => {
+  const made = await person.page.request.post(`${BASE}/api/user/api-keys`, {
+    headers: person.headers,
+    data: { name: "FA check" },
+  });
+  expect(made.ok(), `making a personal key answered ${made.status()}`);
+  const key = (await made.json()).api_key;
+  const bearer = { Authorization: `Bearer ${key}` };
+  const before = await person.page.request.get(`${BASE}/v1/models`, { headers: bearer });
+  expect(before.status() === 200, `the key answered ${before.status()} before`);
+  const added = await api("/api/admin/feature-access/rules", {
+    method: "POST",
+    data: { feature: "api_keys", target_type: "user", target: userId },
+  });
+  expect(added.status() === 201, `adding the API keys rule answered ${added.status()}`);
+  const refused = await person.page.request.get(`${BASE}/v1/models`, { headers: bearer });
+  expect(refused.status() === 403, `the key answered ${refused.status()} while closed`);
+  expect((await refused.json()).detail?.code === "feature_not_enabled", "the refusal has no feature_not_enabled code");
+  const another = await person.page.request.post(`${BASE}/api/user/api-keys`, {
+    headers: person.headers,
+    data: { name: "Another" },
+  });
+  expect(another.status() === 403, `making a key while closed answered ${another.status()}`);
+  const rule = (await added.json()).id;
+  await api(`/api/admin/feature-access/rules/${rule}`, { method: "DELETE" });
+  const again = await person.page.request.get(`${BASE}/v1/models`, { headers: bearer });
+  expect(again.status() === 200, `the key answered ${again.status()} after the section opened`);
 });
 
 await step("with Projects closed too the user starts in Media", async () => {

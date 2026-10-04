@@ -1,7 +1,6 @@
-import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { getCachedSession, onSessionReady } from "../api";
+import { useCachedSession } from "../hooks/useCachedSession";
 import { sectionEnabled, userHomePath, type WebSection } from "../lib/userPanelNav";
 
 const TITLES: Record<WebSection, string> = { chat: "Chat", projects: "Projects" };
@@ -12,8 +11,7 @@ const TITLES: Record<WebSection, string> = { chat: "Chat", projects: "Projects" 
  * a page that loads and then fails on every request.
  */
 export default function SectionGate({ section, children }: { section: WebSection; children: React.ReactNode }) {
-  const [session, setSession] = useState(getCachedSession);
-  useEffect(() => onSessionReady(setSession), []);
+  const session = useCachedSession();
 
   if (sectionEnabled(session, section)) return <>{children}</>;
 

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import ReadOnlyRouteGuard from "../../components/ReadOnlyRouteGuard";
 import Shell from "../../components/Shell";
-import { api, getCachedSession } from "../../api";
+import { bootstrapSession, getCachedSession, onSessionReady } from "../../api";
 import { ReadOnlyProvider } from "../../context/ReadOnlyContext";
 import {
   filterAdminNavFromSession,
@@ -18,8 +18,11 @@ export default function UserLayout() {
   const [session, setSession] = useState<SessionRbac | null>(() => getCachedSession() as SessionRbac | null);
 
   const refreshSessionStatus = useCallback(() => {
-    api<SessionRbac>("/api/auth/session")
-      .then((s) => {
+    // Through the shared session, so a section Feature Access opened or closed meanwhile
+    // reaches every menu and SectionGate, not this sidebar alone.
+    bootstrapSession(true)
+      .then((value) => {
+        const s = value as SessionRbac;
         const ok = s.is_active !== false;
         setSessionActive(ok);
         setActive(ok);
@@ -29,6 +32,9 @@ export default function UserLayout() {
         setActive(isSessionActive());
       });
   }, []);
+
+  // A refresh from elsewhere (a Feature Access refusal) redraws the sidebar too.
+  useEffect(() => onSessionReady((s) => setSession(s as SessionRbac)), []);
 
   useEffect(() => {
     refreshSessionStatus();

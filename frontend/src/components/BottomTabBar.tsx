@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 
-import { getCachedSession } from "../api";
+import { useCachedSession } from "../hooks/useCachedSession";
 import { useSoftKeyboardOpen } from "../hooks/useSoftKeyboardOpen";
 import type { SessionRbac } from "../lib/rbac";
 import { topbarShortcutsForSession } from "../lib/userPanelNav";
@@ -29,7 +29,8 @@ export default function BottomTabBar() {
   const moreButtonRef = useRef<HTMLButtonElement>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
 
-  const items = topbarShortcutsForSession(getCachedSession() as SessionRbac | null);
+  const session = useCachedSession();
+  const items = topbarShortcutsForSession(session as SessionRbac | null);
   const tabs = TAB_PATHS.map((to) => items.find((item) => item.to === to)).filter(
     (item): item is NavItem => item !== undefined,
   );

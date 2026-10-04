@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
-import { getCachedSession } from "../api";
+import { useCachedSession } from "../hooks/useCachedSession";
 import type { SessionRbac } from "../lib/rbac";
 import { getSessionUser } from "../lib/session";
 import { isProjectWorkspacePath, topbarShortcutsForSession } from "../lib/userPanelNav";
@@ -135,9 +135,10 @@ function ProjectsShortcut({
 export default function TopbarNav({ theme, onThemeChange }: Props) {
   const user = getSessionUser();
   const location = useLocation();
+  const session = useCachedSession();
   if (!user) return null;
 
-  const shortcuts = topbarShortcutsForSession(getCachedSession() as SessionRbac | null);
+  const shortcuts = topbarShortcutsForSession(session as SessionRbac | null);
   const inProjectWorkspace = isProjectWorkspacePath(location.pathname);
 
   return (

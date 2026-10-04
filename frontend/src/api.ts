@@ -84,7 +84,31 @@ export async function authFetch(path: string, init: RequestInit = {}): Promise<R
     headers,
   });
   if (response.status === 401) onUnauthorized(path);
+  if (response.status === 403) noticeFeatureRefusal(response);
   return response;
+}
+
+/** The server's code for a section Feature Access closed for this account (see SectionGate). */
+export const FEATURE_NOT_ENABLED = "feature_not_enabled";
+let refreshingForFeature = false;
+
+/**
+ * A section was closed while this page was open: the session it was drawn from
+ * is stale. Read it again, once at a time, so the menus and SectionGate follow.
+ */
+function noticeFeatureRefusal(response: Response) {
+  if (refreshingForFeature) return;
+  void response
+    .clone()
+    .json()
+    .then((body: { detail?: { code?: string } }) => {
+      if (body?.detail?.code !== FEATURE_NOT_ENABLED || refreshingForFeature) return;
+      refreshingForFeature = true;
+      return bootstrapSession(true).finally(() => {
+        refreshingForFeature = false;
+      });
+    })
+    .catch(() => undefined);
 }
 
 export function bootstrapSession(force = false): Promise<SessionInfo> {

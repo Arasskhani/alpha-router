@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const session = vi.hoisted(() => ({ admin: false }));
 
-vi.mock("../api", () => ({ getCachedSession: () => null }));
+vi.mock("../api", () => ({ getCachedSession: () => null, onSessionReady: () => () => undefined }));
 vi.mock("../lib/userPanelNav", async (importOriginal) => {
   const real = await importOriginal<typeof import("../lib/userPanelNav")>();
   return {

@@ -16,7 +16,8 @@
     "audit:phone": "node scripts/phone-audit.mjs",
     "e2e:pwa": "node scripts/pwa-e2e.mjs",
     "e2e:extension": "node scripts/extension-e2e.mjs",
-    "e2e:chat-memory": "node scripts/chat-memory-e2e.mjs"
+    "e2e:chat-memory": "node scripts/chat-memory-e2e.mjs",
+    "e2e:feature-access": "node scripts/feature-access-e2e.mjs"
   },
   "dependencies": {
     "@lobehub/icons-static-svg": "^1.94.0",

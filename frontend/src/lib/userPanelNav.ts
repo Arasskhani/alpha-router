@@ -16,6 +16,37 @@ export const USER_SIDEBAR_NAV: NavItem[] = [
   { to: "/app/manual", label: "User Manual", icon: "manual" },
 ];
 
+/** The web sections Feature Access can close for an account. */
+export type WebSection = "chat" | "projects";
+
+const SECTION_PATHS: Record<WebSection, string> = { chat: "/app/chat", projects: "/app/projects" };
+
+/** Any session shape: only its `features` block is read. */
+type SectionSession = object | null | undefined;
+
+/**
+ * Whether this account may open a web section (`/api/auth/session.features.chat` / `.projects`).
+ * Missing means open: an older server does not send it.
+ */
+export function sectionEnabled(session: SectionSession, section: WebSection): boolean {
+  const features = (session as { features?: Record<string, unknown> | null } | null | undefined)?.features;
+  return features?.[section] !== false;
+}
+
+/** The user sidebar without the sections Feature Access closed for this account. */
+export function userSidebarNavForSession(session: SectionSession): NavItem[] {
+  return USER_SIDEBAR_NAV.filter((item) =>
+    (Object.keys(SECTION_PATHS) as WebSection[]).every(
+      (section) => SECTION_PATHS[section] !== item.to || sectionEnabled(session, section),
+    ),
+  );
+}
+
+/** Where a user starts: Chat when it is open, else the first section that is. */
+export function userHomePath(session: SectionSession): string {
+  return userSidebarNavForSession(session)[0]?.to ?? "/app/media";
+}
+
 /** True for `/app/projects/:id` and `/admin/projects/:id`, not the list or invite page. */
 export function isProjectWorkspacePath(pathname: string): boolean {
   const path = pathname.replace(/\/$/, "") || "/";
@@ -26,7 +57,7 @@ export function isProjectWorkspacePath(pathname: string): boolean {
 
 /** Topbar shortcuts, with the caller's first permitted admin page as the final item. */
 export function topbarShortcutsForSession(session: SessionRbac | null): NavItem[] {
-  const items = [...USER_SIDEBAR_NAV];
+  const items = userSidebarNavForSession(session);
   if (!session?.is_admin_panel) return items;
 
   const adminNav = filterAdminNavFromSession(adminNavSections, session, session.role);

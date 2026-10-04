@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { SessionRbac } from "./rbac";
-import { topbarShortcutsForSession, isProjectWorkspacePath } from "./userPanelNav";
+import {
+  isProjectWorkspacePath,
+  sectionEnabled,
+  topbarShortcutsForSession,
+  userHomePath,
+  userSidebarNavForSession,
+} from "./userPanelNav";
 
 function session(overrides: Partial<SessionRbac> = {}): SessionRbac {
   return {
@@ -77,5 +83,28 @@ describe("isProjectWorkspacePath", () => {
     expect(isProjectWorkspacePath("/app/projects/invite")).toBe(false);
     expect(isProjectWorkspacePath("/app/projects/abc/activity")).toBe(false);
     expect(isProjectWorkspacePath("/app/chat")).toBe(false);
+  });
+});
+
+describe("Feature Access sections", () => {
+  it("shows Chat and Projects when the server says nothing (an older server)", () => {
+    const paths = userSidebarNavForSession(session()).map((item) => item.to);
+    expect(paths).toContain("/app/chat");
+    expect(paths).toContain("/app/projects");
+    expect(userHomePath(session())).toBe("/app/chat");
+  });
+
+  it("leaves out a section the account may not open, everywhere the nav is drawn", () => {
+    const noChat = session({ features: { chat: false, projects: true } });
+    expect(sectionEnabled(noChat, "chat")).toBe(false);
+    expect(userSidebarNavForSession(noChat).map((item) => item.to)).not.toContain("/app/chat");
+    expect(topbarShortcutsForSession(noChat).map((item) => item.to)).not.toContain("/app/chat");
+    expect(userHomePath(noChat)).toBe("/app/projects");
+  });
+
+  it("starts a person with neither section in Media", () => {
+    const neither = session({ features: { chat: false, projects: false } });
+    expect(userHomePath(neither)).toBe("/app/media");
+    expect(sectionEnabled(neither, "projects")).toBe(false);
   });
 });

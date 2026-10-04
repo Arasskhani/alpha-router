@@ -1,6 +1,9 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { Suspense, lazy } from "react";
 import HomeRedirect from "./components/HomeRedirect";
+import SectionGate from "./components/SectionGate";
+import { getCachedSession } from "./api";
+import { userHomePath } from "./lib/userPanelNav";
 import RouteErrorBoundary from "./components/RouteErrorBoundary";
 import Login from "./pages/Login";
 import AdminLayout from "./pages/admin/AdminLayout";
@@ -75,6 +78,11 @@ function PrivateAdmin({ children }: { children: React.ReactNode }) {
   if (!session) return <Navigate to="/login" replace />;
   if (!isAdminPanelRole(session.role)) return <Navigate to="/login" replace />;
   return <>{children}</>;
+}
+
+/** "/app": the first section this account may open (Chat, unless Feature Access closed it). */
+function UserHome() {
+  return <Navigate to={userHomePath(getCachedSession())} replace />;
 }
 
 export default function App() {
@@ -152,12 +160,21 @@ export default function App() {
           </Private>
         }
       >
-        <Route index element={<Navigate to="chat" replace />} />
-        <Route path="chat" element={<ChatPanel />} />
-        <Route path="projects" element={<ProjectsPage />} />
-        <Route path="projects/invite" element={<ProjectInviteClaimPage />} />
-        <Route path="projects/:projectId/activity" element={<ProjectActivity />} />
-        <Route path="projects/:projectId" element={<ProjectWorkspacePage />} />
+        <Route index element={<UserHome />} />
+        <Route path="chat" element={<SectionGate section="chat"><ChatPanel /></SectionGate>} />
+        <Route path="projects" element={<SectionGate section="projects"><ProjectsPage /></SectionGate>} />
+        <Route
+          path="projects/invite"
+          element={<SectionGate section="projects"><ProjectInviteClaimPage /></SectionGate>}
+        />
+        <Route
+          path="projects/:projectId/activity"
+          element={<SectionGate section="projects"><ProjectActivity /></SectionGate>}
+        />
+        <Route
+          path="projects/:projectId"
+          element={<SectionGate section="projects"><ProjectWorkspacePage /></SectionGate>}
+        />
         <Route path="media" element={<MediaLibrary />} />
         <Route path="my-activity" element={<MyActivity />} />
         <Route path="manual" element={<UserManual />} />

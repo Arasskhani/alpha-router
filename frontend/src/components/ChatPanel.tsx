@@ -5798,6 +5798,8 @@ export default function ChatPanel({
     const fd = new FormData();
     fd.append("file", blob, `voice-${Date.now()}.${extension}`);
     if (sid) fd.append("chat_session_id", sid);
+    // A project chat not stored yet is told from a personal one by its project (Feature Access).
+    if (projectId) fd.append("project_id", projectId);
     fd.append("language", voiceRecordingLang);
     // Billing is per second of audio; the server floors this by file size.
     if (durationSeconds > 0) fd.append("duration_seconds", durationSeconds.toFixed(2));

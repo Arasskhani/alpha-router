@@ -2536,7 +2536,13 @@ export async function fetchChatSessionTitle(
   try {
     const data = await api<{ title: string }>("/api/chat/session-title", {
       method: "POST",
-      body: JSON.stringify({ model, messages: payload, ...(sessionId ? { chat_session_id: sessionId } : {}) }),
+      body: JSON.stringify({
+        model,
+        messages: payload,
+        ...(sessionId ? { chat_session_id: sessionId } : {}),
+        // A project chat not stored yet is told from a personal one by its project (Feature Access).
+        ...(getProjectChatScope() ? { project_id: getProjectChatScope() } : {}),
+      }),
     });
     const title = (data.title || "").trim();
     return title || null;

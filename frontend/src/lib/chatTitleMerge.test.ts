@@ -3,6 +3,7 @@ import * as apiMod from "../api";
 import {
   fetchChatSessionTitle,
   mergeSessionAfterMessageLoad,
+  setProjectChatScope,
   type ChatSession,
 } from "./chatStorage";
 
@@ -26,6 +27,22 @@ describe("fetchChatSessionTitle", () => {
     const api = vi.spyOn(apiMod, "api").mockResolvedValue({ title: "Page summary" });
     await fetchChatSessionTitle("model::3", messages);
     expect(JSON.parse(String(api.mock.calls[0][1]?.body))).toEqual({ model: "model::3", messages });
+  });
+
+  it("names the project of a project chat, which may not be stored yet (Feature Access)", async () => {
+    const api = vi.spyOn(apiMod, "api").mockResolvedValue({ title: "Plan" });
+    setProjectChatScope("proj-1");
+    try {
+      await fetchChatSessionTitle("model::3", messages, "chat-2");
+    } finally {
+      setProjectChatScope(null);
+    }
+    expect(JSON.parse(String(api.mock.calls[0][1]?.body))).toEqual({
+      model: "model::3",
+      messages,
+      chat_session_id: "chat-2",
+      project_id: "proj-1",
+    });
   });
 });
 

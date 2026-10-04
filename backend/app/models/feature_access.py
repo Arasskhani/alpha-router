@@ -1,6 +1,6 @@
-"""Who may open the web Chat and Projects: the Feature Access rules.
+"""Who may use the web Chat, Projects and personal API keys: the Feature Access rules.
 
-Both sections are open to everyone by default. An administrator turns one
+All three are open to everyone by default. An administrator turns one
 off for a user, a group or a department with a ``deny`` rule, and can give
 it back to one person inside a denied group or department with an ``allow``
 rule on that person. That is the whole model, so the table is small:
@@ -31,7 +31,9 @@ from app.database import Base
 #: The sections a rule can govern. A new one is a value here and in the check below.
 FEATURE_CHAT = "chat"
 FEATURE_PROJECTS = "projects"
-FEATURES: tuple[str, ...] = (FEATURE_CHAT, FEATURE_PROJECTS)
+#: The person's own API keys (Settings): making one, and every use of one at the gateway.
+FEATURE_API_KEYS = "api_keys"
+FEATURES: tuple[str, ...] = (FEATURE_CHAT, FEATURE_PROJECTS, FEATURE_API_KEYS)
 
 
 class FeatureAccessRule(Base):
@@ -39,7 +41,7 @@ class FeatureAccessRule(Base):
 
     __tablename__ = "feature_access_rules"
     __table_args__ = (
-        CheckConstraint("feature IN ('chat', 'projects')", name="chk_feature_access_feature"),
+        CheckConstraint("feature IN ('chat', 'projects', 'api_keys')", name="chk_feature_access_feature"),
         CheckConstraint("effect IN ('allow', 'deny')", name="chk_feature_access_effect"),
         CheckConstraint(
             "("

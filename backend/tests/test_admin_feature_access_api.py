@@ -55,7 +55,7 @@ class TestRules:
     async def test_add_list_change_remove(self, client, admin, user, session_factory):
         headers = _sign_in(client, admin)
         empty = (await client.get(BASE)).json()
-        assert [f["key"] for f in empty["features"]] == ["chat", "projects"]
+        assert [f["key"] for f in empty["features"]] == ["chat", "projects", "api_keys"]
         assert all(f["rules"] == [] for f in empty["features"])
 
         added = await client.post(

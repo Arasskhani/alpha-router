@@ -38,6 +38,7 @@ from app.services.proxy_service import (
     preflight_stream_chat,
     stream_chat,
 )
+from app.services.feature_access_service import FEATURE_API_KEYS, require_feature
 from app.services.user_service import get_user_by_api_key
 from app.utils.app_attribution import detect_client_app
 
@@ -130,6 +131,9 @@ async def _resolve_gateway_auth(
         elif user:
             if not user.is_active:
                 raise HTTPException(status_code=403, detail="Account disabled")
+            if user_api_key is not None:
+                # Feature Access: a personal key works only while the owner's API keys are open.
+                await require_feature(db, user, FEATURE_API_KEYS)
             user_id = user.id
             username = user.username
             if user_api_key is not None:
@@ -170,6 +174,8 @@ async def _require_valid_gateway_key(
     if user:
         if not user.is_active:
             raise HTTPException(status_code=403, detail="Account disabled")
+        if user_api_key is not None:
+            await require_feature(db, user, FEATURE_API_KEYS)
         return
     raise HTTPException(status_code=401, detail="Invalid API key")
 

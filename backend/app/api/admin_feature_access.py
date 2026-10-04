@@ -36,7 +36,7 @@ router = APIRouter(prefix="/api/admin/feature-access", tags=["feature-access"])
 
 
 class RuleIn(BaseModel):
-    feature: str = Field(pattern=r"^(chat|projects)$")
+    feature: str = Field(pattern=r"^(chat|projects|api_keys)$")
     target_type: str = Field(pattern=r"^(user|group|department)$")
     target: int | str
     effect: str = Field(default="deny", pattern=r"^(allow|deny)$")

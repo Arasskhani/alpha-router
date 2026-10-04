@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.feature_access_service import FEATURE_API_KEYS, require_feature
 from app.models.api_key import UserApiKey
 from app.models.user import User
 from app.services.budget_service import ensure_budget_period, resolve_monthly_budget
@@ -31,6 +32,8 @@ async def ensure_can_create_personal_key(db: AsyncSession, user: User) -> None:
             status_code=403,
             detail="Account disabled. You cannot create an API key.",
         )
+    # Feature Access: an account its API keys are closed to makes none (an administrator always may).
+    await require_feature(db, user, FEATURE_API_KEYS)
     await ensure_budget_period(db, user)
     budget = await resolve_monthly_budget(db, user)
     if budget <= 0:

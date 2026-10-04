@@ -48,9 +48,9 @@ async def _rule(db, feature: str, effect: str = "deny", **target) -> FeatureAcce
 
 
 class TestWithNoRules:
-    async def test_everyone_may_use_both_sections(self, db_session, user):
+    async def test_everyone_may_use_every_section(self, db_session, user):
         decisions = await decide_all(db_session, user)
-        assert {key: d.allowed for key, d in decisions.items()} == {"chat": True, "projects": True}
+        assert {key: d.allowed for key, d in decisions.items()} == {"chat": True, "projects": True, "api_keys": True}
         assert all(d.reason == REASON_DEFAULT for d in decisions.values())
 
     async def test_reads_no_roles(self, db_session, user, monkeypatch):

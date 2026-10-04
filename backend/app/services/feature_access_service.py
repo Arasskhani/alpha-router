@@ -12,8 +12,10 @@ A person no rule names - on them, their groups or their department - costs
 one small query and no role lookup, which is the case for nearly every
 request on nearly every deployment.
 
-This governs the web app only. The browser extension has its own access
-(Chat Tools) and a personal API key goes through the gateway; neither asks.
+Chat and Projects govern the web app only: the browser extension has its
+own access (Chat Tools). API keys governs the person's own keys - making
+one, and every use of one at the gateway. Keys an administrator issues on
+the API Keys page are not personal keys and are not governed here.
 """
 
 from __future__ import annotations
@@ -26,7 +28,7 @@ from fastapi import HTTPException
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.feature_access import FEATURE_CHAT, FEATURE_PROJECTS, FEATURES, FeatureAccessRule
+from app.models.feature_access import FEATURE_API_KEYS, FEATURE_CHAT, FEATURE_PROJECTS, FEATURES, FeatureAccessRule
 from app.models.user import User, UserGroup, user_group_members
 from app.services.rbac import user_is_admin_panel
 from app.services.user_role_service import get_user_role_slugs
@@ -34,7 +36,7 @@ from app.services.user_role_service import get_user_role_slugs
 #: What a refusal answers with; the web app matches on ``code`` to show its "not enabled" page.
 FEATURE_FORBIDDEN_CODE = "feature_not_enabled"
 
-FEATURE_TITLES: dict[str, str] = {FEATURE_CHAT: "Chat", FEATURE_PROJECTS: "Projects"}
+FEATURE_TITLES: dict[str, str] = {FEATURE_CHAT: "Chat", FEATURE_PROJECTS: "Projects", FEATURE_API_KEYS: "API keys"}
 
 #: Why a decision came out the way it did; the admin "check a user" tool shows it.
 REASON_DEFAULT = "default"
@@ -194,6 +196,7 @@ async def require_feature(db: AsyncSession, user: User, feature: str) -> None:
 
 
 __all__ = [
+    "FEATURE_API_KEYS",
     "FEATURE_CHAT",
     "FEATURE_FORBIDDEN_CODE",
     "FEATURE_PROJECTS",

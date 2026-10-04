@@ -108,6 +108,7 @@ async def auth_session(user: User = Depends(get_current_user), db: AsyncSession 
             # Feature Access: whether this account may open the web Chat and Projects.
             "chat": sections["chat"].allowed,
             "projects": sections["projects"].allowed,
+            "api_keys": sections["api_keys"].allowed,
         },
     }
 

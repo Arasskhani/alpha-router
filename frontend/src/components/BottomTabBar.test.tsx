@@ -19,8 +19,8 @@ vi.mock("../lib/userPanelNav", async (importOriginal) => {
     ...real,
     topbarShortcutsForSession: () =>
       session.admin
-        ? [...real.USER_SIDEBAR_NAV, { to: "/admin/users", label: "Administration", icon: "admin" as const }]
-        : [...real.USER_SIDEBAR_NAV],
+        ? [...real.userSidebarNavForSession(null), { to: "/admin/users", label: "Administration", icon: "admin" as const }]
+        : [...real.userSidebarNavForSession(null)],
   };
 });
 

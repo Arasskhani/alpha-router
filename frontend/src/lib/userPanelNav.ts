@@ -7,8 +7,8 @@ import {
 } from "./rbac";
 import { MY_USAGE_AND_ACTIVITY_LABEL } from "./usageActivityLabel";
 
-/** User panel left sidebar (non-admin accounts). */
-export const USER_SIDEBAR_NAV: NavItem[] = [
+/** User panel left sidebar (non-admin accounts); drawn through userSidebarNavForSession. */
+const USER_SIDEBAR_NAV: NavItem[] = [
   { to: "/app/chat", label: "Chat", icon: "chat" },
   { to: "/app/projects", label: "Projects", icon: "projects" },
   { to: "/app/media", label: "Media", icon: "media" },

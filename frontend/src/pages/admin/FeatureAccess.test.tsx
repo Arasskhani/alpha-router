@@ -96,8 +96,9 @@ describe("the Feature Access page", () => {
     serve({ "/api/admin/feature-access": overview() });
     await render();
     expect(host.querySelector("h1")?.textContent).toBe("Feature Access");
-    expect(host.textContent).toContain("No rules: Chat is open to everyone.");
-    expect(host.textContent).toContain("No rules: Projects is open to everyone.");
+    expect(host.querySelectorAll(".settings-section-desc")[0]?.textContent).toBe("Open to everyone.");
+    expect(host.querySelectorAll(".settings-section-desc")[1]?.textContent).toBe("Open to everyone.");
+    expect(host.textContent).toContain("No rules yet.");
   });
 
   it("lists rules with who, access, note and who added them", async () => {

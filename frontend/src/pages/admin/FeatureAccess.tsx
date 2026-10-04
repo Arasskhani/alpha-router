@@ -41,7 +41,7 @@ function RulesTable({
   // On a phone the rules are drawn as a list of cards (styles.css).
   const tableCardsRef = useTableCards<HTMLTableElement>();
   if (feature.rules.length === 0) {
-    return <p className="muted-text">No rules: {feature.title} is open to everyone.</p>;
+    return <p className="muted-text">No rules yet.</p>;
   }
   return (
     <div className="table-wrap">

@@ -45,7 +45,8 @@ if (!ADMIN || !ADMIN_PASSWORD) {
 
 const RUN = Date.now().toString(36);
 const USERNAME = `fa-check-${RUN}`;
-const PASSWORD = `Fa-Check-${RUN}-Passw0rd!`;
+// Must meet the password policy, which refuses one that contains the username.
+const PASSWORD = `Zq-${RUN}-Passw0rd!`;
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 const results = [];
 

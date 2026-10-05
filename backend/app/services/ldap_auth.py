@@ -811,6 +811,32 @@ def _group_search_bases(cfg: dict) -> list[str]:
     return [gbase] if gbase else []
 
 
+def ldap_username_exists(username: str, config: dict) -> bool:
+    """Whether the directory has an account that would sign in as ``username``.
+
+    Searched from the domain base, not only the sync OUs: a person outside them still signs in with
+    their directory password. Matches the logon name, a uid, or the name part of a UPN or mail
+    address, as ``_resolve_username`` reads them. Raises when the directory cannot be asked.
+    """
+    import ldap3
+    from ldap3.utils.conv import escape_filter_chars
+
+    cfg = expand_ldap_config(config)
+    conn = _open_connection(cfg)
+    try:
+        base = (cfg.get("base_dn") or "").strip() or _discover_base_dn(conn)
+        if not base:
+            raise RuntimeError("No search base: configure the domain base DN")
+        name = escape_filter_chars(username)
+        search_filter = f"(|(sAMAccountName={name})(uid={name})(userPrincipalName={name}@*)(mail={name}@*))"
+        search_with_identity_attrs(
+            conn, base, search_filter, ["sAMAccountName"], search_scope=ldap3.SUBTREE, size_limit=1
+        )
+        return bool(conn.entries)
+    finally:
+        conn.unbind()
+
+
 def fetch_ldap_users(config: dict) -> list[dict[str, Any]]:
     cfg = expand_ldap_config(config)
     bases = _sync_search_bases(cfg)

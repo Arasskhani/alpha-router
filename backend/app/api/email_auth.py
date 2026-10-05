@@ -22,6 +22,7 @@ to Sign-in Activity with its reason.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -64,6 +65,7 @@ from app.services.password_policy import PasswordPolicyError, validate_password
 from app.services.rate_limit import check_rate_limit
 from app.services.username_norm import normalize_username, username_taken_ci
 
+LOGGER = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/auth", tags=["auth-email"])
 
 #: Codes sent from one address, and to one email, per window.
@@ -297,7 +299,37 @@ async def _username_check(db: AsyncSession, raw: str) -> tuple[str, str | None, 
         return username, "username_invalid", problem
     if await username_taken_ci(db, username):
         return username, "username_taken", "That username is taken. Choose another."
-    return username, None, None
+    return username, *await _directory_check(db, username)
+
+
+async def _directory_check(db: AsyncSession, username: str) -> tuple[str | None, str | None]:
+    """(code, message) when the name belongs to a directory account, or cannot be checked.
+
+    A directory user is only in Alpharouter after their first sign-in or the next sync. Taking their
+    name before that would lock them out: sign-in matches the local account and never asks the
+    directory. So while LDAP is on, a name is free only when the directory says so.
+    """
+    import asyncio
+
+    from app.config import get_settings
+    from app.services.auth_config import get_provider_config
+    from app.services.ldap_auth import ldap_username_exists
+
+    config = await get_provider_config(db, "ldap")
+    if not config.get("enabled"):
+        return None, None
+    timeout = max(3, int(get_settings().ldap_login_timeout_seconds))
+    try:
+        found = await asyncio.wait_for(asyncio.to_thread(ldap_username_exists, username, config), timeout=timeout)
+    except Exception:  # noqa: BLE001 - any failure leaves the name unchecked, and so not free
+        LOGGER.warning("Could not check sign-up username %r against the directory", username, exc_info=True)
+        return (
+            "ldap_unavailable",
+            "This username could not be checked with your organization's directory. Try again in a few minutes.",
+        )
+    if found:
+        return "username_taken", "That username is taken. Choose another."
+    return None, None
 
 
 @router.post("/signup/username-available")
@@ -342,7 +374,8 @@ async def signup_complete(
     username, code, message = await _username_check(db, body.username)
     if code:
         await _failed(request, EVENT_SIGNUP_FAILED, code, username=username or email)
-        raise _refuse(409 if code == "username_taken" else 400, code, message or "")
+        status = {"username_taken": 409, "ldap_unavailable": 503}.get(code, 400)
+        raise _refuse(status, code, message or "")
     try:
         password = validate_password(body.password, username=username, email=email)
     except PasswordPolicyError as exc:

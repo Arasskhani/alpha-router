@@ -390,6 +390,70 @@ class TestTheUsernameAndPassword:
         assert _detail(resp)["code"] == "signup_disabled"
 
 
+class TestDirectoryNames:
+    """While LDAP is on, a name the directory has is not free, even before that person ever signed in."""
+
+    @pytest.fixture
+    def directory(self, monkeypatch):
+        state = {"enabled": True, "names": {"jdoe"}, "down": False, "asked": []}
+
+        async def config(_db, provider):
+            return {"enabled": state["enabled"]} if provider == "ldap" else {}
+
+        def exists(username, _config):
+            state["asked"].append(username)
+            if state["down"]:
+                raise RuntimeError("unreachable")
+            return username in state["names"]
+
+        monkeypatch.setattr("app.services.auth_config.get_provider_config", config)
+        monkeypatch.setattr("app.services.ldap_auth.ldap_username_exists", exists)
+        return state
+
+    async def test_a_directory_name_is_taken(self, client, db_session, outbox, directory):
+        await _turn_on(db_session)
+        token = await _verified_token(client, outbox)
+        check = await client.post("/api/auth/signup/username-available", json={"token": token, "username": "jdoe"})
+        assert check.json()["available"] is False
+        assert check.json()["code"] == "username_taken"
+        done = await client.post(
+            "/api/auth/signup/complete", json={"token": token, "username": "jdoe", "password": STRONG}
+        )
+        assert done.status_code == 409
+        free = await client.post("/api/auth/signup/username-available", json={"token": token, "username": "brand.new"})
+        assert free.json()["available"] is True
+
+    async def test_a_directory_that_cannot_be_asked_leaves_the_name_unchecked(
+        self, client, db_session, outbox, directory
+    ):
+        directory["down"] = True
+        await _turn_on(db_session)
+        token = await _verified_token(client, outbox)
+        check = await client.post("/api/auth/signup/username-available", json={"token": token, "username": "brand.new"})
+        assert check.json()["available"] is False
+        assert check.json()["code"] == "ldap_unavailable"
+        done = await client.post(
+            "/api/auth/signup/complete", json={"token": token, "username": "brand.new", "password": STRONG}
+        )
+        assert done.status_code == 503
+        assert _detail(done)["code"] == "ldap_unavailable"
+
+    async def test_only_a_well_formed_name_reaches_the_directory(self, client, db_session, outbox, directory):
+        await _turn_on(db_session)
+        token = await _verified_token(client, outbox)
+        check = await client.post("/api/auth/signup/username-available", json={"token": token, "username": "j*(doe)"})
+        assert check.json()["code"] == "username_invalid"
+        assert directory["asked"] == []
+
+    async def test_without_ldap_the_directory_is_not_asked(self, client, db_session, outbox, directory):
+        directory["enabled"] = False
+        await _turn_on(db_session)
+        token = await _verified_token(client, outbox)
+        check = await client.post("/api/auth/signup/username-available", json={"token": token, "username": "jdoe"})
+        assert check.json()["available"] is True
+        assert directory["asked"] == []
+
+
 class TestLimits:
     async def test_one_address_cannot_send_codes_without_end(self, client, db_session, outbox, session_factory):
         await _turn_on(db_session)

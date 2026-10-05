@@ -29,6 +29,23 @@ export class EmailAuthError extends Error {
   }
 }
 
+const FIELD_NAMES: Record<string, string> = {
+  email: "Email",
+  username: "Username",
+  password: "Password",
+  display_name: "Your name",
+  code: "Code",
+};
+
+/** FastAPI's own refusal of a field (422): a list of `{loc, msg}`, said as "Field: what is wrong". */
+function invalidInput(status: number, detail: unknown[]): EmailAuthError {
+  const first = (detail[0] ?? {}) as { loc?: unknown[]; msg?: unknown };
+  const field = Array.isArray(first.loc) ? String(first.loc[first.loc.length - 1] ?? "") : "";
+  const what = typeof first.msg === "string" && first.msg ? first.msg : "Not accepted";
+  const name = FIELD_NAMES[field];
+  return new EmailAuthError(status, "invalid_input", name ? `${name}: ${what}.` : `${what}.`);
+}
+
 async function post<T>(path: string, body: unknown): Promise<T> {
   let res: Response;
   try {
@@ -49,6 +66,7 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   }
   if (!res.ok) {
     const detail = (data as { detail?: unknown } | null)?.detail;
+    if (Array.isArray(detail)) throw invalidInput(res.status, detail);
     if (detail && typeof detail === "object") {
       const { code, message, ...extra } = detail as { code?: string; message?: string } & Record<string, unknown>;
       throw new EmailAuthError(res.status, code || "error", message || `Request failed (${res.status})`, extra);

@@ -155,6 +155,7 @@ export default function SignUpFlow({ onSignedIn, onSignIn, onResetPassword }: Pr
         </label>
         <input
           id="signup-username"
+          maxLength={64}
           value={username}
           onChange={(e) => {
             setUsername(e.target.value);
@@ -176,6 +177,7 @@ export default function SignUpFlow({ onSignedIn, onSignIn, onResetPassword }: Pr
         </label>
         <input
           id="signup-display-name"
+          maxLength={255}
           value={displayName}
           onChange={(e) => setDisplayName(e.target.value)}
           autoComplete="name"
@@ -187,6 +189,7 @@ export default function SignUpFlow({ onSignedIn, onSignIn, onResetPassword }: Pr
         </label>
         <input
           id="signup-password"
+          maxLength={256}
           type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
@@ -201,6 +204,7 @@ export default function SignUpFlow({ onSignedIn, onSignIn, onResetPassword }: Pr
         </label>
         <input
           id="signup-confirm"
+          maxLength={256}
           type="password"
           value={confirm}
           onChange={(e) => setConfirm(e.target.value)}
@@ -235,6 +239,7 @@ export default function SignUpFlow({ onSignedIn, onSignIn, onResetPassword }: Pr
       </label>
       <input
         id="signup-email"
+        maxLength={320}
         type="email"
         value={email}
         onChange={(e) => {

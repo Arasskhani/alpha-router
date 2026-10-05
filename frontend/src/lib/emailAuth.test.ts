@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("../api", () => ({ authFetch: vi.fn() }));
 
 import { authFetch } from "../api";
-import { EmailAuthError, cleanCode, signupStart } from "./emailAuth";
+import { EmailAuthError, cleanCode, signupComplete, signupStart } from "./emailAuth";
 
 afterEach(() => vi.mocked(authFetch).mockReset());
 
@@ -30,6 +30,20 @@ describe("the email sign-up client", () => {
     expect((err as EmailAuthError).code).toBe("email_taken");
     expect((err as EmailAuthError).message).toBe("An account already uses this email.");
     expect((err as EmailAuthError).extra.reset_available).toBe(true);
+  });
+
+  it("names the field FastAPI refused, instead of only the status", async () => {
+    vi.mocked(authFetch).mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          detail: [{ loc: ["body", "display_name"], msg: "String should have at most 255 characters", type: "x" }],
+        }),
+        { status: 422 },
+      ),
+    );
+    const err = await signupComplete("t", "someone", "Pass-word-1!", "x".repeat(300)).catch((e: unknown) => e);
+    expect((err as EmailAuthError).code).toBe("invalid_input");
+    expect((err as EmailAuthError).message).toBe("Your name: String should have at most 255 characters.");
   });
 
   it("says when the server cannot be reached", async () => {

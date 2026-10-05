@@ -117,6 +117,7 @@ export default function PasswordResetFlow({ initialEmail = "", onDone }: Props) 
         </label>
         <input
           id="reset-password"
+          maxLength={256}
           type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
@@ -131,6 +132,7 @@ export default function PasswordResetFlow({ initialEmail = "", onDone }: Props) 
         </label>
         <input
           id="reset-confirm"
+          maxLength={256}
           type="password"
           value={confirm}
           onChange={(e) => setConfirm(e.target.value)}
@@ -165,6 +167,7 @@ export default function PasswordResetFlow({ initialEmail = "", onDone }: Props) 
       </label>
       <input
         id="reset-email"
+        maxLength={320}
         type="email"
         value={email}
         onChange={(e) => setEmail(e.target.value)}

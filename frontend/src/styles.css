@@ -19271,7 +19271,9 @@ p.error,
   color: var(--muted);
 }
 .password-rules__rule--met {
-  color: #059669;
+  /* A green with at least 4.5:1 contrast in every theme: mixed toward the text colour, darker on
+     light surfaces and lighter on dark ones (#059669 alone was 3.8:1 on white). */
+  color: color-mix(in srgb, #047857 75%, var(--text));
 }
 
 /* Sign-up and password reset by email on the sign-in page. */
@@ -19313,7 +19315,9 @@ p.error,
   color: var(--muted);
 }
 .login-form__ok {
-  color: #059669;
+  /* A green with at least 4.5:1 contrast in every theme: mixed toward the text colour, darker on
+     light surfaces and lighter on dark ones (#059669 alone was 3.8:1 on white). */
+  color: color-mix(in srgb, #047857 75%, var(--text));
 }
 .login-form__bad {
   color: var(--danger);
@@ -19330,7 +19334,7 @@ p.error,
 }
 .login-form__success {
   margin: 0;
-  color: #059669;
+  color: color-mix(in srgb, #047857 75%, var(--text));
   font-size: 0.9rem;
 }
 

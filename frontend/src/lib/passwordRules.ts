@@ -5,11 +5,13 @@
  * `/api/auth/password-policy`, so a changed minimum reaches the forms.
  */
 
-export type PasswordRuleKey = "length" | "upper" | "lower" | "digit" | "symbol" | "personal";
+export type PasswordRuleKey = "length" | "upper" | "lower" | "digit" | "symbol" | "personal" | "common";
 
 export type PasswordPolicy = {
   min_length: number;
   rules: { key: PasswordRuleKey; label: string }[];
+  /** The server's list of passwords too common to use, lowercase. */
+  common?: string[];
 };
 
 export const DEFAULT_PASSWORD_POLICY: PasswordPolicy = {
@@ -34,10 +36,19 @@ function personalWords(username?: string, email?: string): string[] {
     .filter((word) => word.length >= PERSONAL_MIN_CHARS);
 }
 
-/** The rules `password` does not meet yet, in rule order. */
+/**
+ * The rules `password` does not meet yet, in rule order. The tests are the
+ * server's: Unicode categories for the character classes (a digit is a decimal
+ * digit, Nd), and lowercase comparison for the personal words and the list.
+ */
 export function unmetPasswordRules(
   password: string,
-  { minLength = 8, username, email }: { minLength?: number; username?: string; email?: string } = {},
+  {
+    minLength = 8,
+    username,
+    email,
+    common = [],
+  }: { minLength?: number; username?: string; email?: string; common?: string[] } = {},
 ): PasswordRuleKey[] {
   const pwd = password.trim();
   const unmet: PasswordRuleKey[] = [];
@@ -48,6 +59,7 @@ export function unmetPasswordRules(
   if (!/[^\p{L}\p{N}\s]/u.test(pwd)) unmet.push("symbol");
   const folded = pwd.toLowerCase();
   if (personalWords(username, email).some((word) => folded.includes(word))) unmet.push("personal");
+  if (common.includes(folded)) unmet.push("common");
   return unmet;
 }
 

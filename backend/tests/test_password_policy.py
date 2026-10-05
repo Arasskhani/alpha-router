@@ -4,6 +4,7 @@ import pytest
 
 from app.services.password_policy import (
     PasswordPolicyError,
+    common_passwords,
     password_rules,
     unmet_rules,
     validate_password,
@@ -89,5 +90,27 @@ def test_unmet_rules_lists_what_is_missing_in_order():
 
 
 def test_the_rules_the_forms_show():
-    assert [rule.key for rule in password_rules()] == ["length", "upper", "lower", "digit", "symbol", "personal"]
+    assert [rule.key for rule in password_rules()] == [
+        "length",
+        "upper",
+        "lower",
+        "digit",
+        "symbol",
+        "personal",
+        "common",
+    ]
     assert password_rules()[0].label == "At least 8 characters"
+
+
+def test_the_rules_agree_with_the_forms_on_digits_case_and_common_passwords():
+    # A decimal digit, as the forms' \p{Nd}: a superscript two is not one.
+    assert "digit" in unmet_rules("Abcdefg!²")
+    assert "digit" not in unmet_rules("Abcdefg!٣")
+    # lower(), as JavaScript's toLowerCase(): "ß" is not "ss".
+    assert "personal" not in unmet_rules("Straße-Kp9", username="strasse")
+    assert "personal" in unmet_rules("STRASSE-Kp9", username="strasse")
+    # The common list is a rule the forms can tick, served with the policy.
+    assert unmet_rules("Alpha-Router123") == ["common"]
+    with pytest.raises(PasswordPolicyError, match="too common"):
+        validate_password("Alpha-Router123")
+    assert "alpha-router123" in common_passwords()

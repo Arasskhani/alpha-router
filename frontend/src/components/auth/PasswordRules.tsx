@@ -32,7 +32,9 @@ export default function PasswordRules({ password, username, email, id }: Props) 
     };
   }, []);
 
-  const unmet = new Set(unmetPasswordRules(password, { minLength: policy.min_length, username, email }));
+  const unmet = new Set(
+    unmetPasswordRules(password, { minLength: policy.min_length, username, email, common: policy.common }),
+  );
   return (
     <ul className="password-rules" id={id} aria-label="Password requirements">
       {policy.rules.map((rule) => {

@@ -32,7 +32,16 @@ def _sign_in(client, account) -> dict[str, str]:
 async def test_the_rules_are_public_for_the_forms(client):
     body = (await client.get("/api/auth/password-policy")).json()
     assert body["min_length"] >= 8
-    assert [rule["key"] for rule in body["rules"]] == ["length", "upper", "lower", "digit", "symbol", "personal"]
+    assert [rule["key"] for rule in body["rules"]] == [
+        "length",
+        "upper",
+        "lower",
+        "digit",
+        "symbol",
+        "personal",
+        "common",
+    ]
+    assert "password123" in body["common"]
 
 
 class TestAdministrators:

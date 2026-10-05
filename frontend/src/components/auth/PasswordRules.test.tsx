@@ -9,7 +9,8 @@ vi.mock("../../api", () => ({
   authFetch: vi.fn(async () => new Response("{}", { status: 500 })),
 }));
 
-import { resetPasswordPolicyCache } from "../../lib/passwordRules";
+import { authFetch } from "../../api";
+import { DEFAULT_PASSWORD_POLICY, resetPasswordPolicyCache } from "../../lib/passwordRules";
 import PasswordRules from "./PasswordRules";
 
 let host: HTMLDivElement;
@@ -57,5 +58,19 @@ describe("PasswordRules", () => {
   it("does not tick the personal rule when the username is in the password", async () => {
     await render("Sara-Pass-123!", { username: "sara" });
     expect(met().join(" | ")).not.toContain("Not your username");
+  });
+
+  it("ticks the common-password rule from the list the server sends", async () => {
+    const policy = {
+      ...DEFAULT_PASSWORD_POLICY,
+      rules: [...DEFAULT_PASSWORD_POLICY.rules, { key: "common", label: "Not a commonly used password" }],
+      common: ["alpha-router123"],
+    };
+    vi.mocked(authFetch).mockResolvedValueOnce(new Response(JSON.stringify(policy)));
+    await render("Alpha-Router123");
+    expect(host.querySelectorAll("li")).toHaveLength(7);
+    expect(met().join(" | ")).not.toContain("Not a commonly used password");
+    await render("Quiet-River-2026!");
+    expect(met().join(" | ")).toContain("Not a commonly used password");
   });
 });

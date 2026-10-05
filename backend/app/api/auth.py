@@ -144,11 +144,12 @@ async def logout_local(
 @router.get("/password-policy")
 async def password_policy() -> dict:
     """The rules a new password must meet, for the forms that set one (the server checks them again)."""
-    from app.services.password_policy import min_length, password_rules
+    from app.services.password_policy import common_passwords, min_length, password_rules
 
     return {
         "min_length": min_length(),
         "rules": [{"key": rule.key, "label": rule.label} for rule in password_rules()],
+        "common": common_passwords(),
     }
 
 

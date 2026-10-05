@@ -23,6 +23,16 @@ describe("unmetPasswordRules", () => {
     expect(unmetPasswordRules("Abc-def-123!", { username: "ab" })).toEqual([]);
   });
 
+  it("tests digits, case and the common list as the server does", () => {
+    // A decimal digit (Nd), as Python's isdecimal(): a superscript two is not one, an Arabic-Indic three is.
+    expect(unmetPasswordRules("Abcdefg!²")).toContain("digit");
+    expect(unmetPasswordRules("Abcdefg!٣")).not.toContain("digit");
+    // Lowercase, as Python's lower(): "ß" is not "ss".
+    expect(unmetPasswordRules("Straße-Kp9", { username: "strasse" })).toEqual([]);
+    expect(unmetPasswordRules("Alpha-Router123", { common: ["alpha-router123"] })).toEqual(["common"]);
+    expect(unmetPasswordRules("Alpha-Router123")).toEqual([]);
+  });
+
   it("follows the server's minimum length", () => {
     expect(unmetPasswordRules("aStrong-1Pass!", { minLength: 20 })).toEqual(["length"]);
   });

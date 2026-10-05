@@ -80,7 +80,13 @@ def password_rules() -> list[PasswordRule]:
         PasswordRule("digit", "A digit (0-9)"),
         PasswordRule("symbol", "A symbol, such as ! @ # $ % - _"),
         PasswordRule("personal", "Not your username or the name in your email"),
+        PasswordRule("common", "Not a commonly used password"),
     ]
+
+
+def common_passwords() -> list[str]:
+    """The blocklist, for the forms to tick the "common" rule as the server will judge it."""
+    return sorted(_COMMON_PASSWORDS)
 
 
 def _is_symbol(ch: str) -> bool:
@@ -90,14 +96,20 @@ def _is_symbol(ch: str) -> bool:
 def _personal_words(username: str | None, email: str | None) -> list[str]:
     words: list[str] = []
     for value in (username, (email or "").split("@", 1)[0] if email else None):
-        word = (value or "").strip().casefold()
+        # lower(), not casefold(): the forms compare with JavaScript's toLowerCase(), and the
+        # two must agree ("ß" stays "ß" in both).
+        word = (value or "").strip().lower()
         if len(word) >= _PERSONAL_MIN_CHARS:
             words.append(word)
     return words
 
 
 def unmet_rules(password: str | None, *, username: str | None = None, email: str | None = None) -> list[str]:
-    """The keys of the rules ``password`` does not meet, in rule order (not the common-password check)."""
+    """The keys of the rules ``password`` does not meet, in rule order.
+
+    The character classes are Unicode categories, as the forms test them: a digit is a decimal digit
+    (``isdecimal``, Nd), so "²" is not one.
+    """
     pwd = (password or "").strip()
     unmet: list[str] = []
     if len(pwd) < min_length():
@@ -106,13 +118,15 @@ def unmet_rules(password: str | None, *, username: str | None = None, email: str
         unmet.append("upper")
     if not any(ch.islower() for ch in pwd):
         unmet.append("lower")
-    if not any(ch.isdigit() for ch in pwd):
+    if not any(ch.isdecimal() for ch in pwd):
         unmet.append("digit")
     if not any(_is_symbol(ch) for ch in pwd):
         unmet.append("symbol")
-    folded = pwd.casefold()
+    folded = pwd.lower()
     if any(word in folded for word in _personal_words(username, email)):
         unmet.append("personal")
+    if folded in _COMMON_PASSWORDS:
+        unmet.append("common")
     return unmet
 
 

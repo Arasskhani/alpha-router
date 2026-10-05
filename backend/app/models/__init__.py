@@ -55,6 +55,7 @@ from app.models.cost_accounting import (
     UsageEvent,
     UsageOperation,
 )
+from app.models.email_verification import EmailVerification
 from app.models.evaluation import (
     EvaluationCase,
     EvaluationDataset,
@@ -200,6 +201,7 @@ __all__ = [
     "ExtensionEvent",
     "ExtensionSession",
     "FeatureAccessRule",
+    "EmailVerification",
     "ReconciliationRun",
     "ReportSchedule",
     "RequestLog",

@@ -151,6 +151,14 @@ describe("Email sign-up settings", () => {
     expect(lastPut?.allowed_domains).toEqual(["example.com", "late.example"]);
   });
 
+  it("splits domains pasted into the box when saving, as Add does", async () => {
+    serve();
+    await render();
+    await typeInto(field<HTMLInputElement>("#email-signup-domain"), "a.example, @B.example;example.com");
+    await click(button("Save email sign-up"));
+    expect(lastPut?.allowed_domains).toEqual(["example.com", "a.example", "b.example"]);
+  });
+
   it("warns that with no domains anyone may sign up", async () => {
     serve({ enabled: true, allowed_domains: [], default_plan_id: 3 });
     await render();

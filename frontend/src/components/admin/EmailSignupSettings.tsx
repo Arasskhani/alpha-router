@@ -18,6 +18,18 @@ export type EmailSignupView = {
 
 const PATH = "/api/admin/authentication/email-signup";
 
+/** Domains typed or pasted: separated by spaces, commas or semicolons, with or without a leading @. */
+function splitDomains(raw: string): string[] {
+  return raw
+    .split(/[\s,;]+/)
+    .map((part) => part.trim().toLowerCase().replace(/^@/, ""))
+    .filter(Boolean);
+}
+
+function withDomains(current: string[], added: string[]): string[] {
+  return [...current, ...added.filter((domain, i) => !current.includes(domain) && added.indexOf(domain) === i)];
+}
+
 /**
  * Admin -> Authentication -> Email sign-up: whether people may create their
  * own account with a code sent by email, from which domains, with which
@@ -61,12 +73,9 @@ export default function EmailSignupSettings() {
   }, []);
 
   function addDomains(raw: string) {
-    const parts = raw
-      .split(/[\s,;]+/)
-      .map((part) => part.trim().toLowerCase().replace(/^@/, ""))
-      .filter(Boolean);
+    const parts = splitDomains(raw);
     if (parts.length === 0) return;
-    setDomains((current) => [...current, ...parts.filter((part) => !current.includes(part))]);
+    setDomains((current) => withDomains(current, parts));
     setDomainDraft("");
   }
 
@@ -82,7 +91,8 @@ export default function EmailSignupSettings() {
     setSaving(true);
     setError("");
     setNotice("");
-    const pending = domainDraft.trim() ? [...domains, domainDraft.trim().toLowerCase().replace(/^@/, "")] : domains;
+    // What is still in the box counts too, split as Add splits it (a pasted "a.com, b.com" is two).
+    const pending = withDomains(domains, splitDomains(domainDraft));
     try {
       const data = await api<EmailSignupView>(PATH, {
         method: "PUT",

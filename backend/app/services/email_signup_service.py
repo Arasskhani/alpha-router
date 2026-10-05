@@ -59,6 +59,9 @@ _DOMAIN_RE = re.compile(r"^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)
 _RESERVED_USERNAMES = frozenset(
     {"admin", "administrator", "root", "system", "support", "security", "gateway-service", "alpharouter"}
 )
+#: Names the product gives accounts itself: a permanently deleted user becomes ``purged-user-<id>``,
+#: and a person holding that name would make the deletion fail on the unique username.
+_RESERVED_PREFIXES = ("purged-user-",)
 
 
 @dataclass
@@ -177,7 +180,7 @@ def username_problem(username: str) -> str | None:
     if not _USERNAME_RE.match(username):
         return "A username uses lowercase letters, digits, dots, hyphens and underscores, and starts with a letter or digit."
     reserved = _RESERVED_USERNAMES | {(get_settings().admin_username or "").strip().lower()}
-    if username in reserved:
+    if username in reserved or username.startswith(_RESERVED_PREFIXES):
         return "That username is reserved. Choose another."
     return None
 

@@ -350,7 +350,7 @@ class TestTheUsernameAndPassword:
     async def test_the_username_must_be_well_formed_and_not_reserved(self, client, db_session, outbox):
         await _turn_on(db_session)
         token = await _verified_token(client, outbox)
-        for bad in ("ab", "has space", "-starts-with-dash", "admin", "alpharouter"):
+        for bad in ("ab", "has space", "-starts-with-dash", "admin", "alpharouter", "purged-user-12"):
             resp = await client.post(
                 "/api/auth/signup/complete", json={"token": token, "username": bad, "password": STRONG}
             )

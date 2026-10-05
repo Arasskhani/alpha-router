@@ -4,6 +4,7 @@ import AdminPage from "../../components/AdminPage";
 import { api } from "../../api";
 import { useConfirm } from "../../context/ConfirmContext";
 import Tabs, { TabPanel } from "../../components/Tabs";
+import EmailSignupSettings from "../../components/admin/EmailSignupSettings";
 
 const LDAPS_PORT = 636;
 const SAML_METADATA_MAX_BYTES = 1024 * 1024;
@@ -110,7 +111,7 @@ const defaultOidc = (): OidcCfg => ({
 });
 
 export default function Authentication() {
-  const [tab, setTab] = useState<"ldap" | "saml" | "oidc">("ldap");
+  const [tab, setTab] = useState<"ldap" | "saml" | "oidc" | "email">("ldap");
   const [ldap, setLdap] = useState<LdapSimple>(defaultLdap);
   const { confirm } = useConfirm();
   const [saml, setSaml] = useState<SamlCfg>(defaultSaml);
@@ -410,6 +411,7 @@ export default function Authentication() {
           { id: "ldap", label: "Active Directory" },
           { id: "saml", label: "SAML" },
           { id: "oidc", label: "OIDC" },
+          { id: "email", label: "Email sign-up" },
         ]}
         value={tab}
         onChange={setTab}
@@ -834,6 +836,12 @@ export default function Authentication() {
             </button>
           </div>
         </form>
+        </TabPanel>
+      )}
+
+      {tab === "email" && (
+        <TabPanel idBase="auth" id="email">
+          <EmailSignupSettings />
         </TabPanel>
       )}
     </AdminPage>

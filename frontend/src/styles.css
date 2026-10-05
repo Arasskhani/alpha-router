@@ -19308,3 +19308,60 @@ p.error,
   color: #059669;
   font-size: 0.9rem;
 }
+
+/* Admin -> Authentication -> Email sign-up. */
+.email-signup-settings__switch {
+  display: block;
+  margin: 0.75rem 0 0.35rem;
+  font-weight: 600;
+}
+.email-signup-settings__group {
+  margin: 0.75rem 0;
+  padding: 0;
+  border: 0;
+}
+.email-signup-settings__group legend {
+  margin-bottom: 0.25rem;
+  font-weight: 600;
+}
+.email-signup-settings__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0.5rem 0;
+  padding: 0;
+  list-style: none;
+}
+.email-signup-settings__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.15rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+.email-signup-settings__chip-remove {
+  padding: 0 0.15rem;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.email-signup-settings__add {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+.email-signup-settings__add .input-block {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+.email-signup-settings__hint {
+  margin-top: -0.35rem;
+}

@@ -469,6 +469,13 @@ async def password_reset_complete(
         await _failed(request, EVENT_PASSWORD_RESET_FAILED, reason, user=user)
         raise _refuse(status, reason, message)
     assert user is not None
+    if normalize_email(str(user.email or "")) != str(row.email):
+        # The account's address changed after the code was sent (an administrator may have moved it
+        # away from a mailbox that is no longer the person's): the code proves the old one only.
+        await db.execute(update(EmailVerification).where(EmailVerification.id == row.id).values(consumed_at=utcnow()))
+        await db.commit()
+        await _failed(request, EVENT_PASSWORD_RESET_FAILED, "code_invalid", user=user, username=str(row.email))
+        raise _refuse(400, "code_invalid", "This code was sent to an address the account no longer uses. Start again.")
     try:
         password = validate_password(body.password, username=str(user.username), email=str(user.email or ""))
     except PasswordPolicyError as exc:

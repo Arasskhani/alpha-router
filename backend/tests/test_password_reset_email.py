@@ -178,6 +178,17 @@ class TestWhoCanReset:
         )
         assert resp.status_code in (400, 403)
 
+    async def test_an_address_changed_after_the_code_ends_it(self, client, db_session, person, outbox, session_factory):
+        await _turn_on(db_session)
+        token = await _verified(client, outbox)
+        person.email = "moved@example.com"
+        await db_session.commit()
+        resp = await client.post("/api/auth/password-reset/complete", json={"token": token, "password": NEW})
+        assert resp.status_code == 400
+        assert _detail(resp)["code"] == "code_invalid"
+        async with session_factory() as fresh:
+            assert verify_password(OLD, (await fresh.get(User, person.id)).hashed_password)
+
 
 class TestTheCodeSteps:
     async def test_wrong_codes_are_recorded_against_the_account(

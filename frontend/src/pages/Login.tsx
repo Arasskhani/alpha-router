@@ -7,6 +7,8 @@ import { markLoggedIn } from "../lib/session";
 import { homePathFor } from "../lib/homePath";
 import { takeAfterLogin } from "../lib/afterLogin";
 import { authFetch, bootstrapSession } from "../api";
+import PasswordResetFlow from "../components/auth/PasswordResetFlow";
+import SignUpFlow from "../components/auth/SignUpFlow";
 function FeatureProvidersArt() {
   return (
     <svg className="login-highlight__art login-highlight__svg" viewBox="0 0 80 56" aria-hidden>
@@ -124,7 +126,17 @@ export default function Login() {
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [shakeFields, setShakeFields] = useState(false);
-  const [methods, setMethods] = useState({ ldap: false, saml: false, oidc: false });
+  const [methods, setMethods] = useState({
+    ldap: false,
+    saml: false,
+    oidc: false,
+    email_signup: false,
+    password_reset: false,
+  });
+  // Signing in, creating an account by email, or resetting a forgotten password by email.
+  const [mode, setMode] = useState<"signin" | "signup" | "reset">("signin");
+  const [resetEmail, setResetEmail] = useState("");
+  const [notice, setNotice] = useState("");
   const nav = useNavigate();
   const [params] = useSearchParams();
 
@@ -142,7 +154,10 @@ export default function Login() {
     return () => document.body.classList.remove("login-route");
   }, []);
   useEffect(() => {
-    authFetch("/api/auth/methods").then((r) => r.json()).then(setMethods).catch(() => {});
+    authFetch("/api/auth/methods")
+      .then((r) => r.json())
+      .then((value) => setMethods((current) => ({ ...current, ...value })))
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -301,9 +316,60 @@ export default function Login() {
         <section className="login-signin" aria-label="Sign in">
           <div className="login-panel">
             <div className="login-panel__shine" aria-hidden />
-            <p className="login-panel__eyebrow">Welcome back</p>
-            <h2 className="login-panel__title">{pendingToken ? "Two-factor authentication" : "Sign in"}</h2>
+            <p className="login-panel__eyebrow">
+              {mode === "signup" ? "New here?" : mode === "reset" ? "Forgot your password?" : "Welcome back"}
+            </p>
+            <h2 className="login-panel__title">
+              {mode === "signup"
+                ? "Create an account"
+                : mode === "reset"
+                  ? "Reset password"
+                  : pendingToken
+                    ? "Two-factor authentication"
+                    : "Sign in"}
+            </h2>
 
+            {mode === "signup" && (
+              <SignUpFlow
+                onSignedIn={() => finishLogin(nav)}
+                onSignIn={() => {
+                  setMode("signin");
+                  setError("");
+                }}
+                onResetPassword={(email) => {
+                  setResetEmail(email);
+                  setMode("reset");
+                }}
+              />
+            )}
+            {mode === "reset" && (
+              <PasswordResetFlow
+                initialEmail={resetEmail}
+                onDone={(name) => {
+                  setMode("signin");
+                  setUsername(name);
+                  setPassword("");
+                  setError("");
+                  setNotice("Your password has been changed. Sign in with your new password.");
+                }}
+              />
+            )}
+            {mode !== "signin" && (
+              <div className="login-panel__links login-panel__links--center">
+                <button
+                  type="button"
+                  className="login-panel__link"
+                  onClick={() => {
+                    setMode("signin");
+                    setError("");
+                  }}
+                >
+                  Back to sign in
+                </button>
+              </div>
+            )}
+
+            {mode === "signin" && (
             <form
               className={`login-form${shakeFields ? " login-form--shake" : ""}`}
               onSubmit={onSubmit}
@@ -371,13 +437,50 @@ export default function Login() {
                   </button>
                 </>
               )}
+              {notice && !error && (
+                <p className="login-form__success" role="status">
+                  {notice}
+                </p>
+              )}
               {error && <p className="login-form__error" role="alert">{error}</p>}
               <button className="btn login-form__submit" type="submit" disabled={submitting} aria-busy={submitting}>
                 {submitting ? "Signing in…" : pendingToken ? "Verify" : "Continue"}
               </button>
+              {!pendingToken && (methods.password_reset || methods.email_signup) && (
+                <div className="login-panel__links">
+                  {methods.password_reset && (
+                    <button
+                      type="button"
+                      className="login-panel__link"
+                      onClick={() => {
+                        setResetEmail("");
+                        setNotice("");
+                        setError("");
+                        setMode("reset");
+                      }}
+                    >
+                      Forgot password?
+                    </button>
+                  )}
+                  {methods.email_signup && (
+                    <button
+                      type="button"
+                      className="login-panel__link"
+                      onClick={() => {
+                        setNotice("");
+                        setError("");
+                        setMode("signup");
+                      }}
+                    >
+                      Create an account
+                    </button>
+                  )}
+                </div>
+              )}
             </form>
+            )}
 
-            {(methods.saml || methods.oidc || methods.ldap) && (
+            {mode === "signin" && (methods.saml || methods.oidc || methods.ldap) && (
               <div className="login-panel__footer">
                 {methods.saml && (
                   <a className="login-panel__sso" href="/api/auth/saml/login">

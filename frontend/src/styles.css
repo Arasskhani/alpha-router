@@ -19248,3 +19248,63 @@ p.error,
 .password-rules__rule--met {
   color: #059669;
 }
+
+/* Sign-up and password reset by email on the sign-in page. */
+.login-panel__links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  margin-top: 0.5rem;
+}
+.login-panel__links--center {
+  justify-content: center;
+}
+.login-panel__link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+.login-panel__link:hover:where(:not(:disabled)) {
+  text-decoration: underline;
+}
+.login-panel__link:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+.login-form__input--code {
+  font-size: 1.25rem;
+  letter-spacing: 0.35em;
+  text-align: center;
+}
+.login-form__field-note {
+  min-height: 1.1rem;
+  margin: -0.35rem 0 0.25rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+.login-form__ok {
+  color: #059669;
+}
+.login-form__bad {
+  color: var(--danger);
+}
+.login-form__notice {
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  font-size: 0.9rem;
+}
+.login-form__notice p {
+  margin: 0;
+}
+.login-form__success {
+  margin: 0;
+  color: #059669;
+  font-size: 0.9rem;
+}

@@ -12835,6 +12835,31 @@ body.login-route #root {
   }
 }
 
+/* The same while creating an account or resetting a password, at any size: those forms are taller
+   than the sign-in card, and on a phone (or a short window) their last field and button would sit
+   below the edge of a page that does not scroll. */
+.login-page--scroll {
+  flex-direction: column;
+  justify-content: flex-start;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+.login-page--scroll .login-page__shell {
+  flex: 0 0 auto;
+  height: auto;
+  max-height: none;
+  margin-block: auto;
+  padding-bottom: 0.75rem;
+}
+.login-page--scroll .login-page__legal {
+  position: static;
+  flex: 0 0 auto;
+  padding-bottom: 0.55rem;
+}
+.login-page--scroll .login-page__glow--b {
+  bottom: 0;
+}
+
 /* —— User Media library page —— */
 .media-page-quota {
   margin-bottom: 1rem;

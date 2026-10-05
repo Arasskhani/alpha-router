@@ -18,7 +18,8 @@
  *     an emailed code, refuses the current password, ends on the sign-in form
  *     with the username filled in, and signs the earlier session out;
  *   - the new password signs in; Sign-in Activity has the sign-up and the
- *     reset; the admin tab shows the settings; the form fits a phone.
+ *     reset; the admin tab shows the settings; on a phone the whole form
+ *     can be scrolled to.
  *
  * Run it from frontend/ against a development stack:
  *
@@ -29,6 +30,10 @@
  *   SIGNUP_E2E_PASSWORD   its password (required)
  *   SIGNUP_E2E_SMTP_PORT  port for the mail sink on 127.0.0.1 (default 2526)
  *   SIGNUP_E2E_CHROMIUM   optional path to a Chromium executable
+ *
+ * Each run asks for four sign-up codes from this machine's address, and the
+ * server allows ten in ten minutes per address: run it at most twice in ten
+ * minutes, or the third run is refused codes ("Too many attempts").
  *
  * It refuses to run when the stack's SMTP settings point at a mail server
  * other than this machine: it would replace them, and a saved SMTP password
@@ -405,14 +410,32 @@ await step("the admin tab shows the settings and the count", async () => {
   expect(checked, "the switch is not on");
 });
 
-await step("the sign-up form fits a phone", async () => {
-  const phone = await freshPage(390);
-  await phone.page.getByRole("button", { name: "Create an account" }).click();
-  await phone.page.locator("#signup-email").waitFor();
-  await sleep(300);
-  const [scroll, width] = await phone.page.evaluate(() => [document.documentElement.scrollWidth, window.innerWidth]);
+await step("on a phone the whole sign-up form can be reached", async () => {
+  // 390 x 664: an iPhone with Safari's bars showing. The details step is the tallest.
+  const phone = await browser.newContext({ viewport: { width: 390, height: 664 } });
+  const small = await phone.newPage();
+  await small.goto(`${BASE}/login`);
+  await small.getByRole("button", { name: "Create an account" }).click();
+  const address = `phone.${RUN}@${DOMAIN}`;
+  const seen = mailbox.length;
+  await small.locator("#signup-email").fill(address);
+  await small.getByRole("button", { name: "Send code" }).click();
+  const got = await codeFor(address, seen);
+  await small.locator("#signup-code").fill(got.code);
+  await small.getByRole("button", { name: "Verify" }).click();
+  await small.locator("#signup-password").fill("x");
+  const submit = small.getByRole("button", { name: "Create account" });
+  // Scrolled the way a person scrolls: code could scroll even a box that hides its overflow.
+  await small.mouse.move(195, 320);
+  await small.mouse.wheel(0, 4000);
+  await sleep(400);
+  const box = await submit.boundingBox();
+  expect(box && box.y >= 0 && box.y + box.height <= 664, `Create account is at ${JSON.stringify(box)}`);
+  const legal = await small.locator(".login-page__legal").boundingBox();
+  expect(!legal || !box || legal.y >= box.y + box.height || legal.y + legal.height <= box.y, "the trademark line lies over the button");
+  const [scroll, width] = await small.evaluate(() => [document.documentElement.scrollWidth, window.innerWidth]);
   expect(scroll <= width, `the page is ${scroll}px wide in a ${width}px window`);
-  await phone.context.close();
+  await phone.close();
 });
 
 // ── Put things back ──

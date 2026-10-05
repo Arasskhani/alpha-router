@@ -274,7 +274,9 @@ export default function Login() {
   }
 
   return (
-    <div className="login-page">
+    // Creating an account and resetting a password take more room than signing in: on a phone, or a
+    // short window, the page scrolls to the bottom of the form instead of cutting it off.
+    <div className={mode === "signin" ? "login-page" : "login-page login-page--scroll"}>
       <div className="login-page__mesh" aria-hidden />
       <div className="login-page__glow login-page__glow--a" aria-hidden />
       <div className="login-page__glow login-page__glow--b" aria-hidden />

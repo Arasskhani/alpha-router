@@ -177,3 +177,19 @@ class TestWhoCanReset:
             "/api/auth/signup/complete", json={"token": token, "username": "someone.else", "password": NEW}
         )
         assert resp.status_code in (400, 403)
+
+
+class TestTheCodeSteps:
+    async def test_wrong_codes_are_recorded_against_the_account(
+        self, client, db_session, person, outbox, session_factory
+    ):
+        await _turn_on(db_session)
+        started = await client.post("/api/auth/password-reset/start", json={"email": "fixture_user@example.com"})
+        right = _code(outbox)
+        wrong = "000000" if right != "000000" else "111111"
+        resp = await client.post(
+            "/api/auth/password-reset/verify", json={"token": started.json()["token"], "code": wrong}
+        )
+        assert resp.status_code == 400
+        failed = await _events(session_factory, "password_reset_failed")
+        assert [(e.reason_code, e.user_id) for e in failed] == [("code_invalid", person.id)]

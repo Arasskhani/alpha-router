@@ -258,6 +258,14 @@ class TestTheCode:
         assert resp.status_code == 400
         assert _detail(resp)["code"] == "code_expired"
 
+    async def test_wrong_codes_are_recorded_against_the_address(self, client, db_session, outbox, session_factory):
+        await _turn_on(db_session)
+        token = (await _start(client, "a@example.com")).json()["token"]
+        wrong = "000000" if _code(outbox) != "000000" else "111111"
+        await client.post("/api/auth/signup/verify", json={"token": token, "code": wrong})
+        failed = await _events(session_factory, "signup_failed")
+        assert [(e.reason_code, e.username) for e in failed] == [("code_invalid", "a@example.com")]
+
     async def test_only_the_hash_is_kept(self, client, db_session, outbox, session_factory):
         await _turn_on(db_session)
         await _start(client, "a@example.com")

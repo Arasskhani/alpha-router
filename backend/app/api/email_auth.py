@@ -140,6 +140,12 @@ async def _failed(
     )
 
 
+async def _code_failed(db: AsyncSession, request: Request, event_type: str, exc: CodeError) -> None:
+    """A refused code step, recorded against the account or the address the code was for."""
+    user = await db.get(User, exc.user_id) if exc.user_id is not None else None
+    await _failed(request, event_type, exc.reason, user=user, username=exc.email)
+
+
 async def _limited(request: Request, event_type: str, keys: list[tuple[str, tuple[int, int]]], who: str | None) -> None:
     try:
         for key, window in keys:
@@ -249,7 +255,7 @@ async def _verify(
         row = await check_code(db, token=body.token, code=body.code, purpose=purpose)
     except CodeError as exc:
         await db.commit()  # the wrong try counts
-        await _failed(request, event_type, exc.reason)
+        await _code_failed(db, request, event_type, exc)
         raise _refuse(exc.status, exc.reason, str(exc)) from exc
     await db.commit()
     user = await db.get(User, int(row.user_id)) if row.user_id is not None else None
@@ -267,7 +273,7 @@ async def _verified_or_refuse(db: AsyncSession, request: Request, token: str, *,
         return await verified_row(db, token=token, purpose=purpose)
     except CodeError as exc:
         await db.commit()
-        await _failed(request, event_type, exc.reason)
+        await _code_failed(db, request, event_type, exc)
         raise _refuse(exc.status, exc.reason, str(exc)) from exc
 
 
@@ -277,7 +283,7 @@ async def _consumed_or_refuse(db: AsyncSession, request: Request, row: Any, *, e
         await consume(db, row)
     except CodeError as exc:
         await db.rollback()
-        await _failed(request, event_type, exc.reason)
+        await _code_failed(db, request, event_type, exc)
         raise _refuse(exc.status, exc.reason, str(exc)) from exc
 
 

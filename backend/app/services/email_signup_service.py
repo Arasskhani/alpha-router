@@ -254,12 +254,25 @@ async def issue_code(
 
 
 class CodeError(Exception):
-    """A code step that cannot go on; ``reason`` is the auth event reason code, ``str()`` the message."""
+    """A code step that cannot go on; ``reason`` is the auth event reason code, ``str()`` the message.
 
-    def __init__(self, reason: str, message: str, status: int = 400) -> None:
+    ``email`` and ``user_id`` name what the code was for, when the token was found, so a run of wrong
+    codes shows in Sign-in Activity against the address or the account being tried.
+    """
+
+    def __init__(
+        self,
+        reason: str,
+        message: str,
+        status: int = 400,
+        *,
+        row: EmailVerification | None = None,
+    ) -> None:
         super().__init__(message)
         self.reason = reason
         self.status = status
+        self.email: str | None = str(row.email) if row is not None else None
+        self.user_id: int | None = int(row.user_id) if row is not None and row.user_id is not None else None
 
 
 async def _live_row(db: AsyncSession, token: str, purpose: str) -> EmailVerification:
@@ -272,8 +285,10 @@ async def _live_row(db: AsyncSession, token: str, purpose: str) -> EmailVerifica
         .scalars()
         .first()
     )
-    if row is None or row.consumed_at is not None:
+    if row is None:
         raise CodeError("code_invalid", "This code is no longer valid. Ask for a new one.")
+    if row.consumed_at is not None:
+        raise CodeError("code_invalid", "This code is no longer valid. Ask for a new one.", row=row)
     return row
 
 
@@ -311,10 +326,10 @@ async def check_code(db: AsyncSession, *, token: str, code: str, purpose: str) -
         return row
     if row.expires_at <= now:
         row.consumed_at = now  # type: ignore[assignment]
-        raise CodeError("code_expired", "This code has expired. Ask for a new one.")
+        raise CodeError("code_expired", "This code has expired. Ask for a new one.", row=row)
     tries = await _count_try(db, row)
     if tries is None:
-        raise CodeError("code_invalid", "Too many wrong codes. Ask for a new one.")
+        raise CodeError("code_invalid", "Too many wrong codes. Ask for a new one.", row=row)
     typed = re.sub(r"\s+", "", code or "")
     if hmac.compare_digest(_code_hash(str(row.token), typed), str(row.code_hash)):
         row.verified_at = now  # type: ignore[assignment]
@@ -322,8 +337,8 @@ async def check_code(db: AsyncSession, *, token: str, code: str, purpose: str) -
     left = MAX_ATTEMPTS - tries
     if left <= 0:
         row.consumed_at = now  # type: ignore[assignment]
-        raise CodeError("code_invalid", "Too many wrong codes. Ask for a new one.")
-    raise CodeError("code_invalid", f"That code is not right. {left} {'try' if left == 1 else 'tries'} left.")
+        raise CodeError("code_invalid", "Too many wrong codes. Ask for a new one.", row=row)
+    raise CodeError("code_invalid", f"That code is not right. {left} {'try' if left == 1 else 'tries'} left.", row=row)
 
 
 async def consume(db: AsyncSession, row: EmailVerification) -> None:
@@ -336,17 +351,17 @@ async def consume(db: AsyncSession, row: EmailVerification) -> None:
         .execution_options(synchronize_session=False)
     )
     if used.rowcount != 1:  # type: ignore[attr-defined]
-        raise CodeError("code_invalid", "This code is no longer valid. Ask for a new one.")
+        raise CodeError("code_invalid", "This code is no longer valid. Ask for a new one.", row=row)
 
 
 async def verified_row(db: AsyncSession, *, token: str, purpose: str) -> EmailVerification:
     """The row whose code was accepted and whose last step is still open, or raise CodeError."""
     row = await _live_row(db, (token or "").strip(), purpose)
     if row.verified_at is None:
-        raise CodeError("code_invalid", "Enter the code from the email first.")
+        raise CodeError("code_invalid", "Enter the code from the email first.", row=row)
     if row.verified_at + COMPLETE_TTL <= utcnow():
         row.consumed_at = utcnow()  # type: ignore[assignment]
-        raise CodeError("code_expired", "This step has expired. Start again.")
+        raise CodeError("code_expired", "This step has expired. Start again.", row=row)
     return row
 
 

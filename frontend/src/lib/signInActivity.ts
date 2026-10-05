@@ -6,7 +6,16 @@
  * page has not learned yet still shows *something* rather than nothing.
  */
 
-type SignInEventType = "login_success" | "login_failed" | "login_rate_limited" | "logout" | "session_revoked";
+type SignInEventType =
+  | "login_success"
+  | "login_failed"
+  | "login_rate_limited"
+  | "logout"
+  | "session_revoked"
+  | "signup_completed"
+  | "signup_failed"
+  | "password_reset"
+  | "password_reset_failed";
 
 export type SignInEvent = {
   id: number;
@@ -47,12 +56,16 @@ export type SignInFilterOptions = {
   auth_methods: string[];
 };
 
-const EVENT_LABELS: Record<string, string> = {
+export const EVENT_LABELS: Record<string, string> = {
   login_success: "Signed in",
   login_failed: "Sign-in failed",
   login_rate_limited: "Rate limited",
   logout: "Signed out",
   session_revoked: "Sessions revoked",
+  signup_completed: "Account created",
+  signup_failed: "Sign-up failed",
+  password_reset: "Password reset by email",
+  password_reset_failed: "Password reset failed",
 };
 
 const OUTCOME_LABELS: Record<string, string> = {
@@ -92,6 +105,20 @@ export const REASON_LABELS: Record<string, string> = {
   admin_2fa_disabled: "Two-factor disabled by an administrator",
   user_deactivated: "Account deactivated by an administrator",
   user_deleted: "Account deleted",
+  password_reset_by_email: "Password reset by email",
+  signup_disabled: "Sign-up by email is off",
+  reset_disabled: "Password reset by email is off",
+  domain_not_allowed: "Email domain not allowed",
+  email_invalid: "Invalid email address",
+  email_taken: "Email already has an account",
+  email_unknown: "No account with this email",
+  not_local_account: "Directory account",
+  code_invalid: "Wrong or used code",
+  code_expired: "Code expired",
+  username_taken: "Username taken",
+  username_invalid: "Username not allowed",
+  weak_password: "Password does not meet the policy",
+  email_send_failed: "Email could not be sent",
 };
 
 function humanCode(value: string): string {

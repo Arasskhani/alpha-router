@@ -9,6 +9,8 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../api", () => ({
@@ -22,8 +24,10 @@ import { api, authFetch } from "../../api";
 import {
   EMPTY_FILTERS,
   IDP_SIGN_OUT_NOTE,
+  EVENT_LABELS,
   REASON_LABELS,
   buildSignInQuery,
+  eventLabel,
   outcomeBadgeClass,
   reasonLabel,
   scopeSentence,
@@ -77,36 +81,35 @@ async function render(path = "/admin/sign-in-activity") {
   });
 }
 
+/** The string values of a tuple in backend/app/models/auth_event.py, resolving its constants. */
+function serverTuple(name: string): string[] {
+  const text = readFileSync(join(__dirname, "../../../../backend/app/models/auth_event.py"), "utf8");
+  const constants = new Map([...text.matchAll(/^([A-Z_]+) = "([^"]+)"$/gm)].map((m) => [m[1], m[2]]));
+  const body = text.split(`${name}: tuple[str, ...] = (`)[1].split("\n)")[0];
+  return body
+    .split("\n")
+    .map((line) => line.trim().replace(/,$/, ""))
+    .filter((line) => line && !line.startsWith("#"))
+    .map((item) => (item.startsWith('"') ? item.slice(1, -1) : (constants.get(item) ?? item)));
+}
+
 function requested(): string[] {
   return vi.mocked(api).mock.calls.map((c) => String(c[0]));
 }
 
 describe("labels", () => {
   it("has a sentence for every reason code the server can store", () => {
-    // Mirrors REASON_CODES in backend/app/models/auth_event.py.
-    const serverCodes = [
-      "bad_password",
-      "no_such_user",
-      "account_inactive",
-      "account_deleted",
-      "twofa_required",
-      "twofa_failed",
-      "ldap_unavailable",
-      "ldap_rejected",
-      "saml_rejected",
-      "oidc_rejected",
-      "sso_code_invalid",
-      "unknown",
-      "rate_limited",
-      "password_changed",
-      "admin_password_reset",
-      "admin_2fa_disabled",
-      "user_deactivated",
-      "user_deleted",
-    ];
+    // Read from the server's own catalogue, so a code added there cannot go unlabelled here.
+    const serverCodes = serverTuple("REASON_CODES");
+    expect(serverCodes.length).toBeGreaterThan(20);
     for (const code of serverCodes) expect(REASON_LABELS[code], code).toBeTruthy();
     expect(reasonLabel(null)).toBe("—");
     expect(reasonLabel("something_new")).toBe("Something new");
+  });
+
+  it("has a name for every event type the server can store", () => {
+    for (const type of serverTuple("EVENT_TYPES")) expect(EVENT_LABELS[type], type).toBeTruthy();
+    expect(eventLabel("signup_completed")).toBe("Account created");
   });
 
   it("colours by outcome: green worked, red failed, grey neither", () => {

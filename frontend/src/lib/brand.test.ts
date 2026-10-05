@@ -46,6 +46,7 @@ describe("project-owned naming contracts", () => {
       mediaView: "alpha_router_media_view",
       installPrompt: "alpha_router_install_prompt",
       afterLogin: "alpha_router_after_login",
+      emailFlow: "alpha_router_email_flow",
     });
   });
 

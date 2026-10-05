@@ -163,6 +163,8 @@ export default function SignUpFlow({ onSignedIn, onSignIn, onResetPassword }: Pr
           }}
           autoComplete="username"
           className="login-form__input"
+          // eslint-disable-next-line jsx-a11y/no-autofocus -- the step the person just reached by entering the code; without it focus fell to the page
+          autoFocus
           aria-describedby="signup-username-status"
           aria-invalid={name.status === "bad"}
           required

@@ -115,11 +115,13 @@ describe("the sign-in page with email sign-up", () => {
     await type("reset-code", "123456");
     await submit();
     expect(host.textContent).toContain("Choose a new password for me");
+    expect(document.activeElement?.id).toBe("reset-password");
     await type("reset-password", "Fresh-Start-2026!");
     await type("reset-confirm", "Fresh-Start-2026!");
     await submit();
     expect(host.querySelector(".login-panel__title")?.textContent).toBe("Sign in");
     expect(host.querySelector<HTMLInputElement>("#login-username")?.value).toBe("me");
+    expect(document.activeElement?.id).toBe("login-password");
     expect(host.textContent).toContain("Your password has been changed. Sign in with your new password.");
   });
 });

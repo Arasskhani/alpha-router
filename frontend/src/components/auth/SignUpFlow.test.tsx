@@ -96,6 +96,7 @@ describe("creating an account", () => {
     await submit();
     expect(last("/api/auth/signup/verify")).toEqual({ path: "/api/auth/signup/verify", body: { token: "tok-1", code: "123456" } });
     expect(host.querySelector<HTMLInputElement>("#signup-username")?.value).toBe("new.person");
+    expect(document.activeElement?.id).toBe("signup-username");
 
     await type("signup-password", "Strong-Pass-2026!");
     await type("signup-confirm", "Strong-Pass-2026!");

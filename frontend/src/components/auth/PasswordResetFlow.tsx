@@ -123,6 +123,8 @@ export default function PasswordResetFlow({ initialEmail = "", onDone }: Props) 
           onChange={(e) => setPassword(e.target.value)}
           autoComplete="new-password"
           className="login-form__input"
+          // eslint-disable-next-line jsx-a11y/no-autofocus -- the step the person just reached by entering the code; without it focus fell to the page
+          autoFocus
           aria-describedby="reset-password-rules"
           required
         />

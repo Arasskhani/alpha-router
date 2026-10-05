@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams, type NavigateFunction } from "react-router-dom";
 import AlphaRouterLogo from "../components/AlphaRouterLogo";
 import { LOGIN_TAGLINE, PAGE_TITLE, PRODUCT_NAME_MARKED, TRADEMARK_OWNER } from "../lib/brand";
@@ -137,6 +137,9 @@ export default function Login() {
   const [mode, setMode] = useState<"signin" | "signup" | "reset">("signin");
   const [resetEmail, setResetEmail] = useState("");
   const [notice, setNotice] = useState("");
+  // After a reset the form comes back with the username filled in: the password is what is left.
+  const passwordInput = useRef<HTMLInputElement>(null);
+  const focusPasswordNext = useRef(false);
   const nav = useNavigate();
   const [params] = useSearchParams();
 
@@ -153,6 +156,11 @@ export default function Login() {
     document.body.classList.add("login-route");
     return () => document.body.classList.remove("login-route");
   }, []);
+  useEffect(() => {
+    if (mode !== "signin" || !focusPasswordNext.current) return;
+    focusPasswordNext.current = false;
+    passwordInput.current?.focus();
+  }, [mode]);
   useEffect(() => {
     authFetch("/api/auth/methods")
       .then((r) => r.json())
@@ -353,6 +361,7 @@ export default function Login() {
                   setPassword("");
                   setError("");
                   setNotice("Your password has been changed. Sign in with your new password.");
+                  focusPasswordNext.current = true;
                 }}
               />
             )}
@@ -397,6 +406,7 @@ export default function Login() {
                     Password
                   </label>
                   <input
+                    ref={passwordInput}
                     id="login-password"
                     type="password"
                     value={password}

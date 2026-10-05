@@ -157,10 +157,14 @@ async def auth_methods(db: AsyncSession = Depends(get_db)):
     ldap_cfg = await get_provider_config(db, "ldap")
     saml_cfg = await get_provider_config(db, "saml")
     oidc_cfg = await get_provider_config(db, "oidc")
+    from app.services.email_signup_service import methods_available
+
     return {
         "ldap": bool(ldap_cfg.get("enabled")),
         "saml": bool(saml_cfg.get("enabled")),
         "oidc": bool(oidc_cfg.get("enabled")),
+        # Self sign-up and password reset by an emailed code (each needs its switch and SMTP).
+        **(await methods_available(db)),
     }
 
 

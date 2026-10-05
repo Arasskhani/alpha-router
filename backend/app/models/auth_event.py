@@ -33,12 +33,21 @@ EVENT_LOGIN_FAILED = "login_failed"
 EVENT_LOGIN_RATE_LIMITED = "login_rate_limited"
 EVENT_LOGOUT = "logout"
 EVENT_SESSION_REVOKED = "session_revoked"
+#: Self sign-up by email, and resetting a forgotten password by email.
+EVENT_SIGNUP_COMPLETED = "signup_completed"
+EVENT_SIGNUP_FAILED = "signup_failed"
+EVENT_PASSWORD_RESET = "password_reset"
+EVENT_PASSWORD_RESET_FAILED = "password_reset_failed"
 EVENT_TYPES: tuple[str, ...] = (
     EVENT_LOGIN_SUCCESS,
     EVENT_LOGIN_FAILED,
     EVENT_LOGIN_RATE_LIMITED,
     EVENT_LOGOUT,
     EVENT_SESSION_REVOKED,
+    EVENT_SIGNUP_COMPLETED,
+    EVENT_SIGNUP_FAILED,
+    EVENT_PASSWORD_RESET,
+    EVENT_PASSWORD_RESET_FAILED,
 )
 
 OUTCOME_SUCCESS = "success"
@@ -78,6 +87,21 @@ REASON_CODES: tuple[str, ...] = (
     "admin_2fa_disabled",
     "user_deactivated",
     "user_deleted",
+    "password_reset_by_email",
+    # signup_failed / password_reset_failed
+    "signup_disabled",
+    "reset_disabled",
+    "domain_not_allowed",
+    "email_invalid",
+    "email_taken",
+    "email_unknown",
+    "not_local_account",
+    "code_invalid",
+    "code_expired",
+    "username_taken",
+    "username_invalid",
+    "weak_password",
+    "email_send_failed",
 )
 
 REASON_DETAIL_MAX_CHARS = 2000

@@ -3,7 +3,7 @@
 import asyncio
 import json
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -258,8 +258,106 @@ async def providers_status(db: AsyncSession = Depends(get_db), _: User = Depends
     ldap = await get_provider_config(db, "ldap")
     saml = await get_provider_config(db, "saml")
     oidc = await get_provider_config(db, "oidc")
+    from app.services.email_signup_service import load_email_signup_settings
+
+    email = await load_email_signup_settings(db)
     return {
         "ldap": {"enabled": ldap.get("enabled", False)},
         "saml": {"enabled": saml.get("enabled", False)},
         "oidc": {"enabled": oidc.get("enabled", False)},
+        "email_signup": {"enabled": email.enabled, "reset_enabled": email.reset_enabled},
     }
+
+
+# ── Email sign-up and password reset by email ─────────────────────────────
+
+
+class EmailSignupIn(BaseModel):
+    enabled: bool = False
+    allowed_domains: list[str] = Field(default_factory=list, max_length=200)
+    default_plan_id: int | None = None
+    reset_enabled: bool = False
+
+
+async def _email_signup_view(db: AsyncSession) -> dict:
+    import datetime as dt
+
+    from sqlalchemy import func, select
+
+    from app.models.auth_event import EVENT_SIGNUP_COMPLETED, AuthEvent
+    from app.models.budget import BudgetPlan
+    from app.services.email_signup_service import load_email_signup_settings, smtp_configured
+
+    settings = await load_email_signup_settings(db)
+    plans = (await db.execute(select(BudgetPlan).order_by(BudgetPlan.name))).scalars().all()
+    since = dt.datetime.utcnow() - dt.timedelta(days=30)
+    recent = (
+        await db.execute(
+            select(func.count())
+            .select_from(AuthEvent)
+            .where(AuthEvent.event_type == EVENT_SIGNUP_COMPLETED, AuthEvent.occurred_at >= since)
+        )
+    ).scalar_one()
+    return {
+        "enabled": settings.enabled,
+        "allowed_domains": settings.allowed_domains,
+        "default_plan_id": settings.default_plan_id,
+        "reset_enabled": settings.reset_enabled,
+        "smtp_configured": await smtp_configured(db),
+        "plans": [
+            {"id": int(p.id), "name": str(p.name), "monthly_budget_usd": float(p.monthly_budget_usd or 0)}
+            for p in plans
+        ],
+        "signups_last_30_days": int(recent or 0),
+    }
+
+
+@router.get("/email-signup")
+async def get_email_signup(db: AsyncSession = Depends(get_db), _: User = Depends(require_authentication)):
+    """Self sign-up by email and password reset by email: the settings, the plans to choose from, recent sign-ups."""
+    return await _email_signup_view(db)
+
+
+@router.put("/email-signup")
+async def save_email_signup(
+    body: EmailSignupIn,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    actor: User = Depends(require_authentication_write),
+):
+    from app.services.client_ip import resolve_client_ip
+    from app.services.email_signup_service import (
+        EmailSignupSettings,
+        load_email_signup_settings,
+        save_email_signup_settings,
+    )
+    from app.services.security_audit import log_security_event
+
+    before = await load_email_signup_settings(db)
+    try:
+        saved = await save_email_signup_settings(
+            db,
+            EmailSignupSettings(
+                enabled=body.enabled,
+                allowed_domains=body.allowed_domains,
+                default_plan_id=body.default_plan_id,
+                reset_enabled=body.reset_enabled,
+            ),
+        )
+    except ValueError as exc:
+        await db.rollback()
+        raise HTTPException(400, str(exc)) from exc
+    await log_security_event(
+        db,
+        actor=actor,
+        actor_ip=resolve_client_ip(request),
+        action="email_signup_settings_changed",
+        resource_type="auth_provider",
+        resource_id="email_signup",
+        detail={
+            "before": {"enabled": before.enabled, **before.as_config()},
+            "after": {"enabled": saved.enabled, **saved.as_config()},
+        },
+    )
+    await db.commit()
+    return await _email_signup_view(db)

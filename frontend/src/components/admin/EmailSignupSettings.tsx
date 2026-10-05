@@ -40,7 +40,9 @@ export default function EmailSignupSettings() {
     setView(data);
     setEnabled(data.enabled);
     setDomains(data.allowed_domains);
-    setPlanId(data.default_plan_id != null ? String(data.default_plan_id) : "");
+    // A plan deleted since it was chosen shows as "No plan", and saving sends that, not the old id.
+    const planKnown = data.plans.some((plan) => plan.id === data.default_plan_id);
+    setPlanId(planKnown ? String(data.default_plan_id) : "");
     setResetEnabled(data.reset_enabled);
   }
 

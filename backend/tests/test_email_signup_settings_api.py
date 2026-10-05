@@ -75,6 +75,22 @@ async def test_saving_checks_and_records_it(client, db_session, admin, session_f
     assert methods["email_signup"] and methods["password_reset"]
 
 
+async def test_a_deleted_default_plan_is_not_shown_and_does_not_block_saving(client, db_session, admin):
+    await _smtp(db_session)
+    plan = BudgetPlan(name="Starter", monthly_budget_usd=5)
+    db_session.add(plan)
+    await db_session.commit()
+    headers = _sign_in(client, admin)
+    await client.put(PATH, json={"enabled": True, "default_plan_id": plan.id}, headers=headers)
+    await db_session.delete(plan)
+    await db_session.commit()
+    body = (await client.get(PATH)).json()
+    assert body["default_plan_id"] is None
+    # The form sends back what it shows: saving works, here turning sign-up off.
+    resaved = await client.put(PATH, json={**body, "enabled": False}, headers=headers)
+    assert resaved.status_code == 200, resaved.text
+
+
 async def test_bad_values_are_refused(client, db_session, admin):
     headers = _sign_in(client, admin)
     no_smtp = await client.put(PATH, json={"enabled": True}, headers=headers)

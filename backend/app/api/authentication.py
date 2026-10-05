@@ -298,10 +298,14 @@ async def _email_signup_view(db: AsyncSession) -> dict:
             .where(AuthEvent.event_type == EVENT_SIGNUP_COMPLETED, AuthEvent.occurred_at >= since)
         )
     ).scalar_one()
+    # A plan deleted since it was chosen is given to nobody (sign-up checks it exists): showing its id
+    # would leave the form with a choice it cannot display, and a save the server refuses.
+    plan_ids = {int(p.id) for p in plans}
+    default_plan_id = settings.default_plan_id if settings.default_plan_id in plan_ids else None
     return {
         "enabled": settings.enabled,
         "allowed_domains": settings.allowed_domains,
-        "default_plan_id": settings.default_plan_id,
+        "default_plan_id": default_plan_id,
         "reset_enabled": settings.reset_enabled,
         "smtp_configured": await smtp_configured(db),
         "plans": [

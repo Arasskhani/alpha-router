@@ -135,6 +135,14 @@ describe("Email sign-up settings", () => {
     expect(host.textContent).toContain("Email sign-up settings saved.");
   });
 
+  it("does not send back a default plan that no longer exists", async () => {
+    serve({ default_plan_id: 99 });
+    await render();
+    expect(field<HTMLSelectElement>("#email-signup-plan").value).toBe("");
+    await click(button("Save email sign-up"));
+    expect(lastPut?.default_plan_id).toBeNull();
+  });
+
   it("keeps a domain that was typed but not added", async () => {
     serve();
     await render();

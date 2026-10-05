@@ -1285,10 +1285,10 @@ export const userManualSections: DocSection[] = [
         </p>
         <ul>
           <li>
-            <strong>Chats</strong> — shared AI threads for this project.
+            <strong>Rooms</strong> — member-only human discussion (hidden from public visitors who are not members).
           </li>
           <li>
-            <strong>Rooms</strong> — member-only human discussion (hidden from public visitors who are not members).
+            <strong>Chats</strong> — shared AI threads for this project.
           </li>
           <li>
             <strong>Resources</strong> — documents submitted for Knowledge review.

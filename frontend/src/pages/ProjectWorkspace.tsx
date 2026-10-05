@@ -170,7 +170,8 @@ export default function ProjectWorkspacePage() {
     }
   }, [tab, canEdit, project]);
 
-  const conversationTabs: Tab[] = project?.isMember ? ["chats", "rooms"] : ["chats"];
+  // Rooms sits before Chats; Chats is still the tab a project opens on.
+  const conversationTabs: Tab[] = project?.isMember ? ["rooms", "chats"] : ["chats"];
   // Memory, media, the member roster and the custom prompt are members-only on
   // the server (403 for public viewers); do not offer tabs that would only fail.
   const tabs: Tab[] = canEdit

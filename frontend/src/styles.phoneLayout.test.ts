@@ -896,6 +896,21 @@ describe("the sign-in page on a phone held sideways", () => {
   });
 });
 
+describe("the sign-in page while creating an account or resetting a password", () => {
+  it("scrolls at any size, with the trademark line after the card", () => {
+    // Top level, not in a query: the forms are taller than the card in any window.
+    expect(declarations(css, ".login-page--scroll")).toContain("overflow-y: auto");
+    expect(declarations(css, ".login-page--scroll")).toContain("flex-direction: column");
+    expect(declarations(css, ".login-page--scroll .login-page__shell")).toContain("height: auto");
+    expect(declarations(css, ".login-page--scroll .login-page__shell")).toContain("margin-block: auto");
+    expect(declarations(css, ".login-page--scroll .login-page__legal")).toContain("position: static");
+    // After the base rule it overrides with the same weight.
+    expect(css.indexOf(".login-page--scroll {")).toBeGreaterThan(lastTopLevelRule(".login-page"));
+    const login = readFileSync(join(__dirname, "pages/Login.tsx"), "utf8");
+    expect(login).toContain('mode === "signin" ? "login-page" : "login-page login-page--scroll"');
+  });
+});
+
 describe("the sign-in page's highlights", () => {
   it("stay still for anyone who asks for less motion", () => {
     expect(declarations(css, ".login-highlight--reveal")).toContain("animation: login-highlight-emerge");

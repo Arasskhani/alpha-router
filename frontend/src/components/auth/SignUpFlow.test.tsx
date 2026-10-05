@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../../api", () => ({ authFetch: vi.fn() }));
 
 import { authFetch } from "../../api";
+import { loadEmailFlow, saveEmailFlow } from "../../lib/emailFlowStore";
 import { resetPasswordPolicyCache } from "../../lib/passwordRules";
 import SignUpFlow from "./SignUpFlow";
 
@@ -40,6 +41,7 @@ let root: Root;
 afterEach(() => {
   act(() => root.unmount());
   host.remove();
+  sessionStorage.clear();
   vi.useRealTimers();
 });
 
@@ -194,5 +196,41 @@ describe("creating an account", () => {
     await submit();
     expect(host.textContent).toContain("The two passwords are not the same.");
     expect(calls.some((c) => c.path === "/api/auth/signup/complete")).toBe(false);
+  });
+
+  it("picks up the code step after a reload, and forgets it once the account is made", async () => {
+    saveEmailFlow({ flow: "signup", step: "code", started: STARTED });
+    replies["/api/auth/signup/verify"] = {
+      body: { verified: true, email: STARTED.email, suggested_username: "new.person" },
+    };
+    replies["/api/auth/signup/username-available"] = { body: { username: "new.person", available: true, code: null, message: null } };
+    replies["/api/auth/signup/complete"] = { body: { role: "user", is_active: true } };
+    const handlers = await render();
+    expect(host.textContent).toContain("We sent a 6-digit code to new.person@example.com");
+    await type("signup-code", "123456");
+    await submit();
+    expect(loadEmailFlow()?.step).toBe("details");
+    await type("signup-password", "Strong-Pass-2026!");
+    await type("signup-confirm", "Strong-Pass-2026!");
+    await submit();
+    expect(handlers.onSignedIn).toHaveBeenCalledTimes(1);
+    expect(loadEmailFlow()).toBeNull();
+  });
+
+  it("picks up the details step with the suggested username", async () => {
+    saveEmailFlow({ flow: "signup", step: "details", started: STARTED, username: "new.person" });
+    await render();
+    expect(host.querySelector<HTMLInputElement>("#signup-username")?.value).toBe("new.person");
+  });
+
+  it("forgets the flow when another email is chosen", async () => {
+    replies["/api/auth/signup/start"] = { body: STARTED };
+    await render();
+    await type("signup-email", STARTED.email);
+    await submit();
+    expect(loadEmailFlow()?.started.token).toBe("tok-1");
+    const back = [...host.querySelectorAll("button")].find((b) => b.textContent === "Use another email");
+    await act(async () => back?.click());
+    expect(loadEmailFlow()).toBeNull();
   });
 });

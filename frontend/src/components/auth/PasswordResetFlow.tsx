@@ -1,6 +1,7 @@
 import { FormEvent, useState } from "react";
 
 import { EmailAuthError, resetComplete, resetStart, resetVerify, type CodeStarted } from "../../lib/emailAuth";
+import { clearEmailFlow, loadEmailFlow, saveEmailFlow } from "../../lib/emailFlowStore";
 import CodeStep from "./CodeStep";
 import PasswordRules from "./PasswordRules";
 
@@ -17,10 +18,18 @@ function messageOf(err: unknown): string {
 
 /** Reset a forgotten password: email, the emailed code, then the new password. */
 export default function PasswordResetFlow({ initialEmail = "", onDone }: Props) {
-  const [step, setStep] = useState<"email" | "code" | "password">("email");
-  const [email, setEmail] = useState(initialEmail);
-  const [started, setStarted] = useState<CodeStarted | null>(null);
-  const [username, setUsername] = useState("");
+  // A reset left by a reload (the mail app opened for the code) picks up where it was.
+  const [resumed] = useState(() => {
+    const flow = loadEmailFlow();
+    if (flow?.flow !== "reset") return null;
+    return { flow, resendIn: Math.max(0, Math.ceil(flow.started.resend_in - (Date.now() - flow.at) / 1000)) };
+  });
+  const [step, setStep] = useState<"email" | "code" | "password">(
+    resumed ? (resumed.flow.step === "password" ? "password" : "code") : "email",
+  );
+  const [email, setEmail] = useState(resumed?.flow.started.email ?? initialEmail);
+  const [started, setStarted] = useState<CodeStarted | null>(resumed?.flow.started ?? null);
+  const [username, setUsername] = useState(resumed?.flow.username ?? "");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
@@ -34,6 +43,7 @@ export default function PasswordResetFlow({ initialEmail = "", onDone }: Props) 
       setStarted(result);
       setEmail(result.email);
       setStep("code");
+      saveEmailFlow({ flow: "reset", step: "code", started: result });
     } catch (err) {
       setError(messageOf(err));
     } finally {
@@ -49,6 +59,7 @@ export default function PasswordResetFlow({ initialEmail = "", onDone }: Props) 
       const result = await resetVerify(started.token, code);
       setUsername(result.username ?? "");
       setStep("password");
+      saveEmailFlow({ flow: "reset", step: "password", started, username: result.username ?? "" });
     } catch (err) {
       setError(messageOf(err));
     } finally {
@@ -67,12 +78,14 @@ export default function PasswordResetFlow({ initialEmail = "", onDone }: Props) 
     setError("");
     try {
       const result = await resetComplete(started.token, password);
+      clearEmailFlow();
       onDone(result.username);
     } catch (err) {
       setError(messageOf(err));
       if (err instanceof EmailAuthError && (err.code === "code_invalid" || err.code === "code_expired")) {
         setStep("email");
         setStarted(null);
+        clearEmailFlow();
       }
     } finally {
       setBusy(false);
@@ -86,7 +99,7 @@ export default function PasswordResetFlow({ initialEmail = "", onDone }: Props) 
         idBase="reset"
         email={started.email}
         codeLength={started.code_length}
-        resendIn={started.resend_in}
+        resendIn={resumed && started === resumed.flow.started ? resumed.resendIn : started.resend_in}
         busy={busy}
         error={error}
         onVerify={(code) => void verify(code)}
@@ -95,6 +108,7 @@ export default function PasswordResetFlow({ initialEmail = "", onDone }: Props) 
           setStep("email");
           setStarted(null);
           setError("");
+          clearEmailFlow();
         }}
       />
     );

@@ -14,6 +14,7 @@ vi.mock("../lib/themeCache", () => ({ applyThemeToDocument: () => {} }));
 vi.mock("../lib/session", () => ({ markLoggedIn: () => {} }));
 
 import { authFetch } from "../api";
+import { loadEmailFlow, saveEmailFlow } from "../lib/emailFlowStore";
 import { resetPasswordPolicyCache } from "../lib/passwordRules";
 import Login from "./Login";
 
@@ -48,6 +49,7 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   host.remove();
+  sessionStorage.clear();
 });
 
 async function render() {
@@ -123,5 +125,20 @@ describe("the sign-in page with email sign-up", () => {
     expect(host.querySelector<HTMLInputElement>("#login-username")?.value).toBe("me");
     expect(document.activeElement?.id).toBe("login-password");
     expect(host.textContent).toContain("Your password has been changed. Sign in with your new password.");
+  });
+
+  it("opens a reset left by a reload where it was, and Back to sign in forgets it", async () => {
+    saveEmailFlow({
+      flow: "reset",
+      step: "password",
+      started: { token: "tok-r", email: "me@example.com", expires_in: 600, resend_in: 60, code_length: 6 },
+      username: "me",
+    });
+    await render();
+    expect(host.querySelector(".login-panel__title")?.textContent).toBe("Reset password");
+    expect(host.textContent).toContain("Choose a new password for me");
+    await click("Back to sign in");
+    expect(loadEmailFlow()).toBeNull();
+    expect(host.querySelector(".login-panel__title")?.textContent).toBe("Sign in");
   });
 });

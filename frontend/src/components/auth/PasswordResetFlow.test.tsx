@@ -36,6 +36,7 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   host.remove();
+  sessionStorage.clear();
 });
 
 async function type(id: string, value: string) {

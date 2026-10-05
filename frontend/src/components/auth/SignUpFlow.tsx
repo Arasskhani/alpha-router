@@ -8,6 +8,7 @@ import {
   signupVerify,
   type CodeStarted,
 } from "../../lib/emailAuth";
+import { clearEmailFlow, loadEmailFlow, saveEmailFlow, type EmailFlow } from "../../lib/emailFlowStore";
 import CodeStep from "./CodeStep";
 import PasswordRules from "./PasswordRules";
 
@@ -27,15 +28,27 @@ function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/** Seconds left of the resend wait for a step picked up after a reload. */
+function waitLeft(flow: EmailFlow): number {
+  return Math.max(0, Math.ceil(flow.started.resend_in - (Date.now() - flow.at) / 1000));
+}
+
 /** Create an account: email, the emailed code, then a username and a password. */
 export default function SignUpFlow({ onSignedIn, onSignIn, onResetPassword }: Props) {
-  const [step, setStep] = useState<"email" | "code" | "details">("email");
-  const [email, setEmail] = useState("");
-  const [started, setStarted] = useState<CodeStarted | null>(null);
+  // A sign-up left by a reload (the mail app opened for the code) picks up where it was.
+  const [resumed] = useState(() => {
+    const flow = loadEmailFlow();
+    return flow?.flow === "signup" ? { flow, resendIn: waitLeft(flow) } : null;
+  });
+  const [step, setStep] = useState<"email" | "code" | "details">(
+    resumed ? (resumed.flow.step === "details" ? "details" : "code") : "email",
+  );
+  const [email, setEmail] = useState(resumed?.flow.started.email ?? "");
+  const [started, setStarted] = useState<CodeStarted | null>(resumed?.flow.started ?? null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [taken, setTaken] = useState<Taken | null>(null);
-  const [username, setUsername] = useState("");
+  const [username, setUsername] = useState(resumed?.flow.username ?? "");
   const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -50,6 +63,7 @@ export default function SignUpFlow({ onSignedIn, onSignIn, onResetPassword }: Pr
       setStarted(result);
       setEmail(result.email);
       setStep("code");
+      saveEmailFlow({ flow: "signup", step: "code", started: result });
     } catch (err) {
       if (err instanceof EmailAuthError && err.code === "email_taken") {
         setTaken({ message: err.message, resetAvailable: err.extra.reset_available === true });
@@ -69,6 +83,7 @@ export default function SignUpFlow({ onSignedIn, onSignIn, onResetPassword }: Pr
       const result = await signupVerify(started.token, code);
       setUsername(result.suggested_username);
       setStep("details");
+      saveEmailFlow({ flow: "signup", step: "details", started, username: result.suggested_username });
     } catch (err) {
       setError(messageOf(err));
     } finally {
@@ -111,12 +126,14 @@ export default function SignUpFlow({ onSignedIn, onSignIn, onResetPassword }: Pr
     setError("");
     try {
       await signupComplete(started.token, username.trim(), password, displayName.trim());
+      clearEmailFlow();
       await onSignedIn();
     } catch (err) {
       setError(messageOf(err));
       if (err instanceof EmailAuthError && (err.code === "code_invalid" || err.code === "code_expired")) {
         setStep("email");
         setStarted(null);
+        clearEmailFlow();
       }
     } finally {
       setBusy(false);
@@ -130,7 +147,7 @@ export default function SignUpFlow({ onSignedIn, onSignIn, onResetPassword }: Pr
         idBase="signup"
         email={started.email}
         codeLength={started.code_length}
-        resendIn={started.resend_in}
+        resendIn={resumed && started === resumed.flow.started ? resumed.resendIn : started.resend_in}
         busy={busy}
         error={error}
         onVerify={(code) => void verify(code)}
@@ -139,6 +156,7 @@ export default function SignUpFlow({ onSignedIn, onSignIn, onResetPassword }: Pr
           setStep("email");
           setStarted(null);
           setError("");
+          clearEmailFlow();
         }}
       />
     );

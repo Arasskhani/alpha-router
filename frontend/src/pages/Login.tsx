@@ -9,6 +9,7 @@ import { takeAfterLogin } from "../lib/afterLogin";
 import { authFetch, bootstrapSession } from "../api";
 import PasswordResetFlow from "../components/auth/PasswordResetFlow";
 import SignUpFlow from "../components/auth/SignUpFlow";
+import { clearEmailFlow, loadEmailFlow } from "../lib/emailFlowStore";
 function FeatureProvidersArt() {
   return (
     <svg className="login-highlight__art login-highlight__svg" viewBox="0 0 80 56" aria-hidden>
@@ -134,7 +135,11 @@ export default function Login() {
     password_reset: false,
   });
   // Signing in, creating an account by email, or resetting a forgotten password by email.
-  const [mode, setMode] = useState<"signin" | "signup" | "reset">("signin");
+  // A sign-up or reset in progress before a reload (lib/emailFlowStore) opens again where it was.
+  const [mode, setMode] = useState<"signin" | "signup" | "reset">(() => {
+    const flow = loadEmailFlow();
+    return flow ? (flow.flow === "signup" ? "signup" : "reset") : "signin";
+  });
   const [resetEmail, setResetEmail] = useState("");
   const [notice, setNotice] = useState("");
   // After a reset the form comes back with the username filled in: the password is what is left.
@@ -371,6 +376,7 @@ export default function Login() {
                   type="button"
                   className="login-panel__link"
                   onClick={() => {
+                    clearEmailFlow();
                     setMode("signin");
                     setError("");
                   }}

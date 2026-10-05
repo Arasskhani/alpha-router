@@ -34,6 +34,8 @@ export const STORAGE_KEYS = {
   installPrompt: "alpha_router_install_prompt",
   /** The page to go back to after signing in (lib/afterLogin.ts), in session storage. */
   afterLogin: "alpha_router_after_login",
+  /** A sign-up or password reset by email in progress (lib/emailFlowStore.ts), in session storage. */
+  emailFlow: "alpha_router_email_flow",
 } as const;
 
 export const BROWSER_EVENT_NAMES = {

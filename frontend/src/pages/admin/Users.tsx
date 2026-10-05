@@ -18,6 +18,7 @@ import {
 } from "../../lib/presence";
 import { normalizeRole, roleLabel, userHasSuperAdminAccess, type RoleRecord } from "../../lib/rbac";
 import { useTableCards } from "../../hooks/useTableCards";
+import PasswordRules from "../../components/auth/PasswordRules";
 
 function userPlanSelectValue(u: U): string {
   if (u.user_plan_mode === "none") return "__none__";
@@ -466,8 +467,8 @@ export default function Users() {
     const isLocal = editUser.auth_provider === "local";
     const wantsPassword = isLocal && (editForm.new_password || editForm.confirm_password);
     if (wantsPassword) {
-      if (editForm.new_password.length < 6) {
-        setErr("Password must be at least 6 characters.");
+      if (!editForm.new_password.trim()) {
+        setErr("Enter the new password.");
         setEditSaving(false);
         return;
       }
@@ -1146,7 +1147,16 @@ export default function Users() {
                   autoComplete="new-password"
                   value={editForm.new_password}
                   onChange={(e) => setEditForm({ ...editForm, new_password: e.target.value })}
+                  aria-describedby="users-new-password-rules"
                 />
+                {editForm.new_password ? (
+                  <PasswordRules
+                    id="users-new-password-rules"
+                    password={editForm.new_password}
+                    username={editUser.username}
+                    email={editUser.email || undefined}
+                  />
+                ) : null}
                 <label htmlFor="users-confirm-password">Confirm password</label>
                 <input id="users-confirm-password"
                   type="password"

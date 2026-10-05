@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../api";
+import PasswordRules from "../auth/PasswordRules";
 import { type RoleRecord } from "../../lib/rbac";
 import Modal from "../Modal";
 
@@ -135,7 +136,14 @@ export default function CreateLocalUserModal({ open, roles, plans, onClose, onSu
           value={form.password}
           onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
           autoComplete="new-password"
+          aria-describedby="create-local-user-modal-password-rules"
           required
+        />
+        <PasswordRules
+          id="create-local-user-modal-password-rules"
+          password={form.password}
+          username={form.username}
+          email={form.email}
         />
         <label htmlFor="create-local-user-modal-display-name">Display name</label>
         <input id="create-local-user-modal-display-name"

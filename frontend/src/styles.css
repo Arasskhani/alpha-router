@@ -19234,3 +19234,17 @@ p.error,
 .feature-access-form__intro {
   margin: 0 0 0.75rem;
 }
+
+/* The password rules beside a new-password field (PasswordRules). */
+.password-rules {
+  display: grid;
+  gap: 0.2rem;
+  margin: 0.25rem 0 0.75rem;
+  padding: 0;
+  list-style: none;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+.password-rules__rule--met {
+  color: #059669;
+}

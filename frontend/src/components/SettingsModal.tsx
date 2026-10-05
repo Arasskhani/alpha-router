@@ -35,6 +35,7 @@ import { sectionEnabled } from "../lib/userPanelNav";
 import ExtensionPanel from "./ExtensionPanel";
 import Modal from "./Modal";
 import PersonalApiKeyPanel from "./PersonalApiKeyPanel";
+import PasswordRules from "./auth/PasswordRules";
 import RecentSignInsModal from "./RecentSignInsModal";
 import ThemeSegmentedControl from "./ThemeSegmentedControl";
 
@@ -1364,8 +1365,10 @@ function SecurityPanel() {
                   autoComplete="new-password"
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
+                  aria-describedby="settings-new-password-rules"
                   required
                 />
+                {newPassword ? <PasswordRules id="settings-new-password-rules" password={newPassword} /> : null}
                 <input
                   type="password"
                   className="settings-row__control"

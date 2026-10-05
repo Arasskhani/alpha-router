@@ -193,3 +193,22 @@ class TestTheCodeSteps:
         assert resp.status_code == 400
         failed = await _events(session_factory, "password_reset_failed")
         assert [(e.reason_code, e.user_id) for e in failed] == [("code_invalid", person.id)]
+
+    async def test_asking_again_does_not_end_a_step_already_verified(
+        self, client, db_session, person, outbox, session_factory
+    ):
+        import datetime as dt
+
+        from app.models.email_verification import EmailVerification
+
+        await _turn_on(db_session)
+        token = await _verified(client, outbox)
+        async with session_factory() as fresh:
+            for row in (await fresh.execute(select(EmailVerification))).scalars():
+                row.created_at = dt.datetime.utcnow() - dt.timedelta(seconds=61)
+            await fresh.commit()
+        # Someone else asks for a code for the same address meanwhile.
+        again = await client.post("/api/auth/password-reset/start", json={"email": "fixture_user@example.com"})
+        assert again.status_code == 200
+        done = await client.post("/api/auth/password-reset/complete", json={"token": token, "password": NEW})
+        assert done.status_code == 200, done.text

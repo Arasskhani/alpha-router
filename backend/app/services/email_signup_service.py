@@ -223,7 +223,7 @@ async def issue_code(
     user_id: int | None = None,
     ip: str | None = None,
 ) -> tuple[EmailVerification, str]:
-    """End the address's earlier codes for this purpose and make a new one (not committed)."""
+    """End the address's earlier codes not yet entered for this purpose and make a new one (not committed)."""
     now = utcnow()
     await db.execute(delete(EmailVerification).where(EmailVerification.created_at < now - KEEP_ROWS))
     await db.execute(
@@ -232,6 +232,9 @@ async def issue_code(
             EmailVerification.email == email,
             EmailVerification.purpose == purpose,
             EmailVerification.consumed_at.is_(None),
+            # A code already entered stays usable for its last step: asking for codes for someone
+            # else's address must not end the step they are on.
+            EmailVerification.verified_at.is_(None),
         )
         .values(consumed_at=now)
     )

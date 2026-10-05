@@ -120,6 +120,55 @@ describe("the docs", () => {
     expect(settings).toContain("Summarize my long chats");
   });
 
+  it("the guides name what the email sign-up and reset screens show", () => {
+    const manual =
+      sectionHtml(userManualSections, "create-account") + sectionHtml(userManualSections, "forgot-password");
+    const flows = ["SignUpFlow", "PasswordResetFlow", "CodeStep"]
+      .map((name) => readFileSync(join(__dirname, "components/auth", `${name}.tsx`), "utf8"))
+      .join("\n");
+    for (const label of [
+      "Send code",
+      "Verify",
+      "Send a new code",
+      "Use another email",
+      "Available",
+      "Create account",
+      "Reset password",
+      "Set new password",
+    ]) {
+      expect(manual).toContain(label);
+      expect(flows).toContain(label);
+    }
+    const login = readFileSync(join(__dirname, "pages/Login.tsx"), "utf8");
+    for (const link of ["Create an account", "Forgot password?"]) {
+      expect(sectionHtml(userManualSections, "sign-in")).toContain(link);
+      expect(login).toContain(link);
+    }
+
+    const guide = sectionHtml(docSections, "admin-authentication");
+    const tab = readFileSync(join(__dirname, "components/admin/EmailSignupSettings.tsx"), "utf8");
+    for (const label of [
+      "Allow people to create an account with their email",
+      "Allowed email domains",
+      "Plan for new accounts",
+      "Allow people with a local account to reset a forgotten password by email",
+      "Accounts created in the last 30 days",
+    ]) {
+      expect(guide).toContain(label);
+      expect(tab).toContain(label);
+    }
+    for (const action of ["user_self_registered", "user_password_reset_by_email", "email_signup_settings_changed"]) {
+      expect(guide).toContain(action);
+    }
+  });
+
+  it("the guides state the password policy the server applies", () => {
+    const policy = readFileSync(join(__dirname, "..", "..", "backend/app/services/password_policy.py"), "utf8");
+    expect(policy).toMatch(/max\(8,/);
+    expect(sectionHtml(docSections, "sign-in")).toContain("at least 8 characters");
+    expect(sectionHtml(userManualSections, "create-account")).toContain("at least 8 characters");
+  });
+
   it("the Admin Guide says what the memory page decides and records", () => {
     const html = sectionHtml(docSections, "admin-memory");
     for (const term of [

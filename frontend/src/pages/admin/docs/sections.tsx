@@ -650,6 +650,32 @@ export const docSections: DocSection[] = [
           Username/password with bcrypt. Optional TOTP 2FA for local accounts (user Settings → Security). Super Admins
           can disable another user’s 2FA from the Users edit modal when needed.
         </p>
+        <h3>Password policy</h3>
+        <p>
+          Every password set in Alpharouter meets the same rules, wherever it is set: an administrator creating a
+          user or resetting a password, a person changing theirs in Settings, creating an account by email, or
+          resetting a forgotten password by email. A password must:
+        </p>
+        <ul>
+          <li>
+            be at least 8 characters long (<code>PASSWORD_MIN_LENGTH</code> can raise this, never lower it);
+          </li>
+          <li>include an uppercase letter, a lowercase letter, a digit and a symbol;</li>
+          <li>not contain the username, or the part of the email address before the @;</li>
+          <li>not be one of the most common passwords.</li>
+        </ul>
+        <p>
+          The forms tick off each rule as it is met; the server checks again and refuses a password that does not
+          meet them. Passwords saved before the policy are not touched and keep working: the rules apply the next time
+          the password is set. Directory (LDAP) and single sign-on passwords are governed where they are kept.
+        </p>
+        <h3>Email sign-up and password reset</h3>
+        <p>
+          When turned on under <a href="#admin-authentication">Authentication → Email sign-up</a>, people can create
+          their own local account from the sign-in page with a code sent to their email address, and people with a
+          local account can reset a forgotten password the same way. Both need the{" "}
+          <a href="#admin-smtp">SMTP Server</a>.
+        </p>
         <h3>LDAP / Active Directory</h3>
         <p>
           LDAPS bind with a service account, Sync OUs, optional prune of users/groups outside those OUs, and a daily
@@ -2931,7 +2957,9 @@ export const docSections: DocSection[] = [
         <h3>Capabilities</h3>
         <ul>
           <li>
-            Create local users (username, password, profile fields, role, optional group/plan).
+            Create local users (username, password, profile fields, role, optional group/plan). The password, and any
+            password an administrator sets later, must meet the <a href="#sign-in">password policy</a>. People can
+            also create their own account when <a href="#admin-authentication">email sign-up</a> is on.
           </li>
           <li>
             Inline edit of profile fields, multi-role assignment, and plan (direct / inherit from group / none).
@@ -3070,8 +3098,8 @@ export const docSections: DocSection[] = [
       <>
         <h2>Authentication</h2>
         <p>
-          Path: <code>/admin/authentication</code>. Tabs for Active Directory (LDAP), SAML, and OIDC. Details of each
-          protocol are under <a href="#sign-in">Sign-in &amp; identity</a>.
+          Path: <code>/admin/authentication</code>. Tabs for Active Directory (LDAP), SAML, OIDC and Email sign-up.
+          Details of each protocol are under <a href="#sign-in">Sign-in &amp; identity</a>.
         </p>
         <ul>
           <li>
@@ -3084,8 +3112,92 @@ export const docSections: DocSection[] = [
           <li>
             <strong>OIDC</strong> — enable, issuer, client credentials, redirect URI (read-only), scopes, claim mapping.
           </li>
+          <li>
+            <strong>Email sign-up</strong> — self sign-up and password reset by email, below.
+          </li>
         </ul>
         <Warn>Store IdP credentials carefully; they are encrypted at rest. Prefer HTTPS IdP endpoints in production.</Warn>
+        <h3>Email sign-up</h3>
+        <p>
+          Lets people create their own account from the sign-in page, and lets people with a local account reset a
+          forgotten password. Both are off until turned on here, and both need a working{" "}
+          <a href="#admin-smtp">SMTP Server</a>: the tab says so when none is set up, the server refuses to turn either
+          on without one, and the sign-in page shows the links only while mail can be sent.
+        </p>
+        <ul>
+          <li>
+            <strong>Allow people to create an account with their email</strong> — adds <em>Create an account</em> to
+            the sign-in page.
+          </li>
+          <li>
+            <strong>Allowed email domains</strong> — only addresses at these domains may create an account, for
+            example <code>example.com</code>. A domain matches exactly: <code>example.com</code> does not let in{" "}
+            <code>mail.example.com</code>; list each one. With the list empty, any address may sign up, and the tab
+            warns about it.
+          </li>
+          <li>
+            <strong>Plan for new accounts</strong> — the <a href="#admin-plans">plan</a> each new account is given, so
+            it can use Alpharouter at once. Without one, a new account can sign in but cannot spend until an
+            administrator assigns a plan. A plan that is deleted later simply stops being given.
+          </li>
+          <li>
+            <strong>Allow people with a local account to reset a forgotten password by email</strong> — adds{" "}
+            <em>Forgot password?</em> to the sign-in page. Directory (LDAP) and single sign-on accounts are refused:
+            their password is kept elsewhere. Deactivated and removed accounts are refused too.
+          </li>
+          <li>
+            <strong>Accounts created in the last 30 days</strong> — a count, to see how much the door is used.
+          </li>
+        </ul>
+        <h3>How an account is created</h3>
+        <ol>
+          <li>
+            The person enters an email address. It must be valid, at an allowed domain and not used by any account,
+            including a removed one. When an account already uses it, the form says so and offers to sign in — and to
+            reset the password, when the account is local, active and reset is turned on.
+          </li>
+          <li>
+            A 6-digit code is sent to the address. It works for 10 minutes and for 5 tries; a new code can be asked for
+            after 60 seconds, and replaces the earlier one. Only a keyed hash of the code is stored, and the code is
+            never put in the subject line.
+          </li>
+          <li>
+            The person chooses a username and a password. The username is checked as it is typed: 3–64 characters,
+            lowercase letters, digits, dots, dashes and underscores, starting with a letter or digit, not taken, and
+            not a reserved name such as <code>admin</code>, <code>root</code> or the configured administrator
+            username. The password must meet the <a href="#sign-in">password policy</a>. This step must be finished
+            within 30 minutes of entering the code.
+          </li>
+          <li>
+            The account is created active, as a local account with the <code>user</code> role and the default plan,
+            and the person is signed in.
+          </li>
+        </ol>
+        <h3>How a password is reset by email</h3>
+        <p>
+          The same code step, sent to the account&apos;s email address, then a new password that meets the policy and
+          differs from the current one. The reset signs the account out on every device and ends on the sign-in form
+          with the username filled in. Two-factor authentication is not removed: the person still enters their
+          authenticator code when signing in.
+        </p>
+        <h3>Email sign-up limits and records</h3>
+        <ul>
+          <li>
+            Asking for a code is limited per address (5 an hour) and per IP address (10 in 10 minutes); entering codes
+            and finishing are limited per IP address too. Codes and their rows are kept for a day.
+          </li>
+          <li>
+            Each new account and each reset is in <a href="#admin-sign-in-activity">Sign-in Activity</a> (
+            <em>Account created</em>, <em>Password reset by email</em>), and so is each refusal (
+            <em>Sign-up failed</em>, <em>Password reset failed</em>) with its reason. Admin Logs record{" "}
+            <code>user_self_registered</code>, <code>user_password_reset_by_email</code> and changes to these settings
+            as <code>email_signup_settings_changed</code>.
+          </li>
+        </ul>
+        <Warn>
+          Because the forms say whether an address already has an account, anyone can learn whether an address is
+          registered, a few times an hour. Limit the domains to your own, and keep reset off if that is a concern.
+        </Warn>
       </>
     ),
   },
@@ -3100,7 +3212,8 @@ export const docSections: DocSection[] = [
         <h2>SMTP Server</h2>
         <p>
           Path: <code>/admin/smtp</code>. Outbound mail for API keys sent to their owners, sign-in and certificate
-          alerts, project invitations and <a href="#admin-reports">scheduled reports</a>.
+          alerts, project invitations, <a href="#admin-reports">scheduled reports</a>, and the codes for{" "}
+          <a href="#admin-authentication">email sign-up and password reset</a>.
         </p>
         <ul>
           <li>
@@ -3689,10 +3802,13 @@ export const docSections: DocSection[] = [
           <li>
             Events: <strong>Signed in</strong>, <strong>Sign-in failed</strong> (with a reason such as wrong password,
             no such account, account deactivated, two-factor code rejected, directory unreachable, SAML/OIDC
-            rejected), <strong>Rate limited</strong>, <strong>Signed out</strong>, and{" "}
+            rejected), <strong>Rate limited</strong>, <strong>Signed out</strong>, <strong>Account created</strong>{" "}
+            and <strong>Sign-up failed</strong> (<a href="#admin-authentication">email sign-up</a>, with a reason such
+            as a domain that is not allowed, an address already in use, a wrong or expired code, or a taken username),{" "}
+            <strong>Password reset by email</strong> and <strong>Password reset failed</strong>, and{" "}
             <strong>Sessions revoked</strong> — a sign-out the person did not perform, caused by a password change,
-            an administrator&apos;s password reset, two-factor being disabled, or the account being deactivated or
-            deleted. Rows imported from the earlier audit trail are marked <em>imported</em>; their reason may read
+            an administrator&apos;s password reset, a password reset by email, two-factor being disabled, or the
+            account being deactivated or deleted. Rows imported from the earlier audit trail are marked <em>imported</em>; their reason may read
             &ldquo;not recorded&rdquo; where retention had already cleared it.
           </li>
           <li>

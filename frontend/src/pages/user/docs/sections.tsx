@@ -112,9 +112,101 @@ export const userManualSections: DocSection[] = [
             to Alpharouter.
           </li>
         </ul>
+        <p>
+          Below the form you may also see <strong>Create an account</strong> (see{" "}
+          <a href="#create-account">Create an account</a>) and <strong>Forgot password?</strong> (see{" "}
+          <a href="#forgot-password">Forgot your password</a>). They appear only when your administrator has turned
+          them on.
+        </p>
         <Note>
           If sign-in fails, contact your administrator — they control which methods are enabled and whether your account
           is active.
+        </Note>
+      </>
+    ),
+  },
+  {
+    id: "create-account",
+    title: "Create an account",
+    group: "Get started",
+    content: (
+      <>
+        <h2>Create an account</h2>
+        <p>
+          If your organization allows it, you can create your own account on the sign-in page: choose{" "}
+          <strong>Create an account</strong> below the sign-in form.
+        </p>
+        <ol>
+          <li>
+            Enter your email address and choose <strong>Send code</strong>. Your organization may accept only some
+            email domains, such as your work address; the form tells you which.
+          </li>
+          <li>
+            Open the email from Alpharouter and type the 6-digit code into the form, then choose{" "}
+            <strong>Verify</strong>. The code works for 10 minutes, and for 5 tries. No email? Check your spam
+            folder, wait for the countdown, then choose <strong>Send a new code</strong>; the new code replaces the
+            old one. <strong>Use another email</strong> goes back to the first step.
+          </li>
+          <li>
+            Choose a <strong>username</strong>. It is checked as you type: 3–64 characters, lowercase letters, digits,
+            dots, dashes and underscores, and nobody else may have it. The form says <em>Available</em> when it is
+            free. Your name is optional; it is what others see.
+          </li>
+          <li>
+            Choose a <strong>password</strong> that meets the password rules below, type it again to confirm, and
+            choose <strong>Create account</strong>. Finish within 30 minutes of entering the
+            code.
+          </li>
+        </ol>
+        <p>
+          Your account is ready at once and you are signed in. Whether you can use paid models straight away depends
+          on the plan your administrator gives new accounts; if a request is refused for budget, ask your
+          administrator for a plan.
+        </p>
+        <p>
+          If the form says an account already uses your email, you already have one: choose <strong>Sign in</strong>,
+          or <strong>Reset password</strong> if you have forgotten it (offered when it is possible). An account that
+          signs in through your organization&apos;s directory or single sign-on uses that username and password.
+        </p>
+        <h3>Password rules</h3>
+        <p>Every password in Alpharouter — when you create an account, reset it, or change it in Settings — must:</p>
+        <ul>
+          <li>be at least 8 characters long (your organization may ask for more);</li>
+          <li>include an uppercase letter, a lowercase letter, a digit and a symbol, such as ! or #;</li>
+          <li>not contain your username, or the part of your email address before the @;</li>
+          <li>not be a very common password.</li>
+        </ul>
+        <p>The form ticks off each rule as you meet it. A long phrase of a few unrelated words is easy to remember.</p>
+      </>
+    ),
+  },
+  {
+    id: "forgot-password",
+    title: "Forgot your password",
+    group: "Get started",
+    content: (
+      <>
+        <h2>Forgot your password</h2>
+        <p>
+          If your organization allows it, choose <strong>Forgot password?</strong> below the sign-in form.
+        </p>
+        <ol>
+          <li>Enter the email address of your account and choose <strong>Send code</strong>.</li>
+          <li>Type the 6-digit code from the email and choose <strong>Verify</strong>; it works as when you create an account.</li>
+          <li>
+            Choose a new password that meets the <a href="#create-account">password rules</a> and is not your current
+            one, confirm it, and choose <strong>Set new password</strong>.
+          </li>
+        </ol>
+        <p>
+          You return to the sign-in form with your username filled in: sign in with the new password. Every device
+          that was signed in to your account is signed out. If you use two-factor authentication, you still enter your
+          authenticator code.
+        </p>
+        <Note>
+          This works only for accounts with an Alpharouter password. If your account signs in through your
+          organization&apos;s directory or single sign-on, reset the password there, or ask your administrator. A
+          deactivated account cannot be reset this way either.
         </Note>
       </>
     ),
@@ -1575,7 +1667,8 @@ export const userManualSections: DocSection[] = [
         <h3>Security</h3>
         <ul>
           <li>
-            Local accounts: change password; set up or disable TOTP 2FA and store backup codes safely
+            Local accounts: change password (it must meet the <a href="#create-account">password rules</a>); set up
+            or disable TOTP 2FA and store backup codes safely
           </li>
           <li>
             LDAP / SAML / OIDC accounts: password and 2FA are managed at your identity provider

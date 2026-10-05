@@ -277,8 +277,34 @@ async def _live_row(db: AsyncSession, token: str, purpose: str) -> EmailVerifica
     return row
 
 
+async def _count_try(db: AsyncSession, row: EmailVerification) -> int | None:
+    """Count one try in the database, before the code is compared: the number of tries so far, or None
+    when the code has none left (or was used meanwhile).
+
+    One UPDATE that reads and raises the count where the row is, so parallel guesses each take a try.
+    Reading the count into Python and writing it back let thirty concurrent guesses be compared while
+    the stored count rose by one.
+    """
+    counted = await db.execute(
+        update(EmailVerification)
+        .where(
+            EmailVerification.id == row.id,
+            EmailVerification.consumed_at.is_(None),
+            EmailVerification.attempts < MAX_ATTEMPTS,
+        )
+        .values(attempts=EmailVerification.attempts + 1)
+        .returning(EmailVerification.attempts)
+        .execution_options(synchronize_session=False)
+    )
+    value = counted.scalar_one_or_none()
+    return int(value) if value is not None else None
+
+
 async def check_code(db: AsyncSession, *, token: str, code: str, purpose: str) -> EmailVerification:
-    """Accept the code for this token (marks it verified), or raise CodeError (counting the try; not committed)."""
+    """Accept the code for this token (marks it verified), or raise CodeError (counting the try; not committed).
+
+    Every try is counted, the right one included, so a code is compared at most ``MAX_ATTEMPTS`` times.
+    """
     row = await _live_row(db, (token or "").strip(), purpose)
     now = utcnow()
     if row.verified_at is not None:
@@ -286,16 +312,31 @@ async def check_code(db: AsyncSession, *, token: str, code: str, purpose: str) -
     if row.expires_at <= now:
         row.consumed_at = now  # type: ignore[assignment]
         raise CodeError("code_expired", "This code has expired. Ask for a new one.")
+    tries = await _count_try(db, row)
+    if tries is None:
+        raise CodeError("code_invalid", "Too many wrong codes. Ask for a new one.")
     typed = re.sub(r"\s+", "", code or "")
     if hmac.compare_digest(_code_hash(str(row.token), typed), str(row.code_hash)):
         row.verified_at = now  # type: ignore[assignment]
         return row
-    row.attempts = int(row.attempts or 0) + 1  # type: ignore[assignment]
-    left = MAX_ATTEMPTS - int(row.attempts)
+    left = MAX_ATTEMPTS - tries
     if left <= 0:
         row.consumed_at = now  # type: ignore[assignment]
         raise CodeError("code_invalid", "Too many wrong codes. Ask for a new one.")
     raise CodeError("code_invalid", f"That code is not right. {left} {'try' if left == 1 else 'tries'} left.")
+
+
+async def consume(db: AsyncSession, row: EmailVerification) -> None:
+    """Mark the row used, once: a second request finishing with the same token at the same moment
+    finds it already used and is refused (not committed)."""
+    used = await db.execute(
+        update(EmailVerification)
+        .where(EmailVerification.id == row.id, EmailVerification.consumed_at.is_(None))
+        .values(consumed_at=utcnow())
+        .execution_options(synchronize_session=False)
+    )
+    if used.rowcount != 1:  # type: ignore[attr-defined]
+        raise CodeError("code_invalid", "This code is no longer valid. Ask for a new one.")
 
 
 async def verified_row(db: AsyncSession, *, token: str, purpose: str) -> EmailVerification:
@@ -339,6 +380,7 @@ __all__ = [
     "CodeError",
     "EmailSignupSettings",
     "check_code",
+    "consume",
     "domain_allowed",
     "issue_code",
     "load_email_signup_settings",

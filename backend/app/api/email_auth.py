@@ -47,6 +47,7 @@ from app.services.email_signup_service import (
     RESEND_COOLDOWN,
     CodeError,
     check_code,
+    consume,
     domain_allowed,
     issue_code,
     load_email_signup_settings,
@@ -270,6 +271,16 @@ async def _verified_or_refuse(db: AsyncSession, request: Request, token: str, *,
         raise _refuse(exc.status, exc.reason, str(exc)) from exc
 
 
+async def _consumed_or_refuse(db: AsyncSession, request: Request, row: Any, *, event_type: str) -> None:
+    """Use the token once; a second request racing with the same token is refused."""
+    try:
+        await consume(db, row)
+    except CodeError as exc:
+        await db.rollback()
+        await _failed(request, event_type, exc.reason)
+        raise _refuse(exc.status, exc.reason, str(exc)) from exc
+
+
 async def _username_check(db: AsyncSession, raw: str) -> tuple[str, str | None, str | None]:
     """The normalized name, and (code, message) when it cannot be taken."""
     username = normalize_username(raw)
@@ -352,9 +363,7 @@ async def signup_complete(
         if await db.get(BudgetPlan, settings.default_plan_id) is not None:
             await upsert_user_plan(db, int(user.id), int(settings.default_plan_id))
     user.monthly_budget_usd = await resolve_monthly_budget(db, user)  # type: ignore[assignment]
-    from app.services.email_signup_service import utcnow
-
-    row.consumed_at = utcnow()  # type: ignore[assignment]
+    await _consumed_or_refuse(db, request, row, event_type=EVENT_SIGNUP_FAILED)
     await ensure_user_chat_store(db, int(user.id))
     await log_security_event(
         db,
@@ -463,6 +472,7 @@ async def password_reset_complete(
         await _failed(request, EVENT_PASSWORD_RESET_FAILED, "weak_password", user=user)
         raise _refuse(400, "weak_password", "Choose a password different from your current one.")
 
+    await _consumed_or_refuse(db, request, row, event_type=EVENT_PASSWORD_RESET_FAILED)
     now = utcnow()
     user.hashed_password = hash_password(password)  # type: ignore[assignment]
     # Every session ends: whoever had the old password is signed out everywhere.

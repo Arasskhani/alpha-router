@@ -36,6 +36,15 @@ UNGUARDED_BY_DESIGN = {
     "/v1/embeddings",
     # The browser extension trades a one-time code or a refresh token here.
     "/api/extension/token",
+    # Creating an account and resetting a forgotten password by an emailed code: before any sign-in,
+    # guarded by the code's token, the settings and rate limits (app/api/email_auth.py).
+    "/api/auth/signup/start",
+    "/api/auth/signup/verify",
+    "/api/auth/signup/username-available",
+    "/api/auth/signup/complete",
+    "/api/auth/password-reset/start",
+    "/api/auth/password-reset/verify",
+    "/api/auth/password-reset/complete",
 }
 
 #: POST only because the request carries a body; the handler reads and returns.

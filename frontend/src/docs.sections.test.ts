@@ -160,6 +160,15 @@ describe("the docs", () => {
     for (const action of ["user_self_registered", "user_password_reset_by_email", "email_signup_settings_changed"]) {
       expect(guide).toContain(action);
     }
+    // What the server refuses, as the guide says it: administrators' resets, directory and product names.
+    for (const term of ["administrator accounts", "purged-user-", "domain base", "5 tries"]) {
+      expect(guide).toContain(term);
+    }
+    const server = readFileSync(join(__dirname, "..", "..", "backend/app/api/email_auth.py"), "utf8");
+    expect(server).toContain('"admin_account"');
+    const codes = readFileSync(join(__dirname, "..", "..", "backend/app/services/email_signup_service.py"), "utf8");
+    expect(codes).toContain('_RESERVED_PREFIXES = ("purged-user-",)');
+    expect(codes).toContain("MAX_ATTEMPTS = 5");
   });
 
   it("the guides state the password policy the server applies", () => {

@@ -145,11 +145,13 @@ export const userManualSections: DocSection[] = [
             Open the email from Alpharouter and type the 6-digit code into the form, then choose{" "}
             <strong>Verify</strong>. The code works for 10 minutes, and for 5 tries. No email? Check your spam
             folder, wait for the countdown, then choose <strong>Send a new code</strong>; the new code replaces the
-            old one. <strong>Use another email</strong> goes back to the first step.
+            old one. <strong>Use another email</strong> goes back to the first step. If the page reloads while you
+            read the email, as it can on a phone, it opens again at this step in the same tab.
           </li>
           <li>
             Choose a <strong>username</strong>. It is checked as you type: 3–64 characters, lowercase letters, digits,
-            dots, dashes and underscores, and nobody else may have it. The form says <em>Available</em> when it is
+            dots, dashes and underscores, and nobody else may have it, in Alpharouter or in your organization&apos;s
+            directory. The form says <em>Available</em> when it is
             free. Your name is optional; it is what others see.
           </li>
           <li>
@@ -206,7 +208,8 @@ export const userManualSections: DocSection[] = [
         <Note>
           This works only for accounts with an Alpharouter password. If your account signs in through your
           organization&apos;s directory or single sign-on, reset the password there, or ask your administrator. A
-          deactivated account cannot be reset this way either.
+          deactivated account cannot be reset this way either, nor an administrator&apos;s account: another
+          administrator resets it.
         </Note>
       </>
     ),

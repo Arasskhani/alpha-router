@@ -3143,7 +3143,10 @@ export const docSections: DocSection[] = [
           <li>
             <strong>Allow people with a local account to reset a forgotten password by email</strong> — adds{" "}
             <em>Forgot password?</em> to the sign-in page. Directory (LDAP) and single sign-on accounts are refused:
-            their password is kept elsewhere. Deactivated and removed accounts are refused too.
+            their password is kept elsewhere. Deactivated and removed accounts are refused too, and so are
+            administrator accounts — any account with an administrator role, and the product&apos;s own addresses
+            such as the one the bootstrap administrator is created with: whoever reads such a mailbox would hold the
+            organization. Another administrator resets their password on the <a href="#admin-users">Users</a> page.
           </li>
           <li>
             <strong>Accounts created in the last 30 days</strong> — a count, to see how much the door is used.
@@ -3157,15 +3160,20 @@ export const docSections: DocSection[] = [
             reset the password, when the account is local, active and reset is turned on.
           </li>
           <li>
-            A 6-digit code is sent to the address. It works for 10 minutes and for 5 tries; a new code can be asked for
-            after 60 seconds, and replaces the earlier one. Only a keyed hash of the code is stored, and the code is
-            never put in the subject line.
+            A 6-digit code is sent to the address. It works for 10 minutes and for 5 tries, counted in the database
+            before each comparison, so guesses sent all at once share the same five. A new code can be asked for after
+            60 seconds and replaces the earlier one, unless that one was already entered. Only a keyed hash of the
+            code is stored, and the code is never put in the subject line. If the page is reloaded meanwhile (on a
+            phone, opening the mail app can do that), the same tab picks up where it was.
           </li>
           <li>
             The person chooses a username and a password. The username is checked as it is typed: 3–64 characters,
             lowercase letters, digits, dots, dashes and underscores, starting with a letter or digit, not taken, and
-            not a reserved name such as <code>admin</code>, <code>root</code> or the configured administrator
-            username. The password must meet the <a href="#sign-in">password policy</a>. This step must be finished
+            not a reserved name such as <code>admin</code>, <code>root</code>, the configured administrator
+            username or <code>purged-user-…</code>. While <a href="#sign-in">LDAP</a> is on, the directory is asked
+            too: a name that signs in there (a logon name, a uid, or the name part of a UPN or mail address, searched
+            from the domain base) is taken even if that person has never signed in to Alpharouter, and while the
+            directory cannot be reached no name can be chosen. The password must meet the <a href="#sign-in">password policy</a>. This step must be finished
             within 30 minutes of entering the code.
           </li>
           <li>
@@ -3176,7 +3184,8 @@ export const docSections: DocSection[] = [
         <h3>How a password is reset by email</h3>
         <p>
           The same code step, sent to the account&apos;s email address, then a new password that meets the policy and
-          differs from the current one. The reset signs the account out on every device and ends on the sign-in form
+          differs from the current one. The code works only while the account still has that address: if an
+          administrator moves the account to another address meanwhile, the code is ended. The reset signs the account out on every device and ends on the sign-in form
           with the username filled in. Two-factor authentication is not removed: the person still enters their
           authenticator code when signing in.
         </p>
@@ -3189,7 +3198,8 @@ export const docSections: DocSection[] = [
           <li>
             Each new account and each reset is in <a href="#admin-sign-in-activity">Sign-in Activity</a> (
             <em>Account created</em>, <em>Password reset by email</em>), and so is each refusal (
-            <em>Sign-up failed</em>, <em>Password reset failed</em>) with its reason. Admin Logs record{" "}
+            <em>Sign-up failed</em>, <em>Password reset failed</em>) with its reason, against the address the code
+            was for and, for a reset, the account. Admin Logs record{" "}
             <code>user_self_registered</code>, <code>user_password_reset_by_email</code> and changes to these settings
             as <code>email_signup_settings_changed</code>.
           </li>
@@ -3197,6 +3207,12 @@ export const docSections: DocSection[] = [
         <Warn>
           Because the forms say whether an address already has an account, anyone can learn whether an address is
           registered, a few times an hour. Limit the domains to your own, and keep reset off if that is a concern.
+        </Warn>
+        <Warn>
+          With SAML or OIDC, Alpharouter cannot ask the identity provider which names it has: someone could sign up
+          with the username of a single sign-on user who has not signed in yet, and that person&apos;s first sign-in
+          would then be refused. Where single sign-on users sign in, allow only domains they do not use, or keep
+          sign-up off.
         </Warn>
       </>
     ),

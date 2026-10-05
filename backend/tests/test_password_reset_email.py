@@ -178,6 +178,38 @@ class TestWhoCanReset:
         )
         assert resp.status_code in (400, 403)
 
+    async def test_an_administrator_asks_another_administrator(self, client, db_session, admin, outbox):
+        admin.email = "boss@example.com"
+        await db_session.commit()
+        await _turn_on(db_session)
+        resp = await client.post("/api/auth/password-reset/start", json={"email": "boss@example.com"})
+        assert resp.status_code == 403
+        assert _detail(resp)["code"] == "admin_account"
+        assert "another administrator" in _detail(resp)["message"]
+        assert outbox == []
+
+    async def test_the_install_address_is_never_reset(self, client, db_session, person, outbox):
+        from app.branding import DEFAULT_ADMIN_EMAIL
+
+        person.email = DEFAULT_ADMIN_EMAIL
+        await db_session.commit()
+        await _turn_on(db_session)
+        resp = await client.post("/api/auth/password-reset/start", json={"email": DEFAULT_ADMIN_EMAIL})
+        assert resp.status_code == 403
+        assert _detail(resp)["code"] == "admin_account"
+        assert outbox == []
+
+    async def test_made_administrator_after_the_code_stops_the_last_step(self, client, db_session, person, outbox):
+        from app.services.user_role_service import set_user_roles
+
+        await _turn_on(db_session)
+        token = await _verified(client, outbox)
+        await set_user_roles(db_session, person, ["super_admin"])
+        await db_session.commit()
+        resp = await client.post("/api/auth/password-reset/complete", json={"token": token, "password": NEW})
+        assert resp.status_code == 403
+        assert _detail(resp)["code"] == "admin_account"
+
     async def test_an_address_changed_after_the_code_ends_it(self, client, db_session, person, outbox, session_factory):
         await _turn_on(db_session)
         token = await _verified(client, outbox)

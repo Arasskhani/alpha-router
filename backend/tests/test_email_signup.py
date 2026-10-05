@@ -220,6 +220,15 @@ class TestAnAddressThatHasAnAccount:
         detail = _detail(await _start(client, "fixture_user@example.com"))
         assert detail["reset_available"] is False
 
+    async def test_an_administrator_is_not_offered_a_reset(self, client, db_session, admin, outbox):
+        admin.email = "boss@example.com"
+        await db_session.commit()
+        await _turn_on(db_session, reset=True)
+        detail = _detail(await _start(client, "boss@example.com"))
+        assert detail["code"] == "email_taken"
+        assert detail["reset_available"] is False
+        assert "reset" not in detail["message"]
+
     async def test_a_directory_account_is_told_where_it_signs_in(self, client, db_session, user):
         user.email = "fixture_user@example.com"
         user.auth_provider = "ldap"

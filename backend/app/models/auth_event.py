@@ -96,6 +96,7 @@ REASON_CODES: tuple[str, ...] = (
     "email_taken",
     "email_unknown",
     "not_local_account",
+    "admin_account",
     "code_invalid",
     "code_expired",
     "username_taken",

@@ -113,6 +113,7 @@ export const REASON_LABELS: Record<string, string> = {
   email_taken: "Email already has an account",
   email_unknown: "No account with this email",
   not_local_account: "Directory account",
+  admin_account: "Administrator account",
   code_invalid: "Wrong or used code",
   code_expired: "Code expired",
   username_taken: "Username taken",

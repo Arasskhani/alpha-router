@@ -214,7 +214,9 @@ async def signup_start(body: EmailIn, request: Request, db: AsyncSession = Depen
     existing = await user_by_email(db, email)
     if existing is not None:
         await _failed(request, EVENT_SIGNUP_FAILED, "email_taken", user=existing, username=email)
-        raise _email_taken(existing, reset_on=settings.reset_enabled)
+        raise _email_taken(
+            existing, reset_on=settings.reset_enabled, administrator=await _is_administrator(db, existing)
+        )
     await _wait_or_refuse(db, email=email, purpose=PURPOSE_SIGNUP)
     row, code = await issue_code(db, email=email, purpose=PURPOSE_SIGNUP, ip=ip)
     await _send_or_refuse(db, request, EVENT_SIGNUP_FAILED, row, code)
@@ -222,7 +224,7 @@ async def signup_start(body: EmailIn, request: Request, db: AsyncSession = Depen
     return _started(row)
 
 
-def _email_taken(user: User, *, reset_on: bool) -> HTTPException:
+def _email_taken(user: User, *, reset_on: bool, administrator: bool) -> HTTPException:
     """The address has an account: say which kind, and whether its password can be reset by email."""
     if user.deleted_at is not None:
         return _refuse(
@@ -240,7 +242,7 @@ def _email_taken(user: User, *, reset_on: bool) -> HTTPException:
             "sign in with your directory username and password, or with single sign-on.",
             reset_available=False,
         )
-    can_reset = reset_on and bool(user.is_active)
+    can_reset = reset_on and bool(user.is_active) and not administrator
     message = "An account already uses this email. Sign in"
     message += ", or reset its password if you have forgotten it." if can_reset else "."
     return _refuse(409, "email_taken", message, reset_available=can_reset)
@@ -334,7 +336,9 @@ async def signup_complete(
     existing = await user_by_email(db, email)
     if existing is not None:
         await _failed(request, EVENT_SIGNUP_FAILED, "email_taken", user=existing, username=email)
-        raise _email_taken(existing, reset_on=settings.reset_enabled)
+        raise _email_taken(
+            existing, reset_on=settings.reset_enabled, administrator=await _is_administrator(db, existing)
+        )
     username, code, message = await _username_check(db, body.username)
     if code:
         await _failed(request, EVENT_SIGNUP_FAILED, code, username=username or email)
@@ -396,7 +400,23 @@ async def _reset_settings_or_refuse(db: AsyncSession, request: Request, who: str
     return settings
 
 
-def _not_resettable(user: User | None) -> tuple[str, str, int] | None:
+async def _is_administrator(db: AsyncSession, user: User) -> bool:
+    """An account with any administrator role, or one of the product's own addresses.
+
+    Their password is never reset by email: whoever reads the mailbox would hold the organization. The
+    bootstrap administrator is given a fixed address at install, which nobody at the customer controls.
+    """
+    from app.branding import DEFAULT_ADMIN_EMAIL, INTERNAL_DOMAIN
+    from app.services.rbac import is_admin_panel_role
+    from app.services.user_role_service import get_user_role_slugs
+
+    email = normalize_email(str(user.email or ""))
+    if email == DEFAULT_ADMIN_EMAIL or email.endswith(f"@{INTERNAL_DOMAIN}"):
+        return True
+    return any(is_admin_panel_role(slug) for slug in await get_user_role_slugs(db, int(user.id)))
+
+
+async def _not_resettable(db: AsyncSession, user: User | None) -> tuple[str, str, int] | None:
     """Why this account's password cannot be reset by email: (reason, message, status), or None."""
     if user is None or user.deleted_at is not None:
         return "email_unknown", "No account uses this email address.", 404
@@ -409,6 +429,13 @@ def _not_resettable(user: User | None) -> tuple[str, str, int] | None:
         )
     if not user.is_active:
         return "account_inactive", "This account is deactivated. Ask your administrator.", 403
+    if await _is_administrator(db, user):
+        return (
+            "admin_account",
+            "The password of an administrator account cannot be reset by email. Ask another administrator "
+            "to reset it on the Users page.",
+            403,
+        )
     return None
 
 
@@ -427,7 +454,7 @@ async def password_reset_start(body: EmailIn, request: Request, db: AsyncSession
         await _failed(request, EVENT_PASSWORD_RESET_FAILED, "email_invalid", username=email or None)
         raise _refuse(400, "email_invalid", "Enter a valid email address.")
     user = await user_by_email(db, email)
-    refusal = _not_resettable(user)
+    refusal = await _not_resettable(db, user)
     if refusal is not None:
         reason, message, status = refusal
         await _failed(request, EVENT_PASSWORD_RESET_FAILED, reason, user=user, username=email)
@@ -463,7 +490,7 @@ async def password_reset_complete(
         db, request, body.token, purpose=PURPOSE_PASSWORD_RESET, event_type=EVENT_PASSWORD_RESET_FAILED
     )
     user = await db.get(User, int(row.user_id)) if row.user_id is not None else None
-    refusal = _not_resettable(user)
+    refusal = await _not_resettable(db, user)
     if refusal is not None:
         reason, message, status = refusal
         await _failed(request, EVENT_PASSWORD_RESET_FAILED, reason, user=user)

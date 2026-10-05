@@ -12,6 +12,10 @@ sign-up):
    password that meets the policy. The account is made, active, with the
    default plan, and the person is signed in.
 
+Password reset (when turned on, for local accounts only): the same three
+steps under ``/api/auth/password-reset``; the last sets the new password and
+signs the account out everywhere, and the person then signs in with it.
+
 Every refusal answers ``{"detail": {"code", "message", ...}}`` and is written
 to Sign-in Activity with its reason.
 """
@@ -25,13 +29,16 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import hash_password
+from app.core.security import hash_password, verify_password
 from app.database import get_db
 from app.models.auth_event import (
+    EVENT_PASSWORD_RESET,
+    EVENT_PASSWORD_RESET_FAILED,
+    EVENT_SESSION_REVOKED,
     EVENT_SIGNUP_COMPLETED,
     EVENT_SIGNUP_FAILED,
 )
-from app.models.email_verification import PURPOSE_SIGNUP
+from app.models.email_verification import PURPOSE_PASSWORD_RESET, PURPOSE_SIGNUP
 from app.models.user import User
 from app.services.auth_events_service import method_for, record_auth_event
 from app.services.client_ip import resolve_client_ip
@@ -86,6 +93,11 @@ class SignupCompleteIn(BaseModel):
     username: str = Field(max_length=128)
     password: str = Field(max_length=256)
     display_name: str | None = Field(default=None, max_length=255)
+
+
+class ResetCompleteIn(BaseModel):
+    token: str = Field(max_length=128)
+    password: str = Field(max_length=256)
 
 
 def _refuse(status: int, code: str, message: str, **extra: Any) -> HTTPException:
@@ -356,3 +368,130 @@ async def signup_complete(
     await db.commit()
     await record_auth_event(event_type=EVENT_SIGNUP_COMPLETED, user=user, auth_method="local", request=request)
     return await _token_response(db, user, response, request)
+
+
+# ── Password reset ────────────────────────────────────────────────────────
+
+
+async def _reset_settings_or_refuse(db: AsyncSession, request: Request, who: str | None):
+    settings = await load_email_signup_settings(db)
+    if not settings.reset_enabled or not await smtp_configured(db):
+        await _failed(request, EVENT_PASSWORD_RESET_FAILED, "reset_disabled", username=who)
+        raise _refuse(403, "reset_disabled", "Resetting a password by email is not available. Ask your administrator.")
+    return settings
+
+
+def _not_resettable(user: User | None) -> tuple[str, str, int] | None:
+    """Why this account's password cannot be reset by email: (reason, message, status), or None."""
+    if user is None or user.deleted_at is not None:
+        return "email_unknown", "No account uses this email address.", 404
+    if (user.auth_provider or "local") != "local" or not user.hashed_password:
+        return (
+            "not_local_account",
+            "This account signs in through your organization's directory. Reset the password there, "
+            "or ask your administrator.",
+            400,
+        )
+    if not user.is_active:
+        return "account_inactive", "This account is deactivated. Ask your administrator.", 403
+    return None
+
+
+@router.post("/password-reset/start")
+async def password_reset_start(body: EmailIn, request: Request, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    email = normalize_email(body.email)
+    ip = resolve_client_ip(request) or "unknown"
+    await _limited(
+        request,
+        EVENT_PASSWORD_RESET_FAILED,
+        [(f"reset:start:ip:{ip}", START_PER_IP), (f"reset:start:email:{email}", START_PER_EMAIL)],
+        email or None,
+    )
+    await _reset_settings_or_refuse(db, request, email or None)
+    if not valid_email(email):
+        await _failed(request, EVENT_PASSWORD_RESET_FAILED, "email_invalid", username=email or None)
+        raise _refuse(400, "email_invalid", "Enter a valid email address.")
+    user = await user_by_email(db, email)
+    refusal = _not_resettable(user)
+    if refusal is not None:
+        reason, message, status = refusal
+        await _failed(request, EVENT_PASSWORD_RESET_FAILED, reason, user=user, username=email)
+        raise _refuse(status, reason, message)
+    assert user is not None
+    await _wait_or_refuse(db, email=email, purpose=PURPOSE_PASSWORD_RESET)
+    row, code = await issue_code(db, email=email, purpose=PURPOSE_PASSWORD_RESET, user_id=int(user.id), ip=ip)
+    await _send_or_refuse(db, request, EVENT_PASSWORD_RESET_FAILED, row, code)
+    await db.commit()
+    return _started(row)
+
+
+@router.post("/password-reset/verify")
+async def password_reset_verify(body: CodeIn, request: Request, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    row, user = await _verify(db, request, body, purpose=PURPOSE_PASSWORD_RESET, event_type=EVENT_PASSWORD_RESET_FAILED)
+    return {"verified": True, "email": str(row.email), "username": str(user.username) if user else None}
+
+
+@router.post("/password-reset/complete")
+async def password_reset_complete(
+    body: ResetCompleteIn, request: Request, db: AsyncSession = Depends(get_db)
+) -> dict[str, Any]:
+    from sqlalchemy import update
+
+    from app.models.email_verification import EmailVerification
+    from app.services.email_signup_service import utcnow
+    from app.services.security_audit import log_security_event
+
+    ip = resolve_client_ip(request) or "unknown"
+    await _limited(request, EVENT_PASSWORD_RESET_FAILED, [(f"reset:complete:ip:{ip}", COMPLETE_PER_IP)], None)
+    await _reset_settings_or_refuse(db, request, None)
+    row = await _verified_or_refuse(
+        db, request, body.token, purpose=PURPOSE_PASSWORD_RESET, event_type=EVENT_PASSWORD_RESET_FAILED
+    )
+    user = await db.get(User, int(row.user_id)) if row.user_id is not None else None
+    refusal = _not_resettable(user)
+    if refusal is not None:
+        reason, message, status = refusal
+        await _failed(request, EVENT_PASSWORD_RESET_FAILED, reason, user=user)
+        raise _refuse(status, reason, message)
+    assert user is not None
+    try:
+        password = validate_password(body.password, username=str(user.username), email=str(user.email or ""))
+    except PasswordPolicyError as exc:
+        await _failed(request, EVENT_PASSWORD_RESET_FAILED, "weak_password", user=user)
+        raise _refuse(400, "weak_password", str(exc)) from exc
+    if user.hashed_password and verify_password(password, str(user.hashed_password)):
+        await _failed(request, EVENT_PASSWORD_RESET_FAILED, "weak_password", user=user)
+        raise _refuse(400, "weak_password", "Choose a password different from your current one.")
+
+    now = utcnow()
+    user.hashed_password = hash_password(password)  # type: ignore[assignment]
+    # Every session ends: whoever had the old password is signed out everywhere.
+    user.token_version = int(user.token_version or 0) + 1  # type: ignore[assignment]
+    await db.execute(
+        update(EmailVerification)
+        .where(
+            EmailVerification.user_id == user.id,
+            EmailVerification.purpose == PURPOSE_PASSWORD_RESET,
+            EmailVerification.consumed_at.is_(None),
+        )
+        .values(consumed_at=now)
+    )
+    await log_security_event(
+        db,
+        actor=user,
+        actor_ip=ip,
+        action="user_password_reset_by_email",
+        resource_type="user",
+        resource_id=str(user.id),
+        detail={"sessions_revoked": True},
+    )
+    await db.commit()
+    await record_auth_event(event_type=EVENT_PASSWORD_RESET, user=user, auth_method="local", request=request)
+    await record_auth_event(
+        event_type=EVENT_SESSION_REVOKED,
+        user=user,
+        reason_code="password_reset_by_email",
+        auth_method="local",
+        request=request,
+    )
+    return {"ok": True, "username": str(user.username)}

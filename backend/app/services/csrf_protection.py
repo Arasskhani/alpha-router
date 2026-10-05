@@ -20,11 +20,14 @@ EXEMPT_PATHS = frozenset(
         "/api/auth/login/2fa",
         "/api/auth/saml/exchange",
         "/api/auth/sso/exchange",
-        # Sign-up by email: made before any session exists.
+        # Sign-up and password reset by email: made before any session exists.
         "/api/auth/signup/start",
         "/api/auth/signup/verify",
         "/api/auth/signup/username-available",
         "/api/auth/signup/complete",
+        "/api/auth/password-reset/start",
+        "/api/auth/password-reset/verify",
+        "/api/auth/password-reset/complete",
     }
 )
 # Cross-origin IdP form POST — skip Origin + CSRF header checks entirely.

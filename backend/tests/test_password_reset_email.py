@@ -55,10 +55,10 @@ def _detail(resp) -> dict:
     return resp.json()["detail"]
 
 
-async def _turn_on(db, *, reset=True) -> None:
+async def _turn_on(db, *, reset=True, signup=False) -> None:
     db.add(SmtpSettings(host="smtp.example.com", port=587, from_address="noreply@example.com"))
     await db.flush()
-    await save_email_signup_settings(db, EmailSignupSettings(enabled=False, reset_enabled=reset))
+    await save_email_signup_settings(db, EmailSignupSettings(enabled=signup, reset_enabled=reset))
     await db.commit()
 
 
@@ -170,13 +170,25 @@ class TestWhoCanReset:
         resp = await client.post("/api/auth/password-reset/complete", json={"token": token, "password": NEW})
         assert resp.status_code == 403
 
-    async def test_a_sign_up_code_does_not_reset_a_password(self, client, db_session, person, outbox):
-        await _turn_on(db_session)
+    async def test_a_reset_code_does_not_make_an_account(self, client, db_session, person, outbox):
+        # Sign-up is on too, so the refusal comes from the token's purpose, not from sign-up being off.
+        await _turn_on(db_session, signup=True)
         token = await _verified(client, outbox)
         resp = await client.post(
             "/api/auth/signup/complete", json={"token": token, "username": "someone.else", "password": NEW}
         )
-        assert resp.status_code in (400, 403)
+        assert resp.status_code == 400
+        assert _detail(resp)["code"] == "code_invalid"
+
+    async def test_a_sign_up_code_does_not_reset_a_password(self, client, db_session, person, outbox):
+        await _turn_on(db_session, signup=True)
+        started = await client.post("/api/auth/signup/start", json={"email": "new.person@example.com"})
+        token = started.json()["token"]
+        verified = await client.post("/api/auth/signup/verify", json={"token": token, "code": _code(outbox)})
+        assert verified.status_code == 200
+        resp = await client.post("/api/auth/password-reset/complete", json={"token": token, "password": NEW})
+        assert resp.status_code == 400
+        assert _detail(resp)["code"] == "code_invalid"
 
     async def test_an_administrator_asks_another_administrator(self, client, db_session, admin, outbox):
         admin.email = "boss@example.com"
@@ -255,3 +267,20 @@ class TestTheCodeSteps:
         assert again.status_code == 200
         done = await client.post("/api/auth/password-reset/complete", json={"token": token, "password": NEW})
         assert done.status_code == 200, done.text
+
+    async def test_a_second_factor_is_still_asked_after_a_reset(self, client, db_session, person, outbox, monkeypatch):
+        from unittest.mock import AsyncMock
+
+        monkeypatch.setattr("app.services.twofa_pending.store_pending", AsyncMock())
+        # The sign-in limiter refuses without Redis; it is not what this test is about.
+        monkeypatch.setattr("app.services.rate_limit.check_login_rate_limit", AsyncMock())
+        person.totp_enabled = True
+        await db_session.commit()
+        await _turn_on(db_session)
+        token = await _verified(client, outbox)
+        done = await client.post("/api/auth/password-reset/complete", json={"token": token, "password": NEW})
+        assert done.status_code == 200
+        login = await client.post("/api/auth/login", json={"username": "fixture_user", "password": NEW})
+        assert login.status_code == 200, login.text
+        assert login.json()["token_type"] == "2fa_pending"
+        assert login.json()["access_token"] == ""

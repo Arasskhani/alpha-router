@@ -208,7 +208,7 @@ async def change_password(
     if body.new_password != body.confirm_password:
         raise HTTPException(status_code=400, detail="New password confirmation does not match")
     try:
-        pwd = validate_password(body.new_password)
+        pwd = validate_password(body.new_password, username=str(user.username), email=str(user.email or ""))
     except PasswordPolicyError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if verify_password(pwd, user.hashed_password):

@@ -141,6 +141,17 @@ async def logout_local(
     return {"ok": True}
 
 
+@router.get("/password-policy")
+async def password_policy() -> dict:
+    """The rules a new password must meet, for the forms that set one (the server checks them again)."""
+    from app.services.password_policy import min_length, password_rules
+
+    return {
+        "min_length": min_length(),
+        "rules": [{"key": rule.key, "label": rule.label} for rule in password_rules()],
+    }
+
+
 @router.get("/methods")
 async def auth_methods(db: AsyncSession = Depends(get_db)):
     ldap_cfg = await get_provider_config(db, "ldap")

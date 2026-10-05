@@ -1213,7 +1213,7 @@ async def create_local_user(
     from app.services.password_policy import PasswordPolicyError, validate_password
 
     try:
-        password = validate_password(body.password)
+        password = validate_password(body.password, username=username, email=body.email)
     except PasswordPolicyError as exc:
         raise HTTPException(400, detail=str(exc)) from exc
     new_slugs = [_normalize_role(body.role)]
@@ -2480,7 +2480,7 @@ async def reset_local_user_password(
     from app.services.password_policy import PasswordPolicyError, validate_password
 
     try:
-        pwd = validate_password(body.password)
+        pwd = validate_password(body.password, username=str(user.username), email=str(user.email or ""))
     except PasswordPolicyError as exc:
         raise HTTPException(400, detail=str(exc)) from exc
     user.hashed_password = hash_password(pwd)

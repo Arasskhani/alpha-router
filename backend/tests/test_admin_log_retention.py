@@ -394,7 +394,7 @@ async def test_account_takeover_paths_are_audited(db):
     await db.commit()
 
     await reset_local_user_password(
-        target.id, ResetPasswordIn(password="a-long-enough-password"), _Request(), db, admin
+        target.id, ResetPasswordIn(password="A-long-enough-passw0rd"), _Request(), db, admin
     )
     await admin_disable_user_2fa(target.id, _Request(), db, admin)
     await bulk_permanently_delete_users(UsersPermanentDeleteIn(user_ids=[doomed.id]), _Request(), db, admin)

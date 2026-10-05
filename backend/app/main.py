@@ -28,6 +28,7 @@ from app.api import (
     sign_in_activity,
     agents,
     auth,
+    email_auth,
     authentication,
     chat,
     extension,
@@ -771,6 +772,7 @@ app.add_middleware(ObservabilityMiddleware)
 app.add_middleware(AdminIpGuardMiddleware)
 
 app.include_router(auth.router)
+app.include_router(email_auth.router)
 app.include_router(gateway.router)
 app.include_router(admin.router)
 if settings.agents_platform_enabled:

@@ -128,6 +128,9 @@ async def security_status(user: User = Depends(get_current_user)):
     local = is_local_user(user)
     return {
         "auth_provider": user.auth_provider or "local",
+        # The password rules shown while a new password is typed refuse these (as the server does).
+        "username": str(user.username),
+        "email": str(user.email or ""),
         "is_local": local,
         "totp_enabled": bool(local and user.totp_enabled),
         "password_change_available": local,

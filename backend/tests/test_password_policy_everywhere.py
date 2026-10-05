@@ -110,3 +110,11 @@ class TestSettings:
         assert ok.status_code == 200, ok.text
         await db_session.refresh(user)
         assert verify_password("Brand-New-Pass-2!", user.hashed_password)
+
+
+async def test_settings_tells_the_form_whose_password_it_is(client, user):
+    """The rules ticked in Settings refuse the username and the email's name, as the server does."""
+    _sign_in(client, user)
+    body = (await client.get("/api/user/settings/security")).json()
+    assert body["username"] == "fixture_user"
+    assert body["email"] == "fixture_user@test"

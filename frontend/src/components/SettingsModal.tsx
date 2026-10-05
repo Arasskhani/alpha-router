@@ -43,6 +43,8 @@ type TabId = "general" | "work-profile" | "memory" | "data-control" | "security"
 
 type SecurityStatus = {
   auth_provider: string;
+  username?: string;
+  email?: string;
   is_local: boolean;
   totp_enabled: boolean;
   password_change_available: boolean;
@@ -1368,7 +1370,14 @@ function SecurityPanel() {
                   aria-describedby="settings-new-password-rules"
                   required
                 />
-                {newPassword ? <PasswordRules id="settings-new-password-rules" password={newPassword} /> : null}
+                {newPassword ? (
+                  <PasswordRules
+                    id="settings-new-password-rules"
+                    password={newPassword}
+                    username={status.username}
+                    email={status.email}
+                  />
+                ) : null}
                 <input
                   type="password"
                   className="settings-row__control"

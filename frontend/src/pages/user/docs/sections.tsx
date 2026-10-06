@@ -1643,7 +1643,12 @@ export const userManualSections: DocSection[] = [
             Chat notification — optional toast (and sound) when a chat finishes while you are in another chat or the
             tab is in the background
           </li>
-          <li>Theme: light, dark, or system</li>
+          <li>
+            Theme: Default, Mint, Dark Mint or <strong>ALPHA BLACK</strong>, and Light, Dark or System beside it.
+            ALPHA BLACK is a terminal from the films — amber on black, a monospace face, scanlines — and is dark only:
+            Light or System leaves it for the default theme. While it is your theme, &ldquo;AR455 was HERE&rdquo;
+            fades in and out for about two seconds when you choose it and each time you sign in.
+          </li>
         </ul>
         <h3>Work profile</h3>
         <ul>
@@ -1733,7 +1738,8 @@ export const userManualSections: DocSection[] = [
             plan change.
           </li>
           <li>
-            <strong>Theme</strong> — follows Settings; applied across the app.
+            <strong>Theme</strong> — the same choice as in Settings (including ALPHA BLACK); applied across the app,
+            and on this device&apos;s sign-in page.
           </li>
           <li>
             <strong>Sign out</strong> — ends your session and revokes prior tokens for your account. Private local data

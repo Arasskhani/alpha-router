@@ -16,7 +16,7 @@ import {
 
 describe("the ALPHA BLACK theme", () => {
   it("is offered in the Theme dropdown under its name", () => {
-    expect(NAMED_THEMES).toEqual(["default", "mint", "dark-mint", "alpha-black"]);
+    expect(NAMED_THEMES).toEqual(["default", "mint", "dark-mint", "alpha-black", "alpha-neon"]);
     expect(namedThemeLabel("alpha-black")).toBe("ALPHA BLACK");
     expect(isCachedTheme("alpha-black")).toBe(true);
   });
@@ -39,6 +39,22 @@ describe("the ALPHA BLACK theme", () => {
     expect(themeForMode("alpha-black", "dark")).toBe("alpha-black");
     expect(themeForMode("alpha-black", "light")).toBe("light");
     expect(themeForMode("alpha-black", "system")).toBe("system");
+  });
+});
+
+describe("the ALPHA Neon theme", () => {
+  it("is offered under its name, dark only, like ALPHA BLACK", () => {
+    expect(namedThemeLabel("alpha-neon")).toBe("ALPHA Neon");
+    expect(isCachedTheme("alpha-neon")).toBe(true);
+    applyThemeToDocument("alpha-neon");
+    expect(document.documentElement.getAttribute("data-theme")).toBe("alpha-neon");
+    expect(document.documentElement.getAttribute("data-scheme")).toBe("dark");
+    expect(namedThemeOf("alpha-neon")).toBe("alpha-neon");
+    expect(colorModeOf("alpha-neon")).toBe("dark");
+    expect(themeForNamed("alpha-neon", "light")).toBe("alpha-neon");
+    expect(themeForMode("alpha-neon", "dark")).toBe("alpha-neon");
+    expect(themeForMode("alpha-neon", "light")).toBe("light");
+    expect(themeForMode("alpha-neon", "system")).toBe("system");
   });
 });
 

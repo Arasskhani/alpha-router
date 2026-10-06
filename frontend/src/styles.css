@@ -156,12 +156,62 @@
   --brand-grad-purple: #ffd166;
   --alpha-router-code-pane: #140d00;
   --alpha-router-code-fg: #ffb000;
-  --alpha-black-glow: rgba(255, 176, 0, 0.3);
-  --alpha-black-font: "Cascadia Mono", "Cascadia Code", "JetBrains Mono", Consolas, "DejaVu Sans Mono",
+  --terminal-glow: rgba(255, 176, 0, 0.3);
+  --terminal-font: "Cascadia Mono", "Cascadia Code", "JetBrains Mono", Consolas, "DejaVu Sans Mono",
     "Liberation Mono", Menlo, "AlphaRouterPersian-Vazirmatn", Tahoma, monospace;
-  --font-mono: var(--alpha-black-font);
+  --alpha-black-font: var(--terminal-font);
+  --font-mono: var(--terminal-font);
 }
-[data-theme="alpha-black"] .alpha-router-app {
+
+/* ALPHA Neon — the hacker films' neon grid: cyan light and magenta headings on blue-black, a faint
+   grid behind the sign-in page and the content, the same monospace face. Dark only. Every text
+   colour is at least 4.7:1 on every surface. */
+[data-theme="alpha-neon"] {
+  --bg: #02040a;
+  --surface: #060b16;
+  --surface-muted: #0a1222;
+  --surface-alt: #0a1222;
+  --surface-2: #0a1222;
+  --hover: #0f1c33;
+  --text: #d9f6ff;
+  --muted: #6b8fa8;
+  --accent: #00e5ff;
+  --accent-hover: #ff2bd6;
+  --accent-contrast: #001318;
+  --border: #123049;
+  --radius: 4px;
+  --radius-sm: 4px;
+  --shadow-md: 0 0 0 1px #123049, 0 0 24px rgba(0, 229, 255, 0.35);
+  --danger: #ff2b6a;
+  --danger-hover: #ff4f86;
+  --danger-contrast: #02040a;
+  --brand-grad-ink: #00e5ff;
+  --brand-grad-indigo: #00e5ff;
+  --brand-grad-purple: #ff2bd6;
+  --alpha-router-code-pane: #0a1222;
+  --alpha-router-code-fg: #d9f6ff;
+  --terminal-glow: rgba(0, 229, 255, 0.35);
+  --terminal-font: "Cascadia Mono", "Cascadia Code", "JetBrains Mono", Consolas, "DejaVu Sans Mono",
+    "Liberation Mono", Menlo, "AlphaRouterPersian-Vazirmatn", Tahoma, monospace;
+  --font-mono: var(--terminal-font);
+}
+[data-theme="alpha-neon"] .login-page,
+[data-theme="alpha-neon"] main {
+  background-image:
+    linear-gradient(rgba(0, 229, 255, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 229, 255, 0.06) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+[data-theme="alpha-neon"] h1,
+[data-theme="alpha-neon"] h2,
+[data-theme="alpha-neon"] .login-panel__title {
+  color: #ff2bd6;
+  text-shadow: 0 0 10px rgba(255, 43, 214, 0.5);
+}
+
+/* What the two terminal themes share. */
+[data-theme="alpha-black"] .alpha-router-app,
+[data-theme="alpha-neon"] .alpha-router-app {
   --alpha-router-sidebar-bg: var(--surface);
   --alpha-router-sidebar-text: var(--text);
   --alpha-router-sidebar-muted: var(--muted);
@@ -173,27 +223,37 @@
 [data-theme="alpha-black"] button,
 [data-theme="alpha-black"] input,
 [data-theme="alpha-black"] textarea,
-[data-theme="alpha-black"] select {
-  font-family: var(--alpha-black-font);
+[data-theme="alpha-black"] select,
+[data-theme="alpha-neon"] body,
+[data-theme="alpha-neon"] button,
+[data-theme="alpha-neon"] input,
+[data-theme="alpha-neon"] textarea,
+[data-theme="alpha-neon"] select {
+  font-family: var(--terminal-font);
 }
 [data-theme="alpha-black"] h1,
 [data-theme="alpha-black"] h2,
-[data-theme="alpha-black"] h3 {
-  text-shadow: 0 0 8px var(--alpha-black-glow);
+[data-theme="alpha-black"] h3,
+[data-theme="alpha-neon"] h3 {
+  text-shadow: 0 0 8px var(--terminal-glow);
   letter-spacing: 0.02em;
 }
-[data-theme="alpha-black"] .btn:not(.btn-ghost):not(.btn-danger) {
-  box-shadow: 0 0 12px var(--alpha-black-glow);
+[data-theme="alpha-black"] .btn:not(.btn-ghost):not(.btn-danger),
+[data-theme="alpha-neon"] .btn:not(.btn-ghost):not(.btn-danger) {
+  box-shadow: 0 0 12px var(--terminal-glow);
 }
 [data-theme="alpha-black"] input:focus-visible,
-[data-theme="alpha-black"] select:focus-visible {
-  box-shadow: 0 0 0 1px var(--accent), 0 0 14px var(--alpha-black-glow);
+[data-theme="alpha-black"] select:focus-visible,
+[data-theme="alpha-neon"] input:focus-visible,
+[data-theme="alpha-neon"] select:focus-visible {
+  box-shadow: 0 0 0 1px var(--accent), 0 0 14px var(--terminal-glow);
 }
-[data-theme="alpha-black"] ::selection {
+[data-theme="alpha-black"] ::selection,
+[data-theme="alpha-neon"] ::selection {
   background: var(--accent);
   color: var(--accent-contrast);
 }
-/* Scanlines and the CRT's darker edge, over everything, never in the way of a click. */
+/* ALPHA BLACK only: scanlines and the CRT's darker edge, over everything, never in the way of a click. */
 [data-theme="alpha-black"] body::after,
 [data-theme="alpha-black"] body::before {
   content: "";

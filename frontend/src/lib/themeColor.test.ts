@@ -28,6 +28,7 @@ describe("the theme colour", () => {
     ["mint", "#ffffff"],
     ["dark-mint", "#161616"],
     ["alpha-black", "#0e0900"],
+    ["alpha-neon", "#060b16"],
   ];
   for (const [theme, colour] of chosen) {
     it(`is ${colour} under both OS schemes for the ${theme} theme`, () => {
@@ -60,5 +61,6 @@ describe("the theme colour", () => {
     expect(surface('\\[data-theme="mint"\\]')).toBe(THEME_SURFACE.mint);
     expect(surface('\\[data-theme="dark-mint"\\]')).toBe(THEME_SURFACE["dark-mint"]);
     expect(surface('\\[data-theme="alpha-black"\\]')).toBe(THEME_SURFACE["alpha-black"]);
+    expect(surface('\\[data-theme="alpha-neon"\\]')).toBe(THEME_SURFACE["alpha-neon"]);
   });
 });

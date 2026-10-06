@@ -1,7 +1,7 @@
 /**
  * @vitest-environment happy-dom
  */
-import { act } from "react";
+import { act, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -60,48 +60,51 @@ describe("the greeting", () => {
 });
 
 type Splash = ReturnType<typeof useAlphaBlackSplash>;
-let current: Splash;
+const probe: { splash?: Splash } = {};
 function Probe({ theme }: { theme: CachedTheme }) {
-  current = useAlphaBlackSplash(theme);
+  const splash = useAlphaBlackSplash(theme);
+  useEffect(() => {
+    probe.splash = splash;
+  });
   return null;
 }
 
 describe("when it plays", () => {
   it("plays when ALPHA BLACK is chosen, not when it is chosen again or another theme is", async () => {
     await act(async () => root.render(<Probe theme="light" />));
-    expect(current.run).toBe(0);
-    await act(async () => current.chosen("alpha-black", "light"));
-    expect(current.run).toBe(1);
-    await act(async () => current.chosen("alpha-black", "alpha-black"));
-    await act(async () => current.chosen("dark", "alpha-black"));
-    expect(current.run).toBe(1);
+    expect(probe.splash!.run).toBe(0);
+    await act(async () => probe.splash!.chosen("alpha-black", "light"));
+    expect(probe.splash!.run).toBe(1);
+    await act(async () => probe.splash!.chosen("alpha-black", "alpha-black"));
+    await act(async () => probe.splash!.chosen("dark", "alpha-black"));
+    expect(probe.splash!.run).toBe(1);
   });
 
   it("plays at once after a sign-in when this device already keeps ALPHA BLACK, and only once", async () => {
     noteSignIn();
     await act(async () => root.render(<Probe theme="alpha-black" />));
-    expect(current.run).toBe(1);
-    await act(async () => current.settled("alpha-black"));
-    expect(current.run).toBe(1);
+    expect(probe.splash!.run).toBe(1);
+    await act(async () => probe.splash!.settled("alpha-black"));
+    expect(probe.splash!.run).toBe(1);
     expect(signInPending()).toBe(false);
   });
 
   it("plays after a sign-in once the account's saved theme turns out to be ALPHA BLACK", async () => {
     noteSignIn();
     await act(async () => root.render(<Probe theme="light" />));
-    expect(current.run).toBe(0);
-    await act(async () => current.settled("alpha-black"));
-    expect(current.run).toBe(1);
+    expect(probe.splash!.run).toBe(0);
+    await act(async () => probe.splash!.settled("alpha-black"));
+    expect(probe.splash!.run).toBe(1);
   });
 
   it("does not play without a sign-in, or for another theme", async () => {
     await act(async () => root.render(<Probe theme="alpha-black" />));
-    expect(current.run).toBe(0);
-    await act(async () => current.settled("alpha-black"));
-    expect(current.run).toBe(0);
+    expect(probe.splash!.run).toBe(0);
+    await act(async () => probe.splash!.settled("alpha-black"));
+    expect(probe.splash!.run).toBe(0);
     noteSignIn();
-    await act(async () => current.settled("dark"));
-    expect(current.run).toBe(0);
+    await act(async () => probe.splash!.settled("dark"));
+    expect(probe.splash!.run).toBe(0);
     expect(signInPending()).toBe(false);
   });
 });

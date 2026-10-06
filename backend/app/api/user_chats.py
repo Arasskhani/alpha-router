@@ -44,7 +44,10 @@ router = APIRouter(prefix="/api/user/chats", tags=["user-chats"])
 class UserPrefsPatchIn(BaseModel):
     default_model: str | None = None
     theme: (
-        Literal["light", "dark", "system", "mint", "dark-mint", "mint-system", "alpha-black", "alpha-neon"] | None
+        Literal[
+            "light", "dark", "system", "mint", "dark-mint", "mint-system", "alpha-black", "alpha-neon", "bloody-night"
+        ]
+        | None
     ) = None
     timezone: str | None = None
     language: str | None = None

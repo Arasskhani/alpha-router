@@ -54,6 +54,10 @@ _MAX_SEARCH_RESULTS = 20
 _PURGE_BATCH_SIZE = 5000
 
 
+#: The themes a person can choose (frontend/src/lib/themeCache.ts); anything else is stored as "light".
+USER_THEMES = ("light", "dark", "system", "mint", "dark-mint", "mint-system", "alpha-black")
+
+
 def _personal_session_filter():
     """Personal /app/chat threads only — project workspaces have their own list API."""
     return ChatSession.project_id.is_(None)
@@ -230,7 +234,7 @@ def _normalize_prefs(raw: dict[str, Any] | None) -> dict[str, Any]:
         base["default_model"] = None
 
     theme = str(raw.get("theme") or "light").lower()
-    if theme in ("dark", "system", "mint", "dark-mint", "mint-system"):
+    if theme in USER_THEMES:
         base["theme"] = theme
     else:
         base["theme"] = "light"

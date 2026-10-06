@@ -209,9 +209,54 @@
   text-shadow: 0 0 10px rgba(255, 43, 214, 0.5);
 }
 
-/* What the two terminal themes share. */
+/* Bloody Night — an intrusion alert at night: blood red on pure black, light grey text, a red edge
+   on the sign-in panel and the cards, the same monospace face. Dark only. Filled buttons carry black
+   text: white on this red was 3.7:1, black is 5.6:1. Every text colour is at least 5:1. */
+[data-theme="bloody-night"] {
+  --bg: #000000;
+  --surface: #0a0a0a;
+  --surface-muted: #111111;
+  --surface-alt: #111111;
+  --surface-2: #111111;
+  --hover: #1a0606;
+  --text: #e8e8e8;
+  --muted: #8c8c8c;
+  --accent: #ff2a2a;
+  --accent-hover: #ff6b6b;
+  --accent-contrast: #000000;
+  --border: #2a0d0d;
+  --radius: 0px;
+  --radius-sm: 0px;
+  --shadow-md: 0 0 0 1px #2a0d0d, 0 0 24px rgba(255, 42, 42, 0.3);
+  --danger: #ff2a2a;
+  --danger-hover: #ff6b6b;
+  --danger-contrast: #000000;
+  --brand-grad-ink: #ff2a2a;
+  --brand-grad-indigo: #ff2a2a;
+  --brand-grad-purple: #ff6b6b;
+  --alpha-router-code-pane: #111111;
+  --alpha-router-code-fg: #e8e8e8;
+  --terminal-glow: rgba(255, 42, 42, 0.3);
+  --terminal-font: "Cascadia Mono", "Cascadia Code", "JetBrains Mono", Consolas, "DejaVu Sans Mono",
+    "Liberation Mono", Menlo, "AlphaRouterPersian-Vazirmatn", Tahoma, monospace;
+  --font-mono: var(--terminal-font);
+}
+[data-theme="bloody-night"] .login-panel,
+[data-theme="bloody-night"] .card {
+  border-left: 2px solid #ff2a2a;
+}
+/* The sign-in button in solid blood red: the base rule pales the accent with a teal white. */
+[data-theme="bloody-night"] .login-form__submit {
+  background: var(--accent);
+}
+[data-theme="bloody-night"] .login-form__submit:hover {
+  background: var(--accent-hover);
+}
+
+/* What the terminal themes share. */
 [data-theme="alpha-black"] .alpha-router-app,
-[data-theme="alpha-neon"] .alpha-router-app {
+[data-theme="alpha-neon"] .alpha-router-app,
+[data-theme="bloody-night"] .alpha-router-app {
   --alpha-router-sidebar-bg: var(--surface);
   --alpha-router-sidebar-text: var(--text);
   --alpha-router-sidebar-muted: var(--muted);
@@ -228,28 +273,40 @@
 [data-theme="alpha-neon"] button,
 [data-theme="alpha-neon"] input,
 [data-theme="alpha-neon"] textarea,
-[data-theme="alpha-neon"] select {
+[data-theme="alpha-neon"] select,
+[data-theme="bloody-night"] body,
+[data-theme="bloody-night"] button,
+[data-theme="bloody-night"] input,
+[data-theme="bloody-night"] textarea,
+[data-theme="bloody-night"] select {
   font-family: var(--terminal-font);
 }
 [data-theme="alpha-black"] h1,
 [data-theme="alpha-black"] h2,
 [data-theme="alpha-black"] h3,
-[data-theme="alpha-neon"] h3 {
+[data-theme="alpha-neon"] h3,
+[data-theme="bloody-night"] h1,
+[data-theme="bloody-night"] h2,
+[data-theme="bloody-night"] h3 {
   text-shadow: 0 0 8px var(--terminal-glow);
   letter-spacing: 0.02em;
 }
 [data-theme="alpha-black"] .btn:not(.btn-ghost):not(.btn-danger),
-[data-theme="alpha-neon"] .btn:not(.btn-ghost):not(.btn-danger) {
+[data-theme="alpha-neon"] .btn:not(.btn-ghost):not(.btn-danger),
+[data-theme="bloody-night"] .btn:not(.btn-ghost):not(.btn-danger) {
   box-shadow: 0 0 12px var(--terminal-glow);
 }
 [data-theme="alpha-black"] input:focus-visible,
 [data-theme="alpha-black"] select:focus-visible,
 [data-theme="alpha-neon"] input:focus-visible,
-[data-theme="alpha-neon"] select:focus-visible {
+[data-theme="alpha-neon"] select:focus-visible,
+[data-theme="bloody-night"] input:focus-visible,
+[data-theme="bloody-night"] select:focus-visible {
   box-shadow: 0 0 0 1px var(--accent), 0 0 14px var(--terminal-glow);
 }
 [data-theme="alpha-black"] ::selection,
-[data-theme="alpha-neon"] ::selection {
+[data-theme="alpha-neon"] ::selection,
+[data-theme="bloody-night"] ::selection {
   background: var(--accent);
   color: var(--accent-contrast);
 }

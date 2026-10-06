@@ -9,20 +9,21 @@ export type CachedTheme =
   | "dark-mint"
   | "mint-system"
   | "alpha-black"
-  | "alpha-neon";
+  | "alpha-neon"
+  | "bloody-night";
 
 /** Effective document theme used by `[data-theme]`. */
-type ResolvedTheme = "light" | "dark" | "mint" | "dark-mint" | "alpha-black" | "alpha-neon";
+type ResolvedTheme = "light" | "dark" | "mint" | "dark-mint" | "alpha-black" | "alpha-neon" | "bloody-night";
 
 /** Named theme shown in the Theme dropdown. */
-export type NamedTheme = "default" | "mint" | "dark-mint" | "alpha-black" | "alpha-neon";
+export type NamedTheme = "default" | "mint" | "dark-mint" | "alpha-black" | "alpha-neon" | "bloody-night";
 
 /** The Theme dropdown's choices, in order. */
-export const NAMED_THEMES: NamedTheme[] = ["default", "mint", "dark-mint", "alpha-black", "alpha-neon"];
+export const NAMED_THEMES: NamedTheme[] = ["default", "mint", "dark-mint", "alpha-black", "alpha-neon", "bloody-night"];
 
 /** Themes with no light variant: Light or System leaves them for the default theme in that mode. */
-type DarkOnlyTheme = "alpha-black" | "alpha-neon";
-const DARK_ONLY = new Set<string>(["alpha-black", "alpha-neon"]);
+type DarkOnlyTheme = "alpha-black" | "alpha-neon" | "bloody-night";
+const DARK_ONLY = new Set<string>(["alpha-black", "alpha-neon", "bloody-night"]);
 
 function isDarkOnly(theme: string): theme is DarkOnlyTheme {
   return DARK_ONLY.has(theme);
@@ -40,6 +41,7 @@ const THEME_VALUES = new Set<CachedTheme>([
   "mint-system",
   "alpha-black",
   "alpha-neon",
+  "bloody-night",
 ]);
 
 export function isCachedTheme(value: string): value is CachedTheme {
@@ -82,6 +84,7 @@ export const THEME_SURFACE: Record<ResolvedTheme, string> = {
   "dark-mint": "#161616",
   "alpha-black": "#0e0900",
   "alpha-neon": "#060b16",
+  "bloody-night": "#0a0a0a",
 };
 
 /**
@@ -138,12 +141,14 @@ export function namedThemeLabel(named: NamedTheme): string {
   if (named === "dark-mint") return "Dark Mint";
   if (named === "alpha-black") return "ALPHA BLACK";
   if (named === "alpha-neon") return "ALPHA Neon";
+  if (named === "bloody-night") return "Bloody Night";
   return "Default";
 }
 
 /** Combine dropdown selection + appearance buttons into a stored theme. */
 function composeTheme(named: NamedTheme, mode: ColorMode): CachedTheme {
-  // ALPHA BLACK and ALPHA Neon are dark only: Light or System leaves them for the default theme in that mode.
+  // ALPHA BLACK, ALPHA Neon and Bloody Night are dark only:
+  // Light or System leaves them for the default theme in that mode.
   if (isDarkOnly(named)) return mode === "dark" ? named : mode;
   if (named === "dark-mint") {
     if (mode === "light") return "mint";

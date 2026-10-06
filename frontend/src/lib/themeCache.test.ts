@@ -16,7 +16,7 @@ import {
 
 describe("the ALPHA BLACK theme", () => {
   it("is offered in the Theme dropdown under its name", () => {
-    expect(NAMED_THEMES).toEqual(["default", "mint", "dark-mint", "alpha-black", "alpha-neon"]);
+    expect(NAMED_THEMES).toEqual(["default", "mint", "dark-mint", "alpha-black", "alpha-neon", "bloody-night"]);
     expect(namedThemeLabel("alpha-black")).toBe("ALPHA BLACK");
     expect(isCachedTheme("alpha-black")).toBe(true);
   });
@@ -55,6 +55,21 @@ describe("the ALPHA Neon theme", () => {
     expect(themeForMode("alpha-neon", "dark")).toBe("alpha-neon");
     expect(themeForMode("alpha-neon", "light")).toBe("light");
     expect(themeForMode("alpha-neon", "system")).toBe("system");
+  });
+});
+
+describe("the Bloody Night theme", () => {
+  it("is offered under its name, dark only, like the ALPHA themes", () => {
+    expect(namedThemeLabel("bloody-night")).toBe("Bloody Night");
+    expect(isCachedTheme("bloody-night")).toBe(true);
+    applyThemeToDocument("bloody-night");
+    expect(document.documentElement.getAttribute("data-theme")).toBe("bloody-night");
+    expect(document.documentElement.getAttribute("data-scheme")).toBe("dark");
+    expect(namedThemeOf("bloody-night")).toBe("bloody-night");
+    expect(colorModeOf("bloody-night")).toBe("dark");
+    expect(themeForNamed("bloody-night", "system")).toBe("bloody-night");
+    expect(themeForMode("bloody-night", "dark")).toBe("bloody-night");
+    expect(themeForMode("bloody-night", "light")).toBe("light");
   });
 });
 

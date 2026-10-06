@@ -33,7 +33,7 @@ describe("the theme picker", () => {
   it("offers ALPHA BLACK and chooses it", async () => {
     const onChange = await render("system");
     const select = host.querySelector<HTMLSelectElement>("select")!;
-    expect([...select.options].map((o) => o.textContent)).toEqual(["Default", "Mint", "Dark Mint", "ALPHA BLACK", "ALPHA Neon"]);
+    expect([...select.options].map((o) => o.textContent)).toEqual(["Default", "Mint", "Dark Mint", "ALPHA BLACK", "ALPHA Neon", "Bloody Night"]);
     await act(async () => {
       select.value = "alpha-black";
       select.dispatchEvent(new Event("change", { bubbles: true }));

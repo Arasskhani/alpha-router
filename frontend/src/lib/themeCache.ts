@@ -130,7 +130,7 @@ export function namedThemeLabel(named: NamedTheme): string {
 }
 
 /** Combine dropdown selection + appearance buttons into a stored theme. */
-export function composeTheme(named: NamedTheme, mode: ColorMode): CachedTheme {
+function composeTheme(named: NamedTheme, mode: ColorMode): CachedTheme {
   // ALPHA BLACK is dark only: Light or System leaves it for the default theme in that mode.
   if (named === "alpha-black") return mode === "dark" ? "alpha-black" : mode;
   if (named === "dark-mint") {

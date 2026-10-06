@@ -1119,6 +1119,8 @@ describe("the installed app's edges", () => {
     ".row-actions-menu--portal": "opens beside its trigger, which is inside the safe area",
     ".alpha-router-attach-menu": "opens beside its trigger, which is inside the safe area",
     ".alpha-router-server-tools-menu": "opens beside its trigger, which is inside the safe area",
+    '[data-theme="alpha-black"] body::after': "ALPHA BLACK's scanlines: they cover the whole screen on purpose",
+    '[data-theme="alpha-black"] body::before': "ALPHA BLACK's darker screen edge: it covers the whole screen on purpose",
   };
 
   it("gives every fixed layer an answer for the insets, or a reason it needs none", () => {

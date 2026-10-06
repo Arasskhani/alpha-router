@@ -171,12 +171,14 @@ describe("the docs", () => {
     expect(codes).toContain("MAX_ATTEMPTS = 5");
   });
 
-  it("the User Manual names the ALPHA BLACK theme and its greeting as the app has them", () => {
+  it("the User Manual names the ALPHA themes and ALPHA BLACK's greeting as the app has them", () => {
     const html = sectionHtml(userManualSections, "user-settings");
     expect(html).toContain("ALPHA BLACK");
     expect(html).toContain("AR455 was HERE");
+    expect(html).toContain("ALPHA Neon");
     const cache = readFileSync(join(__dirname, "lib/themeCache.ts"), "utf8");
     expect(cache).toContain('return "ALPHA BLACK"');
+    expect(cache).toContain('return "ALPHA Neon"');
     const splash = readFileSync(join(__dirname, "lib/alphaBlackSplash.ts"), "utf8");
     expect(splash).toContain('SPLASH_TEXT = "AR455 was HERE"');
   });

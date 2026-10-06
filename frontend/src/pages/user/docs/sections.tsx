@@ -1644,9 +1644,10 @@ export const userManualSections: DocSection[] = [
             tab is in the background
           </li>
           <li>
-            Theme: Default, Mint, Dark Mint or <strong>ALPHA BLACK</strong>, and Light, Dark or System beside it.
-            ALPHA BLACK is a terminal from the films — amber on black, a monospace face, scanlines — and is dark only:
-            Light or System leaves it for the default theme. While it is your theme, &ldquo;AR455 was HERE&rdquo;
+            Theme: Default, Mint, Dark Mint, <strong>ALPHA BLACK</strong> or <strong>ALPHA Neon</strong>, and Light,
+            Dark or System beside it. ALPHA BLACK is a terminal from the films — amber on black, a monospace face,
+            scanlines; ALPHA Neon is its neon-grid sibling — cyan and magenta on blue-black. Both are dark only: Light
+            or System leaves them for the default theme. While ALPHA BLACK is your theme, &ldquo;AR455 was HERE&rdquo;
             fades in and out for about two seconds when you choose it and each time you sign in.
           </li>
         </ul>
@@ -1738,7 +1739,8 @@ export const userManualSections: DocSection[] = [
             plan change.
           </li>
           <li>
-            <strong>Theme</strong> — the same choice as in Settings (including ALPHA BLACK); applied across the app,
+            <strong>Theme</strong> — the same choice as in Settings (including ALPHA BLACK and ALPHA Neon); applied
+            across the app,
             and on this device&apos;s sign-in page.
           </li>
           <li>

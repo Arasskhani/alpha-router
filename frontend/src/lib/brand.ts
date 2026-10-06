@@ -36,6 +36,8 @@ export const STORAGE_KEYS = {
   afterLogin: "alpha_router_after_login",
   /** A sign-up or password reset by email in progress (lib/emailFlowStore.ts), in session storage. */
   emailFlow: "alpha_router_email_flow",
+  /** A sign-in just finished (lib/alphaBlackSplash.ts), in session storage, for the ALPHA BLACK greeting. */
+  justSignedIn: "alpha_router_just_signed_in",
 } as const;
 
 export const BROWSER_EVENT_NAMES = {

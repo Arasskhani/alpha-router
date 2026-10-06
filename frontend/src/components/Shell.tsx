@@ -5,6 +5,8 @@ import AlphaRouterLogo from "./AlphaRouterLogo";
 import BottomTabBar from "./BottomTabBar";
 import InstallBanner from "./InstallBanner";
 import UpdateNotice from "./UpdateNotice";
+import AlphaBlackSplash from "./AlphaBlackSplash";
+import { ALPHA_BLACK, useAlphaBlackSplash } from "../lib/alphaBlackSplash";
 import { useSoftKeyboardOpen } from "../hooks/useSoftKeyboardOpen";
 import ModelProviderIcon from "./ModelProviderIcon";
 import SidebarNav from "./SidebarNav";
@@ -48,6 +50,8 @@ function escapeBelongsElsewhere(target: EventTarget | null): boolean {
 export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
   const loc = useLocation();
   const [theme, setThemeState] = useState<Theme>(() => loadCachedTheme());
+  const themeRef = useRef(theme);
+  const splash = useAlphaBlackSplash(theme);
   const [navPeek, setNavPeek] = useState(false);
   // Phone: the side panel is a drawer behind the topbar's menu button. On the
   // chat page that panel is the chat history (ChatPanel renders it and reads
@@ -81,6 +85,7 @@ export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
   const drawerLayout = phone || (navDrawerWidth && !isChatLayout);
 
   useEffect(() => {
+    themeRef.current = theme;
     applyThemeToDocument(theme);
     saveCachedTheme(theme);
     if (!followsSystemPreference(theme)) return;
@@ -90,30 +95,37 @@ export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
     return () => mq.removeEventListener("change", onChange);
   }, [theme]);
 
+  const { settled } = splash;
   useEffect(() => {
-    if (!getSessionUser()) return;
+    if (!getSessionUser()) {
+      settled();
+      return;
+    }
     let cancelled = false;
     hydrateUserPrefsFromServer()
       .then((prefs) => {
         if (!cancelled) {
           setThemeState(prefs.theme);
           saveCachedTheme(prefs.theme);
+          settled(prefs.theme);
         }
       })
-      .catch(() => {});
+      .catch(() => settled(themeRef.current));
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [settled]);
 
+  const { chosen } = splash;
   const setTheme = useCallback((next: Theme) => {
+    chosen(next, themeRef.current);
     setThemeState(next);
     saveCachedTheme(next);
     applyThemeToDocument(next);
     if (getSessionUser()) {
       void saveThemeToServer(next).catch(() => {});
     }
-  }, []);
+  }, [chosen]);
   useEffect(() => {
     document.title = PAGE_TITLE;
   }, []);
@@ -330,6 +342,7 @@ export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
               </main>
             </div>
           </div>
+          {theme === ALPHA_BLACK ? <AlphaBlackSplash run={splash.run} /> : null}
           <UpdateNotice />
           <InstallBanner />
           {hasTabBar ? <BottomTabBar /> : null}

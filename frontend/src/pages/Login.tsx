@@ -10,6 +10,7 @@ import { authFetch, bootstrapSession } from "../api";
 import PasswordResetFlow from "../components/auth/PasswordResetFlow";
 import SignUpFlow from "../components/auth/SignUpFlow";
 import { clearEmailFlow, loadEmailFlow } from "../lib/emailFlowStore";
+import { noteSignIn } from "../lib/alphaBlackSplash";
 function FeatureProvidersArt() {
   return (
     <svg className="login-highlight__art login-highlight__svg" viewBox="0 0 80 56" aria-hidden>
@@ -116,7 +117,10 @@ async function finishLogin(nav: NavigateFunction) {
   const active = session.is_active !== false;
   markLoggedIn(active);
   // A page that sent the user here to sign in (only the extension's connect page).
-  nav(takeAfterLogin() ?? homePathFor(session));
+  const resume = takeAfterLogin();
+  // The app greets the sign-in when the account's theme is ALPHA BLACK (not the extension's page).
+  if (!resume) noteSignIn();
+  nav(resume ?? homePathFor(session));
 }
 
 export default function Login() {

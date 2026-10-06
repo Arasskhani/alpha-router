@@ -69,10 +69,14 @@ describe("after signing in", () => {
     sessionStorage.setItem(STORAGE_KEYS.afterLogin, JSON.stringify({ target: CONNECT, at: Date.now() }));
     expect(await signIn()).toBe(CONNECT);
     expect(sessionStorage.getItem(STORAGE_KEYS.afterLogin)).toBeNull();
+    // Not the app: no ALPHA BLACK greeting is owed.
+    expect(sessionStorage.getItem(STORAGE_KEYS.justSignedIn)).toBeNull();
   });
 
   it("goes home when nothing asked to be resumed", async () => {
     expect(await signIn()).toBe("/app/chat");
+    // The app greets this sign-in if the account's theme is ALPHA BLACK.
+    expect(Number(sessionStorage.getItem(STORAGE_KEYS.justSignedIn))).toBeGreaterThan(0);
   });
 
   it("goes home when storage names anywhere else", async () => {

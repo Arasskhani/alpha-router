@@ -225,13 +225,15 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 1rem;
+  /* The words stay clear of a notch or the home indicator; the dimming covers the whole screen. */
+  padding: max(1rem, env(safe-area-inset-top, 0px)) max(1rem, env(safe-area-inset-right, 0px))
+    max(1rem, env(safe-area-inset-bottom, 0px)) max(1rem, env(safe-area-inset-left, 0px));
   pointer-events: none;
   background: rgba(7, 4, 0, 0.62);
   animation: alpha-black-splash 2s ease-in-out forwards;
 }
 .alpha-black-splash__text {
-  font-family: var(--alpha-black-font, monospace);
+  font-family: var(--alpha-black-font);
   font-size: clamp(1.8rem, 7vw, 4.75rem);
   font-weight: 700;
   letter-spacing: 0.08em;

@@ -176,9 +176,11 @@ describe("the docs", () => {
     expect(html).toContain("ALPHA BLACK");
     expect(html).toContain("AR455 was HERE");
     expect(html).toContain("ALPHA Neon");
+    expect(html).toContain("Bloody Night");
     const cache = readFileSync(join(__dirname, "lib/themeCache.ts"), "utf8");
     expect(cache).toContain('return "ALPHA BLACK"');
     expect(cache).toContain('return "ALPHA Neon"');
+    expect(cache).toContain('return "Bloody Night"');
     const splash = readFileSync(join(__dirname, "lib/alphaBlackSplash.ts"), "utf8");
     expect(splash).toContain('SPLASH_TEXT = "AR455 was HERE"');
   });

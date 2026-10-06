@@ -55,7 +55,7 @@ _PURGE_BATCH_SIZE = 5000
 
 
 #: The themes a person can choose (frontend/src/lib/themeCache.ts); anything else is stored as "light".
-USER_THEMES = ("light", "dark", "system", "mint", "dark-mint", "mint-system", "alpha-black")
+USER_THEMES = ("light", "dark", "system", "mint", "dark-mint", "mint-system", "alpha-black", "alpha-neon")
 
 
 def _personal_session_filter():

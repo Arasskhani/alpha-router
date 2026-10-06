@@ -7,13 +7,17 @@ export type CachedTheme =
   | "system"
   | "mint"
   | "dark-mint"
-  | "mint-system";
+  | "mint-system"
+  | "alpha-black";
 
 /** Effective document theme used by `[data-theme]`. */
-type ResolvedTheme = "light" | "dark" | "mint" | "dark-mint";
+type ResolvedTheme = "light" | "dark" | "mint" | "dark-mint" | "alpha-black";
 
 /** Named theme shown in the Theme dropdown. */
-export type NamedTheme = "default" | "mint" | "dark-mint";
+export type NamedTheme = "default" | "mint" | "dark-mint" | "alpha-black";
+
+/** The Theme dropdown's choices, in order. */
+export const NAMED_THEMES: NamedTheme[] = ["default", "mint", "dark-mint", "alpha-black"];
 
 /** Appearance mode controlled by Light / Dark / System buttons. */
 export type ColorMode = "light" | "dark" | "system";
@@ -25,6 +29,7 @@ const THEME_VALUES = new Set<CachedTheme>([
   "mint",
   "dark-mint",
   "mint-system",
+  "alpha-black",
 ]);
 
 export function isCachedTheme(value: string): value is CachedTheme {
@@ -56,7 +61,7 @@ function resolveTheme(theme: CachedTheme): ResolvedTheme {
 }
 
 function colorSchemeFor(resolved: ResolvedTheme): "light" | "dark" {
-  return resolved === "dark" || resolved === "dark-mint" ? "dark" : "light";
+  return resolved === "dark" || resolved === "dark-mint" || resolved === "alpha-black" ? "dark" : "light";
 }
 
 /** Each theme's --surface (styles.css): the topbar's colour, which the browser and status bar take. */
@@ -65,6 +70,7 @@ export const THEME_SURFACE: Record<ResolvedTheme, string> = {
   dark: "#12171e",
   mint: "#ffffff",
   "dark-mint": "#161616",
+  "alpha-black": "#0e0900",
 };
 
 /**
@@ -104,6 +110,7 @@ export function applyThemeToDocument(theme: CachedTheme = loadCachedTheme()): vo
 }
 
 export function namedThemeOf(theme: CachedTheme): NamedTheme {
+  if (theme === "alpha-black") return "alpha-black";
   if (theme === "dark-mint") return "dark-mint";
   if (theme === "mint" || theme === "mint-system") return "mint";
   return "default";
@@ -111,18 +118,21 @@ export function namedThemeOf(theme: CachedTheme): NamedTheme {
 
 export function colorModeOf(theme: CachedTheme): ColorMode {
   if (theme === "system" || theme === "mint-system") return "system";
-  if (theme === "dark" || theme === "dark-mint") return "dark";
+  if (theme === "dark" || theme === "dark-mint" || theme === "alpha-black") return "dark";
   return "light";
 }
 
 export function namedThemeLabel(named: NamedTheme): string {
   if (named === "mint") return "Mint";
   if (named === "dark-mint") return "Dark Mint";
+  if (named === "alpha-black") return "ALPHA BLACK";
   return "Default";
 }
 
 /** Combine dropdown selection + appearance buttons into a stored theme. */
 export function composeTheme(named: NamedTheme, mode: ColorMode): CachedTheme {
+  // ALPHA BLACK is dark only: Light or System leaves it for the default theme in that mode.
+  if (named === "alpha-black") return mode === "dark" ? "alpha-black" : mode;
   if (named === "dark-mint") {
     if (mode === "light") return "mint";
     if (mode === "system") return "mint-system";
@@ -138,4 +148,17 @@ export function composeTheme(named: NamedTheme, mode: ColorMode): CachedTheme {
 
 export function followsSystemPreference(theme: CachedTheme): boolean {
   return theme === "system" || theme === "mint-system";
+}
+
+/** The theme the Theme dropdown sets, keeping the appearance mode where the named theme has it. */
+export function themeForNamed(next: NamedTheme, mode: ColorMode): CachedTheme {
+  if (next === "dark-mint" || next === "alpha-black") return next;
+  if (next === "mint") return mode === "system" ? "mint-system" : "mint";
+  return mode;
+}
+
+/** The theme the Light / Dark / System buttons set for the named theme shown. */
+export function themeForMode(named: NamedTheme, next: ColorMode): CachedTheme {
+  if (named === "alpha-black") return composeTheme("alpha-black", next);
+  return composeTheme(named === "default" ? "default" : "mint", next);
 }

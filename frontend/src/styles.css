@@ -129,6 +129,93 @@
   --brand-grad-purple: #059669;
 }
 
+/* ALPHA BLACK — a mainframe terminal from the films: amber phosphor on black, a monospace face,
+   scanlines and a darkened edge like a CRT. Dark only (data-scheme="dark" rules apply too).
+   Muted text is #b8860b, not the darker amber of the first sketch: at least 5.4:1 on every surface. */
+[data-theme="alpha-black"] {
+  --bg: #070400;
+  --surface: #0e0900;
+  --surface-muted: #140d00;
+  --surface-alt: #140d00;
+  --surface-2: #140d00;
+  --hover: #221600;
+  --text: #ffb000;
+  --muted: #b8860b;
+  --accent: #ffb000;
+  --accent-hover: #ffd166;
+  --accent-contrast: #1a1000;
+  --border: #3a2700;
+  --radius: 0px;
+  --radius-sm: 0px;
+  --shadow-md: 0 0 0 1px #3a2700, 0 0 24px rgba(255, 176, 0, 0.3);
+  --danger: #ff5a36;
+  --danger-hover: #ff8a6b;
+  --danger-contrast: #070400;
+  --brand-grad-ink: #ffb000;
+  --brand-grad-indigo: #ffb000;
+  --brand-grad-purple: #ffd166;
+  --alpha-router-code-pane: #140d00;
+  --alpha-router-code-fg: #ffb000;
+  --alpha-black-glow: rgba(255, 176, 0, 0.3);
+  --alpha-black-font: "Cascadia Mono", "Cascadia Code", "JetBrains Mono", Consolas, "DejaVu Sans Mono",
+    "Liberation Mono", Menlo, "AlphaRouterPersian-Vazirmatn", Tahoma, monospace;
+  --font-mono: var(--alpha-black-font);
+}
+[data-theme="alpha-black"] .alpha-router-app {
+  --alpha-router-sidebar-bg: var(--surface);
+  --alpha-router-sidebar-text: var(--text);
+  --alpha-router-sidebar-muted: var(--muted);
+  --alpha-router-sidebar-hover: var(--hover);
+  --alpha-router-sidebar-active: var(--hover);
+  --alpha-router-border: var(--border);
+}
+[data-theme="alpha-black"] body,
+[data-theme="alpha-black"] button,
+[data-theme="alpha-black"] input,
+[data-theme="alpha-black"] textarea,
+[data-theme="alpha-black"] select {
+  font-family: var(--alpha-black-font);
+}
+[data-theme="alpha-black"] h1,
+[data-theme="alpha-black"] h2,
+[data-theme="alpha-black"] h3 {
+  text-shadow: 0 0 8px var(--alpha-black-glow);
+  letter-spacing: 0.02em;
+}
+[data-theme="alpha-black"] .btn:not(.btn-ghost):not(.btn-danger) {
+  box-shadow: 0 0 12px var(--alpha-black-glow);
+}
+[data-theme="alpha-black"] input:focus-visible,
+[data-theme="alpha-black"] select:focus-visible {
+  box-shadow: 0 0 0 1px var(--accent), 0 0 14px var(--alpha-black-glow);
+}
+[data-theme="alpha-black"] ::selection {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+/* Scanlines and the CRT's darker edge, over everything, never in the way of a click. */
+[data-theme="alpha-black"] body::after,
+[data-theme="alpha-black"] body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+[data-theme="alpha-black"] body::after {
+  z-index: 2147483000;
+  background: repeating-linear-gradient(0deg, rgba(255, 176, 0, 0.05) 0 1px, transparent 1px 3px);
+}
+[data-theme="alpha-black"] body::before {
+  z-index: 2147482999;
+  background: radial-gradient(ellipse at center, transparent 60%, rgba(0, 0, 0, 0.55) 100%);
+}
+@media print {
+  [data-theme="alpha-black"] body::after,
+  [data-theme="alpha-black"] body::before {
+    display: none;
+  }
+}
+
 * { box-sizing: border-box; }
 /* Text for assistive technology only. Standard recipe: kept in the accessibility
    tree, removed from the layout and from view. */

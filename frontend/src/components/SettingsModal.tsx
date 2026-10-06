@@ -8,10 +8,12 @@ import {
   normalizePersianFontId,
 } from "../lib/persianFonts";
 import {
+  NAMED_THEMES,
   colorModeOf,
-  composeTheme,
   namedThemeLabel,
   namedThemeOf,
+  themeForMode,
+  themeForNamed,
   type ColorMode,
   type NamedTheme,
 } from "../lib/themeCache";
@@ -73,8 +75,6 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "api-keys", label: "API Key" },
   { id: "extension", label: "Extension" },
 ];
-
-const NAMED_THEME_OPTIONS: NamedTheme[] = ["default", "mint", "dark-mint"];
 
 type Props = {
   open: boolean;
@@ -309,27 +309,8 @@ function GeneralPanel({
     return COMMON_TIMEZONES;
   }, [timezone]);
 
-  const setNamed = (next: NamedTheme) => {
-    if (!setTheme) return;
-    if (next === "dark-mint") {
-      setTheme("dark-mint");
-      return;
-    }
-    if (next === "mint") {
-      setTheme(mode === "system" ? "mint-system" : "mint");
-      return;
-    }
-    setTheme(mode);
-  };
-
-  const setMode = (next: ColorMode) => {
-    if (!setTheme) return;
-    if (named === "default") {
-      setTheme(composeTheme("default", next));
-      return;
-    }
-    setTheme(composeTheme("mint", next));
-  };
+  const setNamed = (next: NamedTheme) => setTheme?.(themeForNamed(next, mode));
+  const setMode = (next: ColorMode) => setTheme?.(themeForMode(named, next));
 
   if (loading) return <p className="muted">Loading preferences…</p>;
 
@@ -460,7 +441,7 @@ function GeneralPanel({
             className="settings-row__control"
             onChange={(e) => setNamed(e.target.value as NamedTheme)}
           >
-            {NAMED_THEME_OPTIONS.map((opt) => (
+            {NAMED_THEMES.map((opt) => (
               <option key={opt} value={opt}>
                 {namedThemeLabel(opt)}
               </option>

@@ -1,8 +1,10 @@
 import {
+  NAMED_THEMES,
   colorModeOf,
-  composeTheme,
   namedThemeLabel,
   namedThemeOf,
+  themeForMode,
+  themeForNamed,
   type CachedTheme,
   type ColorMode,
   type NamedTheme,
@@ -17,31 +19,12 @@ type Props = {
   compact?: boolean;
 };
 
-const NAMED_OPTIONS: NamedTheme[] = ["default", "mint", "dark-mint"];
-
 export default function ThemePicker({ value, onChange, className = "", compact = false }: Props) {
   const named = namedThemeOf(value);
   const mode = colorModeOf(value);
 
-  const setNamed = (next: NamedTheme) => {
-    if (next === "dark-mint") {
-      onChange("dark-mint");
-      return;
-    }
-    if (next === "mint") {
-      onChange(mode === "system" ? "mint-system" : "mint");
-      return;
-    }
-    onChange(mode);
-  };
-
-  const setMode = (next: ColorMode) => {
-    if (named === "default") {
-      onChange(composeTheme("default", next));
-      return;
-    }
-    onChange(composeTheme("mint", next));
-  };
+  const setNamed = (next: NamedTheme) => onChange(themeForNamed(next, mode));
+  const setMode = (next: ColorMode) => onChange(themeForMode(named, next));
 
   return (
     <div className={`theme-picker${compact ? " theme-picker--compact" : ""}${className ? ` ${className}` : ""}`}>
@@ -52,7 +35,7 @@ export default function ThemePicker({ value, onChange, className = "", compact =
           aria-label="Theme"
           onChange={(e) => setNamed(e.target.value as NamedTheme)}
         >
-          {NAMED_OPTIONS.map((opt) => (
+          {NAMED_THEMES.map((opt) => (
             <option key={opt} value={opt}>
               {namedThemeLabel(opt)}
             </option>

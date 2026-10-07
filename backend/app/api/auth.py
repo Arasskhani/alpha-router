@@ -105,10 +105,13 @@ async def auth_session(user: User = Depends(get_current_user), db: AsyncSession 
             "agents_platform": bool(settings.agents_platform_enabled),
             "pwa_service_worker": bool(settings.pwa_service_worker_enabled),
             "pwa_install_prompt": bool(settings.pwa_install_prompt_enabled),
-            # Feature Access: whether this account may open the web Chat and Projects, and use personal API keys.
+            # Feature Access: whether this account may open the web Chat and Projects, create a project,
+            # use personal API keys and use the browser extension.
             "chat": sections["chat"].allowed,
             "projects": sections["projects"].allowed,
+            "project_create": sections["project_create"].allowed,
             "api_keys": sections["api_keys"].allowed,
+            "extension": sections["extension"].allowed,
         },
     }
 

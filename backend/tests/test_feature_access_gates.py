@@ -268,6 +268,15 @@ class TestTheSession:
         features = (await client.get("/api/auth/session")).json()["features"]
         assert features["chat"] is True and features["projects"] is False
 
+    async def test_tells_it_whether_to_offer_creating_projects_and_the_extension(self, client, db_session, user):
+        _sign_in(client, user)
+        features = (await client.get("/api/auth/session")).json()["features"]
+        assert features["project_create"] is True and features["extension"] is True
+        await _deny(db_session, "chat", user)
+        await _deny(db_session, "extension", user)
+        features = (await client.get("/api/auth/session")).json()["features"]
+        assert features["project_create"] is False and features["extension"] is False
+
     async def test_an_administrator_sees_both(self, client, db_session, admin):
         await _deny(db_session, "chat", admin)
         _sign_in(client, admin)

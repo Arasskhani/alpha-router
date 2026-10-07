@@ -309,6 +309,9 @@ describe("Feature Access in the guides", () => {
     expect(html).toContain("/admin/feature-access");
     expect(html).toContain("deny wins");
     expect(html).toContain("project chats keep working");
+    expect(html).toContain("chat of a project that is theirs alone");
+    expect(html).toContain("Create projects off");
+    expect(html).toContain("Browser extension off");
     expect(html).toContain("Nothing is deleted.");
     expect(html).toContain("kept, not revoked");
     for (const action of ["feature_access_rule_added", "feature_access_rule_changed", "feature_access_rule_removed"]) {
@@ -320,7 +323,8 @@ describe("Feature Access in the guides", () => {
 
   it("the User Manual tells a person what they keep", () => {
     const html = sectionHtml(userManualSections as Section[], "user-feature-access");
-    expect(html).toContain("project chats keep working");
+    expect(html).toContain("the chats of projects you share with others keep");
+    expect(html).toContain("chat is closed in a project only you are in");
     expect(html).toContain("Nothing is deleted");
   });
 });

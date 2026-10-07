@@ -2607,9 +2607,11 @@ export const docSections: DocSection[] = [
         <h2>Feature Access</h2>
         <p>
           Path: <code>/admin/feature-access</code>. Who may use the web <strong>Chat</strong>,{" "}
-          <strong>Projects</strong> and <strong>personal API keys</strong>, set for a user, a group or a department
-          the way a plan is assigned. All three are open to everyone until a rule closes them, so nothing changes for
-          anybody on upgrade.
+          <strong>Projects</strong>, <strong>Create projects</strong>, <strong>personal API keys</strong> and the{" "}
+          <strong>Browser extension</strong>, set for a user, a group or a department the way a plan is assigned.
+          Every section is open to everyone until a rule closes it. The one change on upgrade: people whose Chat is
+          already closed can no longer create projects, and the chat of a project that is theirs alone closes too
+          (see below).
         </p>
         <h3>Rules and how they combine</h3>
         <ul>
@@ -2641,9 +2643,24 @@ export const docSections: DocSection[] = [
           <li>
             <strong>Chat off</strong>: the Chat menu goes, the person starts in Projects (or Media), and the personal
             chat list, its folders and chats are refused by the server with <code>403</code> and the code{" "}
-            <code>feature_not_enabled</code>. Their <strong>project chats keep working</strong>: a chat in a project
-            follows Projects. Memory, chat summaries and the recall index stop learning from their personal chats
-            until Chat is given back; what was already learned stays.
+            <code>feature_not_enabled</code>. Their <strong>project chats keep working</strong> in projects with other
+            members: a chat in a project follows Projects. Memory, chat summaries and the recall index stop learning
+            from their personal chats until Chat is given back; what was already learned stays.
+          </li>
+          <li>
+            Chat off also closes <strong>Create projects</strong> for that person (unless they have an Allow of their
+            own on Create projects), and the <strong>chat of a project that is theirs alone</strong> — one where they
+            are Primary Owner and nobody else is a member. Otherwise a project of their own would be a personal chat
+            by another name. In such a project the Chats tab says chat is closed; rooms, resources, media, members and
+            settings keep working, and chat opens again as soon as a second member joins. Pending invitations do not
+            count.
+          </li>
+          <li>
+            <strong>Create projects off</strong>: the <em>New project</em> button goes and the Projects page says
+            creating isn&apos;t enabled; creating a project is refused with <code>403</code>. Everything else is
+            unchanged — the projects they are in, invitations, leaving, archiving and restoring. Create projects is
+            also closed whenever Projects is, and whenever Chat is unless the person has their own Allow on it; Check a
+            user says which.
           </li>
           <li>
             <strong>Projects off</strong>: the Projects menu goes and every project route is refused, project chats
@@ -2662,9 +2679,15 @@ export const docSections: DocSection[] = [
             section is off and are all there when it is given back.
           </li>
           <li>
+            <strong>Browser extension off</strong>: the person cannot download the extension or connect a browser,
+            and a browser they already connected is refused its calls (the side panel says the extension is not
+            enabled for their account). The connection is kept and works again when the section is given back. The
+            extension&apos;s access on <a href="#admin-chat-tools">Chat Tools</a> and the switch on its own page still
+            apply on top of this section.
+          </li>
+          <li>
             Chat and Projects do not touch the <strong>browser extension</strong> or <strong>API keys</strong>, and
-            closing API keys does not touch the web Chat. Who may use the extension is set on{" "}
-            <a href="#admin-chat-tools">Chat Tools</a>.
+            closing API keys or the extension does not touch the web Chat.
           </li>
         </ul>
         <h3>Who may change it</h3>

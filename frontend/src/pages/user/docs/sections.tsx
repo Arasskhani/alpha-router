@@ -1774,21 +1774,30 @@ export const userManualSections: DocSection[] = [
 
   {
     id: "user-feature-access",
-    title: "When Chat, Projects or API keys are missing",
+    title: "When Chat, Projects or other features are missing",
     group: "Account",
     content: (
       <>
-        <h2>When Chat, Projects or API keys are missing</h2>
+        <h2>When Chat, Projects or other features are missing</h2>
         <p>
-          Your administrator can turn <strong>Chat</strong>, <strong>Projects</strong> or your{" "}
-          <strong>personal API key</strong> off for your account, your group or your department. Chat or Projects
-          then leaves your menu, and opening it by its address says it isn&apos;t enabled for you; Settings says so
-          for your API key.
+          Your administrator can turn <strong>Chat</strong>, <strong>Projects</strong>, creating projects, your{" "}
+          <strong>personal API key</strong> or the <strong>browser extension</strong> off for your account, your group
+          or your department. Chat or Projects then leaves your menu, and opening it by its address says it isn&apos;t
+          enabled for you; Settings says so for your API key.
         </p>
         <ul>
           <li>
-            With <strong>Chat</strong> off you start in Projects, and your project chats keep working there. Your
-            memory doesn&apos;t learn from your personal chats meanwhile.
+            With <strong>Chat</strong> off you start in Projects, and the chats of projects you share with others keep
+            working there. Your memory doesn&apos;t learn from your personal chats meanwhile.
+          </li>
+          <li>
+            With Chat off you also cannot create projects, and chat is closed in a project only you are in: its Chats
+            tab says so, while its rooms, files and members still work. Chat there opens again when someone else
+            joins.
+          </li>
+          <li>
+            When <strong>creating projects</strong> is off, the Projects page has no <em>New project</em> button and
+            says why. You can still work in projects you&apos;re invited to.
           </li>
           <li>With <strong>Projects</strong> off you keep your personal chat.</li>
           <li>
@@ -1800,7 +1809,9 @@ export const userManualSections: DocSection[] = [
             on.
           </li>
           <li>
-            The <a href="#extension-install">browser extension</a> follows its own access, not this.
+            With the <strong>browser extension</strong> off you cannot download it or connect a browser, and a
+            connected one says it isn&apos;t enabled for your account. See{" "}
+            <a href="#extension-install">browser extension</a>.
           </li>
         </ul>
         <Note>Ask your administrator if you need a section you don&apos;t see.</Note>

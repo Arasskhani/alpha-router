@@ -19,11 +19,13 @@ from app.api.deps import get_bearer_token, get_current_user, require_active_user
 from app.api.feature_gate import require_web_projects
 from app.config import get_settings
 from app.database import get_db
+from app.models.feature_access import FEATURE_PROJECT_CREATE
 from app.models.project import Project
 from app.models.user import User
 from app.services import activity_service
 from app.services.attachment_policy import media_response_type_and_disposition
 from app.services.bounded_io import BoundedIOError, read_upload_bounded
+from app.services.feature_access_service import require_feature
 from app.services.project_access_service import (
     ProjectAccessError,
     can_view_project_activity,
@@ -195,6 +197,8 @@ async def create_project_endpoint(
     user: User = Depends(require_active_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
+    # Closed with Chat too, unless the person has their own Allow: see feature_access_service.
+    await require_feature(db, user, FEATURE_PROJECT_CREATE)
     try:
         project = await create_project(
             db,

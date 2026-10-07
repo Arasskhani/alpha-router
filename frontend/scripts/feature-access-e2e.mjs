@@ -287,9 +287,21 @@ await step("the chat of a project that is the user's alone follows Chat", async 
   await person.page.goto(`${BASE}/app/projects/${soloProjectId}`);
   await person.page.getByText("so chat is closed in projects that only you are in").waitFor({ timeout: 15_000 });
   await sleep(1500);
-  expect(refusedOnPage.length <= 2, `the page kept asking for the chats: ${refusedOnPage.length} refusals`);
+  expect(refusedOnPage.length === 0, `the page asked for the closed chats: ${refusedOnPage.length} refusals`);
   const rooms = await person.page.request.get(`${BASE}/api/projects/${soloProjectId}/rooms`);
   expect(rooms.status() === 200, `its rooms answered ${rooms.status()}`);
+  // Rooms work, but a decision cannot be handed to the closed chat.
+  const room = await person.page.request.post(`${BASE}/api/projects/${soloProjectId}/rooms`, {
+    headers: person.headers,
+    data: { title: "Notes" },
+  });
+  expect(room.ok(), `creating a room answered ${room.status()}`);
+  await person.page.getByRole("button", { name: "Rooms", exact: true }).click();
+  await person.page.getByRole("heading", { name: "Notes", level: 3 }).waitFor({ timeout: 15_000 });
+  expect(
+    !(await person.page.getByRole("button", { name: "Send decision to Chat" }).isVisible()),
+    "the room offers to send a decision to the closed chat",
+  );
 });
 
 await step("Browser extension closed: the server says the extension is not permitted", async () => {

@@ -118,6 +118,8 @@ export default function ProjectWorkspacePage() {
     setLoading(true);
     setError("");
     try {
+      // Another project's record must not stand in for this one while it loads.
+      setProject((prev) => (prev?.id === projectId ? prev : null));
       const p = await getProject(projectId);
       setProject(p);
     } catch (err) {
@@ -163,7 +165,8 @@ export default function ProjectWorkspacePage() {
   );
   const roleLabel = projectRoleLabel(project?.myRole);
   // Feature Access: Chat closed for this person, and nobody else is in their project.
-  const chatClosed = Boolean(project?.chatClosed);
+  const loadedHere = project?.id === projectId;
+  const chatClosed = loadedHere && Boolean(project?.chatClosed);
 
   useEffect(() => {
     if (tab === "activity" && !canEdit) setTab("chats");
@@ -240,11 +243,14 @@ export default function ProjectWorkspacePage() {
 
   return (
     <ChatPanel
+      // A fresh panel per project: nothing of one project's chats carries into the next.
+      key={projectId}
       projectId={projectId}
       projectReadOnly={projectReadOnly}
       enableModelChrome={tab === "chats" && !chatClosed}
       hideChatSidebar={tab === "rooms" || chatClosed}
-      projectChatClosed={chatClosed}
+      // Held until this project is known, so a chat the server would refuse is never asked for.
+      projectChatClosed={!loadedHere || chatClosed}
       onProjectChatFocus={() => setTab("chats")}
       projectSidebarHeader={
         <div className="alpha-router-project-identity">

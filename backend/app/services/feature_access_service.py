@@ -1,4 +1,5 @@
-"""Decide whether one account may use the web Chat, Projects or its personal API keys.
+"""Decide whether one account may use the web Chat, Projects, creating projects, its personal
+API keys or the browser extension.
 
 The rules (:class:`app.models.feature_access.FeatureAccessRule`) and their
 order, as the administrator sees them on the Feature Access page:
@@ -8,12 +9,17 @@ order, as the administrator sees them on the Feature Access page:
 3. Otherwise a ``deny`` on any of their groups or on their department does.
 4. Otherwise the section is open.
 
+Create projects also closes with others: with Projects closed it is closed,
+and with Chat closed it is closed unless the person's own rule on it is an
+Allow - otherwise a person whose Chat is closed could create a project of
+their own and chat there.
+
 A person no rule names - on them, their groups or their department - costs
 one small query and no role lookup, which is the case for nearly every
 request on nearly every deployment.
 
-Chat and Projects govern the web app only: the browser extension has its
-own access (Chat Tools). API keys governs the person's own keys - making
+Chat and Projects govern the web app only; the browser extension is its own
+section, on top of its Chat Tools access. API keys governs the person's own keys - making
 one, and every use of one at the gateway. Keys an administrator issues on
 the API Keys page are not personal keys and are not governed here.
 """
@@ -28,7 +34,15 @@ from fastapi import HTTPException
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.feature_access import FEATURE_API_KEYS, FEATURE_CHAT, FEATURE_PROJECTS, FEATURES, FeatureAccessRule
+from app.models.feature_access import (
+    FEATURE_API_KEYS,
+    FEATURE_CHAT,
+    FEATURE_EXTENSION,
+    FEATURE_PROJECT_CREATE,
+    FEATURE_PROJECTS,
+    FEATURES,
+    FeatureAccessRule,
+)
 from app.models.user import User, UserGroup, user_group_members
 from app.services.rbac import user_is_admin_panel
 from app.services.user_role_service import get_user_role_slugs
@@ -36,7 +50,13 @@ from app.services.user_role_service import get_user_role_slugs
 #: What a refusal answers with; the web app matches on ``code`` to show its "not enabled" page.
 FEATURE_FORBIDDEN_CODE = "feature_not_enabled"
 
-FEATURE_TITLES: dict[str, str] = {FEATURE_CHAT: "Chat", FEATURE_PROJECTS: "Projects", FEATURE_API_KEYS: "API keys"}
+FEATURE_TITLES: dict[str, str] = {
+    FEATURE_CHAT: "Chat",
+    FEATURE_PROJECTS: "Projects",
+    FEATURE_PROJECT_CREATE: "Create projects",
+    FEATURE_API_KEYS: "API keys",
+    FEATURE_EXTENSION: "Browser extension",
+}
 
 #: Why a decision came out the way it did; the admin "check a user" tool shows it.
 REASON_DEFAULT = "default"
@@ -45,6 +65,13 @@ REASON_USER_ALLOW = "user_allow"
 REASON_USER_DENY = "user_deny"
 REASON_GROUP_DENY = "group_deny"
 REASON_DEPARTMENT_DENY = "department_deny"
+#: Create projects is closed because Projects is (``rule_id`` and ``via`` are the Projects rule's).
+REASON_PROJECTS_CLOSED = "projects_closed"
+#: Create projects is closed because Chat is and the person has no Allow of their own on it.
+REASON_CHAT_CLOSED = "chat_closed"
+
+#: The sections a section's decision also reads.
+_DEPENDS_ON: dict[str, tuple[str, ...]] = {FEATURE_PROJECT_CREATE: (FEATURE_PROJECTS, FEATURE_CHAT)}
 
 
 @dataclass(frozen=True)
@@ -119,6 +146,19 @@ async def _group_name(db: AsyncSession, group_id: int) -> str:
     return str(group.name) if group is not None else f"Group #{group_id}"
 
 
+def _project_create(own: FeatureDecision, projects: FeatureDecision, chat: FeatureDecision) -> FeatureDecision:
+    """Create projects from its own rules and those of the two sections it closes with."""
+    if own.reason == REASON_ADMIN:
+        return own
+    if not projects.allowed:
+        return FeatureDecision(FEATURE_PROJECT_CREATE, False, REASON_PROJECTS_CLOSED, projects.rule_id, projects.via)
+    if not own.allowed or own.reason == REASON_USER_ALLOW:
+        return own
+    if not chat.allowed:
+        return FeatureDecision(FEATURE_PROJECT_CREATE, False, REASON_CHAT_CLOSED, chat.rule_id, chat.via)
+    return own
+
+
 async def decide_all(
     db: AsyncSession,
     user: User,
@@ -127,6 +167,18 @@ async def decide_all(
     """The decision for each of ``features``, loading the person's roles and groups at most once."""
 
     wanted = [validate_feature(feature) for feature in features]
+    needed = list(dict.fromkeys([*wanted, *(dep for feature in wanted for dep in _DEPENDS_ON.get(feature, ()))]))
+    own = await _own_decisions(db, user, needed)
+    out = {feature: own[feature] for feature in wanted}
+    if FEATURE_PROJECT_CREATE in out:
+        out[FEATURE_PROJECT_CREATE] = _project_create(
+            own[FEATURE_PROJECT_CREATE], own[FEATURE_PROJECTS], own[FEATURE_CHAT]
+        )
+    return out
+
+
+async def _own_decisions(db: AsyncSession, user: User, wanted: list[str]) -> dict[str, FeatureDecision]:
+    """Each section by its own rules alone."""
     rules = await _rules_for(db, wanted, user)
     if not rules:
         # No rule names this person, their groups or their department: open, and no role lookup.
@@ -198,7 +250,9 @@ async def require_feature(db: AsyncSession, user: User, feature: str) -> None:
 __all__ = [
     "FEATURE_API_KEYS",
     "FEATURE_CHAT",
+    "FEATURE_EXTENSION",
     "FEATURE_FORBIDDEN_CODE",
+    "FEATURE_PROJECT_CREATE",
     "FEATURE_PROJECTS",
     "FeatureDecision",
     "decide",

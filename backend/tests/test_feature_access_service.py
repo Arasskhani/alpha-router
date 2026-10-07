@@ -1,4 +1,4 @@
-"""Who may use the web Chat and Projects.
+"""Who may use the web Chat, Projects and the other Feature Access sections.
 
 The order an administrator is promised: an admin always may; a rule on the
 person decides; otherwise a deny on a group or the department does; otherwise
@@ -50,7 +50,13 @@ async def _rule(db, feature: str, effect: str = "deny", **target) -> FeatureAcce
 class TestWithNoRules:
     async def test_everyone_may_use_every_section(self, db_session, user):
         decisions = await decide_all(db_session, user)
-        assert {key: d.allowed for key, d in decisions.items()} == {"chat": True, "projects": True, "api_keys": True}
+        assert {key: d.allowed for key, d in decisions.items()} == {
+            "chat": True,
+            "projects": True,
+            "project_create": True,
+            "api_keys": True,
+            "extension": True,
+        }
         assert all(d.reason == REASON_DEFAULT for d in decisions.values())
 
     async def test_reads_no_roles(self, db_session, user, monkeypatch):

@@ -1,6 +1,7 @@
-"""Who may use the web Chat, Projects and personal API keys: the Feature Access rules.
+"""Who may use the web Chat, Projects, creating projects, personal API keys and the
+browser extension: the Feature Access rules.
 
-All three are open to everyone by default. An administrator turns one
+All of them are open to everyone by default. An administrator turns one
 off for a user, a group or a department with a ``deny`` rule, and can give
 it back to one person inside a denied group or department with an ``allow``
 rule on that person. That is the whole model, so the table is small:
@@ -33,7 +34,17 @@ FEATURE_CHAT = "chat"
 FEATURE_PROJECTS = "projects"
 #: The person's own API keys (Settings): making one, and every use of one at the gateway.
 FEATURE_API_KEYS = "api_keys"
-FEATURES: tuple[str, ...] = (FEATURE_CHAT, FEATURE_PROJECTS, FEATURE_API_KEYS)
+#: Creating a project. Closed with Projects, and with Chat unless the person has their own Allow.
+FEATURE_PROJECT_CREATE = "project_create"
+#: The browser extension: downloading it, connecting a browser, and every call a connected browser makes.
+FEATURE_EXTENSION = "extension"
+FEATURES: tuple[str, ...] = (
+    FEATURE_CHAT,
+    FEATURE_PROJECTS,
+    FEATURE_PROJECT_CREATE,
+    FEATURE_API_KEYS,
+    FEATURE_EXTENSION,
+)
 
 
 class FeatureAccessRule(Base):
@@ -41,7 +52,10 @@ class FeatureAccessRule(Base):
 
     __tablename__ = "feature_access_rules"
     __table_args__ = (
-        CheckConstraint("feature IN ('chat', 'projects', 'api_keys')", name="chk_feature_access_feature"),
+        CheckConstraint(
+            "feature IN ('chat', 'projects', 'api_keys', 'project_create', 'extension')",
+            name="chk_feature_access_feature",
+        ),
         CheckConstraint("effect IN ('allow', 'deny')", name="chk_feature_access_effect"),
         CheckConstraint(
             "("

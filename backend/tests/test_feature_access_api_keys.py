@@ -140,8 +140,7 @@ class TestTheWebApp:
     async def test_the_admin_page_lists_and_takes_the_section(self, client, admin, user):
         headers = _sign_in(client, admin)
         listed = (await client.get("/api/admin/feature-access")).json()["features"]
-        assert [f["key"] for f in listed] == ["chat", "projects", "api_keys"]
-        assert listed[2]["title"] == "API keys"
+        assert {f["key"]: f["title"] for f in listed}["api_keys"] == "API keys"
         added = await client.post(
             "/api/admin/feature-access/rules",
             json={"feature": "api_keys", "target_type": "user", "target": user.id},

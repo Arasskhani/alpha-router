@@ -145,15 +145,18 @@ await step("the page is under Chat experience", async () => {
   const link = admin.page.getByRole("link", { name: "Feature Access" }).first();
   expect(await link.isVisible(), "no Feature Access link in the admin menu");
   await admin.page.locator(".feature-access-section__head").first().waitFor({ timeout: 20_000 });
-  for (const name of ["Chat", "Projects"]) {
-    const section = admin.page.locator("section", { has: admin.page.getByRole("heading", { name, level: 2 }) });
+  for (const name of ["Chat", "Projects", "Create projects", "API keys", "Browser extension"]) {
+    const heading = admin.page.getByRole("heading", { name, level: 2, exact: true });
+    const section = admin.page.locator("section", { has: heading });
     // A stack may hold rules already: the section says who it is open to either way.
     expect((await section.textContent()).includes("Open to everyone"), `${name} does not say who it is open to`);
   }
 });
 
 await step("an administrator closes Chat for one user on the page", async () => {
-  const chat = admin.page.locator("section", { has: admin.page.getByRole("heading", { name: "Chat", level: 2 }) });
+  const chat = admin.page.locator("section", {
+    has: admin.page.getByRole("heading", { name: "Chat", level: 2, exact: true }),
+  });
   await chat.getByRole("button", { name: "Add rule" }).click();
   await admin.page.locator("#feature-access-user").fill(USERNAME);
   await admin.page.locator(".user-owner-select__item", { hasText: `FA Check ${RUN}` }).first().click({ timeout: 10_000 });

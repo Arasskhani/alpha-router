@@ -28,7 +28,7 @@ from app.models.chat import ChatSession
 from app.models.feature_access import FEATURE_CHAT, FEATURE_PROJECTS
 from app.models.project import PROJECT_ROLE_PRIMARY_OWNER, ProjectMember
 from app.models.user import User
-from app.services.feature_access_service import FEATURE_FORBIDDEN_CODE, feature_enabled, require_feature
+from app.services.feature_access_service import FEATURE_FORBIDDEN_CODE, decide_all, feature_forbidden
 
 #: Why a project's chat is refused when Chat is: the project has no member but its owner.
 SOLO_PROJECT_REASON = "solo_project"
@@ -36,6 +36,30 @@ SOLO_PROJECT_REASON = "solo_project"
 
 def _from_extension(request: Request) -> bool:
     return bool(getattr(request.state, "extension_session_id", None))
+
+
+async def _allowed(request: Request | None, db: AsyncSession, user: User, feature: str) -> bool:
+    """One section's decision, read once per request.
+
+    The gates of one request ask about Chat and Projects more than once (the
+    Projects router, then the chat in a project), so both are decided together
+    on the first question and kept on the request.
+    """
+    cache: dict[str, bool] | None = getattr(request.state, "feature_allowed", None) if request is not None else None
+    if cache is None:
+        cache = {}
+        if request is not None:
+            request.state.feature_allowed = cache
+    if feature not in cache:
+        wanted = list(dict.fromkeys([feature, FEATURE_CHAT, FEATURE_PROJECTS]))
+        for key, decision in (await decide_all(db, user, wanted)).items():
+            cache[key] = decision.allowed
+    return cache[feature]
+
+
+async def _require(request: Request | None, db: AsyncSession, user: User, feature: str) -> None:
+    if not await _allowed(request, db, user, feature):
+        raise feature_forbidden(feature)
 
 
 async def _stored_chat_project(db: AsyncSession, chat_session_id: str | None) -> tuple[bool, str | None]:
@@ -56,7 +80,9 @@ async def _may_write_in_project(db: AsyncSession, user: User, project_id: str) -
     return access is not None and access.can("chat.write")
 
 
-async def project_chat_closed(db: AsyncSession, user: User, project_id: str | None) -> bool:
+async def project_chat_closed(
+    db: AsyncSession, user: User, project_id: str | None, request: Request | None = None
+) -> bool:
     """Whether this person's Chat is closed and the project is theirs alone.
 
     Theirs alone: they are its Primary Owner and no one else is a member
@@ -64,7 +90,7 @@ async def project_chat_closed(db: AsyncSession, user: User, project_id: str | No
     Chat - nearly everyone - costs no look at the members.
     """
     pid = (project_id or "").strip()
-    if not pid or await feature_enabled(db, user, FEATURE_CHAT):
+    if not pid or await _allowed(request, db, user, FEATURE_CHAT):
         return False
     members = (
         await db.execute(
@@ -87,22 +113,12 @@ def solo_project_chat_forbidden() -> HTTPException:
     )
 
 
-async def require_project_chat(db: AsyncSession, user: User, project_id: str | None) -> None:
+async def require_project_chat(
+    db: AsyncSession, user: User, project_id: str | None, request: Request | None = None
+) -> None:
     """Refuse the chat of a project that is this person's alone while their Chat is closed."""
-    if await project_chat_closed(db, user, project_id):
+    if await project_chat_closed(db, user, project_id, request):
         raise solo_project_chat_forbidden()
-
-
-async def chat_sections(
-    db: AsyncSession,
-    user: User,
-    chat_session_id: str | None,
-    project_id: str | None = None,
-    *,
-    unsaved_is_project: bool = True,
-) -> set[str]:
-    """The sections a request about a chat needs; see :func:`_chat_sections_and_project`."""
-    return (await _chat_sections_and_project(db, user, chat_session_id, project_id, unsaved_is_project))[0]
 
 
 async def _chat_sections_and_project(
@@ -153,8 +169,8 @@ async def require_chat_feature_for(
         return
     needed, in_project = await _chat_sections_and_project(db, user, chat_session_id, project_id, unsaved_is_project)
     for feature in sorted(needed):
-        await require_feature(db, user, feature)
-    await require_project_chat(db, user, in_project)
+        await _require(request, db, user, feature)
+    await require_project_chat(db, user, in_project, request)
 
 
 async def require_web_chat(
@@ -165,7 +181,7 @@ async def require_web_chat(
     """A route of the personal chat list: its list, search and folders."""
     if _from_extension(request):
         return
-    await require_feature(db, user, FEATURE_CHAT)
+    await _require(request, db, user, FEATURE_CHAT)
 
 
 async def require_web_projects(
@@ -176,7 +192,7 @@ async def require_web_projects(
     """Every route under /api/projects."""
     if _from_extension(request):
         return
-    await require_feature(db, user, FEATURE_PROJECTS)
+    await _require(request, db, user, FEATURE_PROJECTS)
 
 
 async def require_open_project_chat(
@@ -188,7 +204,7 @@ async def require_open_project_chat(
     """A route under /api/projects/{project_id}/chats, or one that starts a chat there."""
     if _from_extension(request):
         return
-    await require_project_chat(db, user, project_id)
+    await require_project_chat(db, user, project_id, request)
 
 
 async def require_session_section(
@@ -205,13 +221,15 @@ async def require_session_section(
     """
     if _from_extension(request):
         return
-    await require_stored_chat_section(db, user, session_id)
+    await require_stored_chat_section(db, user, session_id, request)
 
 
-async def require_stored_chat_section(db: AsyncSession, user: User, chat_session_id: str | None) -> None:
+async def require_stored_chat_section(
+    db: AsyncSession, user: User, chat_session_id: str | None, request: Request | None = None
+) -> None:
     """The section of a stored chat, when there is one: for a route that reaches a chat through
     something else (an agent run, a handoff). A chat not stored, or none, is left to the route."""
     stored, in_project = await _stored_chat_project(db, chat_session_id)
     if stored:
-        await require_feature(db, user, FEATURE_PROJECTS if in_project else FEATURE_CHAT)
-        await require_project_chat(db, user, in_project)
+        await _require(request, db, user, FEATURE_PROJECTS if in_project else FEATURE_CHAT)
+        await require_project_chat(db, user, in_project, request)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -220,6 +220,7 @@ async def create_project_endpoint(
 @router.get("/{project_id}")
 async def get_project_endpoint(
     project_id: str,
+    request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
@@ -229,7 +230,7 @@ async def get_project_endpoint(
     await touch_project_visit(db, project_id=project_id, user=user)
     await db.commit()
     # The web app shows a notice in place of the chats: the project is this person's alone and their Chat is closed.
-    project["chatClosed"] = await project_chat_closed(db, user, project_id)
+    project["chatClosed"] = await project_chat_closed(db, user, project_id, request)
     return project
 
 

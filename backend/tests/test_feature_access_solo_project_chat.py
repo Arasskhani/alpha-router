@@ -179,3 +179,21 @@ async def test_an_administrator_is_never_refused(client, db_session, admin):
     assert (await client.get(f"/api/projects/{project_id}")).json()["chatClosed"] is False
     assert (await client.get(f"/api/projects/{project_id}/chats")).status_code == 200
     assert (await client.get(f"/api/user/chat-sessions/{sid}/messages")).status_code == 200
+
+
+async def test_one_request_decides_its_sections_once(client, db_session, user, monkeypatch):
+    """The Projects router and the chat gate of one request share one decision."""
+    import app.api.feature_gate as gate
+
+    project_id, _sid = await _solo(db_session, user)
+    calls: list[list[str]] = []
+    real = gate.decide_all
+
+    async def counting(db, account, features):
+        calls.append(list(features))
+        return await real(db, account, features)
+
+    monkeypatch.setattr(gate, "decide_all", counting)
+    _sign_in(client, user)
+    assert (await client.get(f"/api/projects/{project_id}/chats")).status_code == 200
+    assert len(calls) == 1 and set(calls[0]) == {"chat", "projects"}

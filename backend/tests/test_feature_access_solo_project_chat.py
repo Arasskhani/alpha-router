@@ -181,6 +181,34 @@ async def test_an_administrator_is_never_refused(client, db_session, admin):
     assert (await client.get(f"/api/user/chat-sessions/{sid}/messages")).status_code == 200
 
 
+async def test_a_disabled_or_deleted_member_does_not_count(client, db_session, user, admin):
+    import datetime
+
+    from app.models.user import User
+
+    project_id, _sid = await _solo(db_session, user)
+    gone = User(username="gone-member", email=None, auth_provider="local", is_active=False)
+    deleted = User(
+        username="deleted-member",
+        email=None,
+        auth_provider="local",
+        is_active=True,
+        deleted_at=datetime.datetime.utcnow(),
+    )
+    db_session.add_all([gone, deleted])
+    await db_session.flush()
+    db_session.add_all(
+        [
+            ProjectMember(project_id=project_id, user_id=gone.id, role="contributor"),
+            ProjectMember(project_id=project_id, user_id=deleted.id, role="viewer"),
+        ]
+    )
+    await db_session.commit()
+    await _close_chat(db_session, user)
+    _sign_in(client, user)
+    _refused(await client.get(f"/api/projects/{project_id}/chats"))
+
+
 async def test_one_request_decides_its_sections_once(client, db_session, user, monkeypatch):
     """The Projects router and the chat gate of one request share one decision."""
     import app.api.feature_gate as gate

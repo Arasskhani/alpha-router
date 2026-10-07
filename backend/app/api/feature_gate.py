@@ -85,19 +85,35 @@ async def project_chat_closed(
 ) -> bool:
     """Whether this person's Chat is closed and the project is theirs alone.
 
-    Theirs alone: they are its Primary Owner and no one else is a member
-    (pending invitations do not count). Their Chat is read first, so an open
-    Chat - nearly everyone - costs no look at the members.
+    Theirs alone: they are its Primary Owner and no one else is an active
+    member (pending invitations, and members whose account is disabled or
+    deleted, do not count). Their Chat is read first, so an open Chat - nearly
+    everyone - costs no look at the members.
     """
     pid = (project_id or "").strip()
     if not pid or await _allowed(request, db, user, FEATURE_CHAT):
         return False
-    members = (
+    role = (
         await db.execute(
-            select(ProjectMember.user_id, ProjectMember.role).where(ProjectMember.project_id == pid).limit(2)
+            select(ProjectMember.role).where(ProjectMember.project_id == pid, ProjectMember.user_id == user.id)
         )
-    ).all()
-    return len(members) == 1 and int(members[0][0]) == int(user.id) and members[0][1] == PROJECT_ROLE_PRIMARY_OWNER
+    ).scalar_one_or_none()
+    if role != PROJECT_ROLE_PRIMARY_OWNER:
+        return False
+    other = (
+        await db.execute(
+            select(ProjectMember.user_id)
+            .join(User, User.id == ProjectMember.user_id)
+            .where(
+                ProjectMember.project_id == pid,
+                ProjectMember.user_id != user.id,
+                User.is_active.is_(True),
+                User.deleted_at.is_(None),
+            )
+            .limit(1)
+        )
+    ).first()
+    return other is None
 
 
 def solo_project_chat_forbidden() -> HTTPException:

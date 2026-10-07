@@ -2111,6 +2111,11 @@ export const docSections: DocSection[] = [
             <strong>Nobody has it</strong> until you grant it; it needs Browser Agent and the Full control setting.
           </li>
         </ul>
+        <p>
+          <a href="#admin-feature-access">Feature Access</a> has a <strong>Browser extension</strong> section too, set
+          by user, group or department like Chat or Projects. Closed for someone, it refuses the extension the same way
+          as the Browser Extension entry, on top of it.
+        </p>
         <h3>Right now</h3>
         <p>
           Path: <code>/admin/browser-extension</code>, under <strong>Chat experience</strong>. The page opens on six

@@ -194,7 +194,8 @@ export default function ChatTools() {
       <section className="settings-section" aria-labelledby="extension-link-title">
         <h2 id="extension-link-title">Browser extension</h2>
         <p className="settings-section-desc">
-          The rows above say who may use the extension, its agent and full control. Everything else about it — the
+          The rows above say who may use the extension, its agent and full control; Feature Access can also close the
+          extension for some people. Everything else about it — the
           sites it may work on, which models see page content and screenshots, what always asks, and what is happening
           right now — is on <Link to="/admin/browser-extension">Browser Extension</Link>.
         </p>

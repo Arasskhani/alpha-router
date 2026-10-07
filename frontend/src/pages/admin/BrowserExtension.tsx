@@ -11,7 +11,7 @@ import { useReadOnly } from "../../context/ReadOnlyContext";
  * The browser extension, in one place.
  *
  * Who may use the extension and its agent stays on Chat Tools, with the other
- * tools; everything else about it lives here: what is happening right now, the
+ * tools, and on Feature Access (its Browser extension section); everything else about it lives here: what is happening right now, the
  * two things an administrator reaches for when it is not (stop the runs,
  * disconnect the browsers), and every setting that governs it.
  */
@@ -124,8 +124,9 @@ export default function BrowserExtension() {
       <p className="settings-section-desc">
         Alpharouter in Chrome and Edge: a side panel beside any page, and — where you allow it — an agent that works
         in the person&apos;s tabs. Who may use it is on{" "}
-        <Link to="/admin/chat-tools">Chat Tools</Link> (Browser Extension, Browser Agent, Browser Control). Every
-        change here is recorded in Admin Logs.
+        <Link to="/admin/chat-tools">Chat Tools</Link> (Browser Extension, Browser Agent, Browser Control) and on{" "}
+        <Link to="/admin/feature-access">Feature Access</Link> (Browser extension). Every change here is recorded in
+        Admin Logs.
       </p>
 
       {error ? (

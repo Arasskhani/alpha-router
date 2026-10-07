@@ -8,14 +8,21 @@ means nothing without the first.
 A disabled account may use neither, whatever the ACLs say, and so does the
 organisation switch: turned off, the extension is refused for everyone - no
 browser connects, and a browser already connected is refused its calls.
+
+Feature Access has a Browser extension section too, closed for some people
+the same way as Chat or Projects. Closed, it refuses the extension like the
+``browser_extension`` ACL does: no download, no connecting, no calls. The
+browser stays connected and works again once the section reopens.
 """
 
 from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.feature_access import FEATURE_EXTENSION
 from app.models.user import User
 from app.services.chat_tool_access_service import permitted_tool_keys
+from app.services.feature_access_service import feature_enabled
 from app.services.extension_settings import ExtensionSettings, load_extension_settings
 from app.services.resource_access_service import resolve_resource_access_subject
 
@@ -50,8 +57,10 @@ async def refusal_message(db: AsyncSession) -> str:
 
 
 async def extension_permitted(db: AsyncSession, user: User) -> bool:
-    """May this account use the extension at all: the organisation switch, then its own access."""
+    """May this account use the extension at all: the organisation switch, Feature Access, then its ACL."""
     if await extension_switched_off(db):
+        return False
+    if not await feature_enabled(db, user, FEATURE_EXTENSION):
         return False
     return EXTENSION_TOOL in await permitted_extension_tools(db, user)
 
@@ -62,7 +71,7 @@ async def extension_features(db: AsyncSession, user: User, settings: ExtensionSe
     The organisation switch (``enabled``) is over all of it: turned off, the
     extension offers nothing to anyone, whatever the ACLs say.
     """
-    if not user.is_active or not settings.enabled:
+    if not user.is_active or not settings.enabled or not await feature_enabled(db, user, FEATURE_EXTENSION):
         allowed: frozenset[str] = frozenset()
     else:
         subject = await resolve_resource_access_subject(db, user_id=int(user.id))

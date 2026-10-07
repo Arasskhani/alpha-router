@@ -15,6 +15,7 @@ from app.config import get_settings
 from app.core.security import create_access_token
 from app.main import app as fastapi_app
 from app.models.extension import ExtensionSession
+from app.models.feature_access import FeatureAccessRule
 from app.models.security import SecurityAuditEvent
 from app.models.system import SystemSetting
 from app.models.user import User
@@ -873,3 +874,59 @@ class TestTheOrganisationSwitch:
         resp = await client.get("/api/extension/download")
         assert resp.status_code == 403
         assert resp.json()["detail"] == "Your administrator turned the browser extension off."
+
+
+class TestTheFeatureAccessSection:
+    """Feature Access → Browser extension, closed for a person, refuses the extension as its ACL does.
+
+    Independent of Chat: a closed Chat leaves the extension alone, and the other
+    way round. The browser stays connected and works again when it reopens.
+    """
+
+    async def _close(self, db_session, account):
+        rule = FeatureAccessRule(feature="extension", effect="deny", user_id=account.id)
+        db_session.add(rule)
+        await db_session.commit()
+        return rule
+
+    async def test_no_browser_can_be_authorized(self, client, db_session, user, redirect):
+        await self._close(db_session, user)
+        resp = await _authorize(client, _sign_in(client, user), redirect)
+        assert resp.status_code == 403
+        detail = resp.json()["detail"]
+        assert detail["code"] == "not_permitted"
+        assert detail["message"] == "The browser extension is not enabled for your account."
+
+    async def test_the_web_app_hears_it_is_not_permitted_and_the_download_is_refused(self, client, db_session, user):
+        await self._close(db_session, user)
+        _sign_in(client, user)
+        assert (await client.get("/api/extension/info")).json()["permitted"] is False
+        resp = await client.get("/api/extension/download")
+        assert resp.status_code == 403
+        assert resp.json()["detail"] == "The browser extension is not enabled for your account."
+
+    async def test_a_connected_browser_is_refused_and_works_again_when_it_reopens(
+        self, client, browser, db_session, user, redirect
+    ):
+        tokens = await _connect(client, browser, user, redirect)
+        rule = await self._close(db_session, user)
+        resp = await browser.get("/api/chat/models", headers=_bearer(tokens["access_token"]))
+        assert resp.status_code == 403
+        assert resp.json()["detail"]["code"] == "extension_not_permitted"
+        me = await browser.get("/api/extension/me", headers=_bearer(tokens["access_token"]))
+        assert me.status_code == 200
+        assert not any(me.json()["features"].values()) and me.json()["policy"] is None
+        await db_session.delete(rule)
+        await db_session.commit()
+        assert (await browser.get("/api/chat/models", headers=_bearer(tokens["access_token"]))).status_code == 200
+
+    async def test_a_closed_chat_leaves_the_extension_alone(self, client, browser, db_session, user, redirect):
+        tokens = await _connect(client, browser, user, redirect)
+        db_session.add(FeatureAccessRule(feature="chat", effect="deny", user_id=user.id))
+        await db_session.commit()
+        assert (await browser.get("/api/chat/models", headers=_bearer(tokens["access_token"]))).status_code == 200
+
+    async def test_an_administrator_is_never_refused(self, client, db_session, admin, redirect):
+        await self._close(db_session, admin)
+        resp = await _authorize(client, _sign_in(client, admin), redirect)
+        assert resp.status_code == 200, resp.text

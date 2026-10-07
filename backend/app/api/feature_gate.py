@@ -12,7 +12,8 @@ too (:func:`project_chat_closed`). Its files, rooms and members still work,
 and the chat opens again once a second member joins.
 
 The browser extension uses some of the same routes. It has its own access
-(Chat Tools), so a request it makes is never refused here.
+(the Browser extension section, and Chat Tools; see
+``app.services.extension_access``), so a request it makes is never refused here.
 """
 
 from __future__ import annotations

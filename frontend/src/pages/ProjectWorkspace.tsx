@@ -194,6 +194,7 @@ export default function ProjectWorkspacePage() {
           <ProjectRooms
             projectId={project.id}
             canWrite={canUpload}
+            chatClosed={chatClosed}
             onHandoff={(targetSessionId) => {
               navigate(`?session=${encodeURIComponent(targetSessionId)}`);
               setTab("chats");

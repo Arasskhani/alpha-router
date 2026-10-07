@@ -23,6 +23,8 @@ import { inputDirectionForText, messageDirectionForText } from "../lib/textDirec
 type Props = {
   projectId: string;
   canWrite: boolean;
+  /** The project's chat is closed for this person (Feature Access): no handing a decision to it. */
+  chatClosed?: boolean;
   onHandoff: (targetSessionId: string) => void;
 };
 
@@ -31,7 +33,7 @@ function newClientMessageId(): string {
   return `room-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-export default function ProjectRooms({ projectId, canWrite, onHandoff }: Props) {
+export default function ProjectRooms({ projectId, canWrite, chatClosed = false, onHandoff }: Props) {
   const [rooms, setRooms] = useState<ProjectRoom[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ProjectRoomMessage[]>([]);
@@ -368,7 +370,7 @@ export default function ProjectRooms({ projectId, canWrite, onHandoff }: Props) 
                 <h3>{selected.title}</h3>
                 <p className="form-hint">Members only. Messages stay out of Chats and project memory.</p>
               </div>
-              {canWrite ? (
+              {canWrite && !chatClosed ? (
                 <button
                   type="button"
                   className="btn btn-primary btn-sm"

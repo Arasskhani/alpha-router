@@ -9,7 +9,12 @@
  *     listed, and explained by "Check a user";
  *   - Chat closed: the user starts in Projects, the menu has no Chat, /app/chat
  *     says it is not enabled, and the server refuses the personal chat (403,
- *     feature_not_enabled) - while a turn in a project chat is answered;
+ *     feature_not_enabled) - while a turn in a team project's chat is answered;
+ *   - Chat closed also closes Create projects: no New project button, and the
+ *     server refuses creating one - until a personal Allow on Create projects;
+ *   - the chat of a project that is the user's alone follows Chat: its Chats
+ *     tab says so and the server refuses it, while its rooms keep working;
+ *   - Browser extension closed: the server says the extension is not permitted;
  *   - Projects closed as well: the user starts in Media and /app/projects says
  *     it is not enabled; the server refuses /api/projects;
  *   - API keys closed: no new personal key, and the user's key is refused at
@@ -81,6 +86,8 @@ async function signIn(username, password) {
 
 let admin;
 let userId;
+// A project of the administrator's with the user in it: its chat follows Projects.
+let teamProjectId;
 try {
   admin = await signIn(ADMIN, ADMIN_PASSWORD);
   // A plan, so the user's project turn is not refused for its budget.
@@ -106,6 +113,17 @@ try {
   const body = await made.json();
   userId = body.id ?? body.user?.id;
   expect(userId, "the new user has no id");
+  const team = await admin.page.request.post(`${BASE}/api/projects`, {
+    headers: admin.headers,
+    data: { name: `FA team ${RUN}` },
+  });
+  expect(team.ok(), `creating the team project answered ${team.status()}`);
+  teamProjectId = (await team.json()).id;
+  const joined = await admin.page.request.post(`${BASE}/api/projects/${teamProjectId}/members`, {
+    headers: admin.headers,
+    data: { userId, role: "contributor" },
+  });
+  expect(joined.ok(), `adding the user to the team project answered ${joined.status()}`);
 } catch (err) {
   console.error(`feature-access-e2e: setup failed: ${String(err?.message || err).split("\n")[0]}`);
   await browser.close();
@@ -176,13 +194,11 @@ await step("/app/chat says Chat isn't enabled, and the server refuses it", async
   expect(turn.status() === 403, `a personal turn answered ${turn.status()}`);
 });
 
-await step("a project chat still answers", async () => {
+await step("a team project's chat still answers", async () => {
   const models = await (await person.page.request.get(`${BASE}/api/chat/models`)).json();
   const model = Array.isArray(models) && models[0]?.id;
   expect(model, "the user has no chat model");
-  const project = await (
-    await person.page.request.post(`${BASE}/api/projects`, { headers: person.headers, data: { name: `FA ${RUN}` } })
-  ).json();
+  const project = { id: teamProjectId };
   const chat = await (
     await person.page.request.post(`${BASE}/api/projects/${project.id}/chats`, {
       headers: person.headers,
@@ -212,6 +228,83 @@ await step("a project chat still answers", async () => {
   const response = await answered;
   expect(response.status() === 200, `the page's project turn answered ${response.status()}`);
   return `model ${model}`;
+});
+
+let soloProjectId = null;
+
+await step("Chat closed closes Create projects: no New project, and the server refuses it", async () => {
+  await person.page.goto(`${BASE}/app/projects`);
+  await person.page
+    .getByText("Creating projects isn't enabled for your account. You can still work in projects you're invited to.")
+    .waitFor({ timeout: 15_000 });
+  expect(!(await person.page.getByRole("button", { name: "+ New project" }).isVisible()), "New project is offered");
+  const made = await person.page.request.post(`${BASE}/api/projects`, {
+    headers: person.headers,
+    data: { name: `FA solo ${RUN}` },
+  });
+  expect(made.status() === 403, `creating a project answered ${made.status()}`);
+  expect((await made.json()).detail?.feature === "project_create", "the refusal is not for Create projects");
+  const check = await (await api(`/api/admin/feature-access/check?user_id=${userId}`)).json();
+  const create = check.features.find((f) => f.feature === "project_create");
+  expect(create && !create.allowed && create.reason === "chat_closed", `Check a user said ${JSON.stringify(create)}`);
+});
+
+await step("a personal Allow on Create projects lets the user create one", async () => {
+  const added = await api("/api/admin/feature-access/rules", {
+    method: "POST",
+    data: { feature: "project_create", target_type: "user", target: userId, effect: "allow" },
+  });
+  expect(added.status() === 201, `adding the Allow answered ${added.status()}`);
+  const ruleId = (await added.json()).id;
+  try {
+    await person.page.goto(`${BASE}/app/projects`);
+    await person.page.getByRole("button", { name: "+ New project" }).waitFor({ timeout: 15_000 });
+    const made = await person.page.request.post(`${BASE}/api/projects`, {
+      headers: person.headers,
+      data: { name: `FA solo ${RUN}` },
+    });
+    expect(made.status() === 201, `creating a project answered ${made.status()}`);
+    soloProjectId = (await made.json()).id;
+  } finally {
+    await api(`/api/admin/feature-access/rules/${ruleId}`, { method: "DELETE" });
+  }
+});
+
+await step("the chat of a project that is the user's alone follows Chat", async () => {
+  expect(soloProjectId, "no project of the user's own to check");
+  const project = await (await person.page.request.get(`${BASE}/api/projects/${soloProjectId}`)).json();
+  expect(project.chatClosed === true, `the project says chatClosed ${project.chatClosed}`);
+  const chats = await person.page.request.get(`${BASE}/api/projects/${soloProjectId}/chats`);
+  expect(chats.status() === 403, `its chats answered ${chats.status()}`);
+  expect((await chats.json()).detail?.reason === "solo_project", "the refusal is not the solo-project one");
+  const refusedOnPage = [];
+  person.page.on("response", (r) => {
+    if (r.status() === 403 && r.url().includes(`/api/projects/${soloProjectId}/chats`)) refusedOnPage.push(r.url());
+  });
+  await person.page.goto(`${BASE}/app/projects/${soloProjectId}`);
+  await person.page.getByText("so chat is closed in projects that only you are in").waitFor({ timeout: 15_000 });
+  await sleep(1500);
+  expect(refusedOnPage.length <= 2, `the page kept asking for the chats: ${refusedOnPage.length} refusals`);
+  const rooms = await person.page.request.get(`${BASE}/api/projects/${soloProjectId}/rooms`);
+  expect(rooms.status() === 200, `its rooms answered ${rooms.status()}`);
+});
+
+await step("Browser extension closed: the server says the extension is not permitted", async () => {
+  const before = await (await person.page.request.get(`${BASE}/api/extension/info`)).json();
+  const added = await api("/api/admin/feature-access/rules", {
+    method: "POST",
+    data: { feature: "extension", target_type: "user", target: userId },
+  });
+  expect(added.status() === 201, `adding the extension rule answered ${added.status()}`);
+  const ruleId = (await added.json()).id;
+  try {
+    const info = await (await person.page.request.get(`${BASE}/api/extension/info`)).json();
+    expect(info.permitted === false, `the extension is still permitted (it was ${before.permitted} before)`);
+    const session = await (await person.page.request.get(`${BASE}/api/auth/session`)).json();
+    expect(session.features?.extension === false, "the session still offers the extension");
+  } finally {
+    await api(`/api/admin/feature-access/rules/${ruleId}`, { method: "DELETE" });
+  }
 });
 
 await step("API keys closed: no new key, and the key the user has is refused, then works again", async () => {
@@ -299,6 +392,14 @@ await step("the page fits a phone", async () => {
 for (const rule of await rules().catch(() => [])) {
   if (rule.target === userId && rule.target_type === "user") {
     await api(`/api/admin/feature-access/rules/${rule.id}`, { method: "DELETE" }).catch(() => undefined);
+  }
+}
+for (const [id, owner] of [
+  [soloProjectId, person],
+  [teamProjectId, admin],
+]) {
+  if (id && owner) {
+    await owner.page.request.delete(`${BASE}/api/projects/${id}`, { headers: owner.headers }).catch(() => undefined);
   }
 }
 await api(`/api/admin/users/${userId}`, { method: "DELETE" }).catch(() => undefined);

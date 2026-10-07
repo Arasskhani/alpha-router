@@ -14,7 +14,7 @@ const readOnly = vi.hoisted(() => ({ value: false }));
 vi.mock("../../context/ReadOnlyContext", () => ({ useReadOnly: () => readOnly.value }));
 
 import { api } from "../../api";
-import { decisionText, featureSummary } from "../../lib/featureAccess";
+import { decisionText, featureNote, featureSummary } from "../../lib/featureAccess";
 import FeatureAccess from "./FeatureAccess";
 
 const rule = (over: Record<string, unknown> = {}) => ({
@@ -101,17 +101,31 @@ describe("the Feature Access page", () => {
     expect(host.textContent).toContain("No rules yet.");
   });
 
-  it("draws every section the server governs, API keys among them", async () => {
+  it("draws every section the server governs, with what each also covers", async () => {
     const data = overview();
+    data.features.splice(2, 0, {
+      key: "project_create",
+      title: "Create projects",
+      rules: [],
+      deny_count: 0,
+      allow_count: 0,
+    });
     data.features.push({ key: "api_keys", title: "API keys", rules: [], deny_count: 0, allow_count: 0 });
+    data.features.push({ key: "extension", title: "Browser extension", rules: [], deny_count: 0, allow_count: 0 });
     serve({ "/api/admin/feature-access": data });
     await render();
     expect([...host.querySelectorAll("h2")].map((h) => h.textContent)).toEqual([
       "Chat",
       "Projects",
+      "Create projects",
       "API keys",
+      "Browser extension",
       "Check a user",
     ]);
+    const createSection = host.querySelector('[aria-labelledby="feature-access-project_create"]');
+    expect(createSection?.querySelector(".form-hint")?.textContent).toContain("Closed whenever Projects is");
+    const projectsSection = host.querySelector('[aria-labelledby="feature-access-projects"]');
+    expect(projectsSection?.querySelector(".form-hint")).toBeNull();
   });
 
   it("lists rules with who, access, note and who added them", async () => {
@@ -263,5 +277,18 @@ describe("its wording", () => {
     expect(decisionText({ reason: "group_deny", via: "Interns" })).toBe("Denied for the group “Interns”.");
     expect(decisionText({ reason: "department_deny", via: "Sales" })).toBe("Denied for the department “Sales”.");
     expect(decisionText({ reason: "default", via: null })).toBe("No rule applies.");
+    expect(decisionText({ reason: "projects_closed", via: null })).toBe(
+      "Closed because Projects is closed for this person.",
+    );
+    expect(decisionText({ reason: "chat_closed", via: "Sales" })).toBe(
+      "Closed because Chat is closed for this person. An Allow here gives it back.",
+    );
+  });
+
+  it("explains what closes with what", () => {
+    expect(featureNote("chat")).toContain("also closes Create projects");
+    expect(featureNote("project_create")).toContain("Closed whenever Projects is");
+    expect(featureNote("extension")).toContain("Chat Tools applies on top");
+    expect(featureNote("projects")).toBe("");
   });
 });

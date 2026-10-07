@@ -15,6 +15,7 @@ import {
   type RuleTarget,
   type TargetOptions,
   decisionText,
+  featureNote,
   featureSummary,
   targetTypeLabel,
 } from "../../lib/featureAccess";
@@ -418,8 +419,8 @@ function CheckUser({ version }: { version: number }) {
 }
 
 /**
- * Feature Access: turn the web Chat, Projects or personal API keys off for a
- * user, a group or a department, the way a plan is assigned. All are open
+ * Feature Access: turn the web Chat, Projects, creating projects, personal API
+ * keys or the browser extension off for a user, a group or a department, the way a plan is assigned. All are open
  * until a rule closes them. A rule on a person beats their groups and
  * department; among groups and departments a deny wins; administrators always
  * have everything.
@@ -503,14 +504,16 @@ export default function FeatureAccess() {
       }
     >
       <p className="muted-text">
-        Who may use the web Chat, Projects and personal API keys. All three are open to everyone until you add a
-        rule. Deny turns one off for a user, a group or a department; Allow gives it back to one person inside a
-        denied group or department. A rule on a person beats their groups and department, a deny on any group or
-        department wins over the rest, and administrators always have everything. Project chats follow Projects, so a
-        person without Chat keeps them. Closing API keys stops a person making a personal key and refuses the keys
-        they have (kept, not revoked); keys issued on <Link to="/admin/api-keys">API Keys</Link> are not affected. The
-        browser extension&apos;s access is on <Link to="/admin/chat-tools">Chat Tools</Link>. Nothing is deleted when
-        a section is turned off, and changes are recorded in <Link to="/admin/admin-logs">Admin Logs</Link>.
+        Who may use the web Chat, Projects, creating projects, personal API keys and the browser extension. Every
+        section is open to everyone until you add a rule. Deny turns one off for a user, a group or a department;
+        Allow gives it back to one person inside a denied group or department. A rule on a person beats their groups
+        and department, a deny on any group or department wins over the rest, and administrators always have
+        everything. Project chats follow Projects, so a person without Chat keeps their team projects; closing Chat
+        also closes creating projects and the chat of projects only they are in. Closing API keys stops a person
+        making a personal key and refuses the keys they have (kept, not revoked); keys issued on{" "}
+        <Link to="/admin/api-keys">API Keys</Link> are not affected. The browser extension also follows its access on{" "}
+        <Link to="/admin/chat-tools">Chat Tools</Link>. Nothing is deleted when a section is turned off, and changes
+        are recorded in <Link to="/admin/admin-logs">Admin Logs</Link>.
       </p>
 
       {error ? (
@@ -536,6 +539,7 @@ export default function FeatureAccess() {
             <div>
               <h2 id={`feature-access-${feature.key}`}>{feature.title}</h2>
               <p className="settings-section-desc">{featureSummary(feature)}</p>
+              {featureNote(feature.key) ? <p className="form-hint">{featureNote(feature.key)}</p> : null}
             </div>
             {readOnly ? null : (
               <button

@@ -465,6 +465,9 @@ type ChatPanelProps = {
   enableModelChrome?: boolean;
   hideChatSidebar?: boolean;
   onProjectChatFocus?: () => void;
+  /** The server closed this project's chat for the person (their Chat is closed and the project is
+   * theirs alone): load and poll none of it. */
+  projectChatClosed?: boolean;
 };
 
 export default function ChatPanel({
@@ -477,6 +480,7 @@ export default function ChatPanel({
   enableModelChrome = true,
   hideChatSidebar = false,
   onProjectChatFocus,
+  projectChatClosed = false,
 }: ChatPanelProps = {}) {
   const accountReadOnly = useReadOnly();
   const readOnly = accountReadOnly || projectReadOnly;
@@ -1904,6 +1908,7 @@ export default function ChatPanel({
 
   useEffect(() => {
     const gen = ++hydrateGenRef.current;
+    if (projectChatClosed) return;
     (async () => {
       try {
         const remote = await fetchUserChatsFromServer({
@@ -2066,7 +2071,7 @@ export default function ChatPanel({
         setChatsHydrated(true);
       }
     })();
-  }, [isProjectChat, projectId]);
+  }, [isProjectChat, projectId, projectChatClosed]);
 
   useEffect(() => {
     let debounceTimer: number | undefined;
@@ -2109,7 +2114,7 @@ export default function ChatPanel({
   }, [isProjectChat, projectId, activeId, chatsHydrated]);
 
   useEffect(() => {
-    if (!isProjectChat || !projectId || !chatsHydrated) return;
+    if (!isProjectChat || !projectId || !chatsHydrated || projectChatClosed) return;
     let cancelled = false;
     let inflight = false;
     let since: number | undefined;
@@ -2214,7 +2219,7 @@ export default function ChatPanel({
       window.clearInterval(id);
       document.removeEventListener("visibilitychange", onVis);
     };
-  }, [isProjectChat, projectId, chatsHydrated]);
+  }, [isProjectChat, projectId, chatsHydrated, projectChatClosed]);
 
   const loadMoreSessions = useCallback(async () => {
     if (!inSearchMode || sessionsLoadingMore || sessions.length >= sessionsTotal) return;

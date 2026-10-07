@@ -162,6 +162,8 @@ export default function ProjectWorkspacePage() {
     project && (project.myRole === "viewer" || !project.isMember),
   );
   const roleLabel = projectRoleLabel(project?.myRole);
+  // Feature Access: Chat closed for this person, and nobody else is in their project.
+  const chatClosed = Boolean(project?.chatClosed);
 
   useEffect(() => {
     if (tab === "activity" && !canEdit) setTab("chats");
@@ -181,8 +183,12 @@ export default function ProjectWorkspacePage() {
       : [...conversationTabs, "resources", "overview"];
 
   const tabContent =
-    !project || tab === "chats"
+    !project
       ? null
+      : tab === "chats"
+        ? chatClosed
+          ? <ProjectChatClosedNotice />
+          : null
       : tab === "rooms"
         ? (
           <ProjectRooms
@@ -235,8 +241,9 @@ export default function ProjectWorkspacePage() {
     <ChatPanel
       projectId={projectId}
       projectReadOnly={projectReadOnly}
-      enableModelChrome={tab === "chats"}
-      hideChatSidebar={tab === "rooms"}
+      enableModelChrome={tab === "chats" && !chatClosed}
+      hideChatSidebar={tab === "rooms" || chatClosed}
+      projectChatClosed={chatClosed}
       onProjectChatFocus={() => setTab("chats")}
       projectSidebarHeader={
         <div className="alpha-router-project-identity">
@@ -297,7 +304,7 @@ export default function ProjectWorkspacePage() {
         </div>
       }
       projectBanner={
-        tab === "chats" ? (
+        tab === "chats" && !chatClosed ? (
           <>
             {pendingMedia ? (
               <div className="flash">
@@ -314,6 +321,17 @@ export default function ProjectWorkspacePage() {
       }
       mainOverride={tabContent}
     />
+  );
+}
+
+function ProjectChatClosedNotice() {
+  return (
+    <div className="project-tab-body">
+      <p className="docs-callout docs-callout-info" role="status">
+        Chat isn&apos;t enabled for your account, so chat is closed in projects that only you are in. Rooms, resources,
+        media and members still work, and chat opens again when someone else joins this project.
+      </p>
+    </div>
   );
 }
 

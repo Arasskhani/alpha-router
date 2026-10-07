@@ -45,6 +45,8 @@ export type ProjectRecord = {
   archivedAt?: string | null;
   myRole?: ProjectRole | null;
   isMember: boolean;
+  /** GET /api/projects/{id} only: the person's Chat is closed and the project is theirs alone, so its chat is too. */
+  chatClosed?: boolean;
 };
 
 export function needsPublicTypedConfirm(

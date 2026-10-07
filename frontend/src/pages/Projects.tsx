@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { formatApiError } from "../api";
 import Modal from "../components/Modal";
+import { useCachedSession } from "../hooks/useCachedSession";
 import {
   createProject,
   listProjects,
@@ -9,6 +10,7 @@ import {
   type ProjectRecord,
   type ProjectVisibility,
 } from "../lib/projectsApi";
+import { sectionEnabled } from "../lib/userPanelNav";
 
 type CreateState = {
   open: boolean;
@@ -36,6 +38,8 @@ export default function ProjectsPage() {
   const [exploreQ, setExploreQ] = useState("");
   const [create, setCreate] = useState<CreateState>(INITIAL_CREATE);
   const [flash, setFlash] = useState("");
+  // Feature Access → Create projects (closed with Chat too, unless the person has an Allow there).
+  const canCreate = sectionEnabled(useCachedSession(), "project_create");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -80,12 +84,20 @@ export default function ProjectsPage() {
     <div className="admin-page">
       <header className="admin-page-header">
         <h1>Projects</h1>
-        <div className="admin-page-actions">
-          <button type="button" className="btn btn-primary" onClick={() => setCreate({ ...INITIAL_CREATE, open: true })}>
-            + New project
-          </button>
-        </div>
+        {canCreate ? (
+          <div className="admin-page-actions">
+            <button type="button" className="btn btn-primary" onClick={() => setCreate({ ...INITIAL_CREATE, open: true })}>
+              + New project
+            </button>
+          </div>
+        ) : null}
       </header>
+
+      {canCreate ? null : (
+        <p className="docs-callout docs-callout-info" role="status">
+          Creating projects isn&apos;t enabled for your account. You can still work in projects you&apos;re invited to.
+        </p>
+      )}
 
       {flash ? <div className="flash flash-success">{flash}</div> : null}
       {error ? <div className="flash flash-error">{error}</div> : null}
@@ -158,7 +170,7 @@ export default function ProjectsPage() {
       </section>
 
       <Modal
-        open={create.open}
+        open={create.open && canCreate}
         title="New project"
         onClose={() => setCreate(INITIAL_CREATE)}
         panelClassName="modal-panel--project-form"

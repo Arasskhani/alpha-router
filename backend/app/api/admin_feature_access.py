@@ -1,4 +1,5 @@
-"""Feature Access: the admin page that turns the web Chat, Projects or personal API keys off for some people.
+"""Feature Access: the admin page that turns the web Chat, Projects, creating projects, personal API
+keys or the browser extension off for some people.
 
 Under Chat experience, behind the same menu as Chat Tools: like a tool ACL it
 decides who may use a part of the chat, and the same administrators keep it.
@@ -36,7 +37,7 @@ router = APIRouter(prefix="/api/admin/feature-access", tags=["feature-access"])
 
 
 class RuleIn(BaseModel):
-    feature: str = Field(pattern=r"^(chat|projects|api_keys)$")
+    feature: str = Field(pattern=r"^(chat|projects|project_create|api_keys|extension)$")
     target_type: str = Field(pattern=r"^(user|group|department)$")
     target: int | str
     effect: str = Field(default="deny", pattern=r"^(allow|deny)$")

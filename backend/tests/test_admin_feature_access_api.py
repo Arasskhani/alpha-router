@@ -175,6 +175,41 @@ class TestCheck:
         assert by_key["projects"]["reason"] == "group_deny"
         assert by_key["projects"]["via"] == "Contractors"
 
+    async def test_create_projects_says_when_chat_closed_it(self, client, admin, user, session_factory):
+        headers = _sign_in(client, admin)
+        chat = await client.post(
+            f"{BASE}/rules", json={"feature": "chat", "target_type": "user", "target": user.id}, headers=headers
+        )
+        body = (await client.get(f"{BASE}/check", params={"user_id": user.id})).json()
+        by_key = {f["feature"]: f for f in body["features"]}
+        assert by_key["project_create"]["title"] == "Create projects"
+        assert (by_key["project_create"]["allowed"], by_key["project_create"]["reason"]) == (False, "chat_closed")
+        assert by_key["project_create"]["rule_id"] == chat.json()["id"]
+        assert by_key["extension"]["title"] == "Browser extension" and by_key["extension"]["allowed"] is True
+
+        allow = await client.post(
+            f"{BASE}/rules",
+            json={"feature": "project_create", "target_type": "user", "target": user.id, "effect": "allow"},
+            headers=headers,
+        )
+        assert allow.status_code == 201, allow.text
+        body = (await client.get(f"{BASE}/check", params={"user_id": user.id})).json()
+        by_key = {f["feature"]: f for f in body["features"]}
+        assert (by_key["project_create"]["allowed"], by_key["project_create"]["reason"]) == (True, "user_allow")
+        trail = await _trail(session_factory)
+        assert any(e.resource_id == "project_create" and e.action == "feature_access_rule_added" for e in trail)
+
+    async def test_the_extension_section_takes_rules(self, client, admin, user):
+        headers = _sign_in(client, admin)
+        resp = await client.post(
+            f"{BASE}/rules",
+            json={"feature": "extension", "target_type": "department", "target": "Ops"},
+            headers=headers,
+        )
+        assert resp.status_code == 201, resp.text
+        listed = {f["key"]: f for f in (await client.get(BASE)).json()["features"]}
+        assert listed["extension"]["deny_count"] == 1
+
     async def test_options_list_groups_and_departments(self, client, admin, user, db_session):
         user.department = "Finance"
         await db_session.commit()

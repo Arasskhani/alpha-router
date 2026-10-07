@@ -16,7 +16,7 @@ from app.api.admin import (
     activity_explore_opts,
 )
 from app.api.deps import get_bearer_token, get_current_user, require_active_user
-from app.api.feature_gate import require_web_projects
+from app.api.feature_gate import project_chat_closed, require_open_project_chat, require_web_projects
 from app.config import get_settings
 from app.database import get_db
 from app.models.feature_access import FEATURE_PROJECT_CREATE
@@ -228,6 +228,8 @@ async def get_project_endpoint(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
     await touch_project_visit(db, project_id=project_id, user=user)
     await db.commit()
+    # The web app shows a notice in place of the chats: the project is this person's alone and their Chat is closed.
+    project["chatClosed"] = await project_chat_closed(db, user, project_id)
     return project
 
 
@@ -665,7 +667,7 @@ class ProjectChatMessageIn(BaseModel):
     meta: dict[str, Any] = Field(default_factory=dict)
 
 
-@router.get("/{project_id}/chats")
+@router.get("/{project_id}/chats", dependencies=[Depends(require_open_project_chat)])
 async def get_project_chats(
     project_id: str,
     user: User = Depends(get_current_user),
@@ -688,7 +690,7 @@ async def get_project_chats(
     }
 
 
-@router.get("/{project_id}/chats/sync")
+@router.get("/{project_id}/chats/sync", dependencies=[Depends(require_open_project_chat)])
 async def sync_project_chats_endpoint(
     project_id: str,
     user: User = Depends(get_current_user),
@@ -710,7 +712,7 @@ async def sync_project_chats_endpoint(
     return result
 
 
-@router.post("/{project_id}/chats")
+@router.post("/{project_id}/chats", dependencies=[Depends(require_open_project_chat)])
 async def create_project_chat(
     project_id: str,
     body: ProjectChatCreateIn,
@@ -734,7 +736,7 @@ async def create_project_chat(
     return session
 
 
-@router.get("/{project_id}/chats/{session_id}")
+@router.get("/{project_id}/chats/{session_id}", dependencies=[Depends(require_open_project_chat)])
 async def get_project_chat(
     project_id: str,
     session_id: str,
@@ -747,7 +749,7 @@ async def get_project_chat(
     return session
 
 
-@router.get("/{project_id}/chats/{session_id}/composer-prefs")
+@router.get("/{project_id}/chats/{session_id}/composer-prefs", dependencies=[Depends(require_open_project_chat)])
 async def get_project_chat_composer_prefs_endpoint(
     project_id: str,
     session_id: str,
@@ -760,7 +762,7 @@ async def get_project_chat_composer_prefs_endpoint(
     return result
 
 
-@router.put("/{project_id}/chats/{session_id}/composer-prefs")
+@router.put("/{project_id}/chats/{session_id}/composer-prefs", dependencies=[Depends(require_open_project_chat)])
 async def put_project_chat_composer_prefs_endpoint(
     project_id: str,
     session_id: str,
@@ -785,7 +787,7 @@ async def put_project_chat_composer_prefs_endpoint(
     return result
 
 
-@router.delete("/{project_id}/chats/{session_id}")
+@router.delete("/{project_id}/chats/{session_id}", dependencies=[Depends(require_open_project_chat)])
 async def delete_project_chat(
     project_id: str,
     session_id: str,
@@ -798,7 +800,7 @@ async def delete_project_chat(
     return {"deleted": True}
 
 
-@router.get("/{project_id}/chats/{session_id}/messages")
+@router.get("/{project_id}/chats/{session_id}/messages", dependencies=[Depends(require_open_project_chat)])
 async def get_project_chat_messages(
     project_id: str,
     session_id: str,
@@ -821,7 +823,7 @@ async def get_project_chat_messages(
     return {"messages": messages, "hasMore": has_more, "has_more": has_more}
 
 
-@router.post("/{project_id}/chats/{session_id}/messages")
+@router.post("/{project_id}/chats/{session_id}/messages", dependencies=[Depends(require_open_project_chat)])
 async def post_project_chat_message(
     project_id: str,
     session_id: str,
@@ -844,7 +846,7 @@ async def post_project_chat_message(
     return message
 
 
-@router.post("/{project_id}/chats/{session_id}/pin")
+@router.post("/{project_id}/chats/{session_id}/pin", dependencies=[Depends(require_open_project_chat)])
 async def pin_chat(
     project_id: str,
     session_id: str,
@@ -857,7 +859,7 @@ async def pin_chat(
     return result
 
 
-@router.delete("/{project_id}/chats/{session_id}/pin")
+@router.delete("/{project_id}/chats/{session_id}/pin", dependencies=[Depends(require_open_project_chat)])
 async def unpin_chat(
     project_id: str,
     session_id: str,
@@ -1068,7 +1070,7 @@ async def delete_project_room_message_endpoint(
     return {"deleted": True}
 
 
-@router.post("/{project_id}/rooms/{room_id}/handoffs")
+@router.post("/{project_id}/rooms/{room_id}/handoffs", dependencies=[Depends(require_open_project_chat)])
 async def post_project_room_handoff(
     project_id: str,
     room_id: str,

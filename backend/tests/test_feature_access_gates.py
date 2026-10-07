@@ -4,7 +4,9 @@ What the administrator was promised, end to end through the routes:
 
 - Chat off: the personal chat list, its folders and its chats are refused,
   and so is a turn in a personal chat - but the person's project chats
-  keep working, since they follow Projects.
+  keep working, since they follow Projects (in a project with other members:
+  one that is the person's alone follows Chat, see
+  test_feature_access_solo_project_chat.py).
 - Projects off: every /api/projects route is refused, and so is a project
   chat reached through the shared chat routes.
 - The browser extension is never refused here (it has its own access), and
@@ -22,6 +24,8 @@ from app.config import get_settings
 from app.core.security import create_access_token
 from app.models.chat import ChatSession
 from app.models.feature_access import FeatureAccessRule
+from app.models.project import ProjectMember
+from app.models.user import User
 from app.services import extension_tokens
 from app.services.extension_tokens import create_session
 from app.services.feature_access_service import FEATURE_FORBIDDEN_CODE
@@ -69,7 +73,12 @@ async def _chat(db, account, project_id: str | None = None) -> str:
 
 
 async def _project(db, account) -> str:
+    """A project the account owns with one other member: its chat follows Projects."""
     created = await create_project(db, user=account, name="Launch")
+    teammate = User(username=f"teammate-{uuid.uuid4().hex[:8]}", email=None, auth_provider="local", is_active=True)
+    db.add(teammate)
+    await db.flush()
+    db.add(ProjectMember(project_id=str(created["id"]), user_id=teammate.id, role="contributor"))
     await db.commit()
     return str(created["id"])
 

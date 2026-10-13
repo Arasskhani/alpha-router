@@ -430,6 +430,10 @@ class TestReview:
         assert REVIEW["task"] in prompt
         assert "Silk Road Tower" in prompt
         assert call.kwargs["messages"][0]["role"] == "system"
+        # Room for a reasoning model to think and still answer, and a time limit the panel's wait covers.
+        assert call.kwargs["max_tokens"] == 1024
+        assert call.kwargs["timeout"] == 15.0
+        assert "A search query" in call.kwargs["messages"][0]["content"]
         # A billed helper call, named as the extension's.
         async with session_factory() as fresh:
             [log] = (await fresh.execute(select(RequestLog))).scalars().all()

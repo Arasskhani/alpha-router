@@ -87,7 +87,7 @@ const RATE_LIMIT_RETRIES = 3;
 /** How long the end of a run may take to put things back: the debugger, the banners, the badge; and to save the run. */
 const CLEANUP_MS = 3000;
 /** How long the review model may take over one action before the user is asked instead. */
-const REVIEW_MS = 45_000;
+const REVIEW_MS = 20_000;
 const SAVE_MS = 8000;
 
 /** `work`, but no longer than `ms`: what has not finished by then is left to finish on its own. */

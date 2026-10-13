@@ -180,10 +180,13 @@ describe("screenshots", () => {
     const first = conversation(steps(SCREENSHOTS_KEPT + 1));
     expect(images(first)).toHaveLength(SCREENSHOTS_KEPT);
     expect(omitted(first)).toHaveLength(1);
-    // A new block: the screenshots before it are left out, so that part reads the same at each of its steps.
+    // A new block: of the screenshots before it only that part's latest stays, so it reads the same at each step.
     const next = conversation(steps(5));
-    expect(images(next)).toHaveLength(1);
-    expect(omitted(next)).toHaveLength(4);
+    expect(images(next)).toHaveLength(2);
+    expect(omitted(next)).toHaveLength(3);
+    const settled = conversation(steps(5)).slice(0, 14);
+    for (const count of [6, 7, 8]) expect(conversation(steps(count)).slice(0, 14)).toEqual(settled);
+    for (const count of [5, 6, 7, 8]) expect(images(conversation(steps(count))).length).toBeLessThanOrEqual(SCREENSHOTS_KEPT);
   });
 
   it("zooms into a region and says its pixels are not page coordinates", async () => {

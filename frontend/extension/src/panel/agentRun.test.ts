@@ -1096,7 +1096,8 @@ describe("the conversation the model reads", () => {
     expect(tools[2].content).toContain('Chose "Blue".');
     expect(tools[4].content).not.toContain("cut");
     // Past the newest outline, an older one is cut like any old read.
-    const later = [...entries, ...step(6, "read_page", "[e9] link \"Next\"", "outline"), ...step(7, "get_page_text", text, "text"), ...step(8, "find", text, "text")];
+    // (Nine steps: the first eight are settled, and the settled part's newest outline is the later one.)
+    const later = [...entries, ...step(6, "read_page", "[e9] link \"Next\"", "outline"), ...step(7, "get_page_text", text, "text"), ...step(8, "find", text, "text"), ...step(9, "click", "ok")];
     const again = conversation(later).filter((m) => m.role === "tool") as Array<{ content: string }>;
     expect(again[0].content).toContain("older page content, cut");
     expect(again[5].content).toContain('[e9] link "Next"');

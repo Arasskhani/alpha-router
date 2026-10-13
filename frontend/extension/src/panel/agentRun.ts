@@ -329,14 +329,22 @@ function isZoom(message: ApiMessage): boolean {
  * All but the last `kept` screenshots replaced by a note, so a long run stays
  * affordable. The latest full screenshot is always among them - it is the
  * model's only source of coordinates - however many zooms came after it.
- * Before `from`, every screenshot but that latest full one is replaced.
+ * Before `from` (the settled part) only that part's own latest full screenshot
+ * may stay, so it reads the same however the steps after it go.
  */
 function withRecentScreenshots(messages: ApiMessage[], kept: number = SCREENSHOTS_KEPT, from = 0): ApiMessage[] {
+  const budget = Math.max(1, Math.floor(kept));
   const shots = messages.flatMap((message, index) => (hasImage(message) ? [index] : []));
-  const lastFull = [...shots].reverse().find((index) => !isZoom(messages[index]));
-  const newest = shots.filter((index) => index >= from).slice(-Math.max(1, Math.floor(kept)));
-  if (lastFull !== undefined && !newest.includes(lastFull)) newest.splice(0, newest.length >= Math.max(1, Math.floor(kept)) ? 1 : 0, lastFull);
-  const keep = new Set(newest);
+  const full = (index: number) => !isZoom(messages[index]);
+  const recent = shots.filter((index) => index >= from);
+  const lastFullRecent = [...recent].reverse().find(full);
+  const settledFull = [...shots].reverse().find((index) => index < from && full(index));
+  // With room for one image only, the newest full screenshot wins over the settled part's.
+  const settledKeep = settledFull !== undefined && (budget >= 2 || lastFullRecent === undefined) ? settledFull : undefined;
+  const room = budget - (settledKeep === undefined ? 0 : 1);
+  const newest = room > 0 ? recent.slice(-room) : [];
+  if (lastFullRecent !== undefined && !newest.includes(lastFullRecent)) newest.splice(0, newest.length >= room ? 1 : 0, lastFullRecent);
+  const keep = new Set(settledKeep === undefined ? newest : [settledKeep, ...newest]);
   return messages.map((message, index): ApiMessage => {
     if (message.role !== "user" || !Array.isArray(message.content) || keep.has(index) || !hasImage(message)) return message;
     return { role: "user", content: message.content.map((part) => (part.type === "image_url" ? OMITTED_SHOT : part)) };
@@ -372,8 +380,11 @@ export function conversationFor(entries: Entry[], screenshotsKept: number = SCRE
   // The latest reads of the settled part and of the latest block stay whole: the first only change with a new block.
   const whole = new Set([...reads.filter((index) => index < recentFrom).slice(-WHOLE_PAGE_RESULTS), ...reads.filter((index) => index >= recentFrom).slice(-WHOLE_PAGE_RESULTS)]);
   // The newest outline carries the references the model acts with: it is never cut, however many reads came after it.
-  const outline = [...reads].reverse().find((index) => entries[index].read === "outline");
-  if (outline !== undefined) whole.add(outline);
+  // The settled part keeps its own newest outline whole as well, so that part does not change when a later one comes.
+  const newestOutline = (inPart: (index: number) => boolean) => [...reads].reverse().find((index) => inPart(index) && entries[index].read === "outline");
+  for (const outline of [newestOutline((index) => index < recentFrom), newestOutline((index) => index >= recentFrom)]) {
+    if (outline !== undefined) whole.add(outline);
+  }
   const messages = withRecentScreenshots(
     entries.map((entry, index) =>
       entry.page && entry.message.role === "tool"

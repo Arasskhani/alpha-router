@@ -719,6 +719,8 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
   deps.browser.holdWhile?.(() => dialogsOpen > 0);
   /** Ask mode: the sites where the person allowed plain actions for the rest of this run, from a card. */
   const siteWide = new Set<string>();
+  /** Actions the reviewer allowed this run, by tool, site and what they do: the same one is not reviewed again. */
+  const reviewAllowed = new Set<string>();
   /** What the person allowed on a site for the rest of the run, by kind: "submit:example.com". */
   const forTheRun = new Set<string>();
   /** The sites the person trusts the agent on, across runs - and any they trust from a card during this one. */
@@ -1664,6 +1666,13 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     const trustedHere = Boolean(options.trustedSites && plainHere && pageNow && trusted.has(siteOf(pageNow.host)) && (approval === "user" || approval === "review"));
     if (trustedHere) approval = "none";
     let reviewNote: string | undefined;
+    // The same action on the same site, allowed once by the reviewer this run (a "Next" pressed page after page):
+    // allowed again without another call. Only an allow is remembered; an ask is asked again.
+    const reviewKey = `${name}|${pageNow ? siteOf(pageNow.host) : ""}|${summary}`;
+    if (approval === "review" && reviewAllowed.has(reviewKey)) {
+      approval = "none";
+      base.extra.review = "allow";
+    }
     if (approval === "review") {
       deps.onStep({ id: call.id, tool: name, summary, status: "running", detail: "Checking with the reviewer…" });
       // A crop around the target for a vision reviewer: only under full control, and only where a screenshot of this site may leave at all.
@@ -1686,8 +1695,10 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
         signal,
       ));
       check();
-      if (verdictFromReview.decision === "allow") approval = "none";
-      else {
+      if (verdictFromReview.decision === "allow") {
+        approval = "none";
+        reviewAllowed.add(reviewKey);
+      } else {
         approval = "user";
         reviewNote = verdictFromReview.reason;
       }

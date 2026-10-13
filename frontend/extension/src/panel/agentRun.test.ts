@@ -480,6 +480,24 @@ describe("the card comes first", () => {
   });
 });
 
+describe("the Auto reviewer", () => {
+  it("is asked once about the same action on the same site in a run, not every time", async () => {
+    const h = harness(
+      [
+        { text: "", toolCalls: [call("click", { ref: "e1" }, "v1")] },
+        { text: "", toolCalls: [call("click", { ref: "e1" }, "v2")] },
+        { text: "", toolCalls: [call("type_text", { ref: "e3", text: "SAVE10" }, "v3")] },
+        { text: "", toolCalls: [call("done", { summary: "ok" })] },
+      ],
+      { review: { decision: "allow", reason: "fine" } },
+    );
+    await run(h, { mode: "auto" });
+    // "Next" twice: one review; typing is another action, reviewed on its own.
+    expect(h.deps.review).toHaveBeenCalledTimes(2);
+    expect(h.approvals).toHaveLength(0);
+  });
+});
+
 describe("a site the person trusts", () => {
   const plainThenSend = () => [
     { text: "", toolCalls: [call("click", { ref: "e1" }, "t1")] },

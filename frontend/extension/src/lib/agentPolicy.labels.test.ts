@@ -66,10 +66,10 @@ const CASES: Case[] = [
   ["ثبت نهایی سفارش", "blocked"],
   ["پرداخت قبض", "blocked"],
   // Buying words inside other labels: they ask, never refused on sight.
-  ["Best laptops to buy", "sensitive", LINK],
-  ["How to pay your bill", "sensitive", LINK],
+  ["Best laptops to buy", "act", LINK],
+  ["How to pay your bill", "act", LINK],
   ["Pay with my saved card", "sensitive", { role: "checkbox", tag: "input" }],
-  ["راهنمای خرید", "sensitive", LINK],
+  ["راهنمای خرید", "act", LINK],
   // Nothing to do with buying at all: plain.
   ["Order history", "act"],
   ["Track my order", "act"],
@@ -114,9 +114,9 @@ const CASES: Case[] = [
   ["انتقال وجه", "blocked"],
   ["کارت به کارت", "blocked"],
   ["برداشت", "blocked"],
-  ["Sell on Amazon", "sensitive", LINK],
+  ["Sell on Amazon", "act", LINK],
   ["Swap languages", "sensitive"],
-  ["Trade-in program", "sensitive", LINK],
+  ["Trade-in program", "act", LINK],
   ["پرفروش‌ترین", "act"],
   ["فروشگاه", "act", LINK],
   ["فروشنده شوید", "act", LINK],
@@ -367,5 +367,46 @@ describe("a single key outside a text field", () => {
     expect(pressing("e", { role: "textbox", name: "Search", tag: "input" }).class).toBe("act");
     expect(pressing("ArrowDown").class).toBe("act");
     expect(pressing("Escape").class).toBe("act");
+  });
+});
+
+describe("labels that only looked sensitive", () => {
+  it.each([
+    // Persian nouns that a send word list caught.
+    ["پرسش و پاسخ", "act", LINK],
+    ["پست‌های اخیر", "act", LINK],
+    ["طرح‌های اشتراکی", "act", LINK],
+    // …while the verbs and whole labels still send.
+    ["پاسخ", "sensitive"],
+    ["پاسخ بده", "sensitive"],
+    ["اشتراک‌گذاری", "sensitive"],
+    ["ارسال", "sensitive"],
+    // Clearing a filter or a search deletes nothing.
+    ["Remove filter", "act"],
+    ["Clear all", "act"],
+    ["Clear filters", "act"],
+    ["حذف فیلترها", "act"],
+    ["Remove item", "sensitive"],
+    ["حذف", "sensitive"],
+    // "Order" on a sorting control sorts.
+    ["Order", "act", { role: "combobox", tag: "select" }],
+    ["Order", "act", { role: "columnheader", tag: "th" }],
+    ["Order", "blocked"],
+    // A cookie notice told by its privacy words.
+    ["Accept all", "act", { context: "We and our partners use tracking to personalised ads" }],
+    ["Accept all", "sensitive", { context: "Accept all terms of the loan agreement" }],
+  ] as Case[])("%s: %s", (label, cls, element) => {
+    expect(click(label, element).class).toBe(cls);
+  });
+
+  it("does not take a search box for personal details, nor a promo code for a one-time code", () => {
+    const type = (name: string, text: string, extra: Partial<ElementInfo> = {}) =>
+      classifyAction({ tool: "type_text", args: { text }, page: PAGE, element: { ref: "e1", role: "textbox", name, tag: "input", type: "text", ...extra } }, OPEN).class;
+    expect(type("Search for a place or address", "Tehran")).toBe("act");
+    expect(type("Home address", "Tehran")).toBe("sensitive");
+    expect(type("Promo code", "2024")).toBe("act");
+    expect(type("کد تخفیف", "۱۲۳۴")).toBe("act");
+    expect(type("Verification code", "482913")).toBe("blocked");
+    expect(type("Code", "482913")).toBe("sensitive");
   });
 });

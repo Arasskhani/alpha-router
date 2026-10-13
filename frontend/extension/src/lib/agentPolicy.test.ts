@@ -157,9 +157,13 @@ describe("clicking", () => {
     expect(classify("click", { element: el({ name }) })).toMatchObject({ class: "blocked", reason: "purchase_label" });
   });
 
-  it("asks, and never refuses on sight, a word that may buy inside a longer label", () => {
-    for (const [role, tag, name] of [["checkbox", "input", "Pay with my saved card"], ["link", "a", "Best laptops to buy"], ["button", "button", "Swap languages"], ["link", "a", "Sell on Amazon"], ["button", "button", "Register for the webinar"]] as const) {
+  it("asks, and never refuses on sight, a word that may buy inside a button's longer label - and a link with one just goes", () => {
+    for (const [role, tag, name] of [["checkbox", "input", "Pay with my saved card"], ["button", "button", "Swap languages"], ["button", "button", "Register for the webinar"]] as const) {
       expect(classify("click", { element: el({ role, tag, name }) }).class, name).toBe("sensitive");
+    }
+    // A link goes to a page about it, where any paying is judged again.
+    for (const name of ["Best laptops to buy", "Sell on Amazon", "راهنمای خرید", "خرید آنلاین موبایل", "فروش ویژه"]) {
+      expect(classify("click", { element: el({ role: "link", tag: "a", name, href: "https://shop.example.com/x" }) }).class, name).toBe("act");
     }
     // A form sent by such a button is refused: sending it is the buying.
     expect(classify("click", { element: el({ name: "Pay with my saved card", submits: true }) })).toMatchObject({ class: "blocked", reason: "purchase_label" });

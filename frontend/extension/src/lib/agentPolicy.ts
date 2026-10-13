@@ -161,7 +161,7 @@ const PAGE_TOOLS = new Set([
 const PURCHASE =
   /^(buy|buy (it |this )?now|pay|pay now|purchase|purchase now|checkout|check out|order|order now|donate|donate now|pre-?order|pre-?order now)$|^pay (the |this |my |your )?(bill|invoice|balance)$|\b(buy now|buy it now|pay now|place (your |the |my |an? )?order|complete (your |the |my )?(order|purchase|payment)|(proceed|continue|go) to (checkout|payment)|confirm (and )?pay|confirm (the |your )?payment|confirm (your |the |my )?(order|purchase)|make (a )?payment|submit (your |the )?(order|payment)|add funds|bid now|place (a |an )?bid)\b|\b(buy|pay|check ?out) with (1-?click|one click|apple pay|google pay|g ?pay|paypal|shop ?pay|card|credit card|debit card)\b|\bpay (\p{Sc}|\d)|^(buy|pay|donate|purchase|rent|pre-?order)( it| this)?( now| today)?( for)?[\s\-\u2013\u2014\u00b7:|,]*\p{Sc}?\s?\d[\d.,]*\s?(\p{Sc}|usd|eur|gbp|chf|inr|rub|jpy|aed|irr|تومان|ریال)?$|^order( it| this)?( now| today)?( for)?[\s\-\u2013\u2014\u00b7:|,]*(\p{Sc}\s?\d[\d.,]*|\d[\d.,]*\s?(\p{Sc}|usd|eur|gbp|chf|inr|rub|jpy|aed|irr|تومان|ریال))$/u;
 const PURCHASE_FA =
-  /^(خرید|پیش ?خرید|پرداخت|سفارش|تسویه|اهدا)$|خرید (کن|کنید|نهایی|آنلاین)|(^|\s)(بخر|بخرید|بپرداز|بپردازید)(\s|$)|سفارش (دهید|بدهید|بده)|پرداخت (آنلاین|نهایی|کنید|کن|و تکمیل|قبض)|ثبت (نهایی )?(و پرداخت )?سفارش|تکمیل (سفارش|خرید|پرداخت)|نهایی کردن (سفارش|خرید)|(تایید|تأیید) (و )?(پرداخت|سفارش|خرید)|تسویه حساب|کمک مالی|پرداخت [\d۰-۹]/;
+  /^(خرید|پیش ?خرید|پرداخت|سفارش|تسویه|اهدا)$|خرید (کن|کنید|نهایی)|(^|\s)(بخر|بخرید|بپرداز|بپردازید)(\s|$)|سفارش (دهید|بدهید|بده)|پرداخت (آنلاین|نهایی|کنید|کن|و تکمیل|قبض)|ثبت (نهایی )?(و پرداخت )?سفارش|تکمیل (سفارش|خرید|پرداخت)|نهایی کردن (سفارش|خرید)|(تایید|تأیید) (و )?(پرداخت|سفارش|خرید)|تسویه حساب|کمک مالی|پرداخت [\d۰-۹]/;
 /**
  * Buying words inside a longer label ("Best laptops to buy", "Pay bills"):
  * a click there may buy - it asks, and a form it sends is refused.
@@ -204,11 +204,20 @@ const DELETE_FOREVER =
 const DELETE_FOREVER_FA = /حذف (دائم|دائمی|همیشگی|برای همیشه|کامل)|خالی کردن سطل|پاک کردن (همه|کل)|حذف (همه|همه‌ی|کل)|حذف حساب|بستن حساب|غیرفعال ?سازی حساب/;
 /** Words that send, publish or reply (the administrator can relax these). Subscribing is PURCHASE_LIKE. */
 const SEND = /\b(send|reply|forward|post|publish|share|unsubscribe|tweet|comment)\b/;
-/** "ثبت" sends what a form holds ("ثبت", "ثبت نظر"); "ثبت‌نام" is joining, judged apart. */
-const SEND_FA = /ارسال|فرستادن|بفرست|انتشار|منتشر|پست|پاسخ|بازارسال|هدایت|اشتراک|ثبت(?! ?نام)/;
+/**
+ * "ثبت" sends what a form holds ("ثبت", "ثبت نظر"); "ثبت‌نام" is joining, judged apart. "پاسخ", "پست",
+ * "اشتراک" and "هدایت" are nouns too («پرسش و پاسخ» is a FAQ, «پست‌های اخیر» a list of posts): they send
+ * only as a whole label or as a verb.
+ */
+const SEND_FA =
+  /ارسال|فرستادن|بفرست|انتشار|منتشر کن|بازارسال|ثبت(?! ?نام)|اشتراک ?گذاری|به اشتراک بگذار|پاسخ (بده|دهید|دادن)|^(پاسخ|پاسخ دادن|پست|پست کن|اشتراک|هدایت|هدایت کن|منتشر)$/;
 /** Words that delete or discard (the administrator can relax these). */
 const DELETE = /\b(delete|remove|discard|erase|trash|clear all)\b/;
 const DELETE_FA = /حذف|پاک ?کردن|دور انداختن/;
+/** Removing a filter or a search, or clearing a selection, deletes nothing anyone keeps. */
+const HARMLESS_DELETE =
+  /^(clear|clear all|reset)$|\b(remove|clear|delete) (all |the |this )?(filters?|selection|search|search terms?|tags?|query|sorting)\b|^clear all filters$/;
+const HARMLESS_DELETE_FA = /(حذف|پاک ?کردن) (همه )?(فیلتر|فیلترها|جستجو|جست ?و ?جو|انتخاب|انتخاب ?ها)/;
 /** Words that submit something other than a form (the administrator relaxes them with forms). */
 const SUBMIT = /\bsubmit\b/;
 /** Words that download (the administrator can relax these). */
@@ -231,7 +240,7 @@ const HARMLESS_CONFIRM = /^(accept (all )?cookies|allow (all )?cookies|i accept(
  * loan's terms or a trade offer accepts those.
  */
 const ACCEPT_ON_NOTICE = /^(accept|accept all|accept (&|and) (close|continue)|allow all|i accept( all)?|agree (&|and) (close|continue)|قبول|قبول همه|پذیرش|پذیرش همه)$/;
-const COOKIE_NOTICE = /cookie|consent|gdpr|کوکی/;
+const COOKIE_NOTICE = /cookie|consent|gdpr|your privacy|privacy (choices|settings|preferences)|personali[sz]ed (ads|content)|our partners|tracking|کوکی|حریم خصوصی/;
 /** A dialog's bare yes: judged by what the dialog asks. */
 const BARE_YES = /^(ok|okay|yes|continue|done|تایید|تأیید|بله|باشه|ادامه)$/;
 /**
@@ -427,6 +436,10 @@ function money(label: string): Reading {
   return reading(label, [MONEY, MONEY_FA], [MONEY_WORDS, MONEY_WORDS_FA]);
 }
 
+/** Controls that sort or choose a view: on them a bare "Order" is the order of a list. */
+const SORT_ROLES = new Set(["combobox", "listbox", "option", "columnheader", "tab", "radio", "menuitemradio"]);
+const SORT_ORDER = /^(order|order by|sort order)$/;
+
 /** Two ways offered side by side: "ورود | ثبت‌نام", "Sign in / Register", "Log in or sign up". */
 const EITHER = /\||\/|\bor\b|(^|\s)یا(\s|$)/;
 
@@ -484,7 +497,9 @@ function labelVerdict(element: ElementInfo, said: string[], linkish: boolean, pa
   // sends no form it asks; the whole label, a buying phrase, or a form it sends is refused.
   const refuses = (found: Reading) => found === "strong" || (found === "weak" && Boolean(element.submits) && !linkish);
   // Whatever the element claims to be: a <div onclick> drawn as a button places an order as well as a <button> does.
-  const buying = strongest(purchase);
+  // But a bare "Order" on a sorting control - a menu, a column's header, a tab - sorts.
+  const sorting = SORT_ROLES.has(element.role) || element.tag === "select";
+  const buying = sorting && said.every((label) => matches(label, SORT_ORDER)) ? null : strongest(purchase);
   if (refuses(buying)) return blocked("purchase_label", `The agent never buys or pays: ${named(element)} is for the user to click.`);
   const trading = strongest(money);
   if (refuses(trading)) return blocked("money_label", `The agent never trades or moves money: ${named(element)} is for the user to click.`);
@@ -493,10 +508,12 @@ function labelVerdict(element: ElementInfo, said: string[], linkish: boolean, pa
   }
   const joining = strongest((label) => signUp(label, Boolean(element.submits) && !linkish));
   if (refuses(joining)) return blocked("account_creation", `The agent never creates accounts: ${named(element)} is for the user to click.`);
-  if (buying || said.some((label) => matches(label, PURCHASE_LIKE, PURCHASE_LIKE_FA))) {
+  // A buying or money word inside a link's longer label ("Best laptops to buy", «راهنمای خرید») goes to a page about it,
+  // which is where the paying would be judged: a plain action. On a button it may buy, and asks.
+  if ((buying && !(buying === "weak" && linkish)) || said.some((label) => matches(label, PURCHASE_LIKE, PURCHASE_LIKE_FA))) {
     return verdict("sensitive", "purchase_like", `Clicking ${named(element)} may buy something, or start paying for one.`);
   }
-  if (trading) return verdict("sensitive", "money_like", `Clicking ${named(element)} may trade or move money.`);
+  if (trading && !(trading === "weak" && linkish)) return verdict("sensitive", "money_like", `Clicking ${named(element)} may trade or move money.`);
   if (joining) return verdict("sensitive", "registration", `Clicking ${named(element)} may sign you up for something.`);
   if (consentPage(page.url) || said.some((label) => matches(label, AUTHORIZE, AUTHORIZE_FA) && !harmless(label, element))) {
     return verdict("sensitive", "authorization", `${named(element)} may give a program access to an account, or change what keeps one safe.`);
@@ -511,7 +528,7 @@ function labelVerdict(element: ElementInfo, said: string[], linkish: boolean, pa
   if (said.some((label) => matches(label, DOWNLOAD, DOWNLOAD_FA))) {
     return asks(!relax.downloads, "download", `Clicking ${named(element)} may download a file.`);
   }
-  if (said.some((label) => matches(label, DELETE, DELETE_FA))) {
+  if (said.some((label) => matches(label, DELETE, DELETE_FA) && !matches(label, HARMLESS_DELETE, HARMLESS_DELETE_FA))) {
     return asks(!relax.delete, "delete_label", `Clicking ${named(element)} may delete something.`);
   }
   if (said.some((label) => matches(label, SUBMIT))) {
@@ -673,6 +690,8 @@ function nationalIdIn(text: string): boolean {
 
 /** A field's name that asks for a code. */
 const CODE_FIELD = /\bcode\b|(^|\s)کد/i;
+/** Codes that are no secret: a discount, a coupon, a gift card's printed code, who referred you. */
+const OPEN_CODE_FIELD = /\b(promo|promotion|coupon|discount|voucher|referral|invite|gift)\b|کد تخفیف|کوپن|کد معرف|کد دعوت/i;
 
 /**
  * What is typed, read too: a field's name can say nothing while the text
@@ -684,7 +703,8 @@ function textVerdict(text: unknown, element: ElementInfo): Verdict | null {
   if (cardNumberIn(text)) return blocked("secret_text", "The agent never types a card number: that is for the user to enter.");
   if (ibanIn(text)) return blocked("secret_text", "The agent never types a bank account number (an IBAN or Sheba): that is for the user to enter.");
   if (nationalIdIn(text)) return blocked("secret_text", "The agent never types a national ID number: that is for the user to enter.");
-  if (/^\s*\d{4,8}\s*$/.test(asciiDigits(text)) && matches(`${element.name} ${element.text ?? ""}`, CODE_FIELD)) {
+  const fieldSays = `${element.name} ${element.text ?? ""}`;
+  if (/^\s*\d{4,8}\s*$/.test(asciiDigits(text)) && matches(fieldSays, CODE_FIELD) && !matches(fieldSays, OPEN_CODE_FIELD)) {
     return verdict("sensitive", "code_like", `The text is a short number typed where ${named(element)} asks for a code: a one-time code is the user's to give.`);
   }
   return null;
@@ -706,7 +726,9 @@ function typeVerdict(element: ElementInfo, page: { url: string; host: string }, 
   // The page judges the field by everything it says about it; its name is checked here as well.
   if (sensitiveText(element.name)) return secret();
   if (consentPage(page.url)) return verdict("sensitive", "authorization", `Typing on a page that gives a program access to an account.`);
-  if (matches(field, PERSONAL_FIELD, PERSONAL_FIELD_FA) || element.type === "tel") {
+  // A search box that mentions an address or a phone ("Search for a place or address") gives the page no one's details.
+  const searchBox = Boolean(element.search) || element.role === "searchbox" || element.type === "search" || matches(element.name, SEARCH, SEARCH_FA);
+  if ((!searchBox && matches(field, PERSONAL_FIELD, PERSONAL_FIELD_FA)) || element.type === "tel") {
     return verdict("sensitive", "personal_data", `Typing into ${named(element)} gives a page personal details.`);
   }
   if (typed) return typed;

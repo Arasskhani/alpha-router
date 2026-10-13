@@ -1135,7 +1135,9 @@ export const userManualSections: DocSection[] = [
         <p>
           When your administrator allows it, the side panel has an <strong>Agent</strong> tab: describe a task, and
           Alpharouter carries it out in the tab next to the panel — reading the page, clicking, typing, choosing,
-          opening pages — one step at a time, each shown in the panel as it happens.
+          opening pages — each step shown in the panel as it happens. It starts with the page already read for the
+          model, and in Plan and Auto mode it fills a whole form in one step, so a small task takes a few model turns,
+          not one per field.
         </p>
         <h3>Who decides</h3>
         <DocsTable>
@@ -1149,7 +1151,7 @@ export const userManualSections: DocSection[] = [
           <tbody>
             <tr>
               <td>Looking</td>
-              <td>Reading or searching the page, listing tabs, scrolling, waiting</td>
+              <td>Reading the page, listing tabs, scrolling, waiting; a search box and its Search button</td>
               <td>Goes ahead, except on a site the page went to by itself: you are asked first.</td>
             </tr>
             <tr>
@@ -1160,14 +1162,17 @@ export const userManualSections: DocSection[] = [
                 and the sites it will work on and waits for you to approve it once; then it acts on those sites without
                 asking each time. <strong>Auto</strong> mode (when your administrator turned it on): a review model
                 checks each action against your task, and asks you when it is not sure. Your administrator chooses
-                which modes are offered and which one a run starts in; the panel remembers the one you last chose.
+                which modes are offered and which one a run starts in; the panel remembers the one you last chose
+                until your administrator changes the default. The sites your task names (<em>on github.com</em>,{" "}
+                <em>در دیجی‌کالا</em>), and every page of a site the run already works on, count as the run&apos;s own
+                sites: going there does not ask.
               </td>
             </tr>
             <tr>
               <td>Sensitive</td>
               <td>
-                Sending a form; a button that sends, submits, deletes, confirms, shares, accepts, transfers,
-                downloads or publishes; an <em>Upgrade</em>, <em>Subscribe</em> or <em>Start free trial</em> button;
+                Sending a form (but not a search); a button that sends, submits, deletes, confirms, shares, accepts,
+                transfers, downloads or publishes; an <em>Upgrade</em>, <em>Subscribe</em> or <em>Start free trial</em> button;
                 Enter in a message box; a one-letter key pressed outside a text field (sites use them to archive,
                 delete or send); a short number typed where a page asks for a code; a button with no name, whose
                 purpose nobody can tell; going to another site, or working on one the page went to by itself
@@ -1201,7 +1206,22 @@ export const userManualSections: DocSection[] = [
           (sending, deleting, another site, the rows above) or what is refused, and it is forgotten when the run
           ends. The rules read a button by its whole label, in English and Persian: <em>ورود | ثبت‌نام</em> is a
           sign-in link, a bare <em>لغو</em> or <em>تایید</em> is an ordinary click, and one that says what it
-          cancels or confirms (<em>لغو سفارش</em>, <em>تایید انتقال</em>) always asks.
+          cancels or confirms (<em>لغو سفارش</em>, <em>تایید انتقال</em>) always asks. A link that only mentions
+          prices or buying (<em>Pricing</em>, <em>خرید آنلاین</em>) is an ordinary click; a form that buys still asks,
+          and paying is still refused.
+        </p>
+        <p>
+          A card about sending a form, a download, an upload or a page&apos;s own question also offers{" "}
+          <strong>Allow</strong> <em>sending forms</em> <strong>on</strong> <em>site</em> <strong>for this run</strong>{" "}
+          (or downloads, uploads, the page&apos;s questions): the same kind of action on that site goes ahead until
+          the run ends. Sending a message, deleting, and the refused list are never covered.
+        </p>
+        <p>
+          When your administrator allows it, a card about an ordinary action also offers{" "}
+          <strong>Always allow on</strong> <em>site</em>: that site becomes a <strong>trusted site</strong>, and the
+          agent&apos;s ordinary actions there go ahead in every run without a card or a review. What always asks
+          still asks there. The sites you trust are listed under <strong>Trusted sites</strong> at the top of the
+          Agent tab, each with a button to remove it; they are kept in this browser only.
         </p>
         <p>
           <strong>Plan mode</strong> is a good fit for longer, mostly-on-its-own work: the agent looks first, then
@@ -1230,7 +1250,7 @@ export const userManualSections: DocSection[] = [
           <li>
             While the model works out its next step the panel says <em>Thinking… (model, 25 s)</em>, with its words
             as they come. A step that gets nothing back for a minute and a half is tried once more, and the panel
-            says so; a page that does not answer within 15 seconds (a busy page, or one waiting on a dialog) is left,
+            says so; one still going after four minutes ends with the reason, since asking again would take as long; a page that does not answer within 15 seconds (a busy page, or one waiting on a dialog) is left,
             and the agent is told. If the model only says what it will do without doing it, it is reminded once; a
             second time, the run ends as <em>Stopped: the model did not act</em> — never as finished.
           </li>
@@ -1245,9 +1265,11 @@ export const userManualSections: DocSection[] = [
             start it again and it runs normally.
           </li>
           <li>
-            Tabs the agent opens are grouped under <strong>Alpharouter</strong> in the tab strip, and the Alpharouter
-            button in the toolbar carries a coloured dot for as long as a run is on — cyan while it works, amber while
-            it waits for you, grey while you have taken over — so you can see it from any tab.
+            The tab the agent works in — the one you started from as well as the ones it opens — is grouped under{" "}
+            <strong>Alpharouter</strong> in the tab strip, and its page carries a coloured border from the first step:
+            cyan while the agent works, amber while it waits for you, grey while you have taken over. The toolbar
+            button carries a dot in the same colour, so you can see it from any tab. When the run ends the border goes
+            and your own tab leaves the group, back where it was.
           </li>
         </ul>
         <h3>How it keeps track</h3>

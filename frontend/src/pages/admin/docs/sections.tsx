@@ -2200,7 +2200,11 @@ export const docSections: DocSection[] = [
                 sending, deleting, Enter in a message box, a control with no name, another site, and a site a page
                 moved the tab to by itself (even reading it). An action too long for the review model to see whole
                 goes to the person too. The review model must be one of the page-content models when that list is
-                set. Reviews are billed to the person.
+                set. Reviews are billed to the person. A reasoning model works as a reviewer: it gets room to think
+                (1,024 tokens) and 15 seconds to answer, and an allow is remembered for the same action on the same
+                site for the rest of the run (a <em>Next</em> pressed page after page is reviewed once). Under full
+                control the panel sends a crop of the page around the target only to a review model that reads
+                images.
               </td>
             </tr>
             <tr>
@@ -2228,12 +2232,26 @@ export const docSections: DocSection[] = [
                 error) and Chrome&apos;s debugging bar; the coloured dot on the toolbar button for the length of a
                 run; and the <strong>take-over pause</strong> - a click, key or scroll of the person&apos;s own on
                 the page holds the run until they press Resume, on the banner or in the panel, and the agent
-                judges the page afresh before it goes on. Also fixed, so that no page or model can hang a run:
+                judges the page afresh before it goes on. The tab a run works in, the person&apos;s own included,
+                joins the <strong>Alpharouter</strong> tab group and carries the coloured border from the first step,
+                in every mode, and both are put back when the run ends. Also fixed, so that no page or model can hang a run:
                 a page gets 15 seconds to answer each call (then the agent is told it did not answer); a model
-                step is dropped after 90 seconds without a byte, or 4 minutes in all, and tried once more; the
+                step is dropped after 90 seconds without a byte (and tried once more), or 4 minutes in all; the
                 page&apos;s own dialogs are answered as they open (see <em>Always ask before</em>); and Stop ends
                 a run at once, whatever it waits on. The banner is a small pill at the top centre that takes a
                 click only on its own Stop and Resume, and is left out of screenshots.
+              </td>
+            </tr>
+            <tr>
+              <td>People may trust a site for the agent</td>
+              <td>
+                On by default. A person may choose <strong>Always allow on</strong> <em>site</em> on an approval card
+                for an ordinary action: the agent&apos;s ordinary actions on that site then go ahead in their runs
+                without a card or a review, until they remove it. It never covers what always asks or what is refused,
+                and the list stays in their browser. Off, nobody&apos;s trusted sites count and the button is gone.
+                Separately, every card about sending a form, a download, an upload or a page&apos;s question offers{" "}
+                <em>for this run</em> on that site (never for sending a message or deleting); step events record
+                these as <code>user_run</code> and <code>user_trusted</code>.
               </td>
             </tr>
             <tr>
@@ -2294,7 +2312,10 @@ export const docSections: DocSection[] = [
               <td>
                 <strong>Plan mode</strong> can be turned off (Ask is always offered; Auto is its own switch above), and
                 the <strong>default mode</strong> is what a run starts in unless the person chose another that is
-                on — Plan by default. <strong>Most minutes per task</strong> (20): a run past it ends before its next
+                on — Plan by default; changing it overrides the choice people saved before.{" "}
+                <strong>Agent reasoning</strong> (provider default): <em>Low</em> or <em>Medium</em> asks a model that
+                reasons to think less at each step — quicker, cheaper steps; models that do not reason are unaffected.
+                Low suits most browsing tasks. <strong>Most minutes per task</strong> (20): a run past it ends before its next
                 step, and the server refuses a step of a run that is two minutes past it (<code>run_too_long</code>).{" "}
                 <strong>Most tabs per task</strong> (10): the agent is told when it cannot open another.{" "}
                 <strong>Runs per person per day</strong> (empty: no limit): counted from the runs in Admin Logs by

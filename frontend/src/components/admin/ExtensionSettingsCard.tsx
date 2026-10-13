@@ -63,6 +63,7 @@ type ExtensionSettings = {
   screenshot_after_action: boolean;
   save_runs: boolean;
   private_runs: boolean;
+  trusted_sites: boolean;
 };
 
 /** A connection the card can offer to tick as inside the organisation. */
@@ -1016,6 +1017,16 @@ export default function ExtensionSettingsCard() {
             giving a program access to an account and typing personal details always ask or are refused, and cannot be
             turned off here.
           </p>
+          <label className="extension-admin__choice">
+            <input type="checkbox" checked={form.trusted_sites} disabled={locked} onChange={(e) => patch({ trusted_sites: e.target.checked })} />
+            <span>
+              <strong>People may trust a site for the agent</strong>
+              <span className="muted-text">
+                From an approval card: the agent&apos;s plain actions on that site then go ahead without asking, in every run,
+                until they remove it. What always asks below still asks; off, nobody&apos;s trusted sites count.
+              </span>
+            </span>
+          </label>
           <div className="extension-admin__approvals">
             {APPROVALS.map((approval) => (
               <label key={approval.key} className="extension-admin__choice">

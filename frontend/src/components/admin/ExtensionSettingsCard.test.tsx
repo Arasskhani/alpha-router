@@ -47,6 +47,7 @@ const SETTINGS = {
   screenshot_after_action: true,
   save_runs: true,
   private_runs: true,
+  trusted_sites: true,
 };
 const CONNECTIONS = [
   { id: 1, name: "OpenAI", provider: "openai", host: "api.openai.com", active: true, looks_internal: false, state: "ok" },
@@ -467,8 +468,11 @@ describe("the sections added for R1", () => {
     await act(async () => checkbox("Screenshots of other sites may go").click());
     expect(checkbox("A screenshot after every change").checked).toBe(true);
     await act(async () => checkbox("A screenshot after every change").click());
+    expect(checkbox("People may trust a site").checked).toBe(true);
+    await act(async () => checkbox("People may trust a site").click());
     await save();
     expect(lastPut).toMatchObject({
+      trusted_sites: false,
       screenshot_after_action: false,
       agent_max_minutes: 45,
       agent_max_tabs: 4,

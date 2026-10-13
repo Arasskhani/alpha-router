@@ -191,6 +191,36 @@ describe("a run", () => {
     expect(pageCalls.filter((c) => c.method === "click")).toHaveLength(2);
   });
 
+  it("lets the person trust a site from a card, lists it, and takes it back", async () => {
+    replies = [
+      toolFrame([{ id: "c1", name: "click", args: { ref: "e1" } }]),
+      toolFrame([{ id: "c2", name: "click", args: { ref: "e1" } }]),
+      toolFrame([{ id: "c3", name: "done", args: { summary: "Twice." } }]),
+    ];
+    await render();
+    await start("Click next twice.");
+    await until(() => Boolean(host.querySelector('[role="alertdialog"]')), "the approval card");
+    const always = [...host.querySelectorAll("button")].find((b) => b.textContent?.startsWith("Always allow on "));
+    expect(always?.textContent).toBe("Always allow on example.com");
+    await act(async () => always!.click());
+    await until(() => host.textContent!.includes("Twice."), "the summary");
+    expect(pageCalls.filter((c) => c.method === "click")).toHaveLength(2);
+    await until(() => host.textContent!.includes("Trusted sites (1)"), "the trusted list");
+    expect((await chrome.storage.local.get("alpharouter.trustedSites"))["alpharouter.trustedSites"]).toEqual(["example.com"]);
+    await act(async () => (host.querySelector('[aria-label="Stop trusting example.com"]') as HTMLButtonElement).click());
+    await until(() => !host.textContent!.includes("Trusted sites"), "the list to empty");
+  });
+
+  it("offers no trust when the administrator turned it off", async () => {
+    replies = [toolFrame([{ id: "c1", name: "click", args: { ref: "e1" } }]), toolFrame([{ id: "c2", name: "done", args: { summary: "Once." } }])];
+    await render({ ...ME, policy: { ...ME.policy!, trusted_sites: false } });
+    await start("Click next.");
+    await until(() => Boolean(host.querySelector('[role="alertdialog"]')), "the approval card");
+    expect([...host.querySelectorAll("button")].some((b) => b.textContent?.startsWith("Always allow"))).toBe(false);
+    await act(async () => button("Allow").click());
+    await until(() => host.textContent!.includes("Once."), "the summary");
+  });
+
   it("lets the person allow sending forms on the site for the rest of the run", async () => {
     replies = [
       toolFrame([{ id: "c1", name: "click", args: { ref: "e2" } }]),

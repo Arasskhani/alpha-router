@@ -480,6 +480,48 @@ describe("the card comes first", () => {
   });
 });
 
+describe("a site the person trusts", () => {
+  const plainThenSend = () => [
+    { text: "", toolCalls: [call("click", { ref: "e1" }, "t1")] },
+    { text: "", toolCalls: [call("type_text", { ref: "e3", text: "SAVE10" }, "t2")] },
+    { text: "", toolCalls: [call("click", { ref: "e4" }, "t3")] },
+    { text: "", toolCalls: [call("done", { summary: "ok" })] },
+  ];
+
+  it("lets plain actions go ahead without a card, or the reviewer, while what always asks still asks", async () => {
+    const h = harness(plainThenSend(), { review: { decision: "allow", reason: "fine" } });
+    await run(h, { trustedSites: new Set(["example.com"]) });
+    expect(h.approvals.map((a) => a.summary)).toEqual(['Click "Send message"']);
+    expect(h.reports.filter((r) => r.action !== "unknown" && (r.detail as Record<string, unknown>)?.approval).map((r) => (r.detail as Record<string, unknown>).approval)).toEqual([
+      "user_trusted",
+      "user_trusted",
+      "user",
+    ]);
+    const auto = harness(plainThenSend(), { review: { decision: "allow", reason: "fine" } });
+    await run(auto, { mode: "auto", trustedSites: new Set(["example.com"]) });
+    expect(auto.deps.review).not.toHaveBeenCalled();
+  });
+
+  it("is offered on a plain action's card, and once chosen holds for this run and is kept for the next", async () => {
+    const h = harness(plainThenSend(), { approve: (request) => (request.offerTrust ? "trust" : true) });
+    const trust = vi.fn();
+    h.deps.trust = trust;
+    await run(h, { trustedSites: new Set() });
+    expect(h.approvals.map((a) => [a.summary, a.offerTrust])).toEqual([
+      ['Click "Next"', "example.com"],
+      ['Click "Send message"', undefined],
+    ]);
+    expect(trust).toHaveBeenCalledWith("example.com");
+  });
+
+  it("is neither offered nor counted when the administrator turned trust off", async () => {
+    const h = harness(plainThenSend());
+    await run(h);
+    expect(h.approvals.every((a) => a.offerTrust === undefined)).toBe(true);
+    expect(h.approvals).toHaveLength(3);
+  });
+});
+
 describe("allowing a kind of action on a site for the rest of the run", () => {
   it("offers it for sending a form, downloading and uploading, then asks no more for that kind there", async () => {
     const h = harness(

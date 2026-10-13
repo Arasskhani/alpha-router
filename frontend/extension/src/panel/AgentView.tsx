@@ -17,6 +17,7 @@ import { ChatStreamError } from "../lib/chatStream";
 import { getClient } from "../lib/client";
 import { fromTabScript, isExtensionMessage } from "../lib/messages";
 import { readablePage } from "../lib/sites";
+import { loadTrustedSites, trustSite, untrustSite } from "../lib/trustedSites";
 import { DisconnectedError, TemporaryError } from "../lib/tokens";
 import { useActivePage, useSiteAccess } from "./activePage";
 import { chooseDriver, TabDrivers } from "../lib/driver";
@@ -210,6 +211,10 @@ export default function AgentView({ me, server, hidden = false, onDisconnected, 
   const [paused, setPaused] = useState(false);
   /** A private run: not saved to the person's chat history (its steps still go to Admin Logs). */
   const [privateRun, setPrivateRun] = useState(false);
+  /** The sites this person trusts the agent on, across runs (kept in this browser). */
+  const [trustedList, setTrustedList] = useState<string[]>([]);
+  const trustedNow = useRef<string[]>([]);
+  trustedNow.current = trustedList;
   /** The run's steps as they ended, in order, for the chat it becomes. */
   const stepsTaken = useRef<Map<string, StepView>>(new Map());
   const controller = useRef<AbortController | null>(null);
@@ -246,6 +251,18 @@ export default function AgentView({ me, server, hidden = false, onDisconnected, 
   const savesRuns = me.policy?.save_runs !== false;
   /** A run may be kept out of the history when the person has Private Mode and the administrator allows private runs. */
   const privateOffered = savesRuns && me.features.private_mode && me.policy?.private_runs !== false;
+  /** A person may trust a site for the agent unless the administrator turned that off. */
+  const trustAllowed = me.policy?.trusted_sites !== false;
+
+  useEffect(() => {
+    let live = true;
+    void loadTrustedSites().then((sites) => {
+      if (live) setTrustedList(sites);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
   const rules = useMemo<PolicyContext>(() => {
     // Both addresses: the server this copy talks to, and the one the server gives, if they differ.
     const own = [hostOf(server), hostOf(me.server.url)].filter((host): host is string => host !== null);
@@ -517,6 +534,11 @@ export default function AgentView({ me, server, hidden = false, onDisconnected, 
       },
       onStep: showStep,
       onText: (text) => append({ kind: "text", id: randomHex(6), text }),
+      trust: (site) => {
+        void trustSite(site)
+          .then(setTrustedList)
+          .catch(() => undefined);
+      },
       pause: gate.current ?? undefined,
       onState: (state) => void showBadge(state),
     };
@@ -611,7 +633,19 @@ export default function AgentView({ me, server, hidden = false, onDisconnected, 
         }
       }
       const result = await runAgent(
-        { task, mode, maxSteps, maxMinutes, screenshotsKept, screenshotAfterAction, rules, runId: run, nonce: randomHex(6), modelRef: modelId },
+        {
+          task,
+          mode,
+          maxSteps,
+          maxMinutes,
+          screenshotsKept,
+          screenshotAfterAction,
+          rules,
+          runId: run,
+          nonce: randomHex(6),
+          modelRef: modelId,
+          ...(trustAllowed ? { trustedSites: new Set(trustedNow.current) } : {}),
+        },
         deps(modelId, driver, startedAt),
         abort.signal,
       );
@@ -686,11 +720,17 @@ export default function AgentView({ me, server, hidden = false, onDisconnected, 
    * Allow this action - or, with `site`, plain actions on this site for the rest of the run; with `run`, this kind of
    * action (sending a form, a download, an upload, the page's dialogs) on this site for the rest of the run.
    */
-  function allow(scope: "once" | "site" | "run" = "once") {
+  function allow(scope: "once" | "site" | "run" | "trust" = "once") {
     const pending = approval;
     if (!pending || pending.asking) return;
     const yes: ApprovalAnswer =
-      scope === "site" && pending.request.offerSite ? "site" : scope === "run" && pending.request.offerRun ? "run" : true;
+      scope === "site" && pending.request.offerSite
+        ? "site"
+        : scope === "run" && pending.request.offerRun
+          ? "run"
+          : scope === "trust" && pending.request.offerTrust
+            ? "trust"
+            : true;
     const access = pending.request.access;
     if (access) {
       // The site's permission, asked for in this click: Chrome shows its prompt only now. The
@@ -760,6 +800,31 @@ export default function AgentView({ me, server, hidden = false, onDisconnected, 
           </label>
         )}
       </header>
+      {trustAllowed && trustedList.length > 0 && (
+        <details className="agent__trusted">
+          <summary>Trusted sites ({trustedList.length})</summary>
+          <p className="agent__trusted-hint">The agent&apos;s plain actions on these sites go ahead without asking. What always asks still asks.</p>
+          <ul>
+            {trustedList.map((site) => (
+              <li key={site}>
+                <span>{site}</span>
+                <button
+                  type="button"
+                  className="btn btn--quiet"
+                  aria-label={`Stop trusting ${site}`}
+                  onClick={() => {
+                    void untrustSite(site)
+                      .then(setTrustedList)
+                      .catch(() => undefined);
+                  }}
+                >
+                  Remove
+                </button>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
 
       {banner && (
         <p className="banner banner--error chat__notice" role="alert">
@@ -850,6 +915,17 @@ export default function AgentView({ me, server, hidden = false, onDisconnected, 
                   title="Only this kind of action, only on this site, until the run ends. Sending messages and deleting still ask."
                 >
                   Allow {RUN_KIND_WORDS[approval.request.offerRun.kind]} on {approval.request.offerRun.site} for this run
+                </button>
+              )}
+              {approval.request.offerTrust && (
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => allow("trust")}
+                  disabled={approval.asking}
+                  title="Plain actions on this site, in every run, until you remove it from Trusted sites. Whatever always asks still asks."
+                >
+                  Always allow on {approval.request.offerTrust}
                 </button>
               )}
               <button type="button" className="btn" onClick={() => approval.resolve(false)} disabled={approval.asking}>

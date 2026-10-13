@@ -90,6 +90,8 @@ export type ApprovalRequest = {
    * downloading, uploading, or the page's own dialogs, on this site. Never sending a message or deleting.
    */
   offerRun?: { site: string; kind: RunKind };
+  /** A plain action, where trust is on: the card may offer to trust this site for every run from now on. */
+  offerTrust?: string;
 };
 
 /** The kinds of action a person may allow on a site for the rest of a run, from one card. */
@@ -99,7 +101,7 @@ export type RunKind = "submit" | "download" | "upload" | "dialog";
  * The person's answer to a card: no, yes, yes and the same for plain actions on this site for the rest of the run
  * ("site"), or yes and the same for this kind of action on this site for the rest of the run ("run").
  */
-export type ApprovalAnswer = boolean | "site" | "run";
+export type ApprovalAnswer = boolean | "site" | "run" | "trust";
 
 type ReviewInput = {
   task: string;
@@ -152,6 +154,8 @@ export type AgentDeps = {
   onStep(step: StepView): void;
   /** The model's words, as they come with each step. */
   onText(text: string): void;
+  /** The person trusted a site from a card: kept for every run from now on (the panel saves it). */
+  trust?(site: string): void;
 };
 
 export type AgentOptions = {
@@ -170,6 +174,11 @@ export type AgentOptions = {
   nonce: string;
   /** The model, as the report names it ("model::7"). */
   modelRef?: string;
+  /**
+   * The sites the person trusts the agent on, across runs, when the administrator lets trust count: their plain
+   * actions there need no card or review. Absent: trust is off, and no card offers it.
+   */
+  trustedSites?: ReadonlySet<string>;
 };
 
 export type RunOutcome = "done" | "stopped" | "max_steps" | "max_minutes" | "errors" | "failed" | "no_action";
@@ -712,6 +721,8 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
   const siteWide = new Set<string>();
   /** What the person allowed on a site for the rest of the run, by kind: "submit:example.com". */
   const forTheRun = new Set<string>();
+  /** The sites the person trusts the agent on, across runs - and any they trust from a card during this one. */
+  const trusted = new Set<string>(options.trustedSites ?? []);
   /** Plan mode: true once the user has approved a plan, after which the plan's sites are worked without asking each action. */
   let planApproved = false;
   /** The model answered in words alone and was reminded to act; a second time in a row ends the run. */
@@ -1645,6 +1656,13 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       }
       check();
     }
+    // A site the person trusts: its plain actions go ahead without a card or the reviewer, in every mode - but never one
+    // asked about for another reason (a site the page went to, text that reads like instructions, a run of deletion keys,
+    // the browser's own permission), nor anything the rules always ask about.
+    const plainHere =
+      verdict.class === "act" && PLAIN_REASONS.has(verdict.reason) && (!verdict.site || verdict.site === pageNow?.host) && judged.message === verdict.message && !access;
+    const trustedHere = Boolean(options.trustedSites && plainHere && pageNow && trusted.has(siteOf(pageNow.host)) && (approval === "user" || approval === "review"));
+    if (trustedHere) approval = "none";
     let reviewNote: string | undefined;
     if (approval === "review") {
       deps.onStep({ id: call.id, tool: name, summary, status: "running", detail: "Checking with the reviewer…" });
@@ -1692,7 +1710,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       judged.message === verdict.message;
     // The site as a person names it: an allowance on www.example.com holds on shop.example.com too.
     const plainSite = plain && pageNow ? siteOf(pageNow.host) : undefined;
-    let approvedBy = approval === "none" ? (base.extra.review === "allow" ? "review" : "not_needed") : "user";
+    let approvedBy = trustedHere ? "user_trusted" : approval === "none" ? (base.extra.review === "allow" ? "review" : "not_needed") : "user";
     if (plainSite && siteWide.has(plainSite)) {
       approval = "none";
       // The user's, given once for the site: Admin Logs tells it from an answer to this action's own card.
@@ -1719,12 +1737,18 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
         access,
         ...(plainSite ? { offerSite: plainSite } : {}),
         ...(runKind && runSite ? { offerRun: { site: runSite, kind: runKind } } : {}),
+        ...(options.trustedSites && plainHere && pageNow && verdict.class === "act" && !arrived && !suspect ? { offerTrust: siteOf(pageNow.host) } : {}),
       });
       await shown;
       await state("working", tab);
       check();
       if (allowed === "site" && plainSite) siteWide.add(plainSite);
       if (allowed === "run" && runKind && runSite) forTheRun.add(`${runKind}:${runSite}`);
+      if (allowed === "trust" && pageNow) {
+        const site = siteOf(pageNow.host);
+        trusted.add(site);
+        deps.trust?.(site);
+      }
       if (!allowed) {
         await visual("visuals_target", { rect: null }, tab);
         return {
@@ -1813,6 +1837,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     startSite = first?.host ?? undefined;
     // The user started the run on this page, and named in the task where it should go.
     if (startSite) allow(startSite);
+    for (const site of trusted) allow(site);
     for (const site of namedSites(options.task)) {
       if (classifyAction({ tool: "read_page", args: {}, page: { url: `https://${site}/`, host: site } }, options.rules).class !== "blocked") allow(site);
     }

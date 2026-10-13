@@ -754,6 +754,35 @@ button {
   white-space: nowrap;
 }
 
+.agent__trusted {
+  padding: 0.3rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+
+.agent__trusted summary {
+  cursor: pointer;
+}
+
+.agent__trusted-hint {
+  margin: 0.3rem 0;
+}
+
+.agent__trusted ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.agent__trusted li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  overflow-wrap: anywhere;
+}
+
 .agent__saved {
   color: var(--muted);
   font-size: 0.8125rem;

@@ -348,6 +348,22 @@ def screenshot_allowed(
     return True
 
 
+async def review_reads_images(db: AsyncSession, settings: ExtensionSettings) -> bool:
+    """Whether Auto mode's review model reads images: the extension crops the page for it only then."""
+    match = _MODEL_REF_RE.match(settings.agent_review_model or "")
+    if not settings.agent_auto_mode or not match or int(match.group(1)) > _MAX_MODEL_ID:
+        return False
+    row = await db.get(AIModel, int(match.group(1)))
+    if row is None:
+        return False
+    return supports_vision(
+        external_id=str(row.external_id or ""),
+        is_image_model=bool(row.is_image_model),
+        pricing_raw=cast("str | None", row.pricing_raw),
+        provider_type=cast("str | None", row.provider_type),
+    )
+
+
 async def inside_model_refs(db: AsyncSession, settings: ExtensionSettings) -> set[str] | None:
     """The models inside the organisation, as ``model::<id>`` refs: the internal list
     plus every model on a connection inside the organisation. None when neither list

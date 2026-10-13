@@ -35,7 +35,7 @@ from app.services.extension_distribution import ExtensionUnavailable, current_bu
 from app.services.extension_keys import ExtensionKeyUnavailable, get_signing_key
 from app.services.extension_package import CONNECTED_PAGE, MIN_SUPPORTED_VERSION, normalize_origin
 from app.services.extension_probe import effective_agent_models
-from app.services.extension_settings import data_policy, load_extension_settings
+from app.services.extension_settings import data_policy, load_extension_settings, review_reads_images
 from app.services.extension_tokens import (
     AUDIT_CONNECTED,
     AUDIT_DISCONNECTED,
@@ -294,6 +294,8 @@ async def extension_me(
             "private_runs": settings.private_runs,
             # Whether a person's trusted sites count: their plain actions there go ahead without asking.
             "trusted_sites": settings.trusted_sites,
+            # Whether Auto mode's reviewer reads images: the extension crops the page around a target only for one that does.
+            "review_reads_images": await review_reads_images(db, settings),
             # Full control: whether the admin turned it on; the feature flag says whether this user may use it.
             "full_control": settings.full_control,
             # Which sensitive cases still ask (true), so the extension can relax the rest.

@@ -609,6 +609,7 @@ class TestMe:
             "save_runs": True,
             "private_runs": True,
             "trusted_sites": True,
+            "review_reads_images": False,
             "full_control": False,
             "approvals": {
                 "send": True,

@@ -30,6 +30,7 @@ const APPROVALS: { key: string; label: string; hint: string }[] = [
 const APPROVAL_KEYS = APPROVALS.map((a) => a.key);
 
 type AgentMode = "ask" | "plan" | "auto";
+type AgentReasoning = "provider_default" | "low" | "medium";
 
 type ExtensionSettings = {
   site_access: SiteAccess;
@@ -64,6 +65,7 @@ type ExtensionSettings = {
   save_runs: boolean;
   private_runs: boolean;
   trusted_sites: boolean;
+  agent_reasoning: AgentReasoning;
 };
 
 /** A connection the card can offer to tick as inside the organisation. */
@@ -169,6 +171,7 @@ function toForm(settings: ExtensionSettings): Form {
     screenshot_max_side: String(settings.screenshot_max_side ?? 1280),
     screenshots_kept: String(settings.screenshots_kept ?? 3),
     min_browser_version: String(settings.min_browser_version ?? 116),
+    agent_reasoning: settings.agent_reasoning ?? "provider_default",
   };
 }
 
@@ -822,6 +825,26 @@ export default function ExtensionSettingsCard() {
               <option value="auto" disabled={!form.agent_auto_mode}>
                 Auto
               </option>
+            </select>
+          </label>
+          <label className="extension-admin__field extension-admin__field--inline">
+            <span className="settings-row__title">
+              Agent reasoning
+              <span className="settings-row__hint">
+                How hard a model that reasons thinks at each step. Low or medium makes steps quicker and cheaper; models that do
+                not reason are unaffected.
+              </span>
+            </span>
+            <select
+              className="settings-row__control"
+              aria-label="Agent reasoning"
+              value={form.agent_reasoning}
+              disabled={locked}
+              onChange={(e) => patch({ agent_reasoning: e.target.value as AgentReasoning })}
+            >
+              <option value="provider_default">Provider default</option>
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
             </select>
           </label>
 

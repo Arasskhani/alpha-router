@@ -48,6 +48,7 @@ const SETTINGS = {
   save_runs: true,
   private_runs: true,
   trusted_sites: true,
+  agent_reasoning: "provider_default",
 };
 const CONNECTIONS = [
   { id: 1, name: "OpenAI", provider: "openai", host: "api.openai.com", active: true, looks_internal: false, state: "ok" },
@@ -470,9 +471,16 @@ describe("the sections added for R1", () => {
     await act(async () => checkbox("A screenshot after every change").click());
     expect(checkbox("People may trust a site").checked).toBe(true);
     await act(async () => checkbox("People may trust a site").click());
+    const reasoning = host.querySelector("select[aria-label='Agent reasoning']") as HTMLSelectElement;
+    expect(reasoning.value).toBe("provider_default");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(reasoning, "low");
+      reasoning.dispatchEvent(new Event("change", { bubbles: true }));
+    });
     await save();
     expect(lastPut).toMatchObject({
       trusted_sites: false,
+      agent_reasoning: "low",
       screenshot_after_action: false,
       agent_max_minutes: 45,
       agent_max_tabs: 4,

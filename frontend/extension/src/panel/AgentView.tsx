@@ -30,6 +30,7 @@ import {
   type ApprovalAnswer,
   type ApprovalRequest,
   type ControlDriver,
+  type RunKind,
   type RunOutcome,
   type StepView,
 } from "./agentRun";
@@ -38,6 +39,14 @@ import { modelStep, ModelTimeout } from "./modelStep";
 import { createPauseGate, type PauseControl } from "./pauseGate";
 import { pickModel, textModels, type ChatModel } from "./conversation";
 import type { Me } from "./types";
+
+/** What a card's "for this run" button allows, in words. */
+const RUN_KIND_WORDS: Record<RunKind, string> = {
+  submit: "sending forms",
+  download: "downloads",
+  upload: "uploads",
+  dialog: "the page's confirmations",
+};
 
 const MODEL_KEY = "alpharouter.agentModel";
 const MODE_KEY = "alpharouter.agentMode";
@@ -673,11 +682,15 @@ export default function AgentView({ me, server, hidden = false, onDisconnected, 
     controller.current?.abort();
   }
 
-  /** Allow this action - or, with `site`, plain actions on this site for the rest of the run. */
-  function allow(site = false) {
+  /**
+   * Allow this action - or, with `site`, plain actions on this site for the rest of the run; with `run`, this kind of
+   * action (sending a form, a download, an upload, the page's dialogs) on this site for the rest of the run.
+   */
+  function allow(scope: "once" | "site" | "run" = "once") {
     const pending = approval;
     if (!pending || pending.asking) return;
-    const yes: ApprovalAnswer = site && pending.request.offerSite ? "site" : true;
+    const yes: ApprovalAnswer =
+      scope === "site" && pending.request.offerSite ? "site" : scope === "run" && pending.request.offerRun ? "run" : true;
     const access = pending.request.access;
     if (access) {
       // The site's permission, asked for in this click: Chrome shows its prompt only now. The
@@ -824,8 +837,19 @@ export default function AgentView({ me, server, hidden = false, onDisconnected, 
                 Allow
               </button>
               {approval.request.offerSite && (
-                <button type="button" className="btn" onClick={() => allow(true)} disabled={approval.asking} title="Plain actions only: whatever always asks still asks.">
+                <button type="button" className="btn" onClick={() => allow("site")} disabled={approval.asking} title="Plain actions only: whatever always asks still asks.">
                   Allow on {approval.request.offerSite} for this run
+                </button>
+              )}
+              {approval.request.offerRun && (
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => allow("run")}
+                  disabled={approval.asking}
+                  title="Only this kind of action, only on this site, until the run ends. Sending messages and deleting still ask."
+                >
+                  Allow {RUN_KIND_WORDS[approval.request.offerRun.kind]} on {approval.request.offerRun.site} for this run
                 </button>
               )}
               <button type="button" className="btn" onClick={() => approval.resolve(false)} disabled={approval.asking}>

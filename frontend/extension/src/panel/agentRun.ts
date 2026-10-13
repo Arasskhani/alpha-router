@@ -85,10 +85,21 @@ export type ApprovalRequest = {
    * this site for the rest of the run - never an action that always asks.
    */
   offerSite?: string;
+  /**
+   * A card the administrator lets the person answer for the rest of the run: sending a form,
+   * downloading, uploading, or the page's own dialogs, on this site. Never sending a message or deleting.
+   */
+  offerRun?: { site: string; kind: RunKind };
 };
 
-/** The person's answer to a card: no, yes, or yes and the same for plain actions on this site for the rest of the run. */
-export type ApprovalAnswer = boolean | "site";
+/** The kinds of action a person may allow on a site for the rest of a run, from one card. */
+export type RunKind = "submit" | "download" | "upload" | "dialog";
+
+/**
+ * The person's answer to a card: no, yes, yes and the same for plain actions on this site for the rest of the run
+ * ("site"), or yes and the same for this kind of action on this site for the rest of the run ("run").
+ */
+export type ApprovalAnswer = boolean | "site" | "run";
 
 type ReviewInput = {
   task: string;
@@ -550,6 +561,8 @@ const CHANGES = new Set(["click", "type_text", "select_option", "submit_form", "
 const MAY_LOAD = new Set(["click", "submit_form", "press_key", "navigate", "tab_open", "tab_switch", "computer"]);
 /** A hand-typed field the person took over after it was cleared: what the model is told was done. */
 const TOOK_OVER_AFTER_CLEARING = "The user took over this page after the field was cleared, before the text was typed.";
+/** The cases a card may allow for the rest of the run, on its site, by the rule that asked. */
+const RUN_KINDS: Record<string, RunKind | undefined> = { submit: "submit", download: "download", upload: "upload" };
 /** The rules' plain actions on the page - no case an administrator relaxed - which "Allow on this site" may cover. */
 const PLAIN_REASONS = new Set(["click", "type", "select", "press_key", "same_site", "drag", "tab_switch"]);
 /** Tools (as the rules know them) that change nothing: they do not break a run of deletion keys. */
@@ -697,6 +710,8 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
   deps.browser.holdWhile?.(() => dialogsOpen > 0);
   /** Ask mode: the sites where the person allowed plain actions for the rest of this run, from a card. */
   const siteWide = new Set<string>();
+  /** What the person allowed on a site for the rest of the run, by kind: "submit:example.com". */
+  const forTheRun = new Set<string>();
   /** Plan mode: true once the user has approved a plan, after which the plan's sites are worked without asking each action. */
   let planApproved = false;
   /** The model answered in words alone and was reminded to act; a second time in a row ends the run. */
@@ -1001,23 +1016,32 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     }
     const kind = dialog.type === "beforeunload" ? "asks whether to leave the page" : dialog.type === "prompt" ? "asks for an answer" : "asks to confirm";
     const asks = (options.rules.approvals ?? DEFAULT_APPROVALS).dialogs;
+    // A confirm or a leave-the-page question may be allowed for the rest of the run on its site; an answer typed into a prompt may not.
+    const dialogSite = dialog.type !== "prompt" && lastTab?.host ? siteOf(lastTab.host) : undefined;
     let accept: boolean;
+    let byRun = false;
     if (signal.aborted) {
       accept = false;
+    } else if (asks && dialogSite && forTheRun.has(`dialog:${dialogSite}`)) {
+      accept = true;
+      byRun = true;
     } else if (asks) {
       deps.onState?.("waiting");
-      accept = Boolean(await approve({
+      const answer = await approve({
         tool: "dialog",
         summary: `The page ${kind}:${shown || " (no message)"} - Allow accepts it, Deny dismisses it`,
         verdict: { class: "sensitive", reason: "dialog", message: `The page ${kind}.` },
-      }).catch(() => false));
+        ...(dialogSite ? { offerRun: { site: dialogSite, kind: "dialog" as const } } : {}),
+      }).catch(() => false);
+      if (answer === "run" && dialogSite) forTheRun.add(`dialog:${dialogSite}`);
+      accept = Boolean(answer);
       deps.onState?.("working");
     } else {
       accept = dialog.type !== "prompt";
     }
     if (accept && dialog.type === "prompt") await respond(true, "").catch(() => undefined);
     else await respond(accept).catch(() => undefined);
-    dialogNotes.push(`The page ${kind}:${shown} - it was ${accept ? "accepted" : "dismissed"}${asks && !signal.aborted ? " by the user" : ""}.`);
+    dialogNotes.push(`The page ${kind}:${shown} - it was ${accept ? "accepted" : "dismissed"}${byRun ? ", as the user allowed for this run" : asks && !signal.aborted ? " by the user" : ""}.`);
   }
 
   /**
@@ -1674,15 +1698,33 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       // The user's, given once for the site: Admin Logs tells it from an answer to this action's own card.
       approvedBy = "user_site";
     }
+    // A form sent, a download or an upload, asked about only for its kind: the person may allow that kind on this site
+    // for the rest of the run - never sending a message or deleting, nor anything asked about for another reason.
+    const runKind = verdict.class === "sensitive" ? RUN_KINDS[verdict.reason] : undefined;
+    const runSite =
+      runKind && pageNow && approval === "user" && !arrived && !suspect && !access && judged.message === verdict.message ? siteOf(pageNow.host) : undefined;
+    if (runKind && runSite && forTheRun.has(`${runKind}:${runSite}`)) {
+      approval = "none";
+      approvedBy = "user_run";
+    }
     if (approval === "user") {
       deps.onStep({ id: call.id, tool: name, summary, status: "waiting" });
       // The card first: the target box and the amber border go up beside it, never before it.
       const shown = Promise.all([targetRect ? visual("visuals_target", { rect: targetRect }, tab) : undefined, state("waiting", tab)]);
-      const allowed = await approve({ tool: name, summary, verdict: judged, review: reviewNote, access, ...(plainSite ? { offerSite: plainSite } : {}) });
+      const allowed = await approve({
+        tool: name,
+        summary,
+        verdict: judged,
+        review: reviewNote,
+        access,
+        ...(plainSite ? { offerSite: plainSite } : {}),
+        ...(runKind && runSite ? { offerRun: { site: runSite, kind: runKind } } : {}),
+      });
       await shown;
       await state("working", tab);
       check();
       if (allowed === "site" && plainSite) siteWide.add(plainSite);
+      if (allowed === "run" && runKind && runSite) forTheRun.add(`${runKind}:${runSite}`);
       if (!allowed) {
         await visual("visuals_target", { rect: null }, tab);
         return {

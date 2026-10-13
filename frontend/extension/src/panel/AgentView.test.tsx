@@ -28,7 +28,10 @@ const MODELS = [
 ];
 
 const OUTLINE = 'Page: Cart\nURL: https://shop.example.com/cart\n\n[e1] button "Next"';
-const ELEMENTS = { e1: { ref: "e1", role: "button", name: "Next", tag: "button" } };
+const ELEMENTS = {
+  e1: { ref: "e1", role: "button", name: "Next", tag: "button" },
+  e2: { ref: "e2", role: "button", name: "Save changes", tag: "button", submits: true },
+};
 
 let server: ServerFake;
 let chromeFake: ChromeFake;
@@ -69,7 +72,7 @@ beforeEach(() => {
     const [, method, input, banner] = args!;
     pageCalls.push({ method, args: input, banner });
     if (method === "read_page") return [{ result: { ok: true, outline: OUTLINE, elements: Object.values(ELEMENTS), truncated: false, url: "", title: "" } }];
-    if (method === "describe") return [{ result: { ok: true, element: ELEMENTS[input.ref as "e1"] } }];
+    if (method === "describe") return [{ result: { ok: true, element: ELEMENTS[input.ref as keyof typeof ELEMENTS] } }];
     return [{ result: { ok: true, note: "Done." } }];
   });
   onDisconnected.mockReset();
@@ -185,6 +188,22 @@ describe("a run", () => {
     await act(async () => forSite!.click());
     await until(() => host.textContent!.includes("Clicked it twice."), "the summary");
     // The second click on the same site asked nobody.
+    expect(pageCalls.filter((c) => c.method === "click")).toHaveLength(2);
+  });
+
+  it("lets the person allow sending forms on the site for the rest of the run", async () => {
+    replies = [
+      toolFrame([{ id: "c1", name: "click", args: { ref: "e2" } }]),
+      toolFrame([{ id: "c2", name: "click", args: { ref: "e2" } }]),
+      toolFrame([{ id: "c3", name: "done", args: { summary: "Saved twice." } }]),
+    ];
+    await render();
+    await start("Save twice.");
+    await until(() => Boolean(host.querySelector('[role="alertdialog"]')), "the approval card");
+    const forRun = [...host.querySelectorAll("button")].find((b) => b.textContent?.startsWith("Allow sending forms on "));
+    expect(forRun?.textContent).toMatch(/^Allow sending forms on [\w.-]+ for this run$/);
+    await act(async () => forRun!.click());
+    await until(() => host.textContent!.includes("Saved twice."), "the summary");
     expect(pageCalls.filter((c) => c.method === "click")).toHaveLength(2);
   });
 

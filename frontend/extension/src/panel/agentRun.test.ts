@@ -13,6 +13,7 @@ import {
   type AgentDeps,
   type AgentOptions,
   type ApiMessage,
+  type ApprovalAnswer,
   type ApprovalRequest,
   type ModelReply,
 } from "./agentRun";
@@ -32,6 +33,8 @@ const ELEMENTS: Record<string, Record<string, unknown>> = {
   e3: { ref: "e3", role: "textbox", name: "Coupon", tag: "input" },
   e4: { ref: "e4", role: "button", name: "Send message", tag: "button" },
   e5: { ref: "e5", role: "link", name: "Partner deals", tag: "a", href: "https://partner.org/deals" },
+  e6: { ref: "e6", role: "button", name: "Save changes", tag: "button", submits: true, formAction: "https://shop.example.com/profile" },
+  e7: { ref: "e7", role: "button", name: "Download report", tag: "button" },
 };
 
 function call(name: string, args: Record<string, unknown> = {}, id = `call_${name}_${Math.random().toString(36).slice(2, 7)}`) {
@@ -76,7 +79,7 @@ type Harness = {
 function harness(
   replies: Array<ModelReply | ((signal: AbortSignal) => Promise<ModelReply>)>,
   options: {
-    approve?: (request: ApprovalRequest) => boolean | "site";
+    approve?: (request: ApprovalRequest) => ApprovalAnswer;
     review?: { decision: "allow" | "ask"; reason: string };
     answer?: string;
     browser?: ReturnType<typeof fakeBrowser>;
@@ -474,6 +477,30 @@ describe("the card comes first", () => {
     h.deps.onState = (state) => states.push(state);
     await run(h);
     expect(states).toEqual(["working", "waiting", "working"]);
+  });
+});
+
+describe("allowing a kind of action on a site for the rest of the run", () => {
+  it("offers it for sending a form, downloading and uploading, then asks no more for that kind there", async () => {
+    const h = harness(
+      [
+        { text: "", toolCalls: [call("click", { ref: "e6" }, "r1")] },
+        { text: "", toolCalls: [call("click", { ref: "e6" }, "r2")] },
+        { text: "", toolCalls: [call("click", { ref: "e7" }, "r3")] },
+        { text: "", toolCalls: [call("click", { ref: "e4" }, "r4")] },
+        { text: "", toolCalls: [call("done", { summary: "ok" })] },
+      ],
+      { approve: (request) => (request.offerRun?.kind === "submit" ? "run" : true) },
+    );
+    await run(h);
+    // The first form asked and offered; the second went on its own; the download asked, its own kind; sending a
+    // message asked with no such offer.
+    expect(h.approvals.map((a) => [a.summary, a.offerRun?.kind])).toEqual([
+      ['Click "Save changes"', "submit"],
+      ['Click "Download report"', "download"],
+      ['Click "Send message"', undefined],
+    ]);
+    expect(h.reports.filter((r) => r.action === "click").map((r) => (r.detail as Record<string, unknown>).approval)).toEqual(["user", "user_run", "user", "user"]);
   });
 });
 

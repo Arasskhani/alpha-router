@@ -10,7 +10,7 @@ import { resetConfigForTests } from "../lib/config";
 import { layoutMetrics } from "../test/cdpFixtures";
 import { installChromeFake, EXTENSION_ID, type ChromeFake } from "../test/chromeFake";
 import { SERVER, createServerFake, frame, json, sse, type ServerFake } from "../test/serverFake";
-import AgentView, { agentModels } from "./AgentView";
+import AgentView, { agentModels, savedMode } from "./AgentView";
 import type { Me } from "./types";
 
 const ME: Me = {
@@ -157,6 +157,26 @@ describe("the agent's models", () => {
     await until(() => host.textContent!.includes("ok"), "the summary");
     const body = server.calls.filter((c) => c.path === "/api/chat/completions").at(-1)!.body as { browser_tools: { function: { name: string } }[] };
     expect(body.browser_tools.map((t) => t.function.name)).toContain("update_plan");
+  });
+});
+
+describe("the mode a run starts in", () => {
+  it("is the person's choice while the administrator's default is the one it was made under", () => {
+    const modes = ["ask", "plan", "auto"] as const;
+    expect(savedMode({ mode: "ask", under: "plan" }, [...modes], "plan")).toBe("ask");
+    // The administrator changed the default since: theirs wins.
+    expect(savedMode({ mode: "ask", under: "ask" }, [...modes], "plan")).toBe("plan");
+    // An older panel's bare choice kept no default: the administrator's wins.
+    expect(savedMode("ask", [...modes], "plan")).toBe("plan");
+    // A mode no longer on offer.
+    expect(savedMode({ mode: "auto", under: "plan" }, ["ask", "plan"], "plan")).toBe("plan");
+    expect(savedMode(undefined, [...modes], "plan")).toBe("plan");
+  });
+
+  it("starts in Plan for a person whose older panel saved Ask", async () => {
+    await chrome.storage.local.set({ "alpharouter.agentMode": "ask" });
+    await render({ ...ME, policy: { ...ME.policy!, agent_modes: ["ask", "plan"], agent_default_mode: "plan" } });
+    await until(() => host.querySelector('[role="radio"][aria-checked="true"]')?.textContent === "Plan", "Plan to be chosen");
   });
 });
 

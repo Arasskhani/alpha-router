@@ -49,6 +49,18 @@ const RUN_KIND_WORDS: Record<RunKind, string> = {
   dialog: "the page's confirmations",
 };
 
+/**
+ * The mode a person chose, while it is still on offer and the administrator's default is the one it was chosen under;
+ * otherwise the administrator's default. A choice saved by an older panel (a bare string) did not keep the default it
+ * was made under: the administrator's default wins over it, so a person once switched to Ask is not left asking for
+ * every action after the administrator chose Plan.
+ */
+export function savedMode(saved: unknown, modes: AgentMode[], defaultMode: AgentMode): AgentMode {
+  if (!saved || typeof saved !== "object") return defaultMode;
+  const { mode, under } = saved as { mode?: unknown; under?: unknown };
+  return typeof mode === "string" && (modes as string[]).includes(mode) && under === defaultMode ? (mode as AgentMode) : defaultMode;
+}
+
 const MODEL_KEY = "alpharouter.agentModel";
 const MODE_KEY = "alpharouter.agentMode";
 const DEFAULT_MAX_STEPS = 25;
@@ -306,9 +318,7 @@ export default function AgentView({ me, server, hidden = false, onDisconnected, 
         setModelId(
           (usable.find((m) => m.id === remembered) ?? usable.find((m) => m.id === recommended) ?? pickModel(usable, null))?.id ?? "",
         );
-        // The person's last choice, when it is still on offer; else what the administrator set.
-        const saved = stored[MODE_KEY];
-        setMode(typeof saved === "string" && (modes as string[]).includes(saved) ? (saved as AgentMode) : defaultMode);
+        setMode(savedMode(stored[MODE_KEY], modes, defaultMode));
       })
       .catch((err) => {
         if (!active) return;
@@ -356,7 +366,8 @@ export default function AgentView({ me, server, hidden = false, onDisconnected, 
 
   function chooseMode(next: AgentMode) {
     setMode(next);
-    void chrome.storage.local.set({ [MODE_KEY]: next });
+    // With the default it was chosen under: when the administrator changes the default, theirs wins again.
+    void chrome.storage.local.set({ [MODE_KEY]: { mode: next, under: defaultMode } });
   }
 
   function append(item: LogItem) {

@@ -264,7 +264,7 @@ class TestTheDetail:
     def test_every_mode_is_kept(self, mode):
         assert clean_detail({"mode": mode}) == {"mode": mode}
 
-    @pytest.mark.parametrize("approval", ["not_needed", "user", "user_site", "review"])
+    @pytest.mark.parametrize("approval", ["not_needed", "user", "user_site", "user_run", "review"])
     def test_who_approved_is_kept(self, approval):
         assert clean_detail({"approval": approval}) == {"approval": approval}
 

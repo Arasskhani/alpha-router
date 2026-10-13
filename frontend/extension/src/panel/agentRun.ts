@@ -1759,8 +1759,13 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     let reviewNote: string | undefined;
     // The same action on the same site, allowed once by the reviewer this run (a "Next" pressed page after page):
     // allowed again without another call. Only an allow is remembered; an ask is asked again.
-    const reviewKey = `${name}|${pageNow ? siteOf(pageNow.host) : ""}|${summary}`;
-    if (approval === "review" && reviewAllowed.has(reviewKey)) {
+    // Only a plain action on the run's own page is remembered, by everything the reviewer was shown: never one that
+    // goes to another site, answers a dialog, or is sensitive - those are judged each time.
+    const cacheable = verdict.class === "act" && !verdict.site && !element?.context;
+    const reviewKey = cacheable
+      ? JSON.stringify([name, pageNow ? siteOf(pageNow.host) : "", verdict.reason, summary, element ? reviewTarget(element) : "", a])
+      : null;
+    if (approval === "review" && reviewKey && reviewAllowed.has(reviewKey)) {
       approval = "none";
       base.extra.review = "allow";
     }
@@ -1788,7 +1793,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       check();
       if (verdictFromReview.decision === "allow") {
         approval = "none";
-        reviewAllowed.add(reviewKey);
+        if (reviewKey) reviewAllowed.add(reviewKey);
       } else {
         approval = "user";
         reviewNote = verdictFromReview.reason;

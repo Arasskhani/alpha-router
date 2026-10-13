@@ -527,6 +527,28 @@ describe("the Auto reviewer", () => {
     expect(h.deps.review).toHaveBeenCalledTimes(2);
     expect(h.approvals).toHaveLength(0);
   });
+
+  it("is asked again when the same words name another target", async () => {
+    let post = 1;
+    const browser = fakeBrowser({
+      // Two links both called "Read more", to two pages of the site: the second once the first was clicked.
+      describe: () => ({ ok: true, element: { ref: "e8", role: "link", name: "Read more", tag: "a", href: `https://shop.example.com/post/${post}` } }),
+      click: () => {
+        post = 2;
+        return { ok: true, note: "Clicked." };
+      },
+    });
+    const h = harness(
+      [
+        { text: "", toolCalls: [call("click", { ref: "e8" }, "w1")] },
+        { text: "", toolCalls: [call("click", { ref: "e8" }, "w2")] },
+        { text: "", toolCalls: [call("done", { summary: "ok" })] },
+      ],
+      { review: { decision: "allow", reason: "fine" }, browser },
+    );
+    await run(h, { mode: "auto" });
+    expect(h.deps.review).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("a site the person trusts", () => {

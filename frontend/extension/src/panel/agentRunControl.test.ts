@@ -480,6 +480,32 @@ describe("what an action reports", () => {
   });
 });
 
+describe("the cursor and the highlight", () => {
+  it("are drawn without holding the click up", async () => {
+    const browser = fakeBrowser();
+    const base = browser.page.getMockImplementation()!;
+    let drawn = false;
+    let clickedBeforeDrawn: boolean | null = null;
+    browser.page.mockImplementation(async (method: string, args?: Record<string, unknown>) => {
+      if (method === "visuals_cursor") {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        drawn = true;
+        return { ok: true };
+      }
+      return base(method, args);
+    });
+    const h = harness([{ text: "", toolCalls: [call("computer", { action: "left_click", coordinate: [200, 100] })] }], { browser });
+    vi.mocked(h.driver!.click).mockImplementation(async () => {
+      clickedBeforeDrawn = !drawn;
+    });
+    await h.run();
+    expect(clickedBeforeDrawn).toBe(true);
+    // Still drawn, in order, before the run takes the layer down.
+    const methods = browser.page.mock.calls.map(([method]) => method);
+    expect(methods.indexOf("visuals_cursor")).toBeLessThan(methods.lastIndexOf("visuals_hide"));
+  });
+});
+
 describe("settling under full control", () => {
   it("waits after a click or Enter, not after scrolling, hovering, waiting or another key", async () => {
     const browser = fakeBrowser();

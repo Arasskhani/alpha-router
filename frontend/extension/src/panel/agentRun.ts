@@ -575,6 +575,8 @@ const CHANGES = new Set(["click", "type_text", "select_option", "submit_form", "
 /** Actions after which, without full control, the step ends with the page's new outline. */
 const OUTLINE_AFTER = new Set(["click", "submit_form", "press_key", "select_option", "navigate", "tab_open", "tab_switch"]);
 /** Actions after which a page may be loading. */
+/** Visuals that are only drawn (the target's highlight, the cursor): nothing waits for them. */
+const DRAWN_ONLY = new Set<PageMethod>(["visuals_target", "visuals_cursor"]);
 const MAY_LOAD = new Set(["click", "submit_form", "press_key", "navigate", "tab_open", "tab_switch", "computer"]);
 /** The computer actions that may load a page; typing, hovering, scrolling and waiting do not, so nothing waits after them. */
 const COMPUTER_MAY_LOAD = new Set(["left_click", "right_click", "double_click", "triple_click", "left_click_drag"]);
@@ -910,8 +912,17 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
   async function visual(method: PageMethod, a: Record<string, unknown>, tab: WorkTab | null): Promise<void> {
     if (!tab || !controls(tab)) return;
     visualsIn.add(tab.id);
-    await orOnStop(deps.browser.page(method, a, tab, signal, VISUAL_MS).catch(() => undefined), undefined);
+    // One after another, so they land in the order they were sent.
+    const sent = drawQueue.then(() => deps.browser.page(method, a, tab, signal, VISUAL_MS).catch(() => undefined));
+    drawQueue = sent;
+    // The highlight and the cursor are only drawn: the action does not wait for them. The rest (the veil before a
+    // screenshot, the border's state) are waited for, after whatever was drawn before them.
+    if (DRAWN_ONLY.has(method)) return;
+    await orOnStop(sent, undefined);
   }
+
+  /** The visuals' calls under full control, chained. */
+  let drawQueue: Promise<unknown> = Promise.resolve();
 
   /** Whether the tab is under full control: its visuals are then drawn in step with the real mouse, and veiled for captures. */
   function controls(tab: WorkTab): boolean {
@@ -2071,7 +2082,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     const tab = lastTab;
     if (tab && visualsIn.has(tab.id)) {
       // The border's queued calls first, so the last word is the one that takes it down - but not for long.
-      await Promise.race([borderQueue, new Promise((done) => setTimeout(done, VISUAL_MS))]);
+      await Promise.race([Promise.all([borderQueue, drawQueue]), new Promise((done) => setTimeout(done, VISUAL_MS))]);
       await deps.browser.page("visuals_hide", {}, tab, undefined, VISUAL_MS).catch(() => undefined);
     }
   }

@@ -213,8 +213,6 @@ export default function AgentView({ me, server, hidden = false, onDisconnected, 
   const [privateRun, setPrivateRun] = useState(false);
   /** The sites this person trusts the agent on, across runs (kept in this browser). */
   const [trustedList, setTrustedList] = useState<string[]>([]);
-  const trustedNow = useRef<string[]>([]);
-  trustedNow.current = trustedList;
   /** The run's steps as they ended, in order, for the chat it becomes. */
   const stepsTaken = useRef<Map<string, StepView>>(new Map());
   const controller = useRef<AbortController | null>(null);
@@ -644,7 +642,7 @@ export default function AgentView({ me, server, hidden = false, onDisconnected, 
           runId: run,
           nonce: randomHex(6),
           modelRef: modelId,
-          ...(trustAllowed ? { trustedSites: new Set(trustedNow.current) } : {}),
+          ...(trustAllowed ? { trustedSites: new Set(trustedList) } : {}),
         },
         deps(modelId, driver, startedAt),
         abort.signal,

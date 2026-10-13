@@ -96,11 +96,16 @@ export type ElementInfo = {
   /** For the rules only: the notice it sits in is about cookies or consent, by its name, its marks or its words. */
   cookieNotice?: boolean;
   /**
-   * For the rules only: the field, or the form it is in, is a search - by its
-   * type, role, name or placeholder, or a form marked as one or sending to a
-   * search address.
+   * For the rules only: the field itself is a one-line search box - by its
+   * type, role, name or placeholder. Never a text area or an editor.
    */
   search?: boolean;
+  /**
+   * For the rules only: the form it is in is a search - sent by GET, with one
+   * text field, marked as a search, sending to a search address, or with that
+   * field named like a query.
+   */
+  searchForm?: boolean;
   /**
    * For the rules only: the form it is in holds a secret (a password, card or
    * code field), a file to upload, or a person's contact details - sending
@@ -665,7 +670,7 @@ function defaultButton(form: HTMLFormElement): Element | null {
 }
 
 /** A field's own marks that say it searches: its name or id ("q", "search_query"), its placeholder, its label. */
-const SEARCH_FIELD_NAMES = /^(q|query|search|s|k|kw|keyword|keywords|term|terms|search_?query|search_?term|searchtext|text)$/i;
+const SEARCH_FIELD_NAMES = /^(q|query|search|kw|keyword|keywords|search_?query|search_?term|searchtext)$/i;
 const SEARCH_WORDS = /\bsearch\b|جست ?(و ?)?جو|جستجو/i;
 /** Where a search form sends: /search, /find, /results, or a query named like one. */
 const SEARCH_ACTION = /(^|\/)(search|find|results?|s)(\/|$)/i;
@@ -681,8 +686,14 @@ function searchField(el: Element): boolean {
   return SEARCH_WORDS.test(said);
 }
 
-/** Whether a form searches: marked as a search, inside a search landmark, or sending to a search address. */
+/**
+ * Whether a form searches: sent by GET with a single text field, and marked as a search, inside a search landmark,
+ * sending to a search address, or with that field named like a query. A form that posts, or asks for more than one
+ * thing, is never taken for a search, whatever it is marked.
+ */
 function searchForm(form: HTMLFormElement): boolean {
+  const fields = Array.from(form.elements).filter((field) => holdsText(field));
+  if (fields.length !== 1 || fields[0].tagName.toUpperCase() !== "INPUT" || (form.method || "get").toLowerCase() !== "get") return false;
   if (form.getAttribute("role") === "search" || form.closest('[role="search"], search')) return true;
   const action = form.getAttribute("action");
   if (action) {
@@ -693,21 +704,28 @@ function searchForm(form: HTMLFormElement): boolean {
       // An address the browser cannot read is not a search's.
     }
   }
-  // A form of one text field named like a query, sent by GET: a site's search box.
-  const fields = Array.from(form.elements).filter((field) => holdsText(field));
-  return fields.length === 1 && (form.method || "get").toLowerCase() === "get" && SEARCH_QUERY_NAMES.has(((fields[0] as HTMLInputElement).name ?? "").toLowerCase());
+  // Its one text field named like a query: a site's search box.
+  return SEARCH_QUERY_NAMES.has(((fields[0] as HTMLInputElement).name ?? "").toLowerCase()) || searchField(fields[0]);
 }
 
 /** Contact details a form may ask for, by the browser's own autofill names. */
-const PERSONAL_AUTOCOMPLETE = /\b(tel|tel-national|street-address|address-line\d|postal-code|bday(-day|-month|-year)?|cc-[a-z-]+|one-time-code|new-password|current-password)\b/i;
+const PERSONAL_AUTOCOMPLETE =
+  /\b(name|given-name|family-name|additional-name|nickname|email|organization|tel|tel-national|street-address|address-line\d|address-level\d|postal-code|country|bday(-day|-month|-year)?|cc-[a-z-]+|one-time-code|new-password|current-password)\b/i;
+/** A field's own words that ask for a person's details: their name, how to reach them, where they live. */
+const PERSONAL_WORDS = /\b(e-?mail|phone|mobile|telephone|address|street|postal|zip|full name|first name|last name|surname|your name|company)\b|ایمیل|تلفن|موبایل|همراه|آدرس|نشانی|کد ?پستی|نام و نام خانوادگی|نام خانوادگی/i;
 
 /** Whether a form holds a secret, a file to upload, or a person's contact details. */
 function formHoldsSensitive(form: HTMLFormElement): boolean {
   return Array.from(form.elements).some((field) => {
     const type = field.tagName.toUpperCase() === "INPUT" ? inputType(field) : "";
-    if (type === "password" || type === "file" || type === "tel") return true;
+    if (type === "password" || type === "file" || type === "tel" || type === "email") return true;
     if (PERSONAL_AUTOCOMPLETE.test(field.getAttribute("autocomplete") ?? "")) return true;
-    return holdsText(field) && isSensitiveField(field);
+    if (!holdsText(field)) return false;
+    // A message to write (a text area, an editor) is something the person sends, never a search or a page turn.
+    if (field.tagName.toUpperCase() !== "INPUT") return true;
+    const input = field as HTMLInputElement;
+    const said = [input.name, field.id, field.getAttribute("placeholder"), field.getAttribute("aria-label"), ...Array.from(input.labels ?? []).map((l) => l.textContent)].join(" ");
+    return PERSONAL_WORDS.test(said) || isSensitiveField(field);
   });
 }
 
@@ -784,7 +802,8 @@ function describeElement(el: Element, role: string, isVisible: Visibility, forRu
     if (notice?.words) info.context = notice.words;
     if (notice?.cookies) info.cookieNotice = true;
     const owner = formOf(el);
-    if ((holdsText(el) && searchField(el)) || (owner && searchForm(owner))) info.search = true;
+    if (el.tagName.toUpperCase() === "INPUT" && holdsText(el) && searchField(el)) info.search = true;
+    if (owner && searchForm(owner)) info.searchForm = true;
     if (owner && formHoldsSensitive(owner)) info.formSensitive = true;
   }
   if (el.tagName.toUpperCase() === "SELECT") {

@@ -146,6 +146,10 @@ export function cleanElement(raw: unknown): ElementInfo | null {
   if (v.hidden === "transparent" || v.hidden === "tiny") info.hidden = v.hidden;
   if (typeof v.expanded === "boolean") info.expanded = v.expanded;
   for (const flag of ["selected", "pressed", "invalid", "required", "focused"] as const) if (v[flag] === true) info[flag] = true;
+  // For the rules only: the notice it sits in, and what the page says of the field and its form.
+  const context = str(v.context, 200);
+  if (context) info.context = context;
+  for (const flag of ["cookieNotice", "search", "searchForm", "formSensitive"] as const) if (v[flag] === true) info[flag] = true;
   return info;
 }
 

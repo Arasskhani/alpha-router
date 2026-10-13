@@ -716,7 +716,16 @@ describe("searching and paging through results", () => {
     // A single-page app's box, outside any form, named in Persian.
     expect(classify("press_key", { args: { key: "Enter" }, element: field({ name: "جستجو در محصولات" }) })).toMatchObject({ class: "act", reason: "press_key" });
     // Marked by the page as a search (its name attribute, placeholder or form), whatever its label says.
-    expect(classify("press_key", { args: { key: "Enter" }, element: field({ name: "", search: true, formAction: "https://shop.example.com/", formButton: ["→"] }) })).toMatchObject({ class: "act" });
+    expect(classify("press_key", { args: { key: "Enter" }, element: field({ name: "", search: true, searchForm: true, formAction: "https://shop.example.com/", formButton: ["→"] }) })).toMatchObject({ class: "act" });
+  });
+
+  it("Enter in a text area or an editor marked as a search may still send it", () => {
+    for (const tag of ["textarea", "div"]) {
+      const box = field({ name: "Message #general", tag, search: true });
+      expect(classify("press_key", { args: { key: "Enter" }, element: box })).toMatchObject({ class: "sensitive", reason: "enter_sends" });
+      // Nor does a search mark let it take personal details without asking.
+      expect(classify("type_text", { args: { text: "12 Main St" }, element: field({ name: "Your home address", tag, search: true }) })).toMatchObject({ class: "sensitive", reason: "personal_data" });
+    }
   });
 
   it("Search, Next, Apply filters and their Persian words send no form a person would think of as sending", () => {

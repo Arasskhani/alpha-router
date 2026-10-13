@@ -269,7 +269,7 @@ const HARMLESS_SUBMIT_FA = /^(جست ?(و ?)?جو|جستجو کن|بعدی|صف�
 /** Sending a form that only searches or pages: by its button's words, or the form or field marking itself a search. */
 function harmlessSubmit(element: ElementInfo, said: string[]): boolean {
   if (element.formSensitive) return false;
-  return Boolean(element.search) || (said.length > 0 && said.every((label) => matches(label, HARMLESS_SUBMIT, HARMLESS_SUBMIT_FA, SEARCH, SEARCH_FA)));
+  return Boolean(element.searchForm) || (said.length > 0 && said.every((label) => matches(label, HARMLESS_SUBMIT, HARMLESS_SUBMIT_FA, SEARCH, SEARCH_FA)));
 }
 
 /** Words that upload (the administrator can relax these). */
@@ -727,7 +727,8 @@ function typeVerdict(element: ElementInfo, page: { url: string; host: string }, 
   if (sensitiveText(element.name)) return secret();
   if (consentPage(page.url)) return verdict("sensitive", "authorization", `Typing on a page that gives a program access to an account.`);
   // A search box that mentions an address or a phone ("Search for a place or address") gives the page no one's details.
-  const searchBox = Boolean(element.search) || element.role === "searchbox" || element.type === "search" || matches(element.name, SEARCH, SEARCH_FA);
+  const searchBox =
+    element.tag === "input" && (Boolean(element.search) || element.role === "searchbox" || element.type === "search" || matches(element.name, SEARCH, SEARCH_FA));
   if ((!searchBox && matches(field, PERSONAL_FIELD, PERSONAL_FIELD_FA)) || element.type === "tel") {
     return verdict("sensitive", "personal_data", `Typing into ${named(element)} gives a page personal details.`);
   }
@@ -838,8 +839,9 @@ function keyVerdict(rawKey: unknown, element: ElementInfo | undefined, page: { u
   // implicit submission): judged as sending that form, as submit_form would be. A button presses itself.
   const sendsForm = Boolean(element && element.tag === "input" && !BUTTON_INPUTS.has(element.type ?? "") && element.formAction !== undefined);
   if (element && inText && key === "Enter" && !combo.shift) {
+    // A one-line search box only: Enter in a text area or an editor named "Search…" may still send what it holds.
     const search =
-      element.role === "searchbox" || element.type === "search" || Boolean(element.search) || matches(element.name, SEARCH, SEARCH_FA);
+      element.tag === "input" && (element.role === "searchbox" || element.type === "search" || Boolean(element.search) || matches(element.name, SEARCH, SEARCH_FA));
     // In a form, the form is judged as sending it would be - its button may still pay or join - and a search form passes.
     if (sendsForm) return sentByEnter(element, page, ctx);
     if (search) return verdict("act", "press_key", `Pressing Enter in ${named(element)} to search.`);

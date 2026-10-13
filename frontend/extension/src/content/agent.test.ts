@@ -457,9 +457,10 @@ describe("acting", () => {
     page(`<form action="/w/index.php"><input name="search" aria-label="Search Wikipedia"><button>Search</button></form>`);
     expect(describeFirst().element).toMatchObject({ search: true });
     expect(describeFirst().element.formSensitive).toBeUndefined();
-    // A form marked as a search, whatever its field is called.
+    // A form marked as a search, whatever its field is called: the form searches, the field is not a search box.
     page(`<form role="search" action="/list"><input aria-label="Filter"><button>Go</button></form>`);
-    expect(describeFirst().element).toMatchObject({ search: true });
+    expect(describeFirst().element).toMatchObject({ searchForm: true });
+    expect(describeFirst().element.search).toBeUndefined();
     // A placeholder in Persian.
     page(`<div><input placeholder="جستجو در دیجی‌کالا" aria-label="کالا"></div>`);
     expect(describeFirst().element).toMatchObject({ search: true });
@@ -470,6 +471,29 @@ describe("acting", () => {
     // A phone number by the browser's autofill name.
     page(`<form action="/next"><input aria-label="Contact" autocomplete="tel"><button>Next</button></form>`);
     expect(describeFirst().element).toMatchObject({ formSensitive: true });
+  });
+
+  it("never takes a message box, a posting form or a form of contact details for a search", () => {
+    const describeFirst = () => describeRef(snapshot(document, { isVisible: visible }).elements[0].ref, visible) as { ok: true; element: ElementInfo };
+    // A chat box named "text", and an editor with that id: not search boxes.
+    page(`<textarea name="text" aria-label="Message #general"></textarea>`);
+    expect(describeFirst().element.search).toBeUndefined();
+    page(`<div contenteditable="true" id="text" aria-label="Write a reply"></div>`);
+    expect(describeFirst().element.search).toBeUndefined();
+    page(`<form><input name="s" aria-label="Seat"><button>Go</button></form>`);
+    expect(describeFirst().element.search).toBeUndefined();
+    // Marked as a search, but it posts a home address: not a search, and personal.
+    page(`<form role="search" action="/profile/save" method="post"><input aria-label="Your home address"><button>Go</button></form>`);
+    expect(describeFirst().element.searchForm).toBeUndefined();
+    expect(describeFirst().element.formSensitive).toBe(true);
+    // A search landmark around a form of two fields.
+    page(`<div role="search"><form action="/find"><input aria-label="What"><input aria-label="Where"><button>Find</button></form></div>`);
+    expect(describeFirst().element.searchForm).toBeUndefined();
+    // A job application and a contact form: personal, so "Apply" and "Next" still ask.
+    page(`<form action="/jobs/1"><input autocomplete="name" aria-label="Name"><input type="email" aria-label="Mail"><textarea aria-label="Cover letter"></textarea><button>Apply</button></form>`);
+    expect(describeFirst().element.formSensitive).toBe(true);
+    page(`<form action="/contact"><input aria-label="Your e-mail"><button>Next</button></form>`);
+    expect(describeFirst().element.formSensitive).toBe(true);
   });
 
   it("does not click what is disabled or hidden", () => {

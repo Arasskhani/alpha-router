@@ -162,6 +162,16 @@ describe("a call to the page", () => {
 });
 
 describe("what the page answers", () => {
+  it("keeps the marks the rules judge by, and only as flags", () => {
+    const element = cleanElement({ ref: "e1", role: "button", name: "OK", tag: "button", context: "Delete 3 files?", cookieNotice: true, search: true, searchForm: true, formSensitive: true });
+    expect(element).toMatchObject({ context: "Delete 3 files?", cookieNotice: true, search: true, searchForm: true, formSensitive: true });
+    const odd = cleanElement({ ref: "e1", role: "button", name: "OK", tag: "button", context: "x".repeat(900), search: "yes", formSensitive: 1 });
+    expect(odd?.context).toHaveLength(200);
+    expect(odd?.search).toBeUndefined();
+    expect(odd?.formSensitive).toBeUndefined();
+  });
+
+
   it("is checked for its action, and cut to size", () => {
     const read = cleanPageResult("read_page", {
       ok: true,

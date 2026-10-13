@@ -737,6 +737,7 @@ class TestTheAdminCard:
             "screenshot_after_action": False,
             "save_runs": False,
             "private_runs": False,
+            "trusted_sites": False,
         }
         resp = await client.put("/api/admin/extension/settings", json=body, headers=headers)
         assert resp.status_code == 200, resp.text

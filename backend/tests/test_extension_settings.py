@@ -440,6 +440,7 @@ class TestTheRunLimits:
         assert (s.internal_connections, s.external_screenshots) == ((), True)
         assert (s.save_runs, s.private_runs) == (True, True)
         assert s.screenshot_after_action is True
+        assert s.trusted_sites is True
 
     def test_a_stored_value_out_of_range_falls_back_to_the_default(self):
         stored = {
@@ -515,6 +516,7 @@ class TestTheRunLimits:
                 external_screenshots=False,
                 save_runs=False,
                 private_runs=False,
+                trusted_sites=False,
             ),
         )
         await save_extension_settings(db_session, updated)

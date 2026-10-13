@@ -292,6 +292,8 @@ async def extension_me(
             # Whether finished runs are kept as chats, and whether the person may keep one out.
             "save_runs": settings.save_runs,
             "private_runs": settings.private_runs,
+            # Whether a person's trusted sites count: their plain actions there go ahead without asking.
+            "trusted_sites": settings.trusted_sites,
             # Full control: whether the admin turned it on; the feature flag says whether this user may use it.
             "full_control": settings.full_control,
             # Which sensitive cases still ask (true), so the extension can relax the rest.

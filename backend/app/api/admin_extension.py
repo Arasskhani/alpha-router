@@ -84,6 +84,7 @@ class ExtensionSettingsIn(BaseModel):
     screenshot_after_action: bool = True
     save_runs: bool = True
     private_runs: bool = True
+    trusted_sites: bool = True
 
 
 async def _key_status(db: AsyncSession) -> dict:

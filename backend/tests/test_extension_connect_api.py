@@ -608,6 +608,7 @@ class TestMe:
             "screenshot_after_action": True,
             "save_runs": True,
             "private_runs": True,
+            "trusted_sites": True,
             "full_control": False,
             "approvals": {
                 "send": True,

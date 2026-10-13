@@ -166,6 +166,9 @@ class ExtensionSettings:
     #: Finished runs saved to the person's chat history; and whether a run may be private (not saved).
     save_runs: bool = True
     private_runs: bool = True
+    #: A person may trust a site for the agent across runs, from a card: its plain actions there then go ahead
+    #: without asking (never what always asks). Off, nobody's trusted sites count.
+    trusted_sites: bool = True
 
     def to_json(self) -> dict[str, Any]:
         data = asdict(self)
@@ -488,6 +491,7 @@ def parse_settings(raw: str | None) -> ExtensionSettings:
         screenshot_after_action=bool(data.get("screenshot_after_action", True)),
         save_runs=bool(data.get("save_runs", True)),
         private_runs=bool(data.get("private_runs", True)),
+        trusted_sites=bool(data.get("trusted_sites", True)),
     )
 
 
@@ -776,6 +780,7 @@ async def validated_update(
     screenshot_after_action: bool = True,
     save_runs: bool = True,
     private_runs: bool = True,
+    trusted_sites: bool = True,
 ) -> ExtensionSettings:
     """The settings an administrator asked for, checked; raises ExtensionSettingsError."""
     if site_access not in SITE_ACCESS_MODES:
@@ -872,6 +877,7 @@ async def validated_update(
         screenshot_after_action=bool(screenshot_after_action),
         save_runs=bool(save_runs),
         private_runs=bool(private_runs),
+        trusted_sites=bool(trusted_sites),
     )
     # The reviewer reads what the agent found on pages: element names, the text it would type.
     if updated.agent_auto_mode and not page_content_allowed(updated, updated.agent_review_model):

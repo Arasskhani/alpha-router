@@ -181,7 +181,7 @@ _DETAIL_FIELDS: dict[str, Any] = {
     "class": _one_of("read", "act", "sensitive", "blocked"),
     #: Who let the action go ahead: nobody had to, the user (on its card, once for the site's plain actions for
     #: the rest of the run, or once for this kind of action on the site for the rest of the run), or the review model.
-    "approval": _one_of("not_needed", "user", "user_site", "user_run", "review"),
+    "approval": _one_of("not_needed", "user", "user_site", "user_run", "user_trusted", "review"),
     "review": _one_of("allow", "ask"),
     #: The element acted on: its role and accessible name, never its value.
     "role": lambda value: _text(value, 32),

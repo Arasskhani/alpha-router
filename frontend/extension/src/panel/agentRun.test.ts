@@ -970,6 +970,29 @@ describe("the standing instructions", () => {
   });
 });
 
+describe("the sites a task names", () => {
+  it("are gone to without the other-site warning; a site it does not name still has it", async () => {
+    const h = harness(
+      [
+        { text: "", toolCalls: [call("navigate", { url: "https://en.wikipedia.org/wiki/Silk_Road" }, "w1")] },
+        { text: "", toolCalls: [call("navigate", { url: "https://news.example.net/" }, "w2")] },
+        { text: "", toolCalls: [call("done", { summary: "ok" })] },
+      ],
+      { approve: () => true },
+    );
+    await run(h, { task: "Read about the Silk Road on Wikipedia.", rules: { ...RULES, policy: { allowed_sites: [], blocked_sites: [] } } });
+    // Ask mode asks for both, but only the unnamed site comes as going to another site.
+    expect(h.approvals.map((a) => a.verdict.reason)).toEqual(["allowed_site", "other_site"]);
+  });
+
+  it("never lets a task name a site the administrator blocks", async () => {
+    const h = harness([{ text: "", toolCalls: [call("navigate", { url: "https://bank.example.com/" }, "b1")] }, { text: "", toolCalls: [call("done", { summary: "ok" })] }]);
+    await run(h, { task: "Open bank.example.com and check my balance." });
+    expect(h.approvals).toHaveLength(0);
+    expect(String(h.sent[1].find((m) => m.role === "tool")?.content)).toMatch(/Refused/);
+  });
+});
+
 describe("plan mode", () => {
   it("goes between the sites of an approved plan without asking again, and back to the start site too", async () => {
     const h = harness(

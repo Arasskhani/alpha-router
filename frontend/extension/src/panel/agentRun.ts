@@ -28,6 +28,7 @@ import { signedReasoning } from "../lib/chatStream";
 import { probeInjection } from "../lib/injection";
 import type { ElementInfo, PageMethod, PageResult } from "../lib/pageAgent";
 import { readablePage, siteOf } from "../lib/sites";
+import { namedSites } from "../lib/taskSites";
 import { agentInstructions, CONTROL_TOOL_NAMES, TOOL_NAMES } from "./agentTools";
 import type { PauseGate } from "./pauseGate";
 
@@ -1768,8 +1769,11 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     await raced(deps.browser.begin?.() ?? Promise.resolve()).catch(() => undefined);
     const first = await deps.browser.current();
     startSite = first?.host ?? undefined;
-    // The user started the run on this page.
+    // The user started the run on this page, and named in the task where it should go.
     if (startSite) allow(startSite);
+    for (const site of namedSites(options.task)) {
+      if (classifyAction({ tool: "read_page", args: {}, page: { url: `https://${site}/`, host: site } }, options.rules).class !== "blocked") allow(site);
+    }
     lastTab = first;
     // The model starts knowing where it is.
     const start = first ? await startingPoint(first) : null;

@@ -409,10 +409,17 @@ describe("the rest", () => {
     const search = el({ role: "textbox", name: "Search", tag: "input" });
     expect(classify("submit_form", { element: { ...search, formButton: ["Next", "Place order"] } })).toMatchObject({ class: "blocked", reason: "purchase_label" });
     expect(classify("submit_form", { element: { ...search, formAction: "https://bank.example.com/collect" } }, RULES)).toMatchObject({ class: "blocked", reason: "site_blocked" });
+    // A search form is a plain action; any other form still asks.
     expect(classify("submit_form", { element: { ...search, formAction: "https://shop.example.com/find?q=1", formButton: ["Go"] } })).toEqual({
+      class: "act",
+      reason: "search_form",
+      message: 'Sending the search to shop.example.com/find from "Search".',
+    });
+    const contact = el({ role: "textbox", name: "Your name", tag: "input" });
+    expect(classify("submit_form", { element: { ...contact, formAction: "https://shop.example.com/contact", formButton: ["Save"] } })).toEqual({
       class: "sensitive",
       reason: "submit",
-      message: 'Sending the form to shop.example.com/find from "Search".',
+      message: 'Sending the form to shop.example.com/contact from "Your name".',
     });
   });
 
@@ -615,7 +622,7 @@ describe("what the administrator relaxed", () => {
     expect(classify("press_key", { args: { key: "Delete" } }, relaxed({ delete: false }))).toMatchObject({ class: "act", reason: "delete_key" });
     expect(classify("click", { element: el({ name: "Download report" }) }, relaxed({ downloads: false }))).toMatchObject({ class: "act", reason: "download" });
     expect(classify("click", { element: el({ role: "button", name: "Photo", tag: "input", type: "file" }) }, relaxed({ uploads: false }))).toMatchObject({ class: "act", reason: "upload" });
-    expect(classify("click", { element: el({ name: "Go", submits: true }) }, relaxed({ submit: false }))).toMatchObject({ class: "act", reason: "submit" });
+    expect(classify("click", { element: el({ name: "Save", submits: true }) }, relaxed({ submit: false }))).toMatchObject({ class: "act", reason: "submit" });
     expect(classify("submit_form", { element: el({ role: "textbox", name: "Email" }) }, relaxed({ submit: false }))).toMatchObject({ class: "act", reason: "submit" });
     expect(classify("navigate", { args: { url: "https://partner.org/" } }, relaxed({ leave_sites: false }))).toMatchObject({ class: "act", reason: "other_site", site: "partner.org" });
     expect(classify("click", { element: el({ role: "link", name: "Partner", tag: "a", href: "https://partner.org/" }) }, relaxed({ leave_sites: false }))).toMatchObject({ class: "act", reason: "other_site", site: "partner.org" });
@@ -693,5 +700,32 @@ describe("one site across its hosts, and the sites a run already works on", () =
     expect(classify("navigate", { page, args: { url: "https://news.example.net/" } }, ctx)).toMatchObject({ class: "sensitive", reason: "other_site" });
     const blocked: PolicyContext = { ...RULES, allowedSites: new Set(["example.com"]) };
     expect(classify("navigate", { args: { url: "https://bank.example.com/" } }, blocked)).toMatchObject({ class: "blocked", reason: "site_blocked" });
+  });
+});
+
+describe("searching and paging through results", () => {
+  const field = (overrides: Partial<ElementInfo>) => el({ role: "textbox", tag: "input", type: "text", ...overrides });
+  it("Enter in a site's search box is a plain action, whatever its type", () => {
+    // Wikipedia-style: a type=text field named Search in a form that sends to /w/index.php.
+    const wiki = field({ name: "Search Wikipedia", formAction: "https://en.wikipedia.org/w/index.php", formButton: ["Search"] });
+    expect(classify("press_key", { args: { key: "Enter" }, element: wiki })).toMatchObject({ class: "act", reason: "search_form" });
+    // A single-page app's box, outside any form, named in Persian.
+    expect(classify("press_key", { args: { key: "Enter" }, element: field({ name: "جستجو در محصولات" }) })).toMatchObject({ class: "act", reason: "press_key" });
+    // Marked by the page as a search (its name attribute, placeholder or form), whatever its label says.
+    expect(classify("press_key", { args: { key: "Enter" }, element: field({ name: "", search: true, formAction: "https://shop.example.com/", formButton: ["→"] }) })).toMatchObject({ class: "act" });
+  });
+
+  it("Search, Next, Apply filters and their Persian words send no form a person would think of as sending", () => {
+    for (const name of ["Search", "Next", "Apply filters", "Show results", "Sort", "جستجو", "بعدی", "اعمال فیلتر", "مرتب‌سازی"]) {
+      expect(classify("click", { element: el({ name, submits: true, formAction: "https://shop.example.com/list" }) })).toMatchObject({ class: "act", reason: "search_form" });
+    }
+  });
+
+  it("still asks when the form holds anything personal, and never lets a search pass a form that pays or joins", () => {
+    expect(classify("click", { element: el({ name: "Next", submits: true, formSensitive: true }) })).toMatchObject({ class: "sensitive", reason: "submit" });
+    expect(classify("press_key", { args: { key: "Enter" }, element: field({ name: "Search", search: true, formAction: SHOP.url, formButton: ["Buy now"] }) })).toMatchObject({ class: "blocked" });
+    expect(classify("press_key", { args: { key: "Enter" }, element: field({ name: "Search", search: true, formSensitive: true, formAction: SHOP.url, formButton: ["Search"] }) })).toMatchObject({ class: "sensitive" });
+    expect(classify("click", { element: el({ name: "Sign in", submits: true }) })).toMatchObject({ class: "sensitive", reason: "submit" });
+    expect(classify("click", { element: el({ name: "Continue", submits: true }) })).toMatchObject({ class: "sensitive", reason: "submit" });
   });
 });

@@ -135,7 +135,7 @@ describe("the never list holds against a hostile model, even with a willing revi
 describe("sensitive actions never happen when the user denies, whatever the reviewer says", () => {
   it.each([
     ["sending a message", { ref: "e1", role: "button", name: "Send", tag: "button" }, "left_click", { coordinate: [10, 10] }],
-    ["a form submit", { ref: "e1", role: "button", name: "Go", tag: "button", submits: true }, "left_click", { coordinate: [10, 10] }],
+    ["a form submit", { ref: "e1", role: "button", name: "Save changes", tag: "button", submits: true }, "left_click", { coordinate: [10, 10] }],
     ["an authorization", { ref: "e1", role: "button", name: "Allow access", tag: "button" }, "left_click", { coordinate: [10, 10] }],
   ])("asks and does not act on %s", async (_label, element, action, args) => {
     const { driver, approve } = await attack(element, "computer", { action, ...args });

@@ -245,6 +245,24 @@ const WEIGHTY_FA = /انتقال|حذف|پاک ?کردن|ارسال (پیام|ا
 const AUTHORIZE =
   /\b(allow access|grant access|authorize|authorise|allow|continue as|connect (to|with|your)|link (account|your)|give access|api key|access token|generate (a )?(token|key)|two-?factor|2fa|change (my |your |the )?(password|email|phone)|recovery (email|phone|codes)|trusted devices?|sign out (of )?(all|everywhere)|security (settings|key))\b/;
 const AUTHORIZE_FA = /اجازه دسترسی|اعطای دسترسی|دسترسی بده|مجوز|تغییر رمز|رمز عبور|احراز هویت دو|تأیید دو مرحله|تایید دو مرحله|تنظیمات امنیتی|کلید api|توکن/;
+/** A field's name that says it searches. */
+const SEARCH = /\bsearch\b/;
+const SEARCH_FA = /جست ?(و ?)?جو/;
+/**
+ * A form's sending button that only looks something up or moves through
+ * pages of it: sending such a form from a form with no secret, file or
+ * contact details in it is a plain action, not "sending a form".
+ */
+const HARMLESS_SUBMIT =
+  /^(search|search now|go|find|look ?up|next|next page|next step|previous|previous page|prev|back|apply|apply filters?|filter|filters|sort|sort by|show results|view results|see results|update results|refresh|load more|show more|more results)$/;
+const HARMLESS_SUBMIT_FA = /^(جست ?(و ?)?جو|جستجو کن|بعدی|صفحه بعد|مرحله بعد|قبلی|صفحه قبل|بازگشت|اعمال|اعمال فیلتر|فیلتر|مرتب ?سازی|نمایش نتایج|مشاهده نتایج|نمایش بیشتر|بیشتر|یافتن|پیدا کن|برو)$/;
+
+/** Sending a form that only searches or pages: by its button's words, or the form or field marking itself a search. */
+function harmlessSubmit(element: ElementInfo, said: string[]): boolean {
+  if (element.formSensitive) return false;
+  return Boolean(element.search) || (said.length > 0 && said.every((label) => matches(label, HARMLESS_SUBMIT, HARMLESS_SUBMIT_FA, SEARCH, SEARCH_FA)));
+}
+
 /** Words that upload (the administrator can relax these). */
 const UPLOAD = /\b(upload|attach(ment)?|choose file|browse files?|drop (files?|here)|add (a )?(file|photo|image|attachment))\b/;
 const UPLOAD_FA = /بارگذاری|آپلود|پیوست|انتخاب فایل|افزودن فایل/;
@@ -542,6 +560,7 @@ function clickVerdict(element: ElementInfo, page: { url: string; host: string },
       const refused = siteVerdict(target.host, ctx, "act");
       if (refused) return refused;
     }
+    if (harmlessSubmit(element, said)) return verdict("act", "search_form", `Clicking ${named(element)} to search or move through the results.`);
     return asks(!approvals(ctx).submit, "submit", `Clicking ${named(element)} sends a form.`);
   }
   // Nothing tells what it does - an icon without a name - so neither the agent nor a reviewer can judge it.
@@ -747,12 +766,11 @@ function submitVerdict(element: ElementInfo, page: { url: string; host: string }
   if (said.some((label) => matches(label, SEND, SEND_FA))) {
     return asks(!approvals(ctx).send, "sensitive_label", `Sending this form may send or publish something${dest}.`);
   }
+  // A search form, or one whose button only pages or filters: a plain action - unless it holds anything personal.
+  if (harmlessSubmit(element, element.formButton ?? [])) return verdict("act", "search_form", `Sending the search${dest}.`);
   return asks(!approvals(ctx).submit, "submit", `Sending the form${dest}.`);
 }
 
-/** A field's name that says it searches. */
-const SEARCH = /\bsearch\b/;
-const SEARCH_FA = /جست ?(و ?)?جو/;
 
 /** Roles of fields that hold text a person types. */
 const TEXT_ROLES = new Set(["textbox", "searchbox", "combobox", "spinbutton"]);
@@ -798,9 +816,11 @@ function keyVerdict(rawKey: unknown, element: ElementInfo | undefined, page: { u
   // implicit submission): judged as sending that form, as submit_form would be. A button presses itself.
   const sendsForm = Boolean(element && element.tag === "input" && !BUTTON_INPUTS.has(element.type ?? "") && element.formAction !== undefined);
   if (element && inText && key === "Enter" && !combo.shift) {
-    const search = element.role === "searchbox" || element.type === "search" || (element.role === "combobox" && matches(element.name, SEARCH, SEARCH_FA));
-    if (search) return verdict("act", "press_key", `Pressing Enter in ${named(element)} to search.`);
+    const search =
+      element.role === "searchbox" || element.type === "search" || Boolean(element.search) || matches(element.name, SEARCH, SEARCH_FA);
+    // In a form, the form is judged as sending it would be - its button may still pay or join - and a search form passes.
     if (sendsForm) return sentByEnter(element, page, ctx);
+    if (search) return verdict("act", "press_key", `Pressing Enter in ${named(element)} to search.`);
     return asks(!relax.send, "enter_sends", `Pressing Enter in ${named(element)} may send what it holds.`);
   }
   if (element && sendsForm && key === "Enter" && !combo.shift) return sentByEnter(element, page, ctx);

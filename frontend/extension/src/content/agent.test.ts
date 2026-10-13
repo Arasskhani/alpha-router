@@ -451,6 +451,27 @@ describe("acting", () => {
     expect(snapshot(document, { isVisible: visible }).elements[0].formButton).toBeUndefined();
   });
 
+  it("tells the rules whether a field or its form searches, and whether the form holds anything personal", () => {
+    const describeFirst = () => describeRef(snapshot(document, { isVisible: visible }).elements[0].ref, visible) as { ok: true; element: ElementInfo };
+    // Wikipedia's box: a text field named "search" in a form that sends to /w/index.php.
+    page(`<form action="/w/index.php"><input name="search" aria-label="Search Wikipedia"><button>Search</button></form>`);
+    expect(describeFirst().element).toMatchObject({ search: true });
+    expect(describeFirst().element.formSensitive).toBeUndefined();
+    // A form marked as a search, whatever its field is called.
+    page(`<form role="search" action="/list"><input aria-label="Filter"><button>Go</button></form>`);
+    expect(describeFirst().element).toMatchObject({ search: true });
+    // A placeholder in Persian.
+    page(`<div><input placeholder="جستجو در دیجی‌کالا" aria-label="کالا"></div>`);
+    expect(describeFirst().element).toMatchObject({ search: true });
+    // A sign-in form: no search, and something personal in it.
+    page(`<form action="/login"><input aria-label="Username"><input type="password" aria-label="Password"><button>Next</button></form>`);
+    expect(describeFirst().element.search).toBeUndefined();
+    expect(describeFirst().element).toMatchObject({ formSensitive: true });
+    // A phone number by the browser's autofill name.
+    page(`<form action="/next"><input aria-label="Contact" autocomplete="tel"><button>Next</button></form>`);
+    expect(describeFirst().element).toMatchObject({ formSensitive: true });
+  });
+
   it("does not click what is disabled or hidden", () => {
     page(`<button disabled>Pay</button><button>Visible</button>`);
     const shot = snapshot(document, { isVisible: visible });

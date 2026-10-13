@@ -95,6 +95,18 @@ export type ElementInfo = {
   context?: string;
   /** For the rules only: the notice it sits in is about cookies or consent, by its name, its marks or its words. */
   cookieNotice?: boolean;
+  /**
+   * For the rules only: the field, or the form it is in, is a search - by its
+   * type, role, name or placeholder, or a form marked as one or sending to a
+   * search address.
+   */
+  search?: boolean;
+  /**
+   * For the rules only: the form it is in holds a secret (a password, card or
+   * code field), a file to upload, or a person's contact details - sending
+   * it is never a mere "Next" or "Search".
+   */
+  formSensitive?: boolean;
 };
 
 type AgentError =
@@ -652,6 +664,53 @@ function defaultButton(form: HTMLFormElement): Element | null {
   return Array.from(form.elements).find((field) => submits(field)) ?? null;
 }
 
+/** A field's own marks that say it searches: its name or id ("q", "search_query"), its placeholder, its label. */
+const SEARCH_FIELD_NAMES = /^(q|query|search|s|k|kw|keyword|keywords|term|terms|search_?query|search_?term|searchtext|text)$/i;
+const SEARCH_WORDS = /\bsearch\b|جست ?(و ?)?جو|جستجو/i;
+/** Where a search form sends: /search, /find, /results, or a query named like one. */
+const SEARCH_ACTION = /(^|\/)(search|find|results?|s)(\/|$)/i;
+const SEARCH_QUERY_NAMES = new Set(["q", "query", "search", "s", "k", "keyword", "term", "search_query"]);
+
+/** Whether a field searches, by what it says of itself. */
+function searchField(el: Element): boolean {
+  const input = el as HTMLInputElement;
+  if (el.tagName.toUpperCase() === "INPUT" && inputType(el) === "search") return true;
+  if (el.getAttribute("role") === "searchbox") return true;
+  if (SEARCH_FIELD_NAMES.test(input.name ?? "") || SEARCH_FIELD_NAMES.test(el.id ?? "")) return true;
+  const said = `${el.getAttribute("placeholder") ?? ""} ${el.getAttribute("aria-label") ?? ""} ${el.getAttribute("title") ?? ""}`;
+  return SEARCH_WORDS.test(said);
+}
+
+/** Whether a form searches: marked as a search, inside a search landmark, or sending to a search address. */
+function searchForm(form: HTMLFormElement): boolean {
+  if (form.getAttribute("role") === "search" || form.closest('[role="search"], search')) return true;
+  const action = form.getAttribute("action");
+  if (action) {
+    try {
+      const url = new URL(action, form.ownerDocument.location?.href ?? "https://invalid.invalid/");
+      if (SEARCH_ACTION.test(url.pathname)) return true;
+    } catch {
+      // An address the browser cannot read is not a search's.
+    }
+  }
+  // A form of one text field named like a query, sent by GET: a site's search box.
+  const fields = Array.from(form.elements).filter((field) => holdsText(field));
+  return fields.length === 1 && (form.method || "get").toLowerCase() === "get" && SEARCH_QUERY_NAMES.has(((fields[0] as HTMLInputElement).name ?? "").toLowerCase());
+}
+
+/** Contact details a form may ask for, by the browser's own autofill names. */
+const PERSONAL_AUTOCOMPLETE = /\b(tel|tel-national|street-address|address-line\d|postal-code|bday(-day|-month|-year)?|cc-[a-z-]+|one-time-code|new-password|current-password)\b/i;
+
+/** Whether a form holds a secret, a file to upload, or a person's contact details. */
+function formHoldsSensitive(form: HTMLFormElement): boolean {
+  return Array.from(form.elements).some((field) => {
+    const type = field.tagName.toUpperCase() === "INPUT" ? inputType(field) : "";
+    if (type === "password" || type === "file" || type === "tel") return true;
+    if (PERSONAL_AUTOCOMPLETE.test(field.getAttribute("autocomplete") ?? "")) return true;
+    return holdsText(field) && isSensitiveField(field);
+  });
+}
+
 /** What holds a control that answers something: a dialog, or a notice that says it is about cookies. */
 const NOTICES = '[role="dialog"], [role="alertdialog"], dialog, [aria-modal="true"]';
 const COOKIE_HINT = /cookie|consent|gdpr|\bcmp\b|onetrust|usercentrics|didomi|cookiebot/i;
@@ -724,6 +783,9 @@ function describeElement(el: Element, role: string, isVisible: Visibility, forRu
     const notice = noticeOf(el, isVisible);
     if (notice?.words) info.context = notice.words;
     if (notice?.cookies) info.cookieNotice = true;
+    const owner = formOf(el);
+    if ((holdsText(el) && searchField(el)) || (owner && searchForm(owner))) info.search = true;
+    if (owner && formHoldsSensitive(owner)) info.formSensitive = true;
   }
   if (el.tagName.toUpperCase() === "SELECT") {
     info.options = Array.from((el as HTMLSelectElement).options)

@@ -53,6 +53,8 @@ export type AgentBrowser = {
   hasAccess(url: string): Promise<boolean>;
   /** After an action that may load a page: wait until the tab has settled. */
   settle(): Promise<void>;
+  /** The run starts: the tab it starts in becomes the agent's to show (its tab group). */
+  begin?(): Promise<void>;
 };
 
 type ToolCall = { id: string; type: "function"; function: { name: string; arguments: string } };
@@ -827,16 +829,39 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
    * border saying the agent drives it, and a busy page does not hold the run up with each of them.
    */
   async function visual(method: PageMethod, a: Record<string, unknown>, tab: WorkTab | null): Promise<void> {
-    if (!tab || !deps.driver) return;
-    if (deps.driver.controls && !deps.driver.controls(tab.id)) return;
+    if (!tab || !controls(tab)) return;
     visualsIn.add(tab.id);
     await orOnStop(deps.browser.page(method, a, tab, signal, VISUAL_MS).catch(() => undefined), undefined);
   }
 
-  /** What the run is doing: the page's border (under full control) and the badge. */
+  /** Whether the tab is under full control: its visuals are then drawn in step with the real mouse, and veiled for captures. */
+  function controls(tab: WorkTab): boolean {
+    return Boolean(deps.driver && (!deps.driver.controls || deps.driver.controls(tab.id)));
+  }
+
+  /** The border's calls on pages without full control, one after another and never waited for. */
+  let borderQueue: Promise<unknown> = Promise.resolve();
+
+  /**
+   * The page's border, in every mode: the user sees which tab is the agent's from the start of a run. Under full control
+   * it goes with the other visuals (awaited, veiled for screenshots); on any other page it is queued and not waited
+   * for, so a busy page never holds the run up for it. Never on a page the agent may not work on.
+   */
+  async function border(next: RunState | "error", tab: WorkTab | null): Promise<void> {
+    if (!tab?.host) return;
+    if (controls(tab)) {
+      await visual("visuals_state", { state: next }, tab);
+      return;
+    }
+    if (classifyAction({ tool: "read_page", args: {}, page: { url: tab.url, host: tab.host } }, options.rules).class === "blocked") return;
+    visualsIn.add(tab.id);
+    borderQueue = borderQueue.then(() => deps.browser.page("visuals_state", { state: next }, tab, undefined, VISUAL_MS).catch(() => undefined));
+  }
+
+  /** What the run is doing: the page's border and the badge. */
   async function state(next: RunState, tab: WorkTab | null): Promise<void> {
     deps.onState?.(next);
-    await visual("visuals_state", { state: next }, tab);
+    await border(next, tab);
   }
 
   /**
@@ -1736,6 +1761,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
   // The page's dialogs are answered as they open, whatever the run is doing then.
   deps.driver?.onDialog(answerDialog);
   try {
+    await raced(deps.browser.begin?.() ?? Promise.resolve()).catch(() => undefined);
     const first = await deps.browser.current();
     startSite = first?.host ?? undefined;
     // The user started the run on this page.
@@ -1744,7 +1770,6 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     // The model starts knowing where it is.
     const start = first ? await startingPoint(first) : null;
     if (start) entries[1] = { message: { role: "user", content: `${options.task}\n\n${start}` } };
-    if (first?.host) await visual("visuals_show", {}, first);
     await state("working", first);
     for (steps = 1; steps <= options.maxSteps; steps += 1) {
       check();
@@ -1872,6 +1897,8 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
         });
       }
       lastTab = (await deps.browser.current()) ?? lastTab;
+      // A page loaded since takes the border down with it: up again on the page the agent is on now.
+      if (unseen && finish === null && !tooManyErrors) void border("working", lastTab);
       if (finish !== null) {
         report("done");
         return { outcome: "done", summary: finish, steps };
@@ -1890,14 +1917,16 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       return { outcome: "stopped", summary: "Stopped.", steps };
     }
     report("failed");
-    await visual("visuals_state", { state: "error" }, lastTab);
+    await border("error", lastTab);
     const message = err instanceof Error && err.message ? err.message : "The agent could not go on.";
     return { outcome: "failed", summary: message, steps };
   } finally {
     deps.driver?.onDialog(null);
     // The layer goes with the run; the panel shows the outcome.
     const tab = lastTab;
-    if (tab && deps.driver && visualsIn.has(tab.id)) {
+    if (tab && visualsIn.has(tab.id)) {
+      // The border's queued calls first, so the last word is the one that takes it down - but not for long.
+      await Promise.race([borderQueue, new Promise((done) => setTimeout(done, VISUAL_MS))]);
       await deps.browser.page("visuals_hide", {}, tab, undefined, VISUAL_MS).catch(() => undefined);
     }
   }

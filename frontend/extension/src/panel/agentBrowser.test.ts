@@ -96,6 +96,34 @@ describe("the browser the agent uses", () => {
     expect(browser.workingTab()).toBe(second.id);
   });
 
+  it("takes the tab it starts in and the tabs it switches to into the group, and gives them back at the end", async () => {
+    const start = chromeFake.tabs.add({ url: "https://shop.example.com/", active: true });
+    const other = chromeFake.tabs.add({ url: "https://shop.example.com/b", groupId: 7 });
+    const browser = createAgentBrowser({ startTabId: start.id!, runId: "run-1" });
+    await browser.begin!();
+    const group = chromeFake.tabs.groups.get(start.id!);
+    expect(group).toBeDefined();
+    expect(chromeFake.tabGroups.update).toHaveBeenCalledWith(group, { title: "Alpharouter", color: "cyan" });
+    await browser.switchTab(other.id!);
+    expect(chromeFake.tabs.groups.get(other.id!)).toBe(group);
+    const opened = await browser.openTab("https://partner.org/a");
+    expect(chromeFake.tabs.groups.get(opened.id)).toBe(group);
+    await browser.cleanup();
+    // The start tab was in no group, the other in its own: each goes back; the tab the agent opened stays its work.
+    expect(chromeFake.tabs.groups.has(start.id!)).toBe(false);
+    expect(chromeFake.tabs.groups.get(other.id!)).toBe(7);
+    expect(chromeFake.tabs.groups.get(opened.id)).toBe(group);
+  });
+
+  it("a tab gone before the end of the run is nothing to give back", async () => {
+    const start = chromeFake.tabs.add({ url: "https://shop.example.com/", active: true });
+    const browser = createAgentBrowser({ startTabId: start.id!, runId: "run-1" });
+    await browser.begin!();
+    chromeFake.tabs.ungroup.mockRejectedValueOnce(new Error("No tab with id"));
+    chromeFake.tabs.ungroup.mockRejectedValueOnce(new Error("No tab with id"));
+    await expect(browser.cleanup()).resolves.toBeUndefined();
+  });
+
   it("opens no more tabs than the administrator allows a run", async () => {
     const start = chromeFake.tabs.add({ url: "https://shop.example.com/", active: true });
     const browser = createAgentBrowser({ startTabId: start.id!, runId: "run-1", maxTabs: 2 });

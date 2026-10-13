@@ -138,6 +138,8 @@ export async function runAgentCall(
       case "hide_overlay": {
         const run = typeof args.run === "string" ? args.run : undefined;
         hideOverlay(doc, run);
+        // The border goes with the banner: no page the run has left keeps saying the agent works it.
+        hideVisuals(doc);
         stopWatching(run);
         stopAnnouncements(doc);
         return { ok: true };

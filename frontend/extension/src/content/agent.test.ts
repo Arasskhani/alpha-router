@@ -1022,6 +1022,17 @@ describe("one call from the panel", () => {
   });
 });
 
+describe("the end of a run on a page", () => {
+  it("takes the border down with the banner", async () => {
+    document.body.innerHTML = `<button>One</button>`;
+    await runAgentCall(document, "show_overlay", { run: "run-7", label: "Working" }, visible, () => undefined);
+    await runAgentCall(document, "visuals_state", { state: "working" }, visible, () => undefined);
+    expect(document.getElementById("alpharouter-agent-visuals")).not.toBeNull();
+    await runAgentCall(document, "hide_overlay", { run: "run-7" }, visible, () => undefined);
+    expect(document.getElementById("alpharouter-agent-visuals")).toBeNull();
+  });
+});
+
 describe("references on a page the run came to later", () => {
   it("are numbered past the ones the run was told on the pages before", async () => {
     document.body.innerHTML = `<button>Send</button>`;

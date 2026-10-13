@@ -151,9 +151,20 @@ export function installChromeFake(options: { version?: string } = {}) {
       /** Tab groups: which group each grouped tab is in. */
       groups: new Map<number, number>(),
       group: vi.fn(async ({ tabIds, groupId }: { tabIds: number[]; groupId?: number }) => {
-        const id = groupId ?? 100 + fake.tabs.groups.size;
-        for (const tabId of tabIds) fake.tabs.groups.set(tabId, id);
+        const id = groupId ?? 100 + new Set(fake.tabs.groups.values()).size;
+        for (const tabId of tabIds) {
+          fake.tabs.groups.set(tabId, id);
+          const tab = tabs.get(tabId);
+          if (tab) tab.groupId = id;
+        }
         return id;
+      }),
+      ungroup: vi.fn(async (tabIds: number | number[]) => {
+        for (const tabId of Array.isArray(tabIds) ? tabIds : [tabIds]) {
+          fake.tabs.groups.delete(tabId);
+          const tab = tabs.get(tabId);
+          if (tab) tab.groupId = -1;
+        }
       }),
     },
     tabGroups: {

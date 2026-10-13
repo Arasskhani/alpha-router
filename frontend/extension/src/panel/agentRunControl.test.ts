@@ -196,7 +196,7 @@ describe("computer actions", () => {
     const visuals = visualCalls(h.browser);
     expect(visuals).toEqual(
       expect.arrayContaining([
-        ["visuals_show", {}],
+        ["visuals_state", { state: "working" }],
         ["visuals_target", { rect: { x: 190, y: 90, width: 40, height: 20 } }],
         ["visuals_state", { state: "waiting" }],
         ["visuals_cursor", { x: 400, y: 200, click: "left" }],
@@ -208,18 +208,41 @@ describe("computer actions", () => {
     expect(String(tool.content)).toContain("Clicked at (200, 100)");
   });
 
-  it("puts up no visuals on a page it has no full control of - no border, and no wait on a busy page for one", async () => {
+  it("shows the border on a page it has no full control of too, without the cursor and without waiting on a busy page", async () => {
     let attached = false;
     const driver = { ...fakeDriver(), use: vi.fn(async () => attached), controls: vi.fn(() => attached) };
     const h = harness([{ text: "", toolCalls: [call("read_page")] }], { driver });
     await h.run();
     expect(h.browser.page).toHaveBeenCalledWith("read_page", expect.anything(), TAB, expect.anything());
-    expect(visualCalls(h.browser)).toEqual([]);
-    // The same run on a page it controls shows them, and takes them down at the end.
+    // The border from the start and down at the end; no cursor or target box, which go with the real mouse.
+    expect(visualCalls(h.browser)).toEqual([
+      ["visuals_state", { state: "working" }],
+      ["visuals_hide", {}],
+    ]);
+    // A page too busy to answer does not hold the run up for its border: the border is not waited for.
+    const busy = fakeBrowser();
+    const plain = busy.page.getMockImplementation()!;
+    busy.page.mockImplementation(async (method: string, ...rest: unknown[]) =>
+      method === "visuals_state" ? new Promise<PageResult>(() => undefined) : plain(method, ...(rest as [])),
+    );
+    const started = Date.now();
+    const slow = harness([{ text: "", toolCalls: [call("read_page")] }, { text: "", toolCalls: [call("done", { summary: "ok" })] }], { driver, browser: busy });
+    const calledAt: number[] = [];
+    const model = slow.deps.model;
+    slow.deps.model = async (...rest) => {
+      calledAt.push(Date.now());
+      return model(...rest);
+    };
+    await slow.run();
+    const secondAt = calledAt[1];
+    // The second step came at once; only the end of the run gives the border's calls a moment, and no more.
+    expect(secondAt - started).toBeLessThan(500);
+    expect(Date.now() - started).toBeLessThan(3500);
+    // The same run on a page it controls shows them with the real mouse's visuals, and takes them down at the end.
     attached = true;
     const again = harness([{ text: "", toolCalls: [call("read_page")] }], { driver });
     await again.run();
-    expect(visualCalls(again.browser)).toEqual(expect.arrayContaining([["visuals_show", {}], ["visuals_state", { state: "working" }], ["visuals_hide", {}]]));
+    expect(visualCalls(again.browser)).toEqual(expect.arrayContaining([["visuals_state", { state: "working" }], ["visuals_hide", {}]]));
   });
 
   it("a click on a buy button is judged like a ref click: refused outright, naming the button", async () => {

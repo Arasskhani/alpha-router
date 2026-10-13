@@ -645,7 +645,7 @@ describe("full control", () => {
     // Attached for the run, and let go afterwards.
     expect(chromeFake.debugger.attach).toHaveBeenCalled();
     expect(chromeFake.debugger.attached.has(tabId)).toBe(false);
-    expect(pageCalls.some((c) => c.method === "visuals_show")).toBe(true);
+    expect(pageCalls.some((c) => c.method === "visuals_state")).toBe(true);
   });
 
   it("stays standard with a model that does not read images, and says why", async () => {

@@ -127,6 +127,24 @@ function expectEveryCallAnswered(messages: ApiMessage[]) {
 }
 
 describe("a run", () => {
+  it("first takes the tab it starts in as its own, then shows the border there", async () => {
+    const browser = fakeBrowser();
+    const order: string[] = [];
+    const begin = vi.fn(async () => {
+      order.push("begin");
+    });
+    const h = harness([{ text: "", toolCalls: [call("done", { summary: "ok" })] }], { browser: Object.assign(browser, { begin }) });
+    browser.page.mockImplementation(async (method: string) => {
+      order.push(method);
+      return { ok: true };
+    });
+    await run(h);
+    expect(begin).toHaveBeenCalledTimes(1);
+    expect(order[0]).toBe("begin");
+    expect(order).toContain("visuals_state");
+    expect(browser.page).toHaveBeenCalledWith("visuals_state", { state: "working" }, TAB, undefined, expect.any(Number));
+  });
+
   it("reads without asking, acts once the user allows it, and finishes with done", async () => {
     const h = harness([
       { text: "I will look at the page.", toolCalls: [call("read_page", {}, "c1")] },

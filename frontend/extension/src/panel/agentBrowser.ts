@@ -2,9 +2,12 @@
  * The browser as the agent's loop uses it (agentRun.ts): the tab it works in,
  * the other tabs of the panel's window, and the page actions of content.js.
  *
- * Tabs the agent opens go into one "Alpharouter" tab group, so the user sees
- * which tabs are its work. Its banner with Stop is put on each page it works
- * in, and taken off every one of them when the run ends.
+ * The tabs the agent works in go into one "Alpharouter" tab group, so the user
+ * sees which tabs are its work: the tab the run starts in and any it switches
+ * to for as long as the run lasts (each goes back to its own group, or to
+ * none, when the run ends), and the tabs it opens, which stay in the group.
+ * Its banner with Stop is put on each page it works in, and taken off every
+ * one of them when the run ends.
  */
 
 import { callPage, type OverlayRequest, type PageMethod, type PageResult, type PageTarget } from "../lib/pageAgent";
@@ -38,7 +41,7 @@ export type PanelBrowser = AgentBrowser & {
   workingTab(): number | null;
   /** Every tab the run put its banner on: a Stop from any of them stops the run. */
   bannerTabs(): number[];
-  /** Take the banner off every page it was put on. */
+  /** Take the banner off every page it was put on, and give the tabs the run took back to their own groups. */
   cleanup(): Promise<void>;
 };
 
@@ -61,6 +64,8 @@ function highestRef(result: unknown): number {
 export function createAgentBrowser(options: { startTabId: number | null; runId: string; windowId?: number; maxTabs?: number }): PanelBrowser {
   let working = options.startTabId;
   let groupId: number | null = null;
+  /** Tabs the run took into its group though it did not open them: tab id → the group each was in (-1 for none). */
+  const adopted = new Map<number, number>();
   const maxTabs = Math.max(1, Math.floor(options.maxTabs ?? DEFAULT_MAX_TABS));
   let opened = 0;
   /** Where the banner went up: tab id → the page it was put on. */
@@ -100,6 +105,37 @@ export function createAgentBrowser(options: { startTabId: number | null; runId: 
     }
   }
 
+  /**
+   * A tab the user had, now the agent's for the run: into the group, with the
+   * group it was in remembered so the end of the run gives it back.
+   */
+  async function adopt(tabId: number): Promise<void> {
+    if (adopted.has(tabId)) return;
+    const tab = await chrome.tabs.get(tabId).catch(() => undefined);
+    if (!tab || tab.id === undefined) return;
+    // Already in the run's group: a tab the agent opened, which stays there.
+    if (groupId !== null && tab.groupId === groupId) return;
+    adopted.set(tabId, typeof tab.groupId === "number" ? tab.groupId : -1);
+    await group(tabId);
+  }
+
+  /** Every tab the run took goes back to the group it was in, or out of any; best-effort. */
+  async function giveBack(): Promise<void> {
+    const back = [...adopted.entries()];
+    adopted.clear();
+    await Promise.all(
+      back.map(async ([tabId, was]) => {
+        try {
+          if (was >= 0) await chrome.tabs.group({ groupId: was, tabIds: [tabId] });
+          else await chrome.tabs.ungroup([tabId]);
+        } catch {
+          // The tab is gone, or its old group is: out of the run's group at least.
+          await chrome.tabs.ungroup([tabId]).catch(() => undefined);
+        }
+      }),
+    );
+  }
+
   /** Take the banner off a tab the agent no longer works in, so no banner claims a tab the run has left. */
   function leave(tabId: number | null): void {
     const where = tabId === null ? undefined : overlays.get(tabId);
@@ -110,6 +146,9 @@ export function createAgentBrowser(options: { startTabId: number | null; runId: 
 
   return {
     current,
+    async begin() {
+      if (working !== null) await adopt(working);
+    },
     workingTab: () => working,
     bannerTabs: () => [...overlays.keys()],
 
@@ -138,6 +177,7 @@ export function createAgentBrowser(options: { startTabId: number | null; runId: 
       const tab = await chrome.tabs.update(tabId, { active: true });
       if (working !== tabId) leave(working);
       working = tabId;
+      await adopt(tabId);
       return workTab(tab) ?? current();
     },
 
@@ -184,9 +224,10 @@ export function createAgentBrowser(options: { startTabId: number | null; runId: 
     },
 
     async cleanup() {
-      await Promise.all(
-        [...overlays.values()].map((where) => callPage(where, "hide_overlay", { run: options.runId }, null, undefined, CLEANUP_MS).catch(() => undefined)),
-      );
+      await Promise.all([
+        ...[...overlays.values()].map((where) => callPage(where, "hide_overlay", { run: options.runId }, null, undefined, CLEANUP_MS).catch(() => undefined)),
+        giveBack(),
+      ]);
       overlays.clear();
     },
   };

@@ -707,6 +707,26 @@ describe("going somewhere", () => {
     ]);
   });
 
+  it("waits for the page to settle only after an action that may load one", async () => {
+    const browser = fakeBrowser();
+    const settledAfter: string[] = [];
+    const h = harness(
+      [
+        { text: "", toolCalls: [call("type_text", { ref: "e5", text: "shoes" }), call("press_key", { key: "Tab" }), call("scroll", { direction: "down" })] },
+        { text: "", toolCalls: [call("press_key", { key: "Enter" })] },
+        { text: "", toolCalls: [call("click", { ref: "e5" })] },
+        { text: "", toolCalls: [call("done", { summary: "ok" })] },
+      ],
+      { browser },
+    );
+    browser.settle.mockImplementation(async () => {
+      settledAfter.push(String(h.sent.length));
+    });
+    await run(h);
+    // Nothing waited in the first step; Enter and the click each waited once.
+    expect(settledAfter).toEqual(["2", "3"]);
+  });
+
   it("tells the model the page the tab shows once it settled, inside the page tags", async () => {
     const browser = fakeBrowser();
     let where = TAB;

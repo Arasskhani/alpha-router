@@ -158,6 +158,33 @@ describe("the browser the agent uses", () => {
     await expect(browser.hasAccess("javascript:alert(1)")).resolves.toBe(false);
   });
 
+  it("goes on at once when the action loads nothing, and waits for a load it started", async () => {
+    const start = chromeFake.tabs.add({ url: "https://shop.example.com/", active: true, status: "complete" });
+    const browser = createAgentBrowser({ startTabId: start.id!, runId: "run-1" });
+    vi.useFakeTimers();
+    try {
+      let settled = false;
+      const quiet = browser.settle().then(() => (settled = true));
+      await vi.advanceTimersByTimeAsync(250);
+      await quiet;
+      expect(settled).toBe(true);
+      expect(chromeFake.tabs.onUpdated.listeners.size).toBe(0);
+
+      settled = false;
+      const loading = browser.settle().then(() => (settled = true));
+      await vi.advanceTimersByTimeAsync(100);
+      chromeFake.tabs.update(start.id!, { status: "loading" } as never);
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(settled).toBe(false);
+      chromeFake.tabs.update(start.id!, { status: "complete" } as never);
+      await vi.advanceTimersByTimeAsync(500);
+      await loading;
+      expect(settled).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("waits for a page that is loading, but not forever", async () => {
     const start = chromeFake.tabs.add({ url: "https://shop.example.com/", active: true, status: "loading" });
     const browser = createAgentBrowser({ startTabId: start.id!, runId: "run-1" });

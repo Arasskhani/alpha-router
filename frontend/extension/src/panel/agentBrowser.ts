@@ -17,11 +17,36 @@ import type { AgentBrowser, WorkTab } from "./agentRun";
 /** How long a page may take to load after an action before the agent looks anyway. */
 const SETTLE_LIMIT_MS = 10_000;
 const SETTLE_POLL_MS = 250;
-/** Time for a click or a key to start loading a page, if it is going to. */
-const SETTLE_START_MS = 400;
+/** Time for a click or a key to start loading a page, if it is going to: the tab says so, or the step goes on. */
+const SETTLE_WATCH_MS = 200;
 const OVERLAY_LABEL = "Alpharouter is working on this page";
 /** Taking the banner off a page at the end of a run: best-effort, and not for long. */
 const CLEANUP_MS = 2000;
+
+/** Whether the tab is loading a page, or starts to within SETTLE_WATCH_MS. */
+function loadStarts(tabId: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    let over = false;
+    const finish = (loading: boolean) => {
+      if (over) return;
+      over = true;
+      clearTimeout(timer);
+      chrome.tabs.onUpdated.removeListener(listen);
+      resolve(loading);
+    };
+    const listen = (id: number, change: { status?: string; url?: string }) => {
+      if (id === tabId && (change.status === "loading" || change.url !== undefined)) finish(true);
+    };
+    chrome.tabs.onUpdated.addListener(listen);
+    const timer = setTimeout(() => finish(false), SETTLE_WATCH_MS);
+    chrome.tabs.get(tabId).then(
+      (tab) => {
+        if (tab?.status === "loading") finish(true);
+      },
+      () => finish(false),
+    );
+  });
+}
 
 function workTab(tab: chrome.tabs.Tab | undefined): WorkTab | null {
   if (!tab || tab.id === undefined) return null;
@@ -214,7 +239,8 @@ export function createAgentBrowser(options: { startTabId: number | null; runId: 
     },
 
     async settle() {
-      await sleep(SETTLE_START_MS);
+      if (working === null) return;
+      if (!(await loadStarts(working))) return;
       const deadline = Date.now() + SETTLE_LIMIT_MS;
       while (working !== null && Date.now() < deadline) {
         const tab = await chrome.tabs.get(working).catch(() => undefined);

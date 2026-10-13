@@ -576,6 +576,13 @@ const CHANGES = new Set(["click", "type_text", "select_option", "submit_form", "
 const OUTLINE_AFTER = new Set(["click", "submit_form", "press_key", "select_option", "navigate", "tab_open", "tab_switch"]);
 /** Actions after which a page may be loading. */
 const MAY_LOAD = new Set(["click", "submit_form", "press_key", "navigate", "tab_open", "tab_switch", "computer"]);
+/** The computer actions that may load a page; typing, hovering, scrolling and waiting do not, so nothing waits after them. */
+const COMPUTER_MAY_LOAD = new Set(["left_click", "right_click", "double_click", "triple_click", "left_click_drag"]);
+/** Of the keys, the ones that may send a form, follow a link or press a button: Enter and Space, with or without modifiers. */
+function keyMayLoad(key: unknown): boolean {
+  if (typeof key !== "string") return false;
+  return key === " " || /(^|\+)\s*(enter|return|space)\s*$/i.test(key);
+}
 /** A hand-typed field the person took over after it was cleared: what the model is told was done. */
 const TOOK_OVER_AFTER_CLEARING = "The user took over this page after the field was cleared, before the text was typed.";
 /** The cases a card may allow for the rest of the run, on its site, by the rule that asked. */
@@ -1289,7 +1296,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       note = `Waited ${seconds} s.`;
     }
     check();
-    await race(deps.browser.settle());
+    if (COMPUTER_MAY_LOAD.has(action) || (action === "key" && keyMayLoad(a.text))) await race(deps.browser.settle());
     check();
     const after = await deps.browser.current();
     check();
@@ -1369,7 +1376,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     }
     let moved = "";
     let after: WorkTab | null = tab;
-    if (MAY_LOAD.has(tool)) {
+    if (MAY_LOAD.has(tool) && (tool !== "press_key" || keyMayLoad(a.key))) {
       await raced(deps.browser.settle());
       check();
       after = await deps.browser.current();

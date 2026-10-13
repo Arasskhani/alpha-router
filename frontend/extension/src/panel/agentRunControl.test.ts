@@ -480,6 +480,33 @@ describe("what an action reports", () => {
   });
 });
 
+describe("settling under full control", () => {
+  it("waits after a click or Enter, not after scrolling, hovering, waiting or another key", async () => {
+    const browser = fakeBrowser();
+    const h = harness(
+      [
+        {
+          text: "",
+          toolCalls: [
+            call("computer", { action: "scroll", coordinate: [200, 100], scroll_direction: "down" }),
+            call("computer", { action: "hover", coordinate: [200, 100] }),
+            call("computer", { action: "wait", duration: 0 }),
+            call("computer", { action: "key", text: "Tab" }),
+          ],
+        },
+        { text: "", toolCalls: [call("computer", { action: "key", text: "Enter" }), call("computer", { action: "left_click", coordinate: [200, 100] })] },
+      ],
+      { browser },
+    );
+    const seen: number[] = [];
+    browser.settle.mockImplementation(async () => {
+      seen.push(h.sent.length);
+    });
+    await h.run();
+    expect(seen).toEqual([2, 2]);
+  });
+});
+
 describe("typing under full control", () => {
   it("asks for a click on the field first when nothing has the keyboard", async () => {
     const h = harness([{ text: "", toolCalls: [call("computer", { action: "type", text: "hello" })] }]);

@@ -181,12 +181,14 @@ export function agentInstructions(nonce: string, options: InstructionOptions = {
     "",
     "How to work:",
     ...mode,
-    "- Take one small step at a time. Each action's result says what it hit, where the keyboard is now and what that field holds, the page it went to, and what the page announced. Read it before the next step.",
+    options.mode === "plan" || options.mode === "auto"
+      ? "- Send together the actions you can already see: fill every field of a form, then send it, in one step. Stop the step at an action whose result decides the next one - a click that opens a page, a menu or a dialog. Each action's result says what it hit, where the keyboard is now and what that field holds, the page it went to, and what the page announced. Read it before the next step."
+      : "- Take one small step at a time. Each action's result says what it hit, where the keyboard is now and what that field holds, the page it went to, and what the page announced. Read it before the next step.",
     ...control,
     "- In a field that suggests as you type - recipients, tags, a search with a list - commit what you typed with Enter or Tab, or by clicking the suggestion, then check that it became a chip or a filled-in value.",
     "- When an action does not go through, the rest of that step is skipped: look at its result and at the page, then try another way or ask the user.",
     "- A dialog the page opens (a message, a question, \"leave this page?\") is answered for you - by the user when it asks something - and told to you with the action's result.",
-    "- Before you finish, check on the page that the task is done: the confirmation, the sent message, the saved value. If it is not there, it did not happen.",
+    "- Finish only when the task is done: the confirmation, the sent message, the saved value. When the result of your last action shows it already, you may call done in the same step, right after that action - it is skipped if the action does not go through. Otherwise look at the page first. If it is not there, it did not happen.",
     "- Use ask_user when you need something only the user knows, or a choice only they can make.",
     "- Always end with done: a short summary of what you did, or why the task cannot be done. An answer without a tool call does not end the task.",
     "",

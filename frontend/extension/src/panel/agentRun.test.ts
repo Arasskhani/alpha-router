@@ -1079,9 +1079,17 @@ describe("the standing instructions", () => {
   it("say how to finish, and what each mode means for batches", () => {
     const ask = agentInstructions(NONCE, { mode: "ask" });
     expect(ask).toMatch(/Send one action at a time when the next depends on what the last one did/);
-    expect(ask).toMatch(/check on the page that the task is done/);
+    expect(ask).toMatch(/Finish only when the task is done/);
+    expect(ask).toMatch(/call done in the same step, right after that action/);
     expect(ask).toMatch(/Always end with done/);
     expect(ask).toMatch(/commit what you typed with Enter or Tab/);
+    expect(ask).toMatch(/Take one small step at a time/);
+    expect(ask).not.toMatch(/Send together the actions you can already see/);
+    for (const mode of ["plan", "auto"] as const) {
+      const text = agentInstructions(NONCE, { mode });
+      expect(text).toMatch(/Send together the actions you can already see: fill every field of a form, then send it, in one step/);
+      expect(text).not.toMatch(/Take one small step at a time/);
+    }
     expect(agentInstructions(NONCE, { mode: "plan" })).toMatch(/call update_plan/);
     expect(agentInstructions(NONCE, { mode: "auto" })).toMatch(/a reviewer checks each action/);
   });

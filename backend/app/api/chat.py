@@ -51,7 +51,12 @@ from app.services.extension_run_limits import (
     check_package_version,
     check_run_time,
 )
-from app.services.extension_settings import ExtensionSettings, load_extension_settings, parse_timestamp
+from app.services.extension_settings import (
+    DEFAULT_AGENT_REASONING,
+    ExtensionSettings,
+    load_extension_settings,
+    parse_timestamp,
+)
 from app.services.attachment_extract import processed_attachment_payload_async
 from app.services.attachment_from_media_service import attachments_from_existing_media
 from app.services.attachment_policy import (
@@ -75,7 +80,12 @@ from app.services.chat_export_service import (
     build_pdf_content_disposition,
     render_chat_pdf,
 )
-from app.services.chat_markers import BROWSER_TOOL_CHOICE_BODY_KEY, BROWSER_TOOLS_BODY_KEY, PAGE_CONTEXT_BODY_KEY
+from app.services.chat_markers import (
+    BROWSER_REASONING_BODY_KEY,
+    BROWSER_TOOL_CHOICE_BODY_KEY,
+    BROWSER_TOOLS_BODY_KEY,
+    PAGE_CONTEXT_BODY_KEY,
+)
 from app.services.chat_session_access import resolve_owned_chat_session
 from app.services.chat_title_service import generate_chat_title
 from app.services.chat_tool_access_service import assert_tool_for_user, permitted_tool_keys
@@ -552,6 +562,8 @@ async def _browser_agent_tools(
     payload[BROWSER_TOOLS_BODY_KEY] = [tool.model_dump() for tool in body.browser_tools]
     if body.browser_tool_choice is not None:
         payload[BROWSER_TOOL_CHOICE_BODY_KEY] = body.browser_tool_choice
+    if settings.agent_reasoning != DEFAULT_AGENT_REASONING:
+        payload[BROWSER_REASONING_BODY_KEY] = settings.agent_reasoning
 
 
 async def _project_chat_conflict(db: AsyncSession, chat_session_id: str | None) -> str | None:

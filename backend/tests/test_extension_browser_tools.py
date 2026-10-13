@@ -343,6 +343,51 @@ class TestCaching:
         assert call["caching"] is False
 
 
+@pytest.mark.usefixtures("agent_on")
+class TestReasoningEffort:
+    @staticmethod
+    def _hint(monkeypatch) -> list:
+        seen: list = []
+
+        def hint(model, provider, effort="low"):
+            seen.append((model, provider, effort))
+            return {"reasoning_effort": effort, "drop_params": True}
+
+        monkeypatch.setattr("app.services.chat_turn_context.reasoning_hint", hint)
+        return seen
+
+    async def test_left_to_the_provider_by_default(self, client, browser, models, provider, monkeypatch):
+        seen = self._hint(monkeypatch)
+        provider.reply(*CLICK_REPLY)
+        resp = await client.post("/api/chat/completions", json=_body(models.a), headers=browser.headers)
+        assert resp.status_code == 200, resp.text
+        assert seen == []
+        assert "reasoning_effort" not in provider.calls[0]
+
+    @pytest.mark.parametrize("effort", ["low", "medium"])
+    async def test_held_to_what_the_administrator_chose(
+        self, client, browser, models, provider, db_session, monkeypatch, effort
+    ):
+        await save_extension_settings(db_session, ExtensionSettings(agent_reasoning=effort))
+        await db_session.commit()
+        seen = self._hint(monkeypatch)
+        provider.reply(*CLICK_REPLY)
+        resp = await client.post("/api/chat/completions", json=_body(models.a), headers=browser.headers)
+        assert resp.status_code == 200, resp.text
+        assert [s[2] for s in seen] == [effort]
+        assert provider.calls[0]["reasoning_effort"] == effort
+
+    async def test_a_client_cannot_set_it(self, client, browser, models, provider, monkeypatch):
+        seen = self._hint(monkeypatch)
+        provider.reply(*CLICK_REPLY)
+        resp = await client.post(
+            "/api/chat/completions", json=_body(models.a, _browser_reasoning="low"), headers=browser.headers
+        )
+        assert resp.status_code == 200, resp.text
+        assert seen == []
+        assert "reasoning_effort" not in provider.calls[0]
+
+
 class _SlowStream(_Stream):
     """A model that thinks a while before its first chunk."""
 

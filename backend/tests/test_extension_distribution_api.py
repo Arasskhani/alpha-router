@@ -738,6 +738,7 @@ class TestTheAdminCard:
             "save_runs": False,
             "private_runs": False,
             "trusted_sites": False,
+            "agent_reasoning": "medium",
         }
         resp = await client.put("/api/admin/extension/settings", json=body, headers=headers)
         assert resp.status_code == 200, resp.text
@@ -759,6 +760,10 @@ class TestTheAdminCard:
         )
         assert resp.status_code == 400
         assert "does not exist" in resp.json()["detail"]
+        resp = await client.put(
+            "/api/admin/extension/settings", json={**body, "agent_reasoning": "high"}, headers=headers
+        )
+        assert resp.status_code == 422
 
     async def test_a_value_past_a_limit_is_refused_with_the_limit(self, client, admin, built_extension):
         """The server's own message, not the request parser's, for lists and steps past the settings' limits."""

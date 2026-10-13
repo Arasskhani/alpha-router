@@ -152,6 +152,10 @@ class TestAModelThatThinks:
         assert reasoning_hint("claude-sonnet-4-20250514", "anthropic") == {}
         assert reasoning_hint("some-local-model", None) == {}
 
+    def test_the_effort_asked_for_is_the_one_sent(self):
+        assert reasoning_hint("o3-mini", "openai", "medium") == {"reasoning_effort": "medium", "drop_params": True}
+        assert reasoning_hint("o3-mini", "openai")["reasoning_effort"] == "low"
+
 
 class TestAnAnswerCutOff:
     def test_keeps_the_operations_it_finished(self):

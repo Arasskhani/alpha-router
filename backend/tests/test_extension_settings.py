@@ -441,6 +441,7 @@ class TestTheRunLimits:
         assert (s.save_runs, s.private_runs) == (True, True)
         assert s.screenshot_after_action is True
         assert s.trusted_sites is True
+        assert s.agent_reasoning == "provider_default"
 
     def test_a_stored_value_out_of_range_falls_back_to_the_default(self):
         stored = {
@@ -452,6 +453,7 @@ class TestTheRunLimits:
             "min_browser_version": 12,
             "agent_default_mode": "skip",
             "internal_connections": [3, "x", 0, -1, True, 3],
+            "agent_reasoning": "high",
         }
         s = parse_settings(json.dumps(stored))
         assert (s.agent_max_minutes, s.agent_max_tabs, s.agent_runs_per_day) == (20, 10, None)
@@ -459,6 +461,7 @@ class TestTheRunLimits:
         assert (s.screenshot_max_side, s.screenshots_kept, s.min_browser_version) == (1280, 4, 116)
         assert s.agent_default_mode == "plan"
         assert s.internal_connections == (3,)
+        assert s.agent_reasoning == "provider_default"
 
     def test_screenshots_kept_above_what_a_step_may_carry_is_kept_at_the_most_it_may(self):
         from app.api.chat import MAX_AGENT_IMAGES
@@ -487,6 +490,7 @@ class TestTheRunLimits:
             ({"screenshots_kept": 5}, "Screenshots kept"),
             ({"min_browser_version": 115}, "minimum browser version"),
             ({"agent_default_mode": "skip"}, "default mode"),
+            ({"agent_reasoning": "high"}, "Agent reasoning"),
             ({"agent_default_mode": "plan", "plan_mode": False}, "Plan cannot be the default"),
             ({"agent_default_mode": "auto"}, "Auto cannot be the default"),
             ({"internal_connections": [999999]}, "does not exist"),
@@ -517,6 +521,7 @@ class TestTheRunLimits:
                 save_runs=False,
                 private_runs=False,
                 trusted_sites=False,
+                agent_reasoning="low",
             ),
         )
         await save_extension_settings(db_session, updated)
@@ -525,6 +530,7 @@ class TestTheRunLimits:
         assert again == updated
         assert (again.agent_max_minutes, again.agent_max_tabs, again.agent_runs_per_day) == (5, 3, 12)
         assert again.internal_connections == (model.connection_id,)
+        assert again.agent_reasoning == "low"
         assert again.modes_json() == ["ask"]
         assert again.to_json()["internal_connections"] == [model.connection_id]
 

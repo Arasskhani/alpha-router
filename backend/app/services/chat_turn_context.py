@@ -32,6 +32,7 @@ from app.services.agent_run_service import finalize_agent_run, mark_agent_run_st
 from app.services.budget_reservation_service import release
 from app.services.chat_completion_persistence import persister_from_body
 from app.services.chat_markers import (
+    BROWSER_REASONING_BODY_KEY,
     BROWSER_TOOL_CHOICE_BODY_KEY,
     BROWSER_TOOLS_BODY_KEY,
     CONTEXT_FIT_META_KEY,
@@ -53,6 +54,7 @@ from app.services.code_interpreter_service import (
     code_interpreter_workspace_message,
     workspace_files_from_messages,
 )
+from app.services.memory_extraction_service import reasoning_hint
 from app.services.model_tool_compatibility_service import is_auto_router_model_id, openrouter_auto_plugin
 from app.services.private_mode_service import effective_private_mode, resolve_private_mode
 from app.services.project_turn_planner import augment_messages_with_project_context
@@ -254,6 +256,8 @@ def _page_context_sites(body: dict) -> list[str]:
 
 #: What the agent may ask of the model about its tools; anything else is left to the provider's default.
 _TOOL_CHOICES = frozenset({"auto", "none", "required"})
+#: The reasoning efforts an administrator may hold the agent's model to.
+_REASONING_EFFORTS = frozenset({"low", "medium"})
 
 
 def _browser_tools(body: dict) -> tuple[list[dict], str | None]:
@@ -545,6 +549,10 @@ async def build_turn_context(  # noqa: C901 -- straight-line preparation moved o
             completion_kwargs["caching"] = False
             if browser_tool_choice is not None:
                 completion_kwargs["tool_choice"] = browser_tool_choice
+            # The administrator may hold a model that reasons to less thinking per step; else the provider decides.
+            effort = body.get(BROWSER_REASONING_BODY_KEY)
+            if effort in _REASONING_EFFORTS:
+                completion_kwargs.update(reasoning_hint(model, provider or None, effort))
 
         if agent_turn is None:
             try:

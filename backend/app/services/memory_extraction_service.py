@@ -769,8 +769,8 @@ def salvage_operations(text: str) -> dict[str, Any] | None:
     return {"operations": operations} if operations else None
 
 
-def reasoning_hint(model: str, provider: str | None) -> dict[str, Any]:
-    """``reasoning_effort: low`` for a model that thinks unless told otherwise; nothing for any other.
+def reasoning_hint(model: str, provider: str | None, effort: str = "low") -> dict[str, Any]:
+    """``reasoning_effort`` (``low`` unless told) for a model that thinks unless told otherwise; nothing for any other.
 
     Such a model spends its answer's tokens thinking before it writes the
     JSON, and with a small allowance ran out before the first brace. What it
@@ -791,7 +791,7 @@ def reasoning_hint(model: str, provider: str | None) -> dict[str, Any]:
         return {}
     if "anthropic" in str(provider or "").lower() or "claude" in model.lower():
         return {}
-    return {"reasoning_effort": "low", "drop_params": True}
+    return {"reasoning_effort": effort, "drop_params": True}
 
 
 type _Call = Callable[[list[dict[str, Any]]], Awaitable[tuple[str, str]]]

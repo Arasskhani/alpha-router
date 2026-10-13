@@ -85,6 +85,7 @@ class ExtensionSettingsIn(BaseModel):
     save_runs: bool = True
     private_runs: bool = True
     trusted_sites: bool = True
+    agent_reasoning: Literal["provider_default", "low", "medium"] = "provider_default"
 
 
 async def _key_status(db: AsyncSession) -> dict:

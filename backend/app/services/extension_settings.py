@@ -14,6 +14,8 @@ Kept as one JSON document in ``system_settings`` (``extension.settings``):
 - ``page_content_models`` / ``agent_models``: ``model::<id>`` lists (empty
   means any model the user may use) for turns that carry page content, and
   for the agent.
+- ``agent_reasoning``: the reasoning effort asked of the agent's model at each
+  step (``provider_default``, ``low`` or ``medium``).
 - ``agent_max_steps``, ``agent_auto_mode`` and ``agent_review_model``: the
   agent's limits. Auto mode (acting without asking on allowed sites) needs a
   review model, which checks every action against the user's request. It
@@ -86,6 +88,11 @@ MAX_INTERNAL_CONNECTIONS = 500
 #: checks each action).
 AGENT_MODES = ("ask", "plan", "auto")
 DEFAULT_AGENT_MODE = "plan"
+
+#: How hard a model that reasons thinks at each agent step: as its provider decides, or held to low or medium
+#: effort (fewer tokens and a quicker step). A model that does not reason is sent nothing either way.
+AGENT_REASONING = ("provider_default", "low", "medium")
+DEFAULT_AGENT_REASONING = "provider_default"
 
 #: A host label as browsers accept it: underscores included (intranet hosts have them).
 _LABEL_RE = re.compile(r"^(?!-)[a-z0-9_-]{1,63}(?<!-)$")
@@ -169,6 +176,8 @@ class ExtensionSettings:
     #: A person may trust a site for the agent across runs, from a card: its plain actions there then go ahead
     #: without asking (never what always asks). Off, nobody's trusted sites count.
     trusted_sites: bool = True
+    #: The reasoning effort asked of the agent's model at each step (one of AGENT_REASONING).
+    agent_reasoning: str = DEFAULT_AGENT_REASONING
 
     def to_json(self) -> dict[str, Any]:
         data = asdict(self)
@@ -492,6 +501,9 @@ def parse_settings(raw: str | None) -> ExtensionSettings:
         save_runs=bool(data.get("save_runs", True)),
         private_runs=bool(data.get("private_runs", True)),
         trusted_sites=bool(data.get("trusted_sites", True)),
+        agent_reasoning=(
+            data["agent_reasoning"] if data.get("agent_reasoning") in AGENT_REASONING else defaults.agent_reasoning
+        ),
     )
 
 
@@ -781,6 +793,7 @@ async def validated_update(
     save_runs: bool = True,
     private_runs: bool = True,
     trusted_sites: bool = True,
+    agent_reasoning: str = DEFAULT_AGENT_REASONING,
 ) -> ExtensionSettings:
     """The settings an administrator asked for, checked; raises ExtensionSettingsError."""
     if site_access not in SITE_ACCESS_MODES:
@@ -805,6 +818,8 @@ async def validated_update(
         raise ExtensionSettingsError(
             f"The minimum browser version must be between {TEMPLATE_BROWSER_VERSION} and {MAX_BROWSER_VERSION}."
         )
+    if agent_reasoning not in AGENT_REASONING:
+        raise ExtensionSettingsError("Agent reasoning must be provider default, low or medium.")
     if agent_default_mode not in AGENT_MODES:
         raise ExtensionSettingsError("The default mode must be ask, plan or auto.")
     if agent_default_mode == "plan" and not plan_mode:
@@ -878,6 +893,7 @@ async def validated_update(
         save_runs=bool(save_runs),
         private_runs=bool(private_runs),
         trusted_sites=bool(trusted_sites),
+        agent_reasoning=agent_reasoning,
     )
     # The reviewer reads what the agent found on pages: element names, the text it would type.
     if updated.agent_auto_mode and not page_content_allowed(updated, updated.agent_review_model):

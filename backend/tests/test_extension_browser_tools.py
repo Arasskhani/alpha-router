@@ -36,7 +36,7 @@ from app.services import (
     turn_settlement,
 )
 from app.services.budget_reservation_service import reservation_hold_usd
-from app.services.chat_markers import BROWSER_TOOL_CHOICE_BODY_KEY, BROWSER_TOOLS_BODY_KEY
+from app.services.chat_markers import BROWSER_CACHE_POINT_BODY_KEY, BROWSER_TOOL_CHOICE_BODY_KEY, BROWSER_TOOLS_BODY_KEY
 from app.services.chat_tool_access_service import set_chat_tool_access
 from app.services.chat_turn_context import build_turn_context
 from app.services.extension_settings import ExtensionSettings, save_extension_settings
@@ -376,6 +376,11 @@ class TestReasoningEffort:
         assert resp.status_code == 200, resp.text
         assert [s[2] for s in seen] == [effort]
         assert provider.calls[0]["reasoning_effort"] == effort
+
+    async def test_a_cache_point_goes_only_with_the_tools(self, client, browser, models, provider):
+        body = {"model": f"model::{models.a.id}", "messages": FOLLOW_UP, "browser_cache_point": 2}
+        resp = await client.post("/api/chat/completions", json=body, headers=browser.headers)
+        assert resp.status_code == 422
 
     async def test_a_client_cannot_set_it(self, client, browser, models, provider, monkeypatch):
         seen = self._hint(monkeypatch)
@@ -1074,6 +1079,42 @@ class TestTheTurn:
         )
         assert ctx.completion_kwargs["tools"] == TOOLS
         assert ctx.completion_kwargs["tool_choice"] == "required"
+        assert ctx.completion_kwargs["messages"] == _cached(FOLLOW_UP)
+
+    def _on(self, monkeypatch, provider_type: str) -> None:
+        resolved = self._resolved()
+        for target in (resolved, resolved.ai_model):
+            target.provider_type = provider_type
+        monkeypatch.setattr(self, "_resolved", lambda: resolved)
+
+    async def test_the_settled_history_is_marked_for_anthropic(self, db_session, user, monkeypatch):
+        self._on(monkeypatch, "anthropic")
+        ctx = await self._turn(
+            db_session, user, {"messages": FOLLOW_UP, BROWSER_TOOLS_BODY_KEY: TOOLS, BROWSER_CACHE_POINT_BODY_KEY: 2}
+        )
+        sent = ctx.completion_kwargs["messages"]
+        assert sent[2]["cache_control"] == {"type": "ephemeral"}
+        assert [i for i, m in enumerate(sent) if "cache_control" in m] == [0, 2]
+
+    @pytest.mark.parametrize(
+        ("provider_type", "point"),
+        [
+            # Another provider caches a stable prefix on its own.
+            ("openai", 2),
+            # Never the last message, the system message, one that is not there, or anything but a number.
+            ("anthropic", 3),
+            ("anthropic", 0),
+            ("anthropic", 99),
+            ("anthropic", -1),
+            ("anthropic", "2"),
+            ("anthropic", True),
+            ("anthropic", None),
+        ],
+    )
+    async def test_nothing_else_is_marked(self, db_session, user, monkeypatch, provider_type, point):
+        self._on(monkeypatch, provider_type)
+        body = {"messages": FOLLOW_UP, BROWSER_TOOLS_BODY_KEY: TOOLS, BROWSER_CACHE_POINT_BODY_KEY: point}
+        ctx = await self._turn(db_session, user, body)
         assert ctx.completion_kwargs["messages"] == _cached(FOLLOW_UP)
 
     @pytest.mark.parametrize("choice", [None, "any", 3])

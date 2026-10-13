@@ -47,3 +47,5 @@ BROWSER_TOOLS_BODY_KEY = "_browser_tools"
 BROWSER_TOOL_CHOICE_BODY_KEY = "_browser_tool_choice"
 #: The reasoning effort the administrator holds the agent's model to (``low`` or ``medium``); absent: the provider's.
 BROWSER_REASONING_BODY_KEY = "_browser_reasoning"
+#: Where the agent's conversation settles (the index of the last message that reads the same at its next steps).
+BROWSER_CACHE_POINT_BODY_KEY = "_browser_cache_point"

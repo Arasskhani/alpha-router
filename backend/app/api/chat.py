@@ -81,6 +81,7 @@ from app.services.chat_export_service import (
     render_chat_pdf,
 )
 from app.services.chat_markers import (
+    BROWSER_CACHE_POINT_BODY_KEY,
     BROWSER_REASONING_BODY_KEY,
     BROWSER_TOOL_CHOICE_BODY_KEY,
     BROWSER_TOOLS_BODY_KEY,
@@ -327,12 +328,17 @@ class ChatRequest(BaseModel):
     #: stop can end runs that started before it. Only the extension sends it.
     browser_run_started_at: int | None = Field(None, ge=0, le=4_102_444_800_000)
     browser_tool_choice: Literal["auto", "none", "required"] | None = None
+    #: The index of the last message of the agent conversation's settled part, which reads the same at the next
+    #: steps: marked for a provider whose prompt cache needs a marker. Only with browser_tools.
+    browser_cache_point: int | None = Field(None, ge=1, le=10_000)
 
     @model_validator(mode="after")
     def _browser_tools_shape(self) -> "ChatRequest":
         if self.browser_tools is None:
             if self.browser_tool_choice is not None:
                 raise ValueError("browser_tool_choice goes with browser_tools.")
+            if self.browser_cache_point is not None:
+                raise ValueError("browser_cache_point goes with browser_tools.")
             return self
         names = [tool.function.name for tool in self.browser_tools]
         if len(set(names)) != len(names):
@@ -562,6 +568,8 @@ async def _browser_agent_tools(
     payload[BROWSER_TOOLS_BODY_KEY] = [tool.model_dump() for tool in body.browser_tools]
     if body.browser_tool_choice is not None:
         payload[BROWSER_TOOL_CHOICE_BODY_KEY] = body.browser_tool_choice
+    if body.browser_cache_point is not None and body.browser_cache_point < len(body.messages) - 1:
+        payload[BROWSER_CACHE_POINT_BODY_KEY] = body.browser_cache_point
     if settings.agent_reasoning != DEFAULT_AGENT_REASONING:
         payload[BROWSER_REASONING_BODY_KEY] = settings.agent_reasoning
 

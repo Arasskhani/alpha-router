@@ -36,6 +36,25 @@ def apply_prompt_cache_breakpoints(messages: list[dict]) -> list[dict]:
     return out
 
 
+def apply_message_cache_breakpoint(messages: list[dict], index: object) -> list[dict]:
+    """
+    Mark message ``index`` as the end of a cached prefix: the browser agent's
+    settled history, which reads the same at its next steps. Not the last
+    message, nor a system message (already marked), nor anything out of range.
+    For Anthropic's models through litellm, which carries a marker on a tool's
+    answer or a tool call as it does on any other message.
+    """
+    if not isinstance(index, int) or isinstance(index, bool) or not 0 < index < len(messages) - 1:
+        return messages
+    if messages[index].get("role") == "system":
+        return messages
+    out = list(messages)
+    marked = copy.deepcopy(out[index])
+    marked["cache_control"] = {"type": "ephemeral"}
+    out[index] = marked
+    return out
+
+
 def apply_system_cache_breakpoint(messages: list[dict]) -> list[dict]:
     """
     Mark the first system message as the end of a cached prefix.

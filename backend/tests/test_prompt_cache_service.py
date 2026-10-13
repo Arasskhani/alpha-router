@@ -1,4 +1,4 @@
-from app.services.prompt_cache_service import apply_prompt_cache_breakpoints
+from app.services.prompt_cache_service import apply_message_cache_breakpoint, apply_prompt_cache_breakpoints
 
 
 def test_no_breakpoint_for_single_user_message():
@@ -54,3 +54,19 @@ def test_leaves_an_assistant_tool_call_before_the_latest_user_turn_alone():
         {"role": "user", "content": "Stop"},
     ]
     assert apply_prompt_cache_breakpoints(msgs) == msgs
+
+
+def test_a_message_breakpoint_marks_that_message_only():
+    msgs = [
+        {"role": "system", "content": "rules"},
+        {"role": "user", "content": "task"},
+        {"role": "assistant", "content": None, "tool_calls": [{"id": "c1"}]},
+        {"role": "tool", "tool_call_id": "c1", "content": "ok"},
+        {"role": "tool", "tool_call_id": "c2", "content": "latest"},
+    ]
+    out = apply_message_cache_breakpoint(msgs, 3)
+    assert out[3]["cache_control"] == {"type": "ephemeral"}
+    assert [i for i, m in enumerate(out) if "cache_control" in m] == [3]
+    assert "cache_control" not in msgs[3]
+    for index in (0, 4, 5, -1, None, "3", True):
+        assert apply_message_cache_breakpoint(msgs, index) == msgs

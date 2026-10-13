@@ -32,6 +32,7 @@ from app.services.agent_run_service import finalize_agent_run, mark_agent_run_st
 from app.services.budget_reservation_service import release
 from app.services.chat_completion_persistence import persister_from_body
 from app.services.chat_markers import (
+    BROWSER_CACHE_POINT_BODY_KEY,
     BROWSER_REASONING_BODY_KEY,
     BROWSER_TOOL_CHOICE_BODY_KEY,
     BROWSER_TOOLS_BODY_KEY,
@@ -58,7 +59,11 @@ from app.services.memory_extraction_service import reasoning_hint
 from app.services.model_tool_compatibility_service import is_auto_router_model_id, openrouter_auto_plugin
 from app.services.private_mode_service import effective_private_mode, resolve_private_mode
 from app.services.project_turn_planner import augment_messages_with_project_context
-from app.services.prompt_cache_service import apply_prompt_cache_breakpoints, apply_system_cache_breakpoint
+from app.services.prompt_cache_service import (
+    apply_message_cache_breakpoint,
+    apply_prompt_cache_breakpoints,
+    apply_system_cache_breakpoint,
+)
 from app.services.provider_utils import apply_litellm_provider_kwargs, sse_delta_chunk
 from app.services.resource_access_service import resolve_resource_access_subject
 from app.services.turn_settlement import agent_identity_metadata
@@ -661,6 +666,10 @@ async def build_turn_context(  # noqa: C901 -- straight-line preparation moved o
         if browser_tools:
             # The agent's tools and instructions, the same at every step of a run: cached by the provider.
             messages = apply_system_cache_breakpoint(messages)
+            # And its settled history, for Anthropic, whose cache needs a marker (others cache a stable prefix on
+            # their own) - only when the turn kept every message the extension sent, so the index still points there.
+            if provider == "anthropic" and len(messages) == len(body.get("messages") or []):
+                messages = apply_message_cache_breakpoint(messages, body.get(BROWSER_CACHE_POINT_BODY_KEY))
         original_messages = list(body.get("messages", []))
         resolved_workspace_files = getattr(
             resolved,

@@ -689,8 +689,12 @@ class TestTheReviewerSeesImages:
         vision = await _model(db_session, "gpt-4o")
         text = await _model(db_session, "gpt-3.5-turbo")
         auto = {"agent_auto_mode": True}
-        assert await review_reads_images(db_session, ExtensionSettings(**auto, agent_review_model=f"model::{vision.id}"))
-        assert not await review_reads_images(db_session, ExtensionSettings(**auto, agent_review_model=f"model::{text.id}"))
+        assert await review_reads_images(
+            db_session, ExtensionSettings(**auto, agent_review_model=f"model::{vision.id}")
+        )
+        assert not await review_reads_images(
+            db_session, ExtensionSettings(**auto, agent_review_model=f"model::{text.id}")
+        )
         # Auto mode off, no reviewer, or one that no longer exists: nothing is cropped for it.
         assert not await review_reads_images(db_session, ExtensionSettings(agent_review_model=f"model::{vision.id}"))
         assert not await review_reads_images(db_session, ExtensionSettings(**auto))

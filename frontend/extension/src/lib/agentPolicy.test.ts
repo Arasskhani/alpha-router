@@ -469,7 +469,7 @@ describe("the rest", () => {
   it("does not send away a tab it may not work on, and opens a new one instead", () => {
     const bank = { url: "https://bank.example.com/", host: "bank.example.com" };
     expect(classify("navigate", { page: bank, args: { url: "https://shop.example.com/" } }, RULES)).toMatchObject({ class: "blocked", reason: "tab_refused" });
-    expect(classify("tab_open", { page: bank, args: { url: "https://shop.example.com/" } }, RULES)).toMatchObject({ class: "sensitive", reason: "other_site" });
+    expect(classify("tab_open", { page: bank, args: { url: "https://partner.org/" } }, RULES)).toMatchObject({ class: "sensitive", reason: "other_site" });
   });
 
   it("refuses a tool it does not know", () => {
@@ -671,5 +671,27 @@ describe("read-only, protected and internal sites", () => {
     expect(classify("screenshot", { page: SHOP }, inside)).toMatchObject({ class: "blocked", reason: "screenshot_external" });
     expect(classify("zoom", { page: SHOP }, inside)).toMatchObject({ class: "blocked", reason: "screenshot_external" });
     expect(classify("read_page", { page: SHOP }, inside)).toMatchObject({ class: "read" });
+  });
+});
+
+describe("one site across its hosts, and the sites a run already works on", () => {
+  const page = { url: "https://www.google.com/", host: "www.google.com" };
+  it("counts www, the bare domain and other subdomains as the same site", () => {
+    expect(classify("navigate", { page, args: { url: "https://google.com/search?q=x" } })).toMatchObject({ class: "act", reason: "same_site" });
+    const wiki = { url: "https://en.wikipedia.org/wiki/A", host: "en.wikipedia.org" };
+    expect(classify("click", { page: wiki, element: el({ role: "link", tag: "a", name: "B", href: "https://en.m.wikipedia.org/wiki/B" }) })).toMatchObject({ class: "act" });
+    // Two people's sites on one hosting domain stay two sites.
+    const alice = { url: "https://alice.github.io/", host: "alice.github.io" };
+    expect(classify("navigate", { page: alice, args: { url: "https://bob.github.io/" } })).toMatchObject({ class: "sensitive", reason: "other_site" });
+  });
+
+  it("goes back to a site the run already works on without asking about another site", () => {
+    const ctx: PolicyContext = { ...OPEN, allowedSites: new Set(["wikipedia.org"]) };
+    expect(classify("navigate", { page, args: { url: "https://en.wikipedia.org/wiki/A" } }, ctx)).toMatchObject({ class: "act", reason: "allowed_site", site: "en.wikipedia.org" });
+    expect(classify("tab_switch", { page, target: { url: "https://fa.wikipedia.org/", host: "fa.wikipedia.org" } }, ctx)).toMatchObject({ class: "act", reason: "allowed_site" });
+    // Anywhere else still asks, and a blocked site stays blocked whatever the run allows.
+    expect(classify("navigate", { page, args: { url: "https://news.example.net/" } }, ctx)).toMatchObject({ class: "sensitive", reason: "other_site" });
+    const blocked: PolicyContext = { ...RULES, allowedSites: new Set(["example.com"]) };
+    expect(classify("navigate", { args: { url: "https://bank.example.com/" } }, blocked)).toMatchObject({ class: "blocked", reason: "site_blocked" });
   });
 });

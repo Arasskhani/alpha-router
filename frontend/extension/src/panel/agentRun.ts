@@ -27,7 +27,7 @@ import type { CdpDriver } from "../lib/cdpDriver";
 import { signedReasoning } from "../lib/chatStream";
 import { probeInjection } from "../lib/injection";
 import type { ElementInfo, PageMethod, PageResult } from "../lib/pageAgent";
-import { readablePage } from "../lib/sites";
+import { readablePage, siteOf } from "../lib/sites";
 import { agentInstructions, CONTROL_TOOL_NAMES, TOOL_NAMES } from "./agentTools";
 import type { PauseGate } from "./pauseGate";
 
@@ -711,6 +711,9 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
    * bounces - and the agent acts on no such site until the user agrees.
    */
   const allowedSites = new Set<string>();
+  /** Whether the run may already work on this host's site. */
+  const isAllowed = (host: string) => allowedSites.has(siteOf(host));
+  const allow = (host: string) => allowedSites.add(siteOf(host));
   const started = Date.now();
 
   const check = () => {
@@ -901,7 +904,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     if (!driver) return undefined;
     const tab = await deps.browser.current();
     check();
-    if (!tab?.host || !allowedSites.has(tab.host)) return undefined;
+    if (!tab?.host || !isAllowed(tab.host)) return undefined;
     if (classifyAction({ tool: "screenshot", args: {}, page: { url: tab.url, host: tab.host } }, options.rules).class === "blocked") return undefined;
     if (driver.use && !(await raced(driver.use(tab.id, tab.url)))) return undefined;
     check();
@@ -1212,7 +1215,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     check();
     const after = await deps.browser.current();
     check();
-    const moved = after?.host && after.host !== site && !allowedSites.has(after.host) ? `\n${elsewhere(after.host)}` : "";
+    const moved = after?.host && after.host !== site && !isAllowed(after.host) ? `\n${elsewhere(after.host)}` : "";
     // What was pressed, and where the keyboard went: the model checks this before it types.
     const saw = await aftermath(tab, after, spec.element === "point" || spec.element === "start" ? hit : undefined, action === "scroll" ? wheelAt : undefined);
     check();
@@ -1250,7 +1253,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       const now = await deps.browser.current();
       check();
       const shows = now?.host ? whereTo(now.url) : "a page the agent cannot read";
-      const moved = now?.host && !allowedSites.has(now.host) ? `\n${elsewhere(now.host)}` : "";
+      const moved = now?.host && !isAllowed(now.host) ? `\n${elsewhere(now.host)}` : "";
       const said = tool === "tab_open" ? `Opened a new tab (id ${next.id}); you work there now.` : "The tab has loaded.";
       return {
         content: said + moved,
@@ -1293,7 +1296,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       check();
       after = await deps.browser.current();
       check();
-      if (after?.host && after.host !== site && !allowedSites.has(after.host)) moved = elsewhere(after.host);
+      if (after?.host && after.host !== site && !isAllowed(after.host)) moved = elsewhere(after.host);
     }
     let body: string;
     let detail: string | undefined;
@@ -1386,7 +1389,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
         return { content: "The user did not approve the plan. Revise the approach or the sites and propose it again, or ask them what they want.", status: "denied", detail: "Plan not approved", outcome: "denied" };
       }
       planApproved = true;
-      for (const host of sites) allowedSites.add(host);
+      for (const host of sites) allow(host);
       return { content: `Plan approved. You may act on: ${sites.join(", ")}. Anywhere else, and the actions that always ask, still ask.`, status: "done", detail: `${sites.length} sites`, outcome: "ok", extra: { sites: sites.length } };
     }
     const tab = await deps.browser.current();
@@ -1538,7 +1541,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     }
     const summary = name === "computer" ? describeComputer(a, element, drop) : describeAction(name, a, element, target);
     const verdict = TOOL_NAMES.has(name)
-      ? classifyAction({ tool: judgedAs, args: judgedArgs, page: pageNow, element, drop, target: target && { url: target.url, host: target.host } }, options.rules)
+      ? classifyAction({ tool: judgedAs, args: judgedArgs, page: pageNow, element, drop, target: target && { url: target.url, host: target.host } }, { ...options.rules, allowedSites })
       : ({ class: "blocked", reason: "unknown_tool", message: `The agent has no tool called ${clip(name, 40)}.` } as Verdict);
     const base = {
       site: verdict.site ?? pageNow?.host,
@@ -1580,7 +1583,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     let approval = approvalFor(verdict, options.mode);
     // A site the page went to by itself: the user decides before the agent reads or acts there, in Auto mode too.
     // Reading counts: with every site granted, nothing else would stop an inbox the tab was sent to going to the model.
-    const arrived = pageNow && (PAGE_TOOLS.has(name) || verdict.class !== "read") && !allowedSites.has(pageNow.host) ? pageNow.host : null;
+    const arrived = pageNow && (PAGE_TOOLS.has(name) || verdict.class !== "read") && !isAllowed(pageNow.host) ? pageNow.host : null;
     let judged: Verdict = arrived
       ? { ...verdict, message: `${verdict.message} The page went to ${arrived} without being asked to; allowing this lets the agent work there.` }
       : verdict;
@@ -1662,7 +1665,8 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       !suspect &&
       !access &&
       judged.message === verdict.message;
-    const plainSite = plain && pageNow ? pageNow.host : undefined;
+    // The site as a person names it: an allowance on www.example.com holds on shop.example.com too.
+    const plainSite = plain && pageNow ? siteOf(pageNow.host) : undefined;
     let approvedBy = approval === "none" ? (base.extra.review === "allow" ? "review" : "not_needed") : "user";
     if (plainSite && siteWide.has(plainSite)) {
       approval = "none";
@@ -1690,12 +1694,12 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
         };
       }
       approvedBy = "user";
-      if (arrived) allowedSites.add(arrived);
+      if (arrived) allow(arrived);
       if (deletionKey) deletionsInARow = 0;
       if (suspect) injected = null;
     }
     // Going to another site, allowed by the user, the reviewer or the administrator's rules: the agent may work there.
-    if (verdict.site) allowedSites.add(verdict.site);
+    if (verdict.site) allow(verdict.site);
     base.extra.approval = approvedBy;
     // The person may have taken over meanwhile: nothing is pressed until they resume, and the point is judged again then.
     await gate(tab);
@@ -1765,7 +1769,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     const first = await deps.browser.current();
     startSite = first?.host ?? undefined;
     // The user started the run on this page.
-    if (startSite) allowedSites.add(startSite);
+    if (startSite) allow(startSite);
     lastTab = first;
     // The model starts knowing where it is.
     const start = first ? await startingPoint(first) : null;

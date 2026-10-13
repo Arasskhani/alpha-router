@@ -491,7 +491,7 @@ describe("allowing on a site for the rest of the run", () => {
     await run(h);
     // The first plain action offered it; the next plain one on the site asked nobody; "Send message" still asked, without the offer.
     expect(h.approvals.map((a) => [a.summary, a.offerSite])).toEqual([
-      ['Click "Next"', "shop.example.com"],
+      ['Click "Next"', "example.com"],
       ['Click "Send message"', undefined],
     ]);
     expect(h.browser.page).toHaveBeenCalledWith("type_text", { ref: "e3", text: "SAVE10" }, TAB, expect.anything());
@@ -512,7 +512,7 @@ describe("allowing on a site for the rest of the run", () => {
     await run(h, { rules: relaxed });
     // "Send message" is a plain action with sending relaxed - yet asked about, card and all, after the site-wide allow.
     expect(h.approvals.map((a) => [a.summary, a.offerSite])).toEqual([
-      ['Click "Next"', "shop.example.com"],
+      ['Click "Next"', "example.com"],
       ['Click "Send message"', undefined],
     ]);
   });
@@ -971,6 +971,24 @@ describe("the standing instructions", () => {
 });
 
 describe("plan mode", () => {
+  it("goes between the sites of an approved plan without asking again, and back to the start site too", async () => {
+    const h = harness(
+      [
+        { text: "", toolCalls: [call("update_plan", { summary: "Search, then read the article.", sites: ["www.google.com", "en.wikipedia.org"] }, "p1")] },
+        { text: "", toolCalls: [call("navigate", { url: "https://www.google.com/search?q=alpha" }, "p2")] },
+        { text: "", toolCalls: [call("navigate", { url: "https://en.m.wikipedia.org/wiki/Alpha" }, "p3")] },
+        { text: "", toolCalls: [call("navigate", { url: "https://shop.example.com/cart" }, "p4")] },
+        { text: "", toolCalls: [call("navigate", { url: "https://news.example.net/" }, "p5")] },
+        { text: "", toolCalls: [call("done", { summary: "Read it." }, "p6")] },
+      ],
+      { approve: () => true },
+    );
+    await run(h, { mode: "plan", rules: { ...RULES, policy: { allowed_sites: [], blocked_sites: [] } } });
+    // The plan, then only the site the plan never named.
+    expect(h.approvals.map((a) => a.tool)).toEqual(["update_plan", "navigate"]);
+    expect(h.approvals[1].summary).toContain("news.example.net");
+  });
+
   it("offers the plan tool only in plan mode", () => {
     const names = (fullControl: boolean, plan: boolean) => agentToolsFor({ fullControl, plan }).map((t) => t.function.name);
     expect(names(false, false)).not.toContain("update_plan");

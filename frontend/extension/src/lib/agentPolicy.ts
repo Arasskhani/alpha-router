@@ -41,7 +41,7 @@ import type { ElementInfo } from "../content/agent";
 import { sensitiveText } from "./sensitive";
 import { modifierName } from "./input";
 import { KEY_NAMES_SHOWN, parseKeyCombo } from "./keys";
-import { hostMatches, readablePage, siteRefusal, type SitePolicy } from "./sites";
+import { hostMatches, readablePage, sameSite, siteOf, siteRefusal, type SitePolicy } from "./sites";
 
 type ActionClass = "read" | "act" | "sensitive" | "blocked";
 
@@ -126,6 +126,12 @@ export type PolicyContext = {
   approvals?: Approvals;
   /** Where content may go; everything allowed when not given. */
   data?: DataRules;
+  /**
+   * The sites (as siteOf names them) this run may already work on: where it
+   * started, the plan's sites, those the user allowed it to go to or trusts.
+   * Going to one of them again is a plain action, not another site.
+   */
+  allowedSites?: ReadonlySet<string>;
 };
 
 // screenshot and zoom are full control's reads: they show the page, so a page the agent may not work on is refused too.
@@ -372,7 +378,9 @@ function goingTo(rawUrl: unknown, fromHost: string | undefined, ctx: PolicyConte
   if (!target) return blocked("special_scheme", `The agent opens web pages only (http or https), never ${typeof rawUrl === "string" ? "that address" : "a missing address"}.`);
   const refused = siteVerdict(target.host, ctx, "read");
   if (refused) return refused;
-  if (fromHost && target.host === fromHost) return verdict("act", "same_site", `${what} on ${target.host}.`);
+  // One site, whichever of its hosts: www.example.com and example.com, en.wikipedia.org and en.m.wikipedia.org.
+  if (fromHost && sameSite(target.host, fromHost)) return verdict("act", "same_site", `${what} on ${target.host}.`);
+  if (ctx.allowedSites?.has(siteOf(target.host))) return verdict("act", "allowed_site", `${what} on ${target.host}, a site this run already works on.`, target.host);
   return asks(!approvals(ctx).leave_sites, "other_site", `${what} on another site: ${target.host}.`, target.host);
 }
 
@@ -877,7 +885,8 @@ export function classifyAction(action: ProposedAction, ctx: PolicyContext): Verd
       if (!target.host) return verdict("act", "tab_switch", "Switching to a tab that shows no web page.");
       const refused = siteVerdict(target.host, ctx, "read");
       if (refused) return refused;
-      if (page && target.host === page.host) return verdict("act", "tab_switch", `Switching to another tab of ${target.host}.`);
+      if (page && sameSite(target.host, page.host)) return verdict("act", "tab_switch", `Switching to another tab of ${target.host}.`);
+      if (ctx.allowedSites?.has(siteOf(target.host))) return verdict("act", "allowed_site", `Switching to a tab of ${target.host}, a site this run already works on.`, target.host);
       return asks(!approvals(ctx).leave_sites, "other_site", `Switching to a tab on another site: ${target.host}.`, target.host);
     }
     case "press_key":

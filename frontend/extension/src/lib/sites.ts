@@ -87,3 +87,61 @@ export function siteRefusal(host: string, policy: SitePolicy, serverHost: string
   }
   return null;
 }
+
+/**
+ * Suffixes under which each name is a different owner's site: the
+ * second-level ones of common country codes (example.co.uk, example.co.ir),
+ * and the hosting domains that give every customer a subdomain
+ * (alice.github.io and bob.github.io are two people's sites). A small table,
+ * not the whole Public Suffix List: a suffix it misses only makes two
+ * subdomains of one such host count as one site - and the administrator's
+ * site rules are matched by host, never by this.
+ */
+const MULTI_SUFFIXES = new Set([
+  // Iran
+  "co.ir", "ac.ir", "gov.ir", "org.ir", "net.ir", "sch.ir", "id.ir",
+  // United Kingdom, and other common second-level ones
+  "co.uk", "org.uk", "ac.uk", "gov.uk", "me.uk", "ltd.uk", "plc.uk", "net.uk",
+  "com.au", "net.au", "org.au", "edu.au", "gov.au",
+  "co.jp", "ne.jp", "or.jp", "ac.jp", "go.jp",
+  "com.br", "com.cn", "net.cn", "org.cn", "gov.cn", "edu.cn",
+  "co.in", "net.in", "org.in", "gov.in", "ac.in",
+  "com.tr", "org.tr", "gov.tr", "edu.tr", "net.tr",
+  "co.kr", "or.kr", "com.mx", "com.ar", "co.za", "co.nz", "com.sg", "com.hk", "com.tw", "com.my",
+  "co.id", "or.id", "com.pk", "com.sa", "com.eg", "co.il", "org.il", "ac.il", "com.ua", "co.th", "com.vn", "com.ph",
+  "com.af", "com.iq", "ae.org",
+  // Hosting that hands out subdomains
+  "github.io", "gitlab.io", "pages.dev", "workers.dev", "vercel.app", "netlify.app", "herokuapp.com",
+  "web.app", "firebaseapp.com", "appspot.com", "blogspot.com", "wordpress.com", "azurewebsites.net",
+  "cloudfront.net", "onrender.com", "fly.dev", "glitch.me", "ngrok.io", "ngrok-free.app", "repl.co",
+  "s3.amazonaws.com", "amplifyapp.com", "surge.sh", "translate.goog",
+]);
+
+/** Whether `host` is an address rather than a name: an IPv4 address or an IPv6 one in brackets. */
+function isAddress(host: string): boolean {
+  return host.startsWith("[") || /^\d{1,3}(\.\d{1,3}){3}$/.test(host);
+}
+
+/**
+ * The site a host belongs to, as a person would name it: example.com for
+ * www.example.com, mail.example.com and example.com alike; example.co.uk for
+ * shop.example.co.uk; alice.github.io for alice.github.io. An address, a
+ * single name (an intranet host, localhost) and a host on one of the suffixes
+ * itself are their own site.
+ */
+export function siteOf(host: string): string {
+  const name = host.toLowerCase().replace(/\.$/, "");
+  if (isAddress(name)) return name;
+  const labels = name.split(".");
+  if (labels.length <= 2) return name;
+  for (let take = 3; take >= 2; take -= 1) {
+    const suffix = labels.slice(-take).join(".");
+    if (MULTI_SUFFIXES.has(suffix)) return labels.length > take ? labels.slice(-(take + 1)).join(".") : name;
+  }
+  return labels.slice(-2).join(".");
+}
+
+/** Whether two hosts are the same site (see siteOf). */
+export function sameSite(a: string, b: string): boolean {
+  return siteOf(a) === siteOf(b);
+}

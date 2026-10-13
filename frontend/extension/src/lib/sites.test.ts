@@ -3,7 +3,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { hostMatches, readablePage, siteRefusal } from "./sites";
+import { hostMatches, readablePage, sameSite, siteOf, siteRefusal } from "./sites";
 
 describe("pages the extension can read at all", () => {
   it("are http and https pages, as origin and a per-site pattern", () => {
@@ -91,5 +91,35 @@ describe("the administrator's rules", () => {
   it("never shut out Alpharouter itself, unless it is blocked", () => {
     expect(siteRefusal("ai.example.com", rules(["wiki.example.com"], []), "ai.example.com")).toBeNull();
     expect(siteRefusal("ai.example.com", rules([], ["ai.example.com"]), "ai.example.com")).toBe("site_blocked");
+  });
+});
+
+describe("the site a host belongs to", () => {
+  it.each([
+    ["www.google.com", "google.com"],
+    ["google.com", "google.com"],
+    ["mail.google.com", "google.com"],
+    ["en.wikipedia.org", "wikipedia.org"],
+    ["en.m.wikipedia.org", "wikipedia.org"],
+    ["shop.example.co.uk", "example.co.uk"],
+    ["example.co.uk", "example.co.uk"],
+    ["www.digikala.com", "digikala.com"],
+    ["portal.tehran.ac.ir", "tehran.ac.ir"],
+    ["alice.github.io", "alice.github.io"],
+    ["docs.alice.github.io", "alice.github.io"],
+    ["github.io", "github.io"],
+    ["localhost", "localhost"],
+    ["intranet", "intranet"],
+    ["10.0.0.5", "10.0.0.5"],
+    ["[::1]", "[::1]"],
+    ["WWW.Example.COM.", "example.com"],
+  ])("%s is %s", (host, site) => {
+    expect(siteOf(host)).toBe(site);
+  });
+
+  it("tells two people's hosted sites apart, and one company's subdomains as one", () => {
+    expect(sameSite("alice.github.io", "bob.github.io")).toBe(false);
+    expect(sameSite("www.example.com", "shop.example.com")).toBe(true);
+    expect(sameSite("example.com", "example.org")).toBe(false);
   });
 });

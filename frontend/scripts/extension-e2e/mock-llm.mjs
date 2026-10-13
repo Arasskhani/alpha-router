@@ -301,7 +301,12 @@ export async function startMockLlm({ port = 0, plantBase = "https://planted.inva
       if (req.method === "POST" && req.url?.endsWith("/chat/completions")) {
         const body = JSON.parse((await readBody(req)) || "{}");
         const messages = Array.isArray(body.messages) ? body.messages : [];
-        requests.push({ model: body.model, stream: Boolean(body.stream), messages, tools: body.tools, tool_choice: body.tool_choice });
+        // When it came and when it was answered: the check's timing report tells model time from the browser's.
+        const record = { model: body.model, stream: Boolean(body.stream), messages, tools: body.tools, tool_choice: body.tool_choice, at: Date.now(), doneAt: null };
+        requests.push(record);
+        res.on("finish", () => {
+          record.doneAt = Date.now();
+        });
         const id = `chatcmpl-e2e-${requests.length}`;
         const created = Math.floor(Date.now() / 1000);
         if (Array.isArray(body.tools) && body.tools.length && body.stream) {

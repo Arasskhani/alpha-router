@@ -79,6 +79,9 @@
  *                      names match it run, after the four that set up the
  *                      browser and the panel - for working on one part; a
  *                      step that reads what skipped ones left may then fail
+ *   EXT_E2E_REPORT     optional path: the agent runs' timing (model calls,
+ *                      cards answered, model and browser time) as JSON; the
+ *                      same table is printed at the end either way
  *
  * Full control is checked for real only at more than one size and scale: run
  * it at least twice, once as is and once with EXT_E2E_SCALE=1.5
@@ -222,6 +225,8 @@ async function step(name, fn) {
 
 /** What to do after a step fails, so the next one is not failed by it as well (the agent's steps set it). */
 let afterFailure = null;
+/** The agent runs' timing and cards, once the agent steps have run (set in main). */
+let timingReport = null;
 
 // ---------------------------------------------------------------- putting the stack back
 
@@ -1043,9 +1048,14 @@ async function main() {
   const agentClick = (label) =>
     agentPanel(`(() => { const b = [...root.querySelectorAll('button')].find((b) => b.textContent === ${JSON.stringify(label)}); if (!b) throw new Error('no ${label} button'); b.click(); return true; })()`);
 
+  /** Cards answered per task, for the timing report. */
+  const cardsFor = new Map();
+  let currentTask = null;
+
   /** Answer the approval card once it is up: a step's line says it waits a moment before the card shows. */
   async function agentAnswer(label) {
     await panel.until(agentCard, `the approval card, to press ${label}`, 20_000);
+    if (currentTask) cardsFor.set(currentTask, (cardsFor.get(currentTask) ?? 0) + 1);
     await panel.run(agentClick(label));
   }
 
@@ -1064,6 +1074,7 @@ async function main() {
     await panel.run(agentPanel(`(() => { const s = root.querySelector('select'); s.value = ${JSON.stringify(modelRef)}; s.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`));
     await panel.until(agentIdle, "the agent to be ready");
     await panel.run(typeInto('main.agent textarea[aria-label="Task"]', task));
+    currentTask = task;
     await panel.run(agentClick("Start"));
   }
 
@@ -1421,6 +1432,19 @@ async function main() {
     await page.close();
   });
 
+  timingReport = () => {
+    const rows = [...new Set(agentTasks)].map((task) => {
+      const requests = agentRequests(task);
+      const answered = requests.filter((r) => r.doneAt);
+      // Between one answer and the next request: the browser's work, and any card the check answered meanwhile.
+      const browserMs = answered.slice(1).reduce((sum, r, i) => sum + Math.max(0, r.at - (answered[i].doneAt ?? r.at)), 0);
+      const modelMs = answered.reduce((sum, r) => sum + (r.doneAt - r.at), 0);
+      const totalMs = answered.length ? answered[answered.length - 1].doneAt - requests[0].at : 0;
+      return { task: task.replace(/ \(.*\)$/, ""), modelCalls: requests.length, cards: cardsFor.get(task) ?? 0, modelMs, browserMs, totalMs };
+    });
+    return rows;
+  };
+
   await step("the agent's steps are in Admin Logs, and each run is a chat of the task and the steps alone", async () => {
     expect(agentTasks.length, "the agent did not run");
     const logs = await callJson("/api/admin/admin-logs?source=browser_extension&limit=200");
@@ -1532,6 +1556,14 @@ try {
   exitCode = 2;
 }
 await cleanup();
+if (timingReport) {
+  const rows = timingReport();
+  if (rows.length) {
+    console.log("\nAgent runs: model calls, cards, model time, browser time, total (ms)");
+    for (const row of rows) console.log(`  ${row.task.slice(0, 48).padEnd(48)} ${String(row.modelCalls).padStart(3)} ${String(row.cards).padStart(3)} ${String(row.modelMs).padStart(7)} ${String(row.browserMs).padStart(7)} ${String(row.totalMs).padStart(7)}`);
+    if (process.env.EXT_E2E_REPORT) fs.writeFileSync(process.env.EXT_E2E_REPORT, `${JSON.stringify({ scale: SCALE ?? 1, window: WINDOW?.[0] ?? null, rows }, null, 2)}\n`);
+  }
+}
 const failed = results.filter((r) => !r.ok);
 console.log(failed.length ? `\n${failed.length} of ${results.length} steps failed.` : `\nAll ${results.length} steps passed.`);
 if (cleanupFailed) console.log("The stack could not be put back entirely: see the clean-up lines above.");

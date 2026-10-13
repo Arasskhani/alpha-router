@@ -70,3 +70,34 @@ def test_a_message_breakpoint_marks_that_message_only():
     assert "cache_control" not in msgs[3]
     for index in (0, 4, 5, -1, None, "3", True):
         assert apply_message_cache_breakpoint(msgs, index) == msgs
+
+
+def test_a_message_of_parts_is_marked_on_its_last_part_as_anthropic_reads_it():
+    from litellm.litellm_core_utils.prompt_templates.factory import anthropic_messages_pt
+
+    shot = [
+        {"type": "text", "text": "The page after this step."},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="}},
+    ]
+    msgs = [
+        {"role": "system", "content": "rules"},
+        {"role": "user", "content": "task"},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "click", "arguments": "{}"}}],
+        },
+        {"role": "tool", "tool_call_id": "c1", "content": "ok"},
+        {"role": "user", "content": shot},
+        {"role": "tool", "tool_call_id": "c2", "content": "latest"},
+    ]
+    out = apply_message_cache_breakpoint(msgs, 4)
+    assert "cache_control" not in out[4]
+    assert out[4]["content"][-1]["cache_control"] == {"type": "ephemeral"}
+    assert "cache_control" not in shot[-1]
+    sent = anthropic_messages_pt(out[1:5], model="claude-sonnet-4-20250514", llm_provider="anthropic")
+    assert "cache_control" in str(sent)
+    tool_marked = anthropic_messages_pt(
+        apply_message_cache_breakpoint(msgs, 3)[1:4], model="claude-sonnet-4-20250514", llm_provider="anthropic"
+    )
+    assert "cache_control" in str(tool_marked)

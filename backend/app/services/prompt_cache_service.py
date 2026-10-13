@@ -50,7 +50,12 @@ def apply_message_cache_breakpoint(messages: list[dict], index: object) -> list[
         return messages
     out = list(messages)
     marked = copy.deepcopy(out[index])
-    marked["cache_control"] = {"type": "ephemeral"}
+    content = marked.get("content")
+    if isinstance(content, list) and content and isinstance(content[-1], dict):
+        # Parts (a screenshot and its caption): litellm reads the marker on a part, not on such a message.
+        content[-1]["cache_control"] = {"type": "ephemeral"}
+    else:
+        marked["cache_control"] = {"type": "ephemeral"}
     out[index] = marked
     return out
 

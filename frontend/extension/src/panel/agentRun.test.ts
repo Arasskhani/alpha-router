@@ -480,6 +480,36 @@ describe("the card comes first", () => {
   });
 });
 
+describe("looking for the model", () => {
+  it("reads the page it starts on, and the page after a step that changed it, as read_page would", async () => {
+    const h = harness([
+      { text: "", toolCalls: [call("click", { ref: "e1" }, "l1")] },
+      { text: "", toolCalls: [call("type_text", { ref: "e3", text: "SAVE10" }, "l2")] },
+      { text: "", toolCalls: [call("done", { summary: "ok" })] },
+    ]);
+    await run(h, { looksForModel: true });
+    // The first turn already has the outline, as the answer to a read_page call the run made.
+    const first = h.sent[0];
+    const asked = first.find((m) => m.role === "assistant" && m.tool_calls?.[0].function.name === "read_page");
+    expect(asked && asked.role === "assistant" && asked.tool_calls?.[0].id).toBe("agent_read_1");
+    const read = first.find((m) => m.role === "tool" && m.tool_call_id === "agent_read_1");
+    expect(String(read?.content)).toContain('[e1] button "Next"');
+    expect(String(read?.content)).toContain(`<untrusted_page_content_${NONCE}`);
+    // The click changed the page: the next turn has its new outline; typing alone does not bring one.
+    expect(h.sent[1].some((m) => m.role === "tool" && m.tool_call_id === "agent_read_2")).toBe(true);
+    expect(h.sent[2].some((m) => m.role === "tool" && m.tool_call_id === "agent_read_3")).toBe(false);
+    expectEveryCallAnswered(h.sent[2]);
+    // The references it read are the ones the model is held to.
+    expect(h.browser.page).toHaveBeenCalledWith("click", { ref: "e1" }, TAB, expect.anything());
+  });
+
+  it("reads nothing for the model unless the panel asks it to", async () => {
+    const h = harness([{ text: "", toolCalls: [call("done", { summary: "ok" })] }]);
+    await run(h);
+    expect(h.sent[0].some((m) => m.role === "tool")).toBe(false);
+  });
+});
+
 describe("the Auto reviewer", () => {
   it("is asked once about the same action on the same site in a run, not every time", async () => {
     const h = harness(

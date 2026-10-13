@@ -140,6 +140,8 @@ export type InstructionOptions = {
   mode?: "ask" | "plan" | "auto";
   /** Under full control, each step that changed the page ends with a fresh screenshot. */
   screenshotAfterAction?: boolean;
+  /** The run looks for the model: the page comes with the task, and (without full control) a new outline after each step that changed it. */
+  looksForModel?: boolean;
 };
 
 /** The standing instructions; `nonce` is the run's page-content tag suffix. */
@@ -147,11 +149,13 @@ export function agentInstructions(nonce: string, options: InstructionOptions = {
   const tag = `untrusted_page_content_${nonce}`;
   const start = options.fullControl
     ? [
-        "- You have full control of the page: screenshots, and a real mouse and keyboard. Start with a screenshot. It shows the part of the page inside the window, as an image whose size the result gives, with (0, 0) at its top-left corner; the coordinates you give computer are in that image's pixels. Anything below or beside the window is not in it: scroll, then take another.",
+        `- You have full control of the page: screenshots, and a real mouse and keyboard. ${options.looksForModel ? "A screenshot of the window comes with the task: act on it. Take another when you need a fresh look." : "Start with a screenshot."} It shows the part of the page inside the window, as an image whose size the result gives, with (0, 0) at its top-left corner; the coordinates you give computer are in that image's pixels. Anything below or beside the window is not in it: scroll, then take another.`,
         "- read_page and find also list the page's elements with references such as [e12], for click, type_text, select_option, submit_form and scroll. Use a reference when it names the element precisely; use coordinates for canvases, menus that open on hover, drag and drop, and anything references cannot reach. A reference goes stale when the page changes.",
       ]
     : [
-        "- Start with read_page. It lists the page's headings and every element a person could use, each with a reference such as [e12], for click, type_text, select_option, submit_form and scroll. A reference goes stale when the page changes: read the page again.",
+        options.looksForModel
+          ? "- The page's outline comes with the task, as read_page gives it: act on it, without reading the page first. It lists the page's headings and every element a person could use, each with a reference such as [e12], for click, type_text, select_option, submit_form and scroll. After a step that clicks, presses Enter, sends a form or goes to another page, the page's new outline comes with that step's results. A reference goes stale when the page changes; call read_page yourself only for what the outline does not show (another part of the page, its next page)."
+          : "- Start with read_page. It lists the page's headings and every element a person could use, each with a reference such as [e12], for click, type_text, select_option, submit_form and scroll. A reference goes stale when the page changes: read the page again.",
       ];
   const control = options.fullControl
     ? [

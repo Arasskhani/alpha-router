@@ -79,6 +79,7 @@ function harness(
     rules?: PolicyContext;
     review?: "allow" | "ask";
     screenshotAfterAction?: boolean;
+    looksForModel?: boolean;
   } = {},
 ) {
   const sent: ApiMessage[][] = [];
@@ -108,7 +109,16 @@ function harness(
   };
   const run = () =>
     runAgent(
-      { task: "Go to the next step.", mode: opts.mode ?? "ask", maxSteps: 20, rules: opts.rules ?? RULES, runId: "run-1", nonce: NONCE, screenshotAfterAction: opts.screenshotAfterAction },
+      {
+        task: "Go to the next step.",
+        mode: opts.mode ?? "ask",
+        maxSteps: 20,
+        rules: opts.rules ?? RULES,
+        runId: "run-1",
+        nonce: NONCE,
+        screenshotAfterAction: opts.screenshotAfterAction,
+        looksForModel: opts.looksForModel,
+      },
       deps,
       new AbortController().signal,
     );
@@ -182,6 +192,17 @@ describe("screenshots", () => {
     await h.run();
     expect(h.driver!.zoom).not.toHaveBeenCalled();
     expect(h.sent[1].find((m) => m.role === "tool")!.content).toContain("region");
+  });
+});
+
+describe("the first look under full control", () => {
+  it("is a screenshot that comes with the task, so the first turn can act", async () => {
+    const h = harness([{ text: "", toolCalls: [call("done", { summary: "ok" })] }], { looksForModel: true });
+    await h.run();
+    const images = h.sent[0].filter((m) => m.role === "user" && Array.isArray(m.content));
+    expect(images).toHaveLength(1);
+    // No outline is read for it: the screenshot plays that part.
+    expect(h.browser.page).not.toHaveBeenCalledWith("read_page", expect.anything(), expect.anything(), expect.anything());
   });
 });
 

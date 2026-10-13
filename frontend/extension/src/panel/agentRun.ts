@@ -179,6 +179,12 @@ export type AgentOptions = {
    * actions there need no card or review. Absent: trust is off, and no card offers it.
    */
   trustedSites?: ReadonlySet<string>;
+  /**
+   * The run looks for the model on its own: the page it starts on (its outline, or under full control a screenshot),
+   * and without full control the new outline after each step that changed the page - turns the model would otherwise
+   * spend asking. The panel turns it on.
+   */
+  looksForModel?: boolean;
 };
 
 export type RunOutcome = "done" | "stopped" | "max_steps" | "max_minutes" | "errors" | "failed" | "no_action";
@@ -566,6 +572,8 @@ const BY_HAND = new Set(["click", "type_text", "press_key"]);
 const AFTERMATH = new Set(["click", "type_text", "select_option", "submit_form", "press_key"]);
 /** What changes the page, so that a step with one ends with a fresh screenshot (when the administrator wants one). */
 const CHANGES = new Set(["click", "type_text", "select_option", "submit_form", "press_key", "scroll", "navigate", "tab_open", "tab_switch"]);
+/** Actions after which, without full control, the step ends with the page's new outline. */
+const OUTLINE_AFTER = new Set(["click", "submit_form", "press_key", "select_option", "navigate", "tab_open", "tab_switch"]);
 /** Actions after which a page may be loading. */
 const MAY_LOAD = new Set(["click", "submit_form", "press_key", "navigate", "tab_open", "tab_switch", "computer"]);
 /** A hand-typed field the person took over after it was cleared: what the model is told was done. */
@@ -696,7 +704,12 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     {
       message: {
         role: "system",
-        content: agentInstructions(options.nonce, { fullControl: Boolean(deps.driver), mode: options.mode, screenshotAfterAction: Boolean(options.screenshotAfterAction) }),
+        content: agentInstructions(options.nonce, {
+          fullControl: Boolean(deps.driver),
+          mode: options.mode,
+          screenshotAfterAction: Boolean(options.screenshotAfterAction),
+          looksForModel: Boolean(options.looksForModel),
+        }),
       },
     },
     { message: { role: "user", content: options.task } },
@@ -756,6 +769,33 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     const result = await raced(deps.browser.page(method, a, judged, signal));
     check();
     return result;
+  }
+
+  /** How many reads of the page the run made for the model on its own, for their call ids. */
+  let readsGiven = 0;
+
+  /**
+   * Without full control, the page's outline as read_page gives it, read for the model on its own: at the start of the
+   * run, and after a step that changed the page - instead of a turn of the model's spent asking for it. It goes into the
+   * conversation as a read_page the model made (ids "agent_read_…"), so it is kept and cut like any other read. Only on
+   * a site the run may work on; under full control the screenshot plays this part.
+   */
+  async function readFor(tab: WorkTab | null, why: string): Promise<boolean> {
+    if (!options.looksForModel || !tab?.host || deps.driver || !isAllowed(tab.host)) return false;
+    if (classifyAction({ tool: "read_page", args: {}, page: { url: tab.url, host: tab.host } }, options.rules).class === "blocked") return false;
+    const result = await page("read_page", {}, tab).catch((err) => {
+      if (isAbort(err) || signal.aborted) throw err;
+      return null;
+    });
+    if (!result?.ok) return false;
+    const body = String(result.outline ?? "");
+    if (Array.isArray(result.elements)) remember(tab.id, result.elements as ElementInfo[]);
+    watch(body);
+    readsGiven += 1;
+    const id = `agent_read_${readsGiven}`;
+    entries.push({ message: { role: "assistant", content: null, tool_calls: [{ id, type: "function", function: { name: "read_page", arguments: "{}" } }] } });
+    entries.push({ message: { role: "tool", tool_call_id: id, content: why }, page: wrapPage(options.nonce, tab.host, body), read: "outline" });
+    return true;
   }
 
   function report(outcome: RunOutcome) {
@@ -1856,6 +1896,12 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     // The model starts knowing where it is.
     const start = first ? await startingPoint(first) : null;
     if (start) entries[1] = { message: { role: "user", content: `${options.task}\n\n${start}` } };
+    // The page the run starts on, so the model's first turn can act rather than look: its outline, or under full control
+    // a screenshot of the window.
+    if (options.looksForModel && first && !(await readFor(first, "The page you start on, read for you."))) {
+      const look = deps.driver && first.host && isAllowed(first.host) ? await lookAfter() : undefined;
+      if (look) entries.push({ message: { role: "user", content: [{ type: "text", text: look.caption }, { type: "image_url", image_url: { url: look.url } }] } });
+    }
     await state("working", first);
     for (steps = 1; steps <= options.maxSteps; steps += 1) {
       check();
@@ -1918,6 +1964,8 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       const images: NonNullable<Answer["image"]>[] = [];
       /** Whether the step changed the page since its last screenshot: then it ends with one. */
       let unseen = false;
+      /** Whether the step went to a page or pressed something there: without full control it then ends with an outline. */
+      let reloaded = false;
       for (const call of calls) {
         let answer: Answer & { denied?: boolean };
         try {
@@ -1949,6 +1997,8 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
         if (answer.finish !== undefined) finish = answer.finish;
         if (answer.status === "done" && name === "screenshot") unseen = false;
         else if (answer.status === "done" && (CHANGES.has(name) || (name === "computer" && args(call.function.arguments)?.action !== "wait"))) unseen = true;
+        if (answer.status === "done" && OUTLINE_AFTER.has(name)) reloaded = true;
+        if (name === "read_page" && answer.status === "done") reloaded = false;
         if (answer.denied) skip = "Skipped: an earlier action in this step was denied.";
         if (answer.status === "error") {
           errorsInARow += 1;
@@ -1976,6 +2026,8 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
         const look = await lookAfter();
         if (look) images.push(look);
       }
+      // A step that loaded or changed the page ends, without full control, with its new outline: no turn spent asking.
+      if (reloaded && finish === null && !tooManyErrors) await readFor(await deps.browser.current(), "The page after this step, read for you.");
       // Screenshots go after the step's answers, as images the model reads (tool answers carry text only).
       for (const image of images) {
         entries.push({

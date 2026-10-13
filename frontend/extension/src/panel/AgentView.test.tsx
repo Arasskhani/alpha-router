@@ -370,13 +370,14 @@ describe("a run", () => {
     // The model's answer arrives while paused: the run waits before its next action, and the badge shows the pause.
     await act(async () => finish());
     await until(() => chromeFake.action.badge.color === "#969696", "the grey badge");
-    expect(pageCalls.filter((c) => c.method === "read_page")).toHaveLength(1);
+    // The run's own read of the page it starts on, and the model's first: nothing more while paused.
+    expect(pageCalls.filter((c) => c.method === "read_page")).toHaveLength(2);
     await act(async () => button("Resume").click());
     await until(() => !host.textContent!.includes("You took over"), "the card to go");
     // The page was told first, then the run went on: the second read, and the end.
     expect(pageCalls.some((c) => c.method === "takeover_resume" && c.args.run === run)).toBe(true);
     await until(() => host.textContent!.includes("Done."), "the run to finish");
-    expect(pageCalls.filter((c) => c.method === "read_page")).toHaveLength(2);
+    expect(pageCalls.filter((c) => c.method === "read_page")).toHaveLength(3);
     expect(chromeFake.action.badge.text).toBe("");
   });
 

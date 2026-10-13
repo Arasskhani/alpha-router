@@ -179,6 +179,8 @@ export type AgentOptions = {
    * actions there need no card or review. Absent: trust is off, and no card offers it.
    */
   trustedSites?: ReadonlySet<string>;
+  /** False when the Auto reviewer reads no images: no crop of the page is taken for it. */
+  reviewReadsImages?: boolean;
   /**
    * The run looks for the model on its own: the page it starts on (its outline, or under full control a screenshot),
    * and without full control the new outline after each step that changed the page - turns the model would otherwise
@@ -1735,7 +1737,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       deps.onStep({ id: call.id, tool: name, summary, status: "running", detail: "Checking with the reviewer…" });
       // A crop around the target for a vision reviewer: only under full control, and only where a screenshot of this site may leave at all.
       let crop: string | undefined;
-      if (deps.driver && targetRect && tab && options.rules.data?.modelSeesScreenshots !== false) {
+      if (deps.driver && targetRect && tab && options.reviewReadsImages !== false && options.rules.data?.modelSeesScreenshots !== false) {
         // The target's box is in CSS pixels, as the page described it: crop there, not in the screenshot's pixels.
         const shot = await visualCapture(() => deps.driver!.crop(targetRect!), tab);
         if (shot) crop = shot;

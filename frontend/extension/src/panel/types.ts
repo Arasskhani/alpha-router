@@ -35,6 +35,8 @@ export type Me = {
     private_runs?: boolean;
     /** Whether a person's trusted sites count (absent: they do). */
     trusted_sites?: boolean;
+    /** Whether Auto mode's reviewer reads images (absent: it may, and a crop is sent). */
+    review_reads_images?: boolean;
     /** The sensitive cases that still ask; a missing one asks. */
     approvals?: Partial<Approvals>;
     /** Where content may go: the organisation's internal sites, and the models that may see them and screenshots (null: any). */

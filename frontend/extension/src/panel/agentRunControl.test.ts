@@ -75,6 +75,7 @@ function harness(
     driver?: ControlDriver | null;
     browser?: ReturnType<typeof fakeBrowser>;
     approve?: boolean;
+    reviewReadsImages?: boolean;
     mode?: "ask" | "plan" | "auto";
     rules?: PolicyContext;
     review?: "allow" | "ask";
@@ -118,6 +119,7 @@ function harness(
         nonce: NONCE,
         screenshotAfterAction: opts.screenshotAfterAction,
         looksForModel: opts.looksForModel,
+        reviewReadsImages: opts.reviewReadsImages,
       },
       deps,
       new AbortController().signal,
@@ -1044,6 +1046,18 @@ describe("the reviewer's crop", () => {
     });
     await h.run();
     // The click on a plain "Next" is a read to the reviewer? No - it is an act; it went to review with no crop.
+    expect(h.reviewInputs[0]?.crop).toBeUndefined();
+  });
+
+  it("takes no crop for a reviewer that reads no images", async () => {
+    const h = harness([{ text: "", toolCalls: [call("computer", { action: "left_click", coordinate: [200, 100] })] }, { text: "", toolCalls: [call("done", { summary: "ok" })] }], {
+      mode: "auto",
+      review: "allow",
+      reviewReadsImages: false,
+    });
+    await h.run();
+    expect(h.reviewInputs).toHaveLength(1);
+    expect(h.driver!.crop).not.toHaveBeenCalled();
     expect(h.reviewInputs[0]?.crop).toBeUndefined();
   });
 });

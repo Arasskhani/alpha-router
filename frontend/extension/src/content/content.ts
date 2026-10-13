@@ -6,11 +6,14 @@
  * or tokens.
  */
 
+import { EXTENSION_BUILD } from "../lib/build";
 import { extractPage, isBlockDisplayed, isRendered, isTextRendered, type PageExtract } from "./extract";
 import { runAgentCall } from "./runtime";
 import type { Result } from "./agent";
 
 type ContentApi = {
+  /** The build this copy came from: the panel injects its own over a copy of another. */
+  build: string;
   extract: (limits: { maxChars: number; maxSelectionChars: number }) => PageExtract;
   /** One call from the side panel's agent: which action, with which arguments, for which run. */
   agent: (method: unknown, args: unknown, run?: unknown) => Promise<Result>;
@@ -30,6 +33,7 @@ const scope = globalThis as typeof globalThis & { __alpharouter?: ContentApi };
 // Every injection puts this copy in place, over whatever is there: a copy an
 // older version of the extension left in the page must never be what reads it.
 scope.__alpharouter = {
+  build: EXTENSION_BUILD,
   extract: (limits) =>
     extractPage(document, {
       maxChars: limits.maxChars,

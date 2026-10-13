@@ -21,28 +21,64 @@ type Injection = { target: { tabId: number }; files?: string[]; func?: (...args:
 const SHOP = { tabId: 7, host: "shop.example.com", origin: "https://shop.example.com" };
 
 describe("a call to the page", () => {
-  it("injects content.js, then runs the action with the origin it expects", async () => {
+  const MISSING = [{ result: { ok: false, error: "no_helper", message: "The page's helper is missing." } }];
+
+  it("runs the action through the copy of content.js the page holds, without injecting it again", async () => {
+    chromeFake.scripting.executeScript.mockResolvedValueOnce([{ result: { ok: true, note: "Typed 5 characters." } }]);
+    await expect(callPage(SHOP, "type_text", { ref: "e3", text: "hello" })).resolves.toEqual({ ok: true, note: "Typed 5 characters." });
+    const [run] = chromeFake.scripting.executeScript.mock.calls.map(([injection]) => injection as Injection);
+    expect(chromeFake.scripting.executeScript).toHaveBeenCalledTimes(1);
+    expect(run.target).toEqual({ tabId: 7 });
+    expect(run.args).toEqual(["https://shop.example.com", "type_text", { ref: "e3", text: "hello" }, null, "dev", "no_helper"]);
+  });
+
+  it("injects content.js when the page holds none, then runs the action with the origin it expects", async () => {
     chromeFake.scripting.executeScript
+      .mockResolvedValueOnce(MISSING)
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([{ result: { ok: true, note: "Typed 5 characters." } }]);
-    await expect(callPage(SHOP, "type_text", { ref: "e3", text: "hello" })).resolves.toEqual({
-      ok: true,
-      note: "Typed 5 characters.",
-    });
-    const [inject, run] = chromeFake.scripting.executeScript.mock.calls.map(([injection]) => injection as Injection);
+    await expect(callPage(SHOP, "type_text", { ref: "e3", text: "hello" })).resolves.toEqual({ ok: true, note: "Typed 5 characters." });
+    const [first, inject, run] = chromeFake.scripting.executeScript.mock.calls.map(([injection]) => injection as Injection);
+    expect(first.func).toBeDefined();
     expect(inject).toEqual({ target: { tabId: 7 }, files: ["content.js"] });
-    expect(run.target).toEqual({ tabId: 7 });
-    expect(run.args).toEqual(["https://shop.example.com", "type_text", { ref: "e3", text: "hello" }, null]);
+    expect(run.args?.slice(0, 4)).toEqual(["https://shop.example.com", "type_text", { ref: "e3", text: "hello" }, null]);
+  });
+
+  it("does nothing with a copy another build left in the page, or none at all", async () => {
+    chromeFake.scripting.executeScript.mockResolvedValue([]);
+    await callPage(SHOP, "click", { ref: "e1" });
+    const run = chromeFake.scripting.executeScript.mock.calls[0][0] as Injection;
+    vi.stubGlobal("location", { origin: "https://shop.example.com" });
+    const agent = vi.fn(() => ({ ok: true }));
+    vi.stubGlobal("__alpharouter", { build: "older", agent });
+    expect(run.func!(...run.args!)).toMatchObject({ ok: false, error: "no_helper" });
+    vi.stubGlobal("__alpharouter", undefined);
+    expect(run.func!(...run.args!)).toMatchObject({ ok: false, error: "no_helper" });
+    expect(agent).not.toHaveBeenCalled();
+    vi.stubGlobal("__alpharouter", { build: "dev", agent });
+    expect(run.func!(...run.args!)).toEqual({ ok: true });
+  });
+
+  it("fails when the helper is still missing after it was injected", async () => {
+    chromeFake.scripting.executeScript.mockResolvedValueOnce(MISSING).mockResolvedValueOnce([]).mockResolvedValueOnce(MISSING);
+    await expect(callPage(SHOP, "click", { ref: "e1" })).resolves.toMatchObject({ ok: false, error: "failed" });
   });
 
   it("does not send the action once the run is stopped, however long the page kept the injection back", async () => {
     const abort = new AbortController();
-    chromeFake.scripting.executeScript.mockImplementationOnce(async () => {
+    chromeFake.scripting.executeScript.mockResolvedValueOnce(MISSING).mockImplementationOnce(async () => {
       abort.abort();
       return [];
     });
     await expect(callPage(SHOP, "click", { ref: "e1" }, null, abort.signal)).resolves.toMatchObject({ ok: false, error: "stopped" });
-    expect(chromeFake.scripting.executeScript).toHaveBeenCalledTimes(1);
+    expect(chromeFake.scripting.executeScript).toHaveBeenCalledTimes(2);
+  });
+
+  it("sends nothing for a run already stopped", async () => {
+    const abort = new AbortController();
+    abort.abort();
+    await expect(callPage(SHOP, "click", { ref: "e1" }, null, abort.signal)).resolves.toMatchObject({ ok: false, error: "stopped" });
+    expect(chromeFake.scripting.executeScript).not.toHaveBeenCalled();
   });
 
   it("waits on a page held by a dialog the user is answering, and gets its answer", async () => {
@@ -81,10 +117,10 @@ describe("a call to the page", () => {
   it("puts the run's banner up before the action, when asked to", async () => {
     chromeFake.scripting.executeScript.mockResolvedValue([]);
     await callPage(SHOP, "click", { ref: "e1" }, { run: "run-1", label: "Working" });
-    const run = chromeFake.scripting.executeScript.mock.calls[1][0] as Injection;
+    const run = chromeFake.scripting.executeScript.mock.calls[0][0] as Injection;
     expect(run.args?.[3]).toEqual({ run: "run-1", label: "Working" });
     const seen: string[] = [];
-    vi.stubGlobal("__alpharouter", { agent: vi.fn((method: string) => (seen.push(method), { ok: true })) });
+    vi.stubGlobal("__alpharouter", { build: "dev", agent: vi.fn((method: string) => (seen.push(method), { ok: true })) });
     vi.stubGlobal("location", { origin: "https://shop.example.com" });
     run.func!(...run.args!);
     expect(seen).toEqual(["show_overlay", "click"]);
@@ -101,17 +137,17 @@ describe("a call to the page", () => {
   it("checks the origin inside the page, where no navigation comes between", async () => {
     chromeFake.scripting.executeScript.mockResolvedValue([]);
     await callPage(SHOP, "click", { ref: "e1" });
-    const run = chromeFake.scripting.executeScript.mock.calls[1][0] as Injection;
+    const run = chromeFake.scripting.executeScript.mock.calls[0][0] as Injection;
     const agent = vi.fn(() => ({ ok: true }));
-    vi.stubGlobal("__alpharouter", { agent });
+    vi.stubGlobal("__alpharouter", { build: "dev", agent });
     // Another site, and the same host on another port or scheme: not the page the rules judged.
     for (const origin of ["https://evil.example.net", "https://shop.example.com:8443", "http://shop.example.com"]) {
       vi.stubGlobal("location", { origin });
-      expect(run.func!("https://shop.example.com", "click", { ref: "e1" }, null)).toMatchObject({ ok: false, error: "moved" });
+      expect(run.func!("https://shop.example.com", "click", { ref: "e1" }, null, "dev", "no_helper")).toMatchObject({ ok: false, error: "moved" });
     }
     expect(agent).not.toHaveBeenCalled();
     vi.stubGlobal("location", { origin: "https://shop.example.com" });
-    expect(run.func!("https://shop.example.com", "click", { ref: "e1" }, null)).toEqual({ ok: true });
+    expect(run.func!("https://shop.example.com", "click", { ref: "e1" }, null, "dev", "no_helper")).toEqual({ ok: true });
     expect(agent).toHaveBeenCalledWith("click", { ref: "e1" }, undefined);
   });
 

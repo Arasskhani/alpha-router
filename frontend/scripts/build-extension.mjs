@@ -22,6 +22,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
@@ -37,7 +38,24 @@ const outDir = path.join(frontendDir, "dist-extension");
 // the TypeScript it shadows.
 const resolve = { extensions: [".tsx", ".ts", ".jsx", ".mts", ".mjs", ".js", ".json"] };
 const target = "chrome116";
-const production = { "process.env.NODE_ENV": JSON.stringify("production") };
+/** A hash of the extension's sources: the panel injects content.js into a page only when the copy there is not this build's. */
+function sourceHash() {
+  const hash = crypto.createHash("sha256");
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else {
+        hash.update(path.relative(extensionDir, full));
+        hash.update(fs.readFileSync(full));
+      }
+    }
+  };
+  walk(path.join(extensionDir, "src"));
+  return hash.digest("hex").slice(0, 16);
+}
+const buildId = JSON.stringify(sourceHash());
+const production = { "process.env.NODE_ENV": JSON.stringify("production"), __ALPHAROUTER_BUILD__: buildId };
 
 async function buildPages() {
   await build({
@@ -46,6 +64,7 @@ async function buildPages() {
     base: "./",
     plugins: [react()],
     resolve,
+    define: { __ALPHAROUTER_BUILD__: buildId },
     logLevel: "warn",
     build: {
       outDir,

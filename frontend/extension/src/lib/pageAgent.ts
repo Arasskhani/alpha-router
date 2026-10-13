@@ -1,8 +1,9 @@
 /**
  * The side panel's line to the agent's hands in a page (content.js).
  *
- * Each call injects content.js into the tab - only now, and only there - and
- * runs one action. The tab may have moved to another site since the rules
+ * Each call runs one action through content.js in the tab, injecting it -
+ * only now, and only there - when the page does not hold this build's copy
+ * already. The tab may have moved to another site since the rules
  * judged the page, so the call checks the page's origin inside the page,
  * where no navigation can come between the check and the action. What comes
  * back is built from the page, so it is checked and cut to size before the
@@ -10,6 +11,7 @@
  */
 
 import type { ElementInfo } from "../content/agent";
+import { EXTENSION_BUILD } from "./build";
 import type { PageMethod } from "../content/runtime";
 
 export type { ElementInfo } from "../content/agent";
@@ -222,7 +224,10 @@ export function cleanPageResult(method: PageMethod, raw: unknown): PageResult {
   }
 }
 
-type AgentScope = { __alpharouter?: { agent?: (method: unknown, args: unknown, run?: unknown) => unknown } };
+type AgentScope = { __alpharouter?: { build?: unknown; agent?: (method: unknown, args: unknown, run?: unknown) => unknown } };
+
+/** What the page answers when it holds no copy of this build's content.js: nothing was done, inject and ask again. */
+const NO_HELPER = "no_helper";
 
 /**
  * Where a call goes: the tab, and the page in it the rules judged - its host
@@ -257,25 +262,37 @@ export async function callPage(
   hold?: () => boolean,
 ): Promise<PageResult> {
   const { tabId, host, origin } = target;
-  let results: Array<{ result?: unknown }>;
+  let result: unknown;
   const started = Date.now();
+  const left = () => Math.max(1, timeoutMs - (Date.now() - started));
+  const run = async () =>
+    (
+      await bounded(chrome.scripting.executeScript({
+        target: { tabId },
+        // Serialized into the page: it may use nothing from this module. The
+        // origin, not the host: another port or scheme of a host is another site.
+        func: (expected: string, name: string, input: Record<string, unknown>, banner: OverlayRequest | null, build: string, missing: string) => {
+          if (location.origin !== expected) return { ok: false, error: "moved", message: `The tab left ${expected}.` };
+          const helper = (globalThis as AgentScope).__alpharouter;
+          // No copy, or one another build left: nothing is done here, the panel injects its own first.
+          if (!helper?.agent || helper.build !== build) return { ok: false, error: missing, message: "The page's helper is missing." };
+          if (banner) helper.agent("show_overlay", banner);
+          return helper.agent(name, input, banner?.run);
+        },
+        args: [origin, method, args, overlay, EXTENSION_BUILD, NO_HELPER],
+      }), left(), signal, hold)
+    )?.[0]?.result;
+  // Stopped already: the action is never sent.
+  if (signal?.aborted) return failure("stopped", "The run was stopped.");
   try {
-    await bounded(chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] }), timeoutMs, signal, hold);
-    // A busy page can hold the injection back for a while: a Stop pressed meanwhile keeps the action from going.
-    if (signal?.aborted) return failure("stopped", "The run was stopped.");
-    results = await bounded(chrome.scripting.executeScript({
-      target: { tabId },
-      // Serialized into the page: it may use nothing from this module. The
-      // origin, not the host: another port or scheme of a host is another site.
-      func: (expected: string, name: string, input: Record<string, unknown>, banner: OverlayRequest | null) => {
-        if (location.origin !== expected) return { ok: false, error: "moved", message: `The tab left ${expected}.` };
-        const agent = (globalThis as AgentScope).__alpharouter?.agent;
-        if (!agent) return { ok: false, error: "failed", message: "The page's helper is missing." };
-        if (banner) agent("show_overlay", banner);
-        return agent(name, input, banner?.run);
-      },
-      args: [origin, method, args, overlay],
-    }), Math.max(1, timeoutMs - (Date.now() - started)), signal, hold);
+    result = await run();
+    if (isNoHelper(result)) {
+      await bounded(chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] }), left(), signal, hold);
+      // A busy page can hold the injection back for a while: a Stop pressed meanwhile keeps the action from going.
+      if (signal?.aborted) return failure("stopped", "The run was stopped.");
+      result = await run();
+      if (isNoHelper(result)) return failure("failed", "The page's helper is missing.");
+    }
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") return failure("stopped", "The run was stopped.");
     if (err instanceof PageTimeout) {
@@ -288,5 +305,9 @@ export async function callPage(
     if (/no tab with id|tab was closed/i.test(message)) return failure("moved", "The tab was closed.");
     return failure("failed", "The page could not be reached. Reload it and try again.");
   }
-  return cleanPageResult(method, results?.[0]?.result);
+  return cleanPageResult(method, result);
+}
+
+function isNoHelper(result: unknown): boolean {
+  return Boolean(result && typeof result === "object" && (result as { error?: unknown }).error === NO_HELPER);
 }

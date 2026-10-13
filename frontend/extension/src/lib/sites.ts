@@ -115,6 +115,12 @@ const MULTI_SUFFIXES = new Set([
   "web.app", "firebaseapp.com", "appspot.com", "blogspot.com", "wordpress.com", "azurewebsites.net",
   "cloudfront.net", "onrender.com", "fly.dev", "glitch.me", "ngrok.io", "ngrok-free.app", "repl.co",
   "s3.amazonaws.com", "amplifyapp.com", "surge.sh", "translate.goog",
+  // Tenants of one service, each its own owner (the Public Suffix List's private section, the common ones)
+  "sharepoint.com", "onmicrosoft.com", "atlassian.net", "myshopify.com", "wixsite.com", "weebly.com", "squarespace.com",
+  "notion.site", "webflow.io", "substack.com", "tumblr.com", "trycloudflare.com", "ngrok.app", "r2.dev", "run.app",
+  "cloudfunctions.net", "azurestaticapps.net", "web.core.windows.net", "blob.core.windows.net", "deno.dev",
+  "replit.app", "replit.dev", "github.dev", "codespaces.dev", "readthedocs.io", "hf.space", "streamlit.app",
+  "zendesk.com", "freshdesk.com", "force.com", "my.salesforce.com", "lightning.force.com", "bitbucket.io", "neocities.org", "carrd.co", "framer.app", "framer.website",
 ]);
 
 /** Whether `host` is an address rather than a name: an IPv4 address or an IPv6 one in brackets. */
@@ -134,7 +140,7 @@ export function siteOf(host: string): string {
   if (isAddress(name)) return name;
   const labels = name.split(".");
   if (labels.length <= 2) return name;
-  for (let take = 3; take >= 2; take -= 1) {
+  for (let take = 4; take >= 2; take -= 1) {
     const suffix = labels.slice(-take).join(".");
     if (MULTI_SUFFIXES.has(suffix)) return labels.length > take ? labels.slice(-(take + 1)).join(".") : name;
   }

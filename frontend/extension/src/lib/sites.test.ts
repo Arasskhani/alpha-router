@@ -108,6 +108,13 @@ describe("the site a host belongs to", () => {
     ["alice.github.io", "alice.github.io"],
     ["docs.alice.github.io", "alice.github.io"],
     ["github.io", "github.io"],
+    // Tenants of one service are each their own site.
+    ["corp.sharepoint.com", "corp.sharepoint.com"],
+    ["evil-my.sharepoint.com", "evil-my.sharepoint.com"],
+    ["acme.atlassian.net", "acme.atlassian.net"],
+    ["shop.myshopify.com", "shop.myshopify.com"],
+    ["files.acct.web.core.windows.net", "acct.web.core.windows.net"],
+    ["acme.my.salesforce.com", "acme.my.salesforce.com"],
     ["localhost", "localhost"],
     ["intranet", "intranet"],
     ["10.0.0.5", "10.0.0.5"],

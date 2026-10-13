@@ -52,7 +52,14 @@ describe("a model step", () => {
       signal.addEventListener("abort", () => clearInterval(beat));
       return stream.response;
     });
-    await expect(modelStep({ request, idleMs: 30, totalMs: 80, retries: 0 }, new AbortController().signal)).rejects.toThrow(/did not finish within/);
+    const onRetry = vi.fn();
+    await expect(modelStep({ request, idleMs: 30, totalMs: 80, onRetry }, new AbortController().signal)).rejects.toMatchObject({
+      kind: "total",
+      message: expect.stringMatching(/did not finish within .* a quicker model/),
+    });
+    // The same call again would only run as long: it is not tried twice.
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(onRetry).not.toHaveBeenCalled();
   });
 
   it("keeps waiting while the server keeps the stream alive", async () => {

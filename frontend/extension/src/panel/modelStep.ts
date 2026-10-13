@@ -6,9 +6,10 @@
  * A model can take its time - a reasoning model with three screenshots may
  * think for a minute - but a call that sends nothing for `idleMs` (not even
  * a keep-alive), or runs past `totalMs`, is not coming back: it is dropped.
- * Dropped, cut short, answered with a server error or an error frame, or
- * lost to the network, it is tried once more; anything else (a refusal, a
- * Stop) is final. The caller shows the wait (onText) while it lasts.
+ * Dropped for silence, cut short, answered with a server error or an error
+ * frame, or lost to the network, it is tried once more; anything else (a
+ * refusal, a Stop, a call that kept talking past `totalMs` - the same call
+ * again would only take as long) is final. The caller shows the wait (onText) while it lasts.
  */
 
 import { ApiError } from "../lib/api";
@@ -23,9 +24,12 @@ const MODEL_TOTAL_MS = 240_000;
 const MODEL_RETRIES = 1;
 
 export class ModelTimeout extends Error {
-  constructor(message: string) {
+  /** "idle": nothing came for too long (a second try may get through); "total": it ran past the step's time. */
+  readonly kind: "idle" | "total";
+  constructor(message: string, kind: "idle" | "total" = "idle") {
     super(message);
     this.name = "ModelTimeout";
+    this.kind = kind;
   }
 }
 
@@ -47,7 +51,7 @@ function isAbort(err: unknown): boolean {
 
 /** Whether a second try may mend what went wrong: a limit, a cut or failed stream, a server error, the network. */
 function worthRetrying(err: unknown): boolean {
-  if (err instanceof ModelTimeout) return true;
+  if (err instanceof ModelTimeout) return err.kind === "idle";
   if (err instanceof ChatStreamError) return err.retryable;
   if (err instanceof ApiError) return err.status >= 500;
   if (err instanceof DisconnectedError) return false;
@@ -60,15 +64,18 @@ async function once(call: ModelStepCall, stepSignal: AbortSignal): Promise<Strea
   const totalMs = call.totalMs ?? MODEL_TOTAL_MS;
   const attempt = new AbortController();
   let limit: ModelTimeout | null = null;
-  const drop = (why: string) => {
-    limit = new ModelTimeout(why);
+  const drop = (why: string, kind: "idle" | "total" = "idle") => {
+    limit = new ModelTimeout(why, kind);
     attempt.abort();
   };
   const onStop = () => attempt.abort();
   if (stepSignal.aborted) attempt.abort();
   else stepSignal.addEventListener("abort", onStop, { once: true });
   let idle = setTimeout(() => drop(`The model sent nothing for ${Math.round(idleMs / 1000)} s.`), idleMs);
-  const total = setTimeout(() => drop(`The model did not finish within ${Math.round(totalMs / 1000)} s.`), totalMs);
+  const total = setTimeout(
+    () => drop(`The model did not finish within ${Math.round(totalMs / 1000)} s. Try a smaller task, or a quicker model.`, "total"),
+    totalMs,
+  );
   const alive = () => {
     clearTimeout(idle);
     idle = setTimeout(() => drop(`The model sent nothing for ${Math.round(idleMs / 1000)} s.`), idleMs);

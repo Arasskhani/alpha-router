@@ -1102,6 +1102,7 @@ async function main() {
     await panel.until(agentIdle, "the run to end");
     expect(form.url().includes("/agent-thanks.html?name=Majid+E2E"), `the tab shows ${form.url()}`);
     const requests = agentRequests(task);
+    // This account has full control, so the task comes with a screenshot: read the page, type, send, read it, done.
     expect(requests.length === 5, `${requests.length} model calls for five steps`);
     const names = (requests[0].tools ?? []).map((t) => t.function?.name);
     // The 16 ref-based tools, plus the three of full control (on for this check's account).
@@ -1157,7 +1158,8 @@ async function main() {
     const clicks = await control.evaluate(() => window.__clicks);
     expect(clicks.length === 1 && clicks[0] === true, `the click was ${JSON.stringify(clicks)} (a real mouse click is trusted)`);
     const requests = agentRequests(task);
-    expect(requests.length === 3, `${requests.length} model calls for three steps`);
+    // The screenshot comes with the task: click, done.
+    expect(requests.length === 2, `${requests.length} model calls for two steps`);
     const names = (requests[0].tools ?? []).map((t) => t.function?.name);
     expect(names.includes("computer") && names.includes("screenshot") && names.includes("click"), `the tools were ${names.join(", ")}`);
     const shot = requests[1].messages.find((m) => m.role === "user" && Array.isArray(m.content));

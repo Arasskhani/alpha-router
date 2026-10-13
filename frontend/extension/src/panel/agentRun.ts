@@ -27,7 +27,7 @@ import type { CdpDriver } from "../lib/cdpDriver";
 import { signedReasoning } from "../lib/chatStream";
 import { probeInjection } from "../lib/injection";
 import type { ElementInfo, PageMethod, PageResult } from "../lib/pageAgent";
-import { readablePage, siteOf } from "../lib/sites";
+import { readablePage, sameSite, siteOf } from "../lib/sites";
 import { namedSites } from "../lib/taskSites";
 import { agentInstructions, CONTROL_TOOL_NAMES, TOOL_NAMES } from "./agentTools";
 import type { PauseGate } from "./pauseGate";
@@ -608,6 +608,13 @@ const CHANGES = new Set(["click", "type_text", "select_option", "submit_form", "
 /** Actions after which, without full control, the step ends with the page's new outline. */
 const OUTLINE_AFTER = new Set(["click", "submit_form", "press_key", "select_option", "navigate", "tab_open", "tab_switch"]);
 /** Actions after which a page may be loading. */
+/** Whether a form the element sends goes to another site than the page's: a run allow never covers that. */
+function sendsElsewhere(element: ElementInfo | undefined, host: string): boolean {
+  if (!element?.formAction) return false;
+  const to = readablePage(element.formAction)?.host;
+  return !to || !sameSite(to, host);
+}
+
 /** Visuals that are only drawn (the target's highlight, the cursor): nothing waits for them. */
 const DRAWN_ONLY = new Set<PageMethod>(["visuals_target", "visuals_cursor"]);
 const MAY_LOAD = new Set(["click", "submit_form", "press_key", "navigate", "tab_open", "tab_switch", "computer"]);
@@ -971,7 +978,8 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
    * for, so a busy page never holds the run up for it. Never on a page the agent may not work on.
    */
   async function border(next: RunState | "error", tab: WorkTab | null): Promise<void> {
-    if (!tab?.host) return;
+    // Only on a site the run works on: not one the page sent the tab to by itself, before the person decides.
+    if (!tab?.host || !isAllowed(tab.host)) return;
     if (controls(tab)) {
       await visual("visuals_state", { state: next }, tab);
       return;
@@ -1096,7 +1104,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
    * type. The page cannot be reached while the dialog is up, so the border
    * stays as it is; the badge shows the wait.
    */
-  async function answerDialog(dialog: { type?: string; message?: string }, answer?: (accept: boolean, promptText?: string) => Promise<void>): Promise<void> {
+  async function answerDialog(dialog: { type?: string; message?: string; url?: string }, answer?: (accept: boolean, promptText?: string) => Promise<void>): Promise<void> {
     dialogsOpen += 1;
     try {
       await answerOneDialog(dialog, answer);
@@ -1105,7 +1113,7 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     }
   }
 
-  async function answerOneDialog(dialog: { type?: string; message?: string }, answer?: (accept: boolean, promptText?: string) => Promise<void>): Promise<void> {
+  async function answerOneDialog(dialog: { type?: string; message?: string; url?: string }, answer?: (accept: boolean, promptText?: string) => Promise<void>): Promise<void> {
     const driver = deps.driver;
     if (!driver) return;
     // To the tab that asked: the agent may be on another by the time the user answers.
@@ -1121,7 +1129,9 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     const kind = dialog.type === "beforeunload" ? "asks whether to leave the page" : dialog.type === "prompt" ? "asks for an answer" : "asks to confirm";
     const asks = (options.rules.approvals ?? DEFAULT_APPROVALS).dialogs;
     // A confirm or a leave-the-page question may be allowed for the rest of the run on its site; an answer typed into a prompt may not.
-    const dialogSite = dialog.type !== "prompt" && lastTab?.host ? siteOf(lastTab.host) : undefined;
+    // Its site is the page that raised it, as the browser says - not the tab as last seen, which a click may have left.
+    const raisedOn = dialog.url ? readablePage(dialog.url)?.host : undefined;
+    const dialogSite = dialog.type !== "prompt" && raisedOn ? siteOf(raisedOn) : undefined;
     let accept: boolean;
     let byRun = false;
     if (signal.aborted) {
@@ -1827,7 +1837,9 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
     // for the rest of the run - never sending a message or deleting, nor anything asked about for another reason.
     const runKind = verdict.class === "sensitive" ? RUN_KINDS[verdict.reason] : undefined;
     const runSite =
-      runKind && pageNow && approval === "user" && !arrived && !suspect && !access && judged.message === verdict.message ? siteOf(pageNow.host) : undefined;
+      runKind && pageNow && approval === "user" && !arrived && !suspect && !access && judged.message === verdict.message && !sendsElsewhere(element, pageNow.host)
+        ? siteOf(pageNow.host)
+        : undefined;
     if (runKind && runSite && forTheRun.has(`${runKind}:${runSite}`)) {
       approval = "none";
       approvedBy = "user_run";

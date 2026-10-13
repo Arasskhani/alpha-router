@@ -860,7 +860,7 @@ describe("reference actions under full control", () => {
 
 describe("the page's dialogs", () => {
   const click = () => [{ text: "", toolCalls: [call("computer", { action: "left_click", coordinate: [200, 100] })] }];
-  type Dialog = { type: string; message: string };
+  type Dialog = { type: string; message: string; url?: string };
 
   /** The handler the run gave the driver for the page's dialogs. */
   const handlerOf = (driver: ControlDriver) => vi.mocked(driver.onDialog).mock.calls.find(([cb]) => cb)![0]!;
@@ -910,7 +910,7 @@ describe("the page's dialogs", () => {
   it("lets the person accept the page's confirmations on the site for the rest of the run - never a prompt's answer", async () => {
     const twice = [...click(), ...click()];
     const h = harness(twice, { mode: "auto", review: "allow" });
-    opens(h, { type: "confirm", message: "Apply the filter?" });
+    opens(h, { type: "confirm", message: "Apply the filter?", url: TAB.url });
     h.deps.approve = vi.fn(async (request: ApprovalRequest) => {
       h.approvals.push(request);
       return request.offerRun?.kind === "dialog" ? "run" : true;
@@ -924,6 +924,11 @@ describe("the page's dialogs", () => {
     opens(prompted, { type: "prompt", message: "Your name?" });
     await prompted.run();
     expect(prompted.approvals[0].offerRun).toBeUndefined();
+    // A dialog whose page the browser does not name is never covered for the run.
+    const unnamed = harness(click(), { mode: "auto", review: "allow" });
+    opens(unnamed, { type: "confirm", message: "Apply the filter?" });
+    await unnamed.run();
+    expect(unnamed.approvals[0].offerRun).toBeUndefined();
   });
 
   it("puts a dialog's words inside the page tags: they are the page's", async () => {

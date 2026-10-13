@@ -615,6 +615,28 @@ describe("allowing a kind of action on a site for the rest of the run", () => {
     ]);
     expect(h.reports.filter((r) => r.action === "click").map((r) => (r.detail as Record<string, unknown>).approval)).toEqual(["user", "user_run", "user", "user"]);
   });
+
+  it("never covers a form on the site that sends to another site", async () => {
+    const browser = fakeBrowser({
+      describe: (args) =>
+        args.ref === "e9"
+          ? { ok: true, element: { ref: "e9", role: "button", name: "Save changes", tag: "button", submits: true, formAction: "https://collector.example.net/save" } }
+          : { ok: true, element: ELEMENTS[String(args.ref)] as never },
+    });
+    const h = harness(
+      [
+        { text: "", toolCalls: [call("click", { ref: "e6" }, "x1")] },
+        { text: "", toolCalls: [call("click", { ref: "e9" }, "x2")] },
+        { text: "", toolCalls: [call("done", { summary: "ok" })] },
+      ],
+      { approve: (request) => (request.offerRun?.kind === "submit" ? "run" : true), browser },
+    );
+    await run(h);
+    expect(h.approvals.map((a) => [a.summary, a.offerRun?.kind])).toEqual([
+      ['Click "Save changes"', "submit"],
+      [expect.stringContaining("Save changes"), undefined],
+    ]);
+  });
 });
 
 describe("allowing on a site for the rest of the run", () => {

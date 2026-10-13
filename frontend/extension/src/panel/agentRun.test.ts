@@ -8,6 +8,7 @@ import type { PageResult } from "../lib/pageAgent";
 import { agentInstructions, agentToolsFor } from "./agentTools";
 import {
   conversation,
+  conversationFor,
   runAgent,
   type AgentBrowser,
   type AgentDeps,
@@ -1074,6 +1075,64 @@ describe("the conversation the model reads", () => {
     expectEveryCallAnswered(messages);
     expect(messages.at(-1)).toMatchObject({ role: "tool", tool_call_id: "c6" });
     expect(messages.reduce((sum, m) => sum + (typeof m.content === "string" ? m.content.length : 0), 0)).toBeLessThan(130_000);
+  });
+});
+
+describe("the conversation's settled part", () => {
+  function entry(message: ApiMessage, page?: string, read?: "outline" | "text") {
+    return page ? { message, page: { open: "<p>", body: page, close: "</p>" }, ...(read ? { read } : {}) } : { message };
+  }
+  const step = (n: number) => [
+    entry({ role: "assistant", content: null, tool_calls: [{ id: `c${n}`, type: "function", function: { name: "read_page", arguments: "{}" } }], reasoning_details: [{ type: "reasoning.text", text: `why ${n}` }] }),
+    entry({ role: "tool", tool_call_id: `c${n}`, content: "" }, `[e${n}] button "Step ${n}"\n${"o".repeat(3000)}`, "outline"),
+  ];
+  const history = (count: number) => [entry({ role: "system", content: "rules" }), entry({ role: "user", content: "task" }), ...Array.from({ length: count }, (_, i) => step(i + 1)).flat()];
+
+  it("goes with each step's call once a block has settled", async () => {
+    const reads = Array.from({ length: 6 }, () => ({ text: "", toolCalls: [call("read_page", {})] }));
+    const h = harness([...reads, { text: "", toolCalls: [call("done", { summary: "ok" })] }]);
+    await run(h);
+    const points = vi.mocked(h.deps.model).mock.calls.map(([, , point]) => point);
+    // Calls 1-5 see at most four steps behind them; the sixth sees five, four of them settled.
+    expect(points.slice(0, 5)).toEqual([undefined, undefined, undefined, undefined, undefined]);
+    expect(points[5]).toBe(9);
+    expect(points[6]).toBe(9);
+  });
+
+  it("has none within the first block", () => {
+    for (const count of [1, 2, 3, 4]) expect(conversationFor(history(count)).cachePoint).toBeUndefined();
+  });
+
+  it("reads the same at every step of a block, and ends at the block's start", () => {
+    const at5 = conversationFor(history(5));
+    // Four steps of two messages after the system message and the task: the settled part ends at index 9.
+    expect(at5.cachePoint).toBe(9);
+    for (const count of [6, 7, 8]) {
+      const later = conversationFor(history(count));
+      expect(later.cachePoint).toBe(9);
+      expect(later.messages.slice(0, 10)).toEqual(at5.messages.slice(0, 10));
+    }
+    // The next block settles the steps before it, once.
+    const at9 = conversationFor(history(9));
+    expect(at9.cachePoint).toBe(17);
+    expect(at9.messages.slice(0, 18)).toEqual(conversationFor(history(12)).messages.slice(0, 18));
+    // The settled part keeps no readable reasoning; the latest steps do.
+    expect(at9.messages.slice(2, 18).some((m) => m.role === "assistant" && m.reasoning_details?.length)).toBe(false);
+    expect((at9.messages.at(-2) as { reasoning_details?: unknown[] }).reasoning_details).toHaveLength(1);
+  });
+
+  it("leaves out whole blocks first when too long, and points at what stays of the settled part", () => {
+    const big = (n: number) => [
+      entry({ role: "assistant", content: null, tool_calls: [{ id: `c${n}`, type: "function", function: { name: "get_page_text", arguments: "{}" } }] }),
+      entry({ role: "tool", tool_call_id: `c${n}`, content: "y".repeat(12_000) }),
+    ];
+    const entries = [entry({ role: "system", content: "rules" }), entry({ role: "user", content: "task" }), ...Array.from({ length: 13 }, (_, i) => big(i + 1)).flat()];
+    const { messages, cachePoint } = conversationFor(entries);
+    // 13 steps: 12 settled; about 156,000 characters, so the oldest block of four goes.
+    expect(messages[2]).toMatchObject({ role: "user", content: expect.stringMatching(/^\(4 earlier steps were left out/) });
+    expect(messages[3]).toMatchObject({ role: "assistant", tool_calls: [expect.objectContaining({ id: "c5" })] });
+    expect(cachePoint).toBe(2 + 1 + 16 - 1);
+    expect(messages[cachePoint!]).toMatchObject({ role: "tool", tool_call_id: "c12" });
   });
 });
 

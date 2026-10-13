@@ -139,7 +139,8 @@ export type ControlDriver = Pick<CdpDriver, "screenshot" | "zoom" | "crop" | "cl
 export type RunState = "working" | "waiting" | "paused";
 
 export type AgentDeps = {
-  model(messages: ApiMessage[], signal: AbortSignal): Promise<ModelReply>;
+  /** One step's call; `cachePoint` is the index of the last message of the conversation's settled part, if any. */
+  model(messages: ApiMessage[], signal: AbortSignal, cachePoint?: number): Promise<ModelReply>;
   browser: AgentBrowser;
   /** Attached by the caller (chooseDriver) when the run has full control; the caller stops it after the run. */
   driver?: ControlDriver | null;
@@ -328,12 +329,13 @@ function isZoom(message: ApiMessage): boolean {
  * All but the last `kept` screenshots replaced by a note, so a long run stays
  * affordable. The latest full screenshot is always among them - it is the
  * model's only source of coordinates - however many zooms came after it.
+ * Before `from`, every screenshot but that latest full one is replaced.
  */
-function withRecentScreenshots(messages: ApiMessage[], kept: number = SCREENSHOTS_KEPT): ApiMessage[] {
+function withRecentScreenshots(messages: ApiMessage[], kept: number = SCREENSHOTS_KEPT, from = 0): ApiMessage[] {
   const shots = messages.flatMap((message, index) => (hasImage(message) ? [index] : []));
-  const newest = shots.slice(-Math.max(1, Math.floor(kept)));
   const lastFull = [...shots].reverse().find((index) => !isZoom(messages[index]));
-  if (lastFull !== undefined && !newest.includes(lastFull)) newest.splice(0, 1, lastFull);
+  const newest = shots.filter((index) => index >= from).slice(-Math.max(1, Math.floor(kept)));
+  if (lastFull !== undefined && !newest.includes(lastFull)) newest.splice(0, newest.length >= Math.max(1, Math.floor(kept)) ? 1 : 0, lastFull);
   const keep = new Set(newest);
   return messages.map((message, index): ApiMessage => {
     if (message.role !== "user" || !Array.isArray(message.content) || keep.has(index) || !hasImage(message)) return message;
@@ -341,17 +343,34 @@ function withRecentScreenshots(messages: ApiMessage[], kept: number = SCREENSHOT
   });
 }
 
-/**
- * The conversation as the model reads it: older page content cut short, only
- * the latest screenshots kept, and - when it is still too long - the oldest
- * steps left out whole, a tool call never without its answer.
- */
 /** The model's readable reasoning goes back with this many of its latest steps; its signed blocks with all. */
 const REASONING_KEPT = 2;
+/**
+ * The conversation is compacted a block of this many steps at a time, not at every step: what lies before the
+ * latest block's start reads the same at each step of the block, so a provider can serve it from its prompt cache.
+ */
+const BLOCK_STEPS = 4;
 
-export function conversation(entries: Entry[], screenshotsKept: number = SCREENSHOTS_KEPT): ApiMessage[] {
+/**
+ * The conversation as the model reads it, and where its settled part ends (`cachePoint`, the index of that part's
+ * last message, when there is one). Older page content is cut short, only the latest screenshots are kept, and -
+ * when it is still too long - the oldest steps are left out whole, a tool call never without its answer. Steps
+ * before the latest block are compacted as of that block's start, so they change only when a new block begins.
+ */
+export function conversationFor(entries: Entry[], screenshotsKept: number = SCREENSHOTS_KEPT): { messages: ApiMessage[]; cachePoint?: number } {
+  // Steps: an assistant message and what came after it; before the first, what came after the task.
+  const stepOf: number[] = [];
+  let steps = 0;
+  entries.forEach((entry, index) => {
+    if (index >= 2 && (entry.message.role === "assistant" || steps === 0)) steps += 1;
+    stepOf.push(index < 2 ? 0 : steps);
+  });
+  const settledSteps = steps > BLOCK_STEPS ? Math.floor((steps - 1) / BLOCK_STEPS) * BLOCK_STEPS : 0;
+  const settledEnd = settledSteps ? stepOf.findIndex((step, index) => index >= 2 && step > settledSteps) : 2;
+  const recentFrom = settledEnd < 0 ? entries.length : settledEnd;
   const reads = entries.flatMap((entry, index) => (entry.page && entry.read ? [index] : []));
-  const whole = new Set(reads.slice(-WHOLE_PAGE_RESULTS));
+  // The latest reads of the settled part and of the latest block stay whole: the first only change with a new block.
+  const whole = new Set([...reads.filter((index) => index < recentFrom).slice(-WHOLE_PAGE_RESULTS), ...reads.filter((index) => index >= recentFrom).slice(-WHOLE_PAGE_RESULTS)]);
   // The newest outline carries the references the model acts with: it is never cut, however many reads came after it.
   const outline = [...reads].reverse().find((index) => entries[index].read === "outline");
   if (outline !== undefined) whole.add(outline);
@@ -362,39 +381,51 @@ export function conversation(entries: Entry[], screenshotsKept: number = SCREENS
         : entry.message,
     ),
     screenshotsKept,
+    recentFrom,
   );
   // The model's reasoning goes back with its steps: its signed blocks with every step, since a provider may check
   // every call of the turn (Gemini: all since the last user message, which on the agent's path is the whole run);
-  // the readable text only with the latest steps, where it helps, so the older text does not grow every request.
+  // the readable text only with the latest steps of the latest block, where it helps, so the older text does not
+  // grow every request.
   let assistants = 0;
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     const message = messages[i];
     if (message.role !== "assistant") continue;
     assistants += 1;
-    if (assistants > REASONING_KEPT && message.reasoning_details) {
+    if ((assistants > REASONING_KEPT || i < recentFrom) && message.reasoning_details) {
       const { reasoning_details: details, ...rest } = message;
       const signed = details.filter(signedReasoning);
       messages[i] = signed.length ? { ...rest, reasoning_details: signed } : rest;
     }
   }
   const [system, task, ...rest] = messages;
-  // Steps: an assistant message and the tool answers after it.
   const groups: ApiMessage[][] = [];
   for (const message of rest) {
     if (message.role === "assistant" || !groups.length) groups.push([message]);
     else groups[groups.length - 1].push(message);
   }
-  let total = [system, task, ...rest].reduce((sum, message) => sum + size(message), 0);
+  const groupSize = (group: ApiMessage[]) => group.reduce((sum, message) => sum + size(message), 0);
+  let total = size(system) + size(task) + groups.reduce((sum, group) => sum + groupSize(group), 0);
   let dropped = 0;
+  // Too long: whole blocks of the settled part go first, so what stays of it still reads the same; then single steps.
   while (groups.length > 1 && total > MAX_CONVERSATION_CHARS) {
-    const oldest = groups.shift()!;
-    total -= oldest.reduce((sum, message) => sum + size(message), 0);
-    dropped += 1;
+    const blocks = dropped < settledSteps ? Math.min(BLOCK_STEPS, settledSteps - dropped, groups.length - 1) : 1;
+    for (const group of groups.splice(0, blocks)) total -= groupSize(group);
+    dropped += blocks;
   }
   const note: ApiMessage[] = dropped
     ? [{ role: "user", content: `(${dropped} earlier step${dropped === 1 ? " was" : "s were"} left out to save space.)` }]
     : [];
-  return [system, task, ...note, ...groups.flat()];
+  const out = [system, task, ...note, ...groups.flat()];
+  const settledLeft = settledSteps - dropped;
+  if (settledLeft <= 0) return { messages: out };
+  const cachePoint = 2 + note.length + groups.slice(0, settledLeft).reduce((sum, group) => sum + group.length, 0) - 1;
+  return cachePoint < out.length - 1 ? { messages: out, cachePoint } : { messages: out };
+}
+
+/** The conversation as the model reads it (see conversationFor). */
+export function conversation(entries: Entry[], screenshotsKept: number = SCREENSHOTS_KEPT): ApiMessage[] {
+  return conversationFor(entries, screenshotsKept).messages;
 }
 
 function args(raw: string): Record<string, unknown> | null {
@@ -1934,7 +1965,8 @@ export async function runAgent(options: AgentOptions, deps: AgentDeps, signal: A
       }
       let reply: ModelReply;
       try {
-        reply = await deps.model(conversation(entries, options.screenshotsKept), signal);
+        const { messages: sent, cachePoint } = conversationFor(entries, options.screenshotsKept);
+        reply = await deps.model(sent, signal, cachePoint);
       } catch (err) {
         if (isAbort(err) || signal.aborted) throw abortError();
         throw err;

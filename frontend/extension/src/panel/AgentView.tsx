@@ -420,7 +420,7 @@ export default function AgentView({ me, server, hidden = false, onDisconnected, 
     const { api } = getClient();
     const browserTools = agentToolsFor({ fullControl: driver !== null, plan: mode === "plan" });
     return {
-      async model(messages, stepSignal) {
+      async model(messages, stepSignal, cachePoint) {
         // No chat, no history, no assistant message id: each step stands alone.
         // The run's start goes with every step, so an administrator's stop can end it.
         const body = JSON.stringify({
@@ -430,6 +430,8 @@ export default function AgentView({ me, server, hidden = false, onDisconnected, 
           browser_tools: browserTools,
           browser_tool_choice: "auto",
           browser_run_started_at: startedAt,
+          // Where the conversation's settled part ends: the server may mark it for the provider's prompt cache.
+          ...(cachePoint !== undefined ? { browser_cache_point: cachePoint } : {}),
         });
         // While the model thinks, the panel says so, with its words as they come.
         setThinking({ since: Date.now(), text: "" });

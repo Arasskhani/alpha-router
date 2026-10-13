@@ -165,20 +165,25 @@ describe("screenshots", () => {
 
   it("keeps only the latest few in the conversation", () => {
     const shot = (n: number): ApiMessage => ({ role: "user", content: [{ type: "text", text: `shot ${n}` }, { type: "image_url", image_url: { url: `data:${n}` } }] });
-    const entries = [
+    const steps = (count: number) => [
       { message: { role: "system", content: "sys" } as ApiMessage },
       { message: { role: "user", content: "task" } as ApiMessage },
-      ...Array.from({ length: SCREENSHOTS_KEPT + 2 }, (_, i) => [
+      ...Array.from({ length: count }, (_, i) => [
         { message: { role: "assistant", content: null, tool_calls: [{ id: `c${i}`, type: "function" as const, function: { name: "screenshot", arguments: "{}" } }] } as ApiMessage },
         { message: { role: "tool", tool_call_id: `c${i}`, content: "ok" } as ApiMessage },
         { message: shot(i) },
       ]).flat(),
     ];
-    const out = conversation(entries);
-    const images = out.filter((m) => Array.isArray(m.content) && m.content.some((p) => p.type === "image_url"));
-    expect(images).toHaveLength(SCREENSHOTS_KEPT);
-    const omitted = out.filter((m) => Array.isArray(m.content) && m.content.some((p) => p.type === "text" && p.text.includes("left out")));
-    expect(omitted).toHaveLength(2);
+    const images = (out: ApiMessage[]) => out.filter((m) => Array.isArray(m.content) && m.content.some((p) => p.type === "image_url"));
+    const omitted = (out: ApiMessage[]) => out.filter((m) => Array.isArray(m.content) && m.content.some((p) => p.type === "text" && p.text.includes("left out")));
+    // Within the first block: the latest few.
+    const first = conversation(steps(SCREENSHOTS_KEPT + 1));
+    expect(images(first)).toHaveLength(SCREENSHOTS_KEPT);
+    expect(omitted(first)).toHaveLength(1);
+    // A new block: the screenshots before it are left out, so that part reads the same at each of its steps.
+    const next = conversation(steps(5));
+    expect(images(next)).toHaveLength(1);
+    expect(omitted(next)).toHaveLength(4);
   });
 
   it("zooms into a region and says its pixels are not page coordinates", async () => {

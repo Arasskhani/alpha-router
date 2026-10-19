@@ -27,14 +27,24 @@ type ChatToolRow = {
   description: string;
   icon: string;
   permitted: boolean;
+  /** False when the tool cannot run now (Web Search with no search service set up); absent means it can. */
+  available?: boolean;
+  unavailable_reason?: string;
 };
 
 let permitted: Set<string> | null = null;
+/** Tools that are permitted but cannot run now, and why - the menu shows them off with the reason. */
+let unavailable = new Map<string, string>();
 let inFlight: Promise<Set<string>> | null = null;
 
 /** True unless the server has told us this tool is off limits. */
 export function chatToolAllowed(key: string): boolean {
   return permitted === null || permitted.has(key);
+}
+
+/** Why a permitted tool cannot run now, or "" when it can. */
+export function chatToolUnavailableReason(key: string): string {
+  return unavailable.get(key) ?? "";
 }
 
 /** Replace the cached answer. Exported for tests and for the 403 path. */
@@ -55,6 +65,11 @@ export function loadChatToolPermissions(): Promise<Set<string>> {
     .then((rows) => {
       const allowed = new Set(rows.filter((row) => row.permitted).map((row) => row.key));
       permitted = allowed;
+      unavailable = new Map(
+        rows
+          .filter((row) => row.available === false)
+          .map((row) => [row.key, row.unavailable_reason || "Not available right now."] as [string, string]),
+      );
       return allowed;
     })
     .catch(() => {
@@ -71,5 +86,6 @@ export function loadChatToolPermissions(): Promise<Set<string>> {
 /** Drop the cached answer — sign-out, and tests. */
 export function resetChatToolPermissions(): void {
   permitted = null;
+  unavailable = new Map();
   inFlight = null;
 }

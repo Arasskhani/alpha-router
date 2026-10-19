@@ -8,7 +8,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../../api", () => ({ api: vi.fn(async () => []) }));
 
 import { copyFreshChatTools } from "../../lib/chatTools";
-import { resetChatToolPermissions, setPermittedChatTools } from "../../lib/chatToolPermissions";
+import { loadChatToolPermissions, resetChatToolPermissions, setPermittedChatTools } from "../../lib/chatToolPermissions";
+import { api } from "../../api";
 import ServerToolsMenu from "./ServerToolsMenu";
 
 let host: HTMLDivElement;
@@ -77,5 +78,18 @@ describe("the chat tools menu", () => {
     setPermittedChatTools(["web_search"]);
     open();
     expect(visibleTools()).toEqual(["Web Search"]);
+  });
+
+  it("shows Web Search off, saying why, when there is no search service", async () => {
+    vi.mocked(api).mockResolvedValueOnce([
+      { key: "web_search", title: "Web Search", description: "", icon: "globe", permitted: true, available: false, unavailable_reason: "No web search service is set up." },
+      { key: "web_fetch", title: "Web Fetch", description: "", icon: "link", permitted: true, available: true },
+    ]);
+    await loadChatToolPermissions();
+    open();
+    const row = [...document.querySelectorAll(".alpha-router-server-tool")].find((el) => el.textContent?.includes("Web Search"))!;
+    expect(row.textContent).toContain("No web search service is set up.");
+    expect(row.querySelector("button")!.disabled).toBe(true);
+    expect(row.querySelector("button")!.getAttribute("aria-pressed")).toBe("false");
   });
 });

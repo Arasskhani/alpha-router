@@ -6,7 +6,7 @@ import {
   type ChatToolsState,
   videoDurationChoices,
 } from "../../lib/chatTools";
-import { chatToolAllowed, loadChatToolPermissions } from "../../lib/chatToolPermissions";
+import { chatToolAllowed, chatToolUnavailableReason, loadChatToolPermissions } from "../../lib/chatToolPermissions";
 import ChatToolIcon from "../ChatToolIcon";
 import {
   DEFAULT_CUSTOM_ASPECT_RATIO,
@@ -240,9 +240,11 @@ export default function ServerToolsMenu({
         icon={<ChatToolIcon name="globe" />}
         toolKey={CHAT_TOOL_KEY_BY_FIELD.webSearch}
         title="Web Search"
-        description="Fresh web results"
-        on={tools.webSearch}
+        description={chatToolUnavailableReason(CHAT_TOOL_KEY_BY_FIELD.webSearch) || "Fresh web results"}
+        on={tools.webSearch && !chatToolUnavailableReason(CHAT_TOOL_KEY_BY_FIELD.webSearch)}
         onToggle={() => patch({ webSearch: !tools.webSearch })}
+        disabled={Boolean(chatToolUnavailableReason(CHAT_TOOL_KEY_BY_FIELD.webSearch))}
+        disabledTitle={chatToolUnavailableReason(CHAT_TOOL_KEY_BY_FIELD.webSearch)}
       />
 
       <ToolRow

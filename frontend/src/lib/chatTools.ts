@@ -1,4 +1,4 @@
-import { chatToolAllowed } from "./chatToolPermissions";
+import { chatToolAllowed, chatToolUnavailableReason } from "./chatToolPermissions";
 import {
   DEFAULT_CUSTOM_ASPECT_RATIO,
   DEFAULT_IMAGE_ASPECT_PRESET,
@@ -197,7 +197,8 @@ export function normalizeChatTools(raw?: Partial<ChatToolsState> | null): ChatTo
   // by somebody who still has it) comes back on. Clamping here covers every
   // path that loads a session, rather than each of them remembering to.
   for (const [field, key] of Object.entries(CHAT_TOOL_KEY_BY_FIELD)) {
-    if (!chatToolAllowed(key)) state[field as keyof typeof CHAT_TOOL_KEY_BY_FIELD] = false;
+    // A tool that cannot run now (Web Search with no search service) is off too, rather than failing every turn.
+    if (!chatToolAllowed(key) || chatToolUnavailableReason(key)) state[field as keyof typeof CHAT_TOOL_KEY_BY_FIELD] = false;
   }
   return state;
 }

@@ -1,7 +1,11 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("../api", () => ({ api: vi.fn() }));
 
 import {
   chatToolAllowed,
+  chatToolUnavailableReason,
+  loadChatToolPermissions,
   resetChatToolPermissions,
   setPermittedChatTools,
 } from "./chatToolPermissions";
@@ -50,5 +54,21 @@ describe("toggles saved before a tool was restricted", () => {
     const loaded = normalizeChatTools({ webSearch: true, codeInterpreter: true });
     expect(loaded.webSearch).toBe(true);
     expect(loaded.codeInterpreter).toBe(true);
+  });
+});
+
+describe("a tool that is permitted but cannot run now", () => {
+  it("is switched off when the state is loaded", async () => {
+    const { api } = await import("../api");
+    vi.mocked(api).mockResolvedValueOnce([
+      { key: "web_search", permitted: true, available: false, unavailable_reason: "No search service." },
+      { key: "web_fetch", permitted: true, available: true },
+    ]);
+    await loadChatToolPermissions();
+    expect(chatToolUnavailableReason("web_search")).toBe("No search service.");
+    expect(chatToolUnavailableReason("web_fetch")).toBe("");
+    const loaded = normalizeChatTools({ webSearch: true, webFetch: true });
+    expect(loaded.webSearch).toBe(false);
+    expect(loaded.webFetch).toBe(true);
   });
 });

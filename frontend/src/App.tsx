@@ -63,6 +63,7 @@ const AgentApprovals = lazy(() => import("./pages/admin/AgentApprovals"));
 const AgentActivity = lazy(() => import("./pages/admin/AgentActivity"));
 const AgentUsageActivity = lazy(() => import("./pages/admin/AgentUsageActivity"));
 const SecuritySettings = lazy(() => import("./pages/admin/SecuritySettings"));
+const Guardrails = lazy(() => import("./pages/admin/Guardrails"));
 const ExtensionConnect = lazy(() => import("./pages/ExtensionConnect"));
 
 
@@ -152,6 +153,7 @@ export default function App() {
         <Route path="agent-approvals" element={<AgentApprovals />} />
         <Route path="agent-activity" element={<AgentActivity />} />
         <Route path="security-settings" element={<SecuritySettings />} />
+        <Route path="guardrails" element={<Guardrails />} />
         <Route path="docs" element={<Docs />} />
       </Route>
       <Route

@@ -73,6 +73,7 @@ export const adminNavSections: NavSection[] = [
     categoryKey: "security",
     items: [
       { to: "/admin/security-settings", label: "Security Settings", menuKey: "security_settings" },
+      { to: "/admin/guardrails", label: "Guardrails", menuKey: "guardrails" },
     ],
   },
   {

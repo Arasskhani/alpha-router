@@ -145,6 +145,7 @@ const MENU_PATH_PREFIXES: Record<MenuKey, string[]> = {
   admin_guide: ["/admin/docs"],
   user_manual: ["/admin/manual"],
   security_settings: ["/admin/security-settings"],
+  guardrails: ["/admin/guardrails"],
 };
 
 const MENU_TO_CATEGORY: Record<MenuKey, CategoryKey> = {
@@ -173,6 +174,7 @@ const MENU_TO_CATEGORY: Record<MenuKey, CategoryKey> = {
   admin_guide: "developer",
   user_manual: "developer",
   security_settings: "security",
+  guardrails: "security",
 };
 
 function pathMatchesMenu(path: string, menu: MenuKey): boolean {

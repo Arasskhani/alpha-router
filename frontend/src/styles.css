@@ -19766,3 +19766,393 @@ p.error,
 .email-signup-settings__hint {
   margin-top: -0.35rem;
 }
+
+/* --- Guardrails (Admin › Guardrails) ------------------------------------------------------------------------ */
+.guardrails-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  margin-bottom: 0.75rem;
+}
+.guardrails-intro {
+  margin: 0;
+  max-width: 48rem;
+}
+.guardrails-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.guardrails-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.78rem;
+}
+.guardrails-pill--bad {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.guardrails-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--muted);
+  flex-shrink: 0;
+}
+.guardrails-dot--enforce {
+  background: var(--accent);
+}
+.guardrails-dot--monitor {
+  background: #f59e0b;
+}
+.guardrails-dot--off {
+  background: transparent;
+  border: 1px solid var(--muted);
+}
+.guardrails-dot--bad {
+  background: var(--danger);
+}
+.guardrails-panel {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+.guardrails-rules,
+.guardrails-patterns,
+.guardrails-events,
+.guardrails-destinations,
+.guardrails-overview {
+  display: grid;
+  gap: 0.75rem;
+  min-width: 0;
+}
+.guardrails-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr));
+  gap: 0.75rem;
+}
+@media (max-width: 640px) {
+  /* Two by two on a phone, so the rules stay in reach. */
+  .guardrails-stats {
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+  }
+  .guardrails-stat {
+    padding: 0.6rem 0.7rem;
+  }
+  .guardrails-stat__value {
+    font-size: 1.3rem;
+  }
+}
+.guardrails-stat {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.85rem 1rem;
+}
+.guardrails-stat__label,
+.guardrails-stat__detail {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.guardrails-stat__value {
+  font-size: 1.6rem;
+  font-weight: 700;
+  line-height: 1.1;
+}
+.guardrails-tone--block {
+  color: var(--danger);
+}
+.guardrails-tone--redact {
+  color: var(--accent);
+}
+.guardrails-tone--route {
+  color: #60a5fa;
+}
+.guardrails-tone--monitor {
+  color: #f59e0b;
+}
+.guardrails-bg--block {
+  background: var(--danger);
+}
+.guardrails-bg--redact {
+  background: var(--accent);
+}
+.guardrails-bg--route {
+  background: #60a5fa;
+}
+.guardrails-bg--monitor {
+  background: #f59e0b;
+}
+.guardrails-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.guardrails-toolbar__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.guardrails-search {
+  max-width: 18rem;
+  margin-bottom: 0;
+}
+.guardrails-filters {
+  justify-content: flex-start;
+}
+.guardrails-table td {
+  vertical-align: middle;
+}
+.guardrails-row--off td {
+  opacity: 0.65;
+}
+.guardrails-rule-name {
+  font-weight: 600;
+}
+.guardrails-rule-sub {
+  font-size: 0.76rem;
+  margin-top: 0.1rem;
+}
+.guardrails-chip {
+  display: inline-block;
+  margin: 0.1rem 0.25rem 0.1rem 0;
+  padding: 0.05rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+.guardrails-action {
+  display: inline-block;
+  padding: 0.12rem 0.5rem;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+.guardrails-action--block {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+}
+.guardrails-action--redact {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.guardrails-action--route {
+  color: #60a5fa;
+  background: color-mix(in srgb, #60a5fa 14%, transparent);
+}
+.guardrails-action--monitor {
+  color: #f59e0b;
+  background: color-mix(in srgb, #f59e0b 14%, transparent);
+}
+.guardrails-action--engine_error {
+  color: var(--danger);
+  border: 1px solid var(--danger);
+}
+.guardrails-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  white-space: nowrap;
+}
+.guardrails-hits {
+  font-variant-numeric: tabular-nums;
+}
+.guardrails-foot {
+  font-size: 0.78rem;
+  margin: 0;
+}
+.guardrails-chart h3,
+.guardrails-columns h3 {
+  margin: 0 0 0.6rem;
+  font-size: 0.9rem;
+}
+.guardrails-bars {
+  display: grid;
+  grid-template-columns: repeat(30, minmax(0, 1fr));
+  align-items: end;
+  gap: 3px;
+  height: 7rem;
+}
+.guardrails-bar {
+  display: flex;
+  flex-direction: column-reverse;
+  height: 100%;
+  border-radius: 3px 3px 0 0;
+  background: color-mix(in srgb, var(--border) 35%, transparent);
+  overflow: hidden;
+}
+.guardrails-bar__part {
+  display: block;
+  width: 100%;
+}
+.guardrails-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.9rem;
+  margin-top: 0.5rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.guardrails-swatch {
+  display: inline-block;
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 2px;
+  vertical-align: -1px;
+}
+.guardrails-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  gap: 0.75rem;
+}
+.guardrails-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.3rem;
+}
+.guardrails-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: 0.85rem;
+}
+.guardrails-form {
+  display: grid;
+  gap: 0.75rem;
+}
+.guardrails-fieldset {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.6rem 0.8rem 0.75rem;
+  margin: 0;
+  display: grid;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.guardrails-fieldset legend {
+  padding: 0 0.3rem;
+  font-weight: 600;
+}
+.guardrails-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-inline-end: 0.9rem;
+  font-weight: 400;
+}
+.guardrails-inline-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.6rem;
+}
+.guardrails-checklist {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr));
+  gap: 0.25rem 0.75rem;
+  max-height: 13rem;
+  overflow: auto;
+}
+.guardrails-check {
+  font-weight: 400;
+}
+.guardrails-number {
+  width: 5.5rem;
+}
+.guardrails-grid2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+  gap: 0.5rem 0.75rem;
+}
+.guardrails-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.guardrails-invalid {
+  color: var(--danger);
+  font-size: 0.8rem;
+}
+.guardrails-live {
+  padding: 0.6rem 0.8rem;
+}
+.guardrails-highlight {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 0.25rem 0;
+}
+.guardrails-highlight mark {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 0.15rem;
+  margin: 0 0.1rem;
+}
+.guardrails-test-result {
+  display: grid;
+  gap: 0.35rem;
+}
+.guardrails-event-row {
+  cursor: pointer;
+}
+.guardrails-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+  text-align: start;
+}
+.guardrails-found {
+  overflow-wrap: anywhere;
+}
+.guardrails-pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+.guardrails-pager .muted-text {
+  margin-inline-end: auto;
+  font-size: 0.78rem;
+}
+.guardrails-details {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.35rem 1rem;
+  margin: 0;
+}
+.guardrails-details dt {
+  color: var(--muted);
+}
+.guardrails-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.guardrails-settings {
+  display: grid;
+  gap: 0.9rem;
+  padding: 1rem;
+  max-width: 46rem;
+}
+
+/* What Guardrails did to a chat message: masked before sending, or sent to another model. */
+.alpha-router-msg-guardrail {
+  display: flex;
+  gap: 0.4rem;
+  align-items: flex-start;
+  margin-top: 0.4rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+}

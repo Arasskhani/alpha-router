@@ -59,7 +59,9 @@ export type MenuKey =
 
   | "user_manual"
 
-  | "security_settings";
+  | "security_settings"
+
+  | "guardrails";
 
 export type NavIconKey = "chat" | "media" | "activity" | "manual" | "admin" | "folder" | "projects";
 

@@ -383,6 +383,40 @@ async def job_extension_session_cleanup():
             logger.exception("Extension connection cleanup failed")
 
 
+async def job_guardrail_event_retention():
+    """Delete Guardrails events past the window the administrator set; recorded in the governance chain."""
+    async with AsyncSessionLocal() as db:
+        from app.services.guardrail_alerts import purge_expired_events
+
+        try:
+            result = await purge_expired_events(db)
+            if result["events_deleted"]:
+                logger.info(
+                    "Guardrails event retention: %s events deleted (>%sd)",
+                    result["events_deleted"],
+                    result["retention_days"],
+                )
+                try:
+                    from app.services.agent_governance_service import append_governance_audit_event
+
+                    await append_governance_audit_event(
+                        db,
+                        event_type="governance.retention.guardrail_events.purged",
+                        resource_type="guardrail_events",
+                        resource_id=None,
+                        actor_user_id=None,
+                        outcome="success",
+                        payload=dict(result),
+                    )
+                    await db.commit()
+                except Exception:
+                    await db.rollback()
+                    logger.exception("Guardrails event retention ran but could not be recorded in the audit chain")
+        except Exception:
+            await db.rollback()
+            logger.exception("Guardrails event retention failed")
+
+
 async def job_auth_event_retention():
     """Delete sign-in history past the window set on the Retention Policy page.
 
@@ -653,6 +687,14 @@ def start_scheduler():
         minute=35,
         timezone=get_server_timezone(),
         id="auth_event_retention",
+    )
+    scheduler.add_job(
+        job_guardrail_event_retention,
+        "cron",
+        hour=4,
+        minute=45,
+        timezone=get_server_timezone(),
+        id="guardrail_event_retention",
     )
     scheduler.add_job(
         job_extension_session_cleanup,

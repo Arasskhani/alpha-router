@@ -674,6 +674,10 @@ async def write_events(rows: Sequence[GuardrailEvent], session_factory: Any = No
             await db.commit()
     except Exception:  # noqa: BLE001 -- the record failing must not change what the rules decided
         logger.exception("Could not record %d guardrail event(s)", len(rows))
+        return
+    from app.services.guardrail_alerts import alert_blocked
+
+    await alert_blocked(rows, session_factory)
 
 
 # --- the one call integrations make ---------------------------------------------------------------------------

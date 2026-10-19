@@ -2,23 +2,18 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
-from html.parser import HTMLParser
 from urllib.parse import urlparse
 
-from app.branding import OUTBOUND_USER_AGENT
 from app.core.prompt_fences import RUNTIME_POLICY, untrusted_preamble, wrap_untrusted
 from app.services.failure_details import failure_message
 from app.services.metered_usage_service import (
     finish_metered_usage,
     start_metered_usage,
 )
-from app.services.provider_utils import extract_prompt_text
+from app.services.web_fetch_service import extract_urls, fetch_all, fetch_page, latest_user_text
 from app.services.web_search_providers import SearchResult
 from app.services.web_search_service import WebSearchUnavailable, search_web
-
-URL_RE = re.compile(r"https?://[^\s<>\[\]()\"']+", re.IGNORECASE)
 
 
 @dataclass
@@ -40,15 +35,6 @@ def parse_tools_config(body: dict) -> ChatToolsConfig:
         web_fetch=bool(tools.get("web_fetch") or body.get("web_fetch")),
         code_interpreter=bool(tools.get("code_interpreter") or body.get("code_interpreter")),
     )
-
-
-def _last_user_text(messages: list[dict]) -> str:
-    for m in reversed(messages):
-        if m.get("role") == "user":
-            content = m.get("content")
-            if isinstance(content, str):
-                return content.strip()
-    return extract_prompt_text(messages).strip()
 
 
 def _search_result_limit(depth: str) -> int:
@@ -113,27 +99,8 @@ def format_search_results(rows: list[SearchResult], *, label: str) -> str:
     )
 
 
-class _MLStripper(HTMLParser):
-    def __init__(self) -> None:
-        super().__init__()
-        self._chunks: list[str] = []
-
-    def handle_data(self, data: str) -> None:
-        if data.strip():
-            self._chunks.append(data.strip())
-
-    def get_text(self) -> str:
-        return "\n".join(self._chunks)
-
-
-def _html_to_text(html: str) -> str:
-    parser = _MLStripper()
-    try:
-        parser.feed(html)
-        parser.close()
-    except Exception:  # noqa: BLE001 -- external/optional dependency; falls back (return re.sub(r"<[^>]+>", " ", html))
-        return re.sub(r"<[^>]+>", " ", html)
-    return re.sub(r"\s+", " ", parser.get_text()).strip()
+#: What one page may give the model, in characters.
+PAGE_CHARS_FOR_MODEL = 8000
 
 
 async def fetch_url_text(
@@ -145,17 +112,17 @@ async def fetch_url_text(
     username: str | None = None,
     reserve_budget: bool = True,
 ) -> str:
+    """One link read as text for the model (title first), metered as web_fetch; raises when it cannot be read.
+
+    The fetch goes through the SSRF-guarded client: a link to an internal,
+    private or metadata address is refused before anything is sent.
+    """
+    from app.config import get_settings
+    from app.services.bounded_io import clamp_limit
+
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         raise ValueError("Invalid URL")
-    # SSRF guard: reject URLs that resolve to internal/private/metadata IPs.
-    # This runs before the fetch so a malicious user cannot make the server
-    # probe internal services or cloud metadata endpoints via the web-fetch
-    # chat tool.
-    from app.config import get_settings
-    from app.services.bounded_io import bounded_get_bytes, clamp_limit
-    from app.services.ssrf_guard import safe_client
-
     metered = (
         await start_metered_usage(
             user_id=user_id,
@@ -172,36 +139,20 @@ async def fetch_url_text(
         else None
     )
     try:
-        async with safe_client(
-            headers={"User-Agent": OUTBOUND_USER_AGENT},
-        ) as client:
-            byte_limit = clamp_limit(
-                get_settings().max_web_fetch_bytes,
-                minimum=256 * 1024,
-                maximum=5 * 1024 * 1024,
-            )
-            raw, ctype = await bounded_get_bytes(client, url, max_bytes=byte_limit)
-            text = raw.decode("utf-8", errors="replace")
-            if "html" in ctype.lower() or "<html" in text[:200].lower():
-                text = _html_to_text(text)
+        byte_limit = clamp_limit(get_settings().max_web_fetch_bytes, minimum=256 * 1024, maximum=5 * 1024 * 1024)
+        page = await fetch_page(url, max_bytes=byte_limit)
     except BaseException as exc:
         if metered is not None:
             await finish_metered_usage(
-                metered,
-                success=False,
-                quantity=None,
-                unit=None,
-                error_message=failure_message(exc),
+                metered, success=False, quantity=None, unit=None, error_message=failure_message(exc)
             )
         raise
     if metered is not None:
-        await finish_metered_usage(
-            metered,
-            success=True,
-            quantity=1,
-            unit="request",
-        )
-    return text[:max_chars]
+        await finish_metered_usage(metered, success=True, quantity=1, unit="request")
+    text = f"Title: {page.title}\n\n{page.text}" if page.title else page.text
+    if page.truncated or len(text) > max_chars:
+        text = text[:max_chars].rstrip() + "\n(The page was longer; the rest was left out.)"
+    return text
 
 
 async def web_fetch_context(
@@ -212,23 +163,30 @@ async def web_fetch_context(
     username: str | None = None,
     reserve_budget: bool = True,
 ) -> str:
-    text = _last_user_text(messages)
-    urls = list(dict.fromkeys(URL_RE.findall(text)))[:3]
+    """The pages of the links the person typed in their latest message, read at the same time."""
+    urls = extract_urls(latest_user_text(messages))
     if not urls:
         return ""
+
+    async def read(url: str) -> str:
+        return await fetch_url_text(
+            url,
+            max_chars=PAGE_CHARS_FOR_MODEL,
+            user_id=user_id,
+            alpha_router_api_key_id=alpha_router_api_key_id,
+            username=username,
+            reserve_budget=reserve_budget,
+        )
+
     blocks: list[str] = ["Fetched page content for URLs in the user message. " + untrusted_preamble("page content")]
-    for url in urls:
-        try:
-            content = await fetch_url_text(
-                url,
-                user_id=user_id,
-                alpha_router_api_key_id=alpha_router_api_key_id,
-                username=username,
-                reserve_budget=reserve_budget,
+    for url, result in zip(urls, await fetch_all(urls, read), strict=True):
+        if isinstance(result, BaseException):
+            reason = (failure_message(result) or type(result).__name__).rstrip(". ")
+            blocks.append(
+                wrap_untrusted("WEB_PAGE", f"(This page could not be read: {reason}. Tell the user.)", source=url)
             )
-            blocks.append(wrap_untrusted("WEB_PAGE", content[:8000], source=url))
-        except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
-            blocks.append(wrap_untrusted("WEB_PAGE", f"(fetch failed: {exc})", source=url))
+        else:
+            blocks.append(wrap_untrusted("WEB_PAGE", result, source=url))
     return "\n\n".join(blocks)
 
 
@@ -246,7 +204,7 @@ async def augment_messages_with_tools(
     if not messages:
         return messages
     system_blocks: list[str] = []
-    user_query = _last_user_text(messages)
+    user_query = latest_user_text(messages)
 
     if tools.web_search and user_query:
         ctx = await web_search_context(

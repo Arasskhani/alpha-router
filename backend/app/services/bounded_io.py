@@ -169,3 +169,44 @@ async def bounded_get_bytes(
             mime = response.headers.get("content-type", "application/octet-stream").split(";", 1)[0].strip()
             return body, mime
     raise BoundedIOError("Remote response exceeded the redirect limit")
+
+
+async def bounded_get_bytes_truncating(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    max_bytes: int,
+) -> tuple[bytes, str, bool]:
+    """GET ``url`` (redirects checked hop by hop, as ``bounded_get_bytes``), reading at most ``max_bytes``.
+
+    For reading a web page: a page larger than the limit is cut there rather
+    than refused. Returns the bytes read, the full ``Content-Type`` header
+    (its charset included) and whether the body was cut.
+    """
+    from app.services.ssrf_guard import assert_response_target_safe, assert_url_safe
+
+    current_url = url
+    for hop in range(5):
+        assert_url_safe(current_url)
+        async with client.stream("GET", current_url) as response:
+            assert_response_target_safe(response)
+            if response.status_code in {301, 302, 303, 307, 308}:
+                location = response.headers.get("location")
+                if not location:
+                    raise BoundedIOError("Redirect response is missing Location")
+                if hop >= 4:
+                    raise BoundedIOError("Remote response exceeded the redirect limit")
+                current_url = urljoin(current_url, location)
+                continue
+            response.raise_for_status()
+            output = bytearray()
+            truncated = False
+            async for chunk in response.aiter_bytes(CHUNK_BYTES):
+                room = max_bytes - len(output)
+                if len(chunk) > room:
+                    output.extend(chunk[:room])
+                    truncated = True
+                    break
+                output.extend(chunk)
+            return bytes(output), response.headers.get("content-type", ""), truncated
+    raise BoundedIOError("Remote response exceeded the redirect limit")

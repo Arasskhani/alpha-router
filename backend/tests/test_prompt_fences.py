@@ -67,7 +67,7 @@ async def test_fetch_failure_is_also_fenced():
     with patch.object(chat_tools_service, "fetch_url_text", new=AsyncMock(side_effect=RuntimeError("boom"))):
         ctx = await chat_tools_service.web_fetch_context([{"role": "user", "content": "see https://a.test"}])
     assert 'BEGIN_UNTRUSTED_WEB_PAGE source="https://a.test"' in ctx
-    assert "(fetch failed: boom)" in ctx
+    assert "(This page could not be read: boom. Tell the user.)" in ctx
 
 
 def test_agent_path_uses_the_shared_policy_and_wrapper():

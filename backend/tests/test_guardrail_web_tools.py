@@ -159,3 +159,21 @@ class TestFetch:
         text = await loop.run(ToolCall("f1", "web_fetch", json.dumps({"url": "https://wiki.intranet.example/hr"})))
         assert "Intranet pages are not read for AI models" in text
         assert read == []
+
+
+class TestOnlyWhatIsTried:
+    async def test_a_service_never_reached_is_not_checked_nor_recorded(
+        self, db_session, session_factory, monkeypatch, user
+    ):
+        from sqlalchemy import select
+
+        from app.models.guardrail import GuardrailEvent
+
+        await search_connection(db_session, "Our SearXNG", "searxng", priority=1, trust="public")
+        await search_connection(db_session, "Brave", "brave", priority=2, trust="public")
+        await add_rule(db_session, mode="monitor")
+        fake_search(monkeypatch)
+        await search_web(f"card {CARD}", 5, user_id=user.id, reserve_budget=False)
+        async with session_factory() as db:
+            rows = (await db.execute(select(GuardrailEvent))).scalars().all()
+        assert [(r.action, r.destination) for r in rows] == [("monitor", "Web search · Our SearXNG")]

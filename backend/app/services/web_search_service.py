@@ -173,17 +173,21 @@ class WebSearchUnavailable(Exception):
         self.code = failures[0].code if failures else ERROR_NOT_CONFIGURED
 
 
-async def _guarded_queries(
-    db: AsyncSession,
+async def _guarded_query(
     query: str,
-    steps: list[SearchStep],
+    step: SearchStep,
     *,
     user_id: int | None,
     alpha_router_api_key_id: int | None,
     username: str | None,
     session_factory: Callable[[], Any] | None,
-) -> dict[int, str | SearchFailure]:
-    """Per service (by its place in the plan), the query it may be sent - masked as the rules say - or why not."""
+) -> str | SearchFailure:
+    """The query this service may be sent - masked as the rules say - or why not.
+
+    Asked just before the service is tried, so a service that is never reached
+    is never checked nor recorded.
+    """
+    from app.database import AsyncSessionLocal
     from app.services.guardrail_policy import (
         Destination,
         EventContext,
@@ -194,27 +198,25 @@ async def _guarded_queries(
         mask_text,
     )
 
-    out: dict[int, str | SearchFailure] = {}
     ctx = EventContext(
         user_id=user_id, username=username, alpha_router_api_key_id=alpha_router_api_key_id, source="web_search"
     )
     segment = Segment("web_search", query)
-    for index, step in enumerate(steps):
-        destination = Destination(
-            label=f"Web search · {step.label}", trust=step.trust_level, connection_id=step.connection_id
-        )
-        try:
+    destination = Destination(
+        label=f"Web search · {step.label}", trust=step.trust_level, connection_id=step.connection_id
+    )
+    try:
+        async with (session_factory or AsyncSessionLocal)() as db:
             verdict = await inspect(db, [segment], destination=destination, ctx=ctx, session_factory=session_factory)
-        except GuardrailEngineError as exc:
-            out[index] = SearchFailure(label=step.label, code="blocked", message=str(exc))
-            continue
-        if verdict.blocked or verdict.action == "route":
-            notices = verdict.notices()
-            message = notices[0] if notices else "Your organisation does not allow this search here."
-            out[index] = SearchFailure(label=step.label, code="blocked", message=message)
-        elif verdict.to_mask:
-            out[index] = mask_text(query, verdict.to_mask, Masker())
-    return out
+    except GuardrailEngineError as exc:
+        return SearchFailure(label=step.label, code="blocked", message=str(exc))
+    if verdict.blocked or verdict.action == "route":
+        notices = verdict.notices()
+        message = notices[0] if notices else "Your organisation does not allow this search here."
+        return SearchFailure(label=step.label, code="blocked", message=message)
+    if verdict.to_mask:
+        return mask_text(query, verdict.to_mask, Masker())
+    return query
 
 
 async def search_web(
@@ -233,24 +235,21 @@ async def search_web(
 
     async with (session_factory or AsyncSessionLocal)() as db:
         steps = await search_plan(db)
+    failures: list[SearchFailure] = []
+    metering = user_id is not None or alpha_router_api_key_id is not None
+    for step in steps:
         # The administrator's Guardrails, per service: a query may go to one and not to another.
-        queries = await _guarded_queries(
-            db,
+        query_for_step = await _guarded_query(
             query,
-            steps,
+            step,
             user_id=user_id,
             alpha_router_api_key_id=alpha_router_api_key_id,
             username=username,
             session_factory=session_factory,
         )
-    failures: list[SearchFailure] = []
-    metering = user_id is not None or alpha_router_api_key_id is not None
-    for index, step in enumerate(steps):
-        step_query = queries.get(index)
-        if isinstance(step_query, SearchFailure):
-            failures.append(step_query)
+        if isinstance(query_for_step, SearchFailure):
+            failures.append(query_for_step)
             continue
-        query_for_step = step_query if step_query is not None else query
         metered = (
             await start_metered_usage(
                 user_id=user_id,

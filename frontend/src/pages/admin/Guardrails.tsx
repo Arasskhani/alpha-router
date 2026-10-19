@@ -83,7 +83,7 @@ export default function Guardrails() {
           </div>
         ) : null}
       </div>
-      {error ? <p className="alert alert-error">{error}</p> : null}
+      {error ? <p className="alert alert-error" role="alert">{error}</p> : null}
       <Tabs items={TABS} value={tab} onChange={setTab} ariaLabel="Guardrails" idBase="guardrails" />
       <TabPanel id={tab} idBase="guardrails" className="guardrails-panel">
         {tab === "overview" ? <OverviewTab overview={overview} /> : null}

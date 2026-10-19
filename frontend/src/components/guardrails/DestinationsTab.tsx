@@ -53,7 +53,7 @@ export default function DestinationsTab({ onChanged }: { onChanged: () => Promis
         Internal: run by your organisation. Trusted external: an outside service under contract. Public: anything else.
         A new connection starts as Public, the strictest.
       </p>
-      {error ? <p className="alert alert-error">{error}</p> : null}
+      {error ? <p className="alert alert-error" role="alert">{error}</p> : null}
       {notice ? <p className="alert alert-success">{notice}</p> : null}
       <div className="table-wrap">
         <table className="card data-table guardrails-table">

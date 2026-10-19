@@ -94,7 +94,7 @@ export default function TestTextModal({ meta, onClose }: { meta: GuardrailsMeta 
           </label>
           <span className="muted-text">As a person no rule names: rules for everyone apply.</span>
         </div>
-        {err ? <p className="alert alert-error">{err}</p> : null}
+        {err ? <p className="alert alert-error" role="alert">{err}</p> : null}
         {result ? (
           <div className="guardrails-test-result" data-testid="guardrails-test-result">
             <p>

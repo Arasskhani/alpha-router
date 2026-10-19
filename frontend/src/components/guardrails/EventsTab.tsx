@@ -99,7 +99,7 @@ export default function EventsTab({ meta }: { meta: GuardrailsMeta | null }) {
           Export CSV
         </button>
       </div>
-      {error ? <p className="alert alert-error">{error}</p> : null}
+      {error ? <p className="alert alert-error" role="alert">{error}</p> : null}
       <div className="table-wrap">
         <table className="card data-table guardrails-table">
           <thead>

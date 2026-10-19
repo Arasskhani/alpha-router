@@ -42,10 +42,10 @@ export default function SettingsTab() {
     }
   }
 
-  if (!form) return error ? <p className="alert alert-error">{error}</p> : <p className="muted-text">Loading…</p>;
+  if (!form) return error ? <p className="alert alert-error" role="alert">{error}</p> : <p className="muted-text">Loading…</p>;
   return (
     <form className="card guardrails-settings" onSubmit={save}>
-      {error ? <p className="alert alert-error">{error}</p> : null}
+      {error ? <p className="alert alert-error" role="alert">{error}</p> : null}
       {notice ? <p className="alert alert-success">{notice}</p> : null}
       <fieldset className="guardrails-fieldset" disabled={readOnly}>
         <legend>When a text cannot be checked</legend>

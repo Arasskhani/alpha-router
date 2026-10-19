@@ -117,7 +117,7 @@ export default function PatternsTab({ meta, onChanged }: { meta: GuardrailsMeta 
   const rows = view === "custom" ? (data?.custom ?? []) : (data?.library ?? []);
   return (
     <div className="guardrails-patterns">
-      {error ? <p className="alert alert-error">{error}</p> : null}
+      {error ? <p className="alert alert-error" role="alert">{error}</p> : null}
       {notice ? <p className="alert alert-success">{notice}</p> : null}
       <div className="guardrails-toolbar">
         <div className="activity-segmented" role="group" aria-label="Which patterns">

@@ -71,12 +71,12 @@ async def test_a_plain_user_reaches_none_of_it(client, user):
 async def test_a_draft_is_tried_with_what_the_form_holds(client, admin, monkeypatch):
     seen = _fake_search(monkeypatch, [SearchResult(title="T", url="https://t.example", snippet="s")])
     headers = _sign_in(client, admin)
-    body = {"provider_type": "google", "api_key": "AIza", "config": {"cx": "abc"}, "query": "hello"}
+    body = {"provider_type": "google_pse", "api_key": "AIza", "config": {"cx": "abc"}, "query": "hello"}
     resp = await client.post(f"{BASE}/test", json=body, headers=headers)
     assert resp.status_code == 200, resp.text
     data = resp.json()
     assert data["ok"] is True and data["count"] == 1 and data["query"] == "hello"
-    assert (seen[0].provider, seen[0].api_key, seen[0].config) == ("google", "AIza", {"cx": "abc"})
+    assert (seen[0].provider, seen[0].api_key, seen[0].config) == ("google_pse", "AIza", {"cx": "abc"})
 
 
 async def test_a_saved_connection_is_tried_with_its_stored_key(client, db_session, admin, monkeypatch):
@@ -99,7 +99,7 @@ async def test_a_saved_connection_is_tried_with_its_stored_key(client, db_sessio
     [
         ({"provider_type": "openai", "api_key": "sk"}, 400),
         ({"provider_type": "brave"}, 400),
-        ({"provider_type": "google", "api_key": "k"}, 400),
+        ({"provider_type": "google_pse", "api_key": "k"}, 400),
         ({"connection_id": 999}, 404),
     ],
 )

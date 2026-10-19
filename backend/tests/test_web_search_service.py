@@ -69,7 +69,7 @@ class TestThePlan:
     async def test_active_connections_by_priority_then_duckduckgo(self, db_session):
         await _search_connection(db_session, "Tavily", "tavily", priority=20)
         await _search_connection(db_session, "Brave", "brave", priority=10)
-        await _search_connection(db_session, "Off", "google", priority=1, active=False)
+        await _search_connection(db_session, "Off", "google_pse", priority=1, active=False)
         steps = await search_plan(db_session)
         assert [(s.label, s.target.provider) for s in steps] == [
             ("Brave", "brave"),

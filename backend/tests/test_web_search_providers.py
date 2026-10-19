@@ -94,26 +94,26 @@ class TestTavily:
 class TestGoogle:
     async def test_sends_key_and_engine_and_never_shows_the_key_in_an_error(self):
         rec = Recorder(body={"items": [{"title": "G", "link": "https://g.example", "snippet": "s"}]})
-        rows = await _search(SearchTarget("google", api_key="AIza-secret", config={"cx": "abc"}), rec, limit=20)
+        rows = await _search(SearchTarget("google_pse", api_key="AIza-secret", config={"cx": "abc"}), rec, limit=20)
         assert rows[0].url == "https://g.example"
         params = rec.requests[0].url.params
         assert (params["key"], params["cx"], params["num"]) == ("AIza-secret", "abc", "10")
         failing = Recorder(error=httpx.ConnectError("boom https://www.googleapis.com/customsearch/v1?key=AIza-secret"))
         with pytest.raises(WebSearchError) as raised:
-            await _search(SearchTarget("google", api_key="AIza-secret", config={"cx": "abc"}), failing)
+            await _search(SearchTarget("google_pse", api_key="AIza-secret", config={"cx": "abc"}), failing)
         assert raised.value.code == "network"
         assert "AIza-secret" not in raised.value.message
 
     async def test_a_daily_limit_is_a_quota_not_a_bad_key(self):
         body = {"error": {"errors": [{"reason": "dailyLimitExceeded"}]}}
         with pytest.raises(WebSearchError) as raised:
-            await _search(SearchTarget("google", api_key="k", config={"cx": "abc"}), Recorder(403, body))
+            await _search(SearchTarget("google_pse", api_key="k", config={"cx": "abc"}), Recorder(403, body))
         assert raised.value.code == "quota"
 
     async def test_without_its_engine_id_nothing_is_sent(self):
         rec = Recorder(body={})
         with pytest.raises(WebSearchError) as raised:
-            await _search(SearchTarget("google", api_key="k"), rec)
+            await _search(SearchTarget("google_pse", api_key="k"), rec)
         assert raised.value.code == "not_configured"
         assert rec.requests == []
 

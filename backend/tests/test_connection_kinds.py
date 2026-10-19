@@ -44,6 +44,9 @@ class TestTheRules:
             ("web_search", "searxng", False),
             ("web_search", "openai", True),
             ("models", "tavily", True),
+            # Gemini's provider id is "google": a model provider, never taken for Google's search.
+            ("models", "google", False),
+            ("web_search", "google", True),
             ("search", "brave", True),
         ],
     )
@@ -102,7 +105,7 @@ class TestTheAdminApi:
         body = {
             "name": "Google search",
             "kind": "web_search",
-            "provider_type": "google",
+            "provider_type": "google_pse",
             "api_key": "AIza-test-key",
             "config": {"cx": "a1b2c3:xyz", "ignored": "x"},
             "priority": 5,
@@ -126,7 +129,7 @@ class TestTheAdminApi:
             ({"kind": "web_search", "provider_type": "openai", "api_key": "sk-x"}, "web search connection is one of"),
             ({"kind": "models", "provider_type": "tavily", "api_key": "tvly-x"}, "is a web search service"),
             ({"kind": "web_search", "provider_type": "brave", "api_key": ""}, "needs its API key"),
-            ({"kind": "web_search", "provider_type": "google", "api_key": "k"}, "search engine id"),
+            ({"kind": "web_search", "provider_type": "google_pse", "api_key": "k"}, "search engine id"),
             ({"kind": "web_search", "provider_type": "searxng"}, "address of your SearXNG"),
             ({"kind": "web_search", "provider_type": "brave", "api_key": "k", "priority": 0}, "Priority"),
             ({"kind": "web_search", "provider_type": "brave", "api_key": "k", "price_per_request_usd": -1}, "price"),
@@ -162,9 +165,9 @@ class TestTheAdminApi:
         await db_session.refresh(search)
         assert (search.priority, float(search.price_per_request_usd)) == (7, pytest.approx(0.01))
         # Switching to Google needs its engine id.
-        resp = await client.patch(url, json={"provider_type": "google"}, headers=headers)
+        resp = await client.patch(url, json={"provider_type": "google_pse"}, headers=headers)
         assert resp.status_code == 400
-        resp = await client.patch(url, json={"provider_type": "google", "config": {"cx": "abc"}}, headers=headers)
+        resp = await client.patch(url, json={"provider_type": "google_pse", "config": {"cx": "abc"}}, headers=headers)
         assert resp.status_code == 200, resp.text
         await db_session.refresh(search)
         assert search.config_json == '{"cx": "abc"}'

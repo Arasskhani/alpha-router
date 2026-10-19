@@ -22,7 +22,7 @@ CONNECTION_KINDS = (CONNECTION_KIND_MODELS, CONNECTION_KIND_WEB_SEARCH)
 
 #: The search services a web search connection may be. Never a model provider's name, and no model connection
 #: may take one of these.
-WEB_SEARCH_PROVIDERS = ("brave", "tavily", "google", "searxng", "duckduckgo")
+WEB_SEARCH_PROVIDERS = ("brave", "tavily", "google_pse", "searxng", "duckduckgo")
 
 
 def model_connection() -> Any:
@@ -66,7 +66,7 @@ def search_config(provider_type: str, config: dict[str, Any] | None) -> dict[str
     """
     provider = (provider_type or "").strip().lower()
     raw = config if isinstance(config, dict) else {}
-    if provider == "google":
+    if provider == "google_pse":
         cx = str(raw.get("cx") or "").strip()
         if not _GOOGLE_CX.match(cx):
             raise ValueError("Google Programmable Search needs its search engine id (cx).")

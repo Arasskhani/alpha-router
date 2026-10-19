@@ -270,7 +270,7 @@ _Search = Callable[..., Awaitable[list[SearchResult]]]
 PROVIDERS: dict[str, _Search] = {
     "brave": search_brave,
     "tavily": search_tavily,
-    "google": search_google,
+    "google_pse": search_google,
     "searxng": search_searxng,
     "duckduckgo": search_duckduckgo,
 }
@@ -279,7 +279,7 @@ PROVIDERS: dict[str, _Search] = {
 PROVIDER_LABELS: dict[str, str] = {
     "brave": "Brave Search",
     "tavily": "Tavily",
-    "google": "Google Programmable Search",
+    "google_pse": "Google Programmable Search",
     "searxng": "SearXNG",
     "duckduckgo": "DuckDuckGo",
 }

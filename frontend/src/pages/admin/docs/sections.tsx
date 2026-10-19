@@ -2439,7 +2439,10 @@ export const docSections: DocSection[] = [
                 if the model answered every trial with a tool call at all. A model that reads no images is not
                 asked. The result (<code>POST /api/admin/extension/probe/model::&lt;id&gt;</code>) is kept per model
                 and shown in the table; each run costs three small vision calls, billed to the administrator, and is
-                recorded as <code>extension_model_probed</code>.
+                recorded as <code>extension_model_probed</code>. The table lists the agent&apos;s models first
+                (marked <em>Agent</em>), then those that passed, failed and were never probed, and shows ten until{" "}
+                <strong>Show all</strong>; a search box and the <em>All / Passed / Failed / Not probed</em> filter,
+                with their counts, narrow a long list.
               </td>
             </tr>
             <tr>

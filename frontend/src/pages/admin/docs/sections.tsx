@@ -1786,7 +1786,10 @@ export const docSections: DocSection[] = [
             <tr>
               <td>DuckDuckGo</td>
               <td>Nothing</td>
-              <td>No official API: free, but it may slow down or refuse busy servers. Best kept as the fallback.</td>
+              <td>
+                No official API: free, but it may slow down or refuse busy servers. Only DuckDuckGo itself is asked.
+                Best kept as the fallback.
+              </td>
             </tr>
           </tbody>
         </DocsTable>
@@ -1822,8 +1825,10 @@ export const docSections: DocSection[] = [
           <li>
             With a model that calls functions, the model is offered <code>web_search</code> and{" "}
             <code>web_fetch</code> and decides itself: it writes its own queries — a follow-up is searched for what it
-            means, and small talk is not searched — and reads the pages it chooses. A turn allows 3 searches, 3 page
-            reads and 6 rounds; then it answers from what it found. The model&apos;s calls run on the server and never
+            means, and small talk is not searched — and reads pages the person linked or its searches found, never an
+            address it makes up (one written from a page could carry the chat&apos;s contents away). A turn allows 3
+            searches, 3 page reads and 6 rounds, each search 45 s and each page 30 s; every round is priced against
+            the budget before it is asked. Then it answers from what it found. The model&apos;s calls run on the server and never
             reach the browser.
           </li>
           <li>

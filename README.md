@@ -27,8 +27,10 @@ run the same Compose stack on Linux or any other Docker-capable environment.
 - **Specialist Agents** — five seeded domain Agents (IT, HR, Legal, Finance,
   Marketing) with Knowledge Bases, ACL, maker-checker approvals, and evaluation
   publish gates
-- **Chat tools** — web search, web fetch (SSRF-guarded), image generation,
-  video generation, speech, and Code Interpreter
+- **Chat tools** — web search the model drives itself (Brave, Tavily, Google
+  Programmable Search, SearXNG or DuckDuckGo, with sources under the answer),
+  web fetch (SSRF-guarded), image generation, video generation, speech, and
+  Code Interpreter
 - **Code Interpreter** — networkless disposable containers, measured
   per-model compatibility, Redis admission leases, and cancel-on-Stop
 - **Browser extension** — Alpharouter in Chrome and Edge: chat in the side

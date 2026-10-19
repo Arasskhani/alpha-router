@@ -1696,11 +1696,22 @@ export const docSections: DocSection[] = [
           Path: <code>/admin/connections</code>. Each connection stores a provider type, encrypted API key, optional base
           URL, and sync schedule.
         </p>
+        <p>
+          The page has two tabs, because a connection is one of two kinds, fixed when it is created:{" "}
+          <strong>Model providers</strong> (the models people chat with, under a <em>Model API key</em>) and{" "}
+          <strong>Web search</strong> (the services the chat&apos;s Web Search asks, under a <em>Web Search API key</em>
+          ). Each tab has its own <strong>+ New</strong> button and its own form, so a search key cannot end up on a
+          model connection by mistake; the form also warns when a key looks like the other kind&apos;s. A web search
+          connection has no models to sync. See <a href="#admin-web-search">Web search &amp; web fetch</a>.
+        </p>
         <h3>Create / edit</h3>
         <ul>
           <li>Name, provider (for example <code>openrouter</code>, <code>openai</code>, <code>custom</code>)</li>
           <li>Base URL (optional; provider defaults apply when empty)</li>
-          <li>API key (required on create; leave blank on edit to keep the existing key)</li>
+          <li>
+            API key (leave blank on edit to keep the existing key; a provider that needs none, such as a local Ollama,
+            may be saved without one)
+          </li>
           <li>Sync interval in hours (<code>0</code> = manual sync only)</li>
         </ul>
         <h3>Actions</h3>
@@ -1721,6 +1732,124 @@ export const docSections: DocSection[] = [
           Creating a connection does not sync automatically — run <strong>Sync now</strong> before enabling models for
           users.
         </Warn>
+      </>
+    ),
+  },
+  {
+    id: "admin-web-search",
+    title: "Web search & web fetch",
+    group: "Models & API",
+    content: (
+      <>
+        <h2>Web search &amp; web fetch</h2>
+        <p>
+          Path: <code>/admin/connections</code>, <strong>Web search</strong> tab. The chat&apos;s <em>Web Search</em>{" "}
+          asks the search services set up here; <em>Web Fetch</em> reads the pages themselves and needs no service.
+        </p>
+        <h3>Search services</h3>
+        <DocsTable>
+          <thead>
+            <tr>
+              <th>Service</th>
+              <th>Needs</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Brave Search</td>
+              <td>Web Search API key</td>
+              <td>An independent index; a free tier and paid plans.</td>
+            </tr>
+            <tr>
+              <td>Tavily</td>
+              <td>Web Search API key</td>
+              <td>A search API made for AI answers; returns page extracts.</td>
+            </tr>
+            <tr>
+              <td>Google Programmable Search</td>
+              <td>API key and the engine&apos;s id (<code>cx</code>)</td>
+              <td>
+                Stored as <code>google_pse</code>, apart from Gemini&apos;s <code>google</code> model provider. Create
+                the engine at programmablesearchengine.google.com and set it to search the whole web.
+              </td>
+            </tr>
+            <tr>
+              <td>SearXNG</td>
+              <td>The server&apos;s address, no key</td>
+              <td>
+                A self-hosted metasearch server with its JSON format enabled. One on a private address is refused by
+                the server&apos;s SSRF guard unless <code>ALLOW_SSRF_PRIVATE_RANGES=true</code> is set — do that only
+                for a server you trust.
+              </td>
+            </tr>
+            <tr>
+              <td>DuckDuckGo</td>
+              <td>Nothing</td>
+              <td>No official API: free, but it may slow down or refuse busy servers. Best kept as the fallback.</td>
+            </tr>
+          </tbody>
+        </DocsTable>
+        <h3>The order a search asks in</h3>
+        <ul>
+          <li>
+            Active search connections by <strong>priority</strong> (a lower number first), then DuckDuckGo when the{" "}
+            <strong>DuckDuckGo fallback</strong> switch is on (it is, by default). The tab shows the resulting order.
+          </li>
+          <li>
+            A service that fails — a wrong key, a used-up quota, a timeout — passes the search to the next; when none
+            answers, the model is told why and says so to the person instead of answering as if it had searched.
+          </li>
+          <li>
+            With no active search connection and the fallback off, Web Search shows switched off in the composer,
+            with the reason.
+          </li>
+          <li>
+            <strong>Test</strong> runs a real search with what the form holds (or a saved connection), and shows the
+            results, the time it took or the service&apos;s error.
+          </li>
+        </ul>
+        <h3>Pricing</h3>
+        <p>
+          Each search is metered against the person, their plan and the API key they used, as{" "}
+          <code>service_type=web_search</code> with <code>provider_type</code> set to the service and{" "}
+          <code>model_id</code> to <code>&lt;service&gt;-search</code>, at the connection&apos;s{" "}
+          <strong>price per request</strong> (USD; DuckDuckGo is free). A page read is metered as{" "}
+          <code>service_type=web_fetch</code>, <code>provider_type=direct_http</code>.
+        </p>
+        <h3>How the chat uses them</h3>
+        <ul>
+          <li>
+            With a model that calls functions, the model is offered <code>web_search</code> and{" "}
+            <code>web_fetch</code> and decides itself: it writes its own queries — a follow-up is searched for what it
+            means, and small talk is not searched — and reads the pages it chooses. A turn allows 3 searches, 3 page
+            reads and 6 rounds; then it answers from what it found. The model&apos;s calls run on the server and never
+            reach the browser.
+          </li>
+          <li>
+            A model without function calling gets one search of the person&apos;s own words, made before it is asked.
+          </li>
+          <li>
+            Web Fetch reads up to three links the person typed (not links inside an attached file), through the SSRF
+            guard, up to <code>MAX_WEB_FETCH_BYTES</code> per page; a PDF is read as a document.
+          </li>
+          <li>
+            Results and pages reach the model fenced as untrusted data, after the platform&apos;s rules. The chat shows
+            what is being searched or read, and lists the sources under the answer; they are kept with the saved
+            answer.
+          </li>
+        </ul>
+        <Note>
+          Privacy: the queries — written by the model from the conversation — go to the search service chosen, under
+          its own terms; pages are read from this server&apos;s address. Turn Web Search off for a group in{" "}
+          <a href="#admin-chat-tools">Chat Tools</a> if that is not acceptable for them.
+        </Note>
+        <h3>What is recorded</h3>
+        <p>
+          Creating, changing and deleting a search connection are audited like any connection (its priority, price
+          and engine id included, never its key); the fallback switch is audited as{" "}
+          <code>web_search_settings_updated</code>.
+        </p>
       </>
     ),
   },
@@ -4223,9 +4352,12 @@ export const docSections: DocSection[] = [
           their original <code>PricingSnapshot</code>.
         </p>
         <p>
-          Built-in web search emits <code>provider_type=duckduckgo</code> and <code>service_type=web_search</code>;
-          direct URL fetch emits <code>provider_type=direct_http</code> and <code>service_type=web_fetch</code>. Both use
-          the <code>request</code> unit unless the provider response exposes a more specific metered unit.
+          Web search emits <code>service_type=web_search</code> with <code>provider_type</code> set to the service
+          that answered (<code>brave</code>, <code>tavily</code>, <code>google_pse</code>, <code>searxng</code>,{" "}
+          <code>duckduckgo</code>) and <code>model_id</code> to <code>&lt;service&gt;-search</code>, priced by the
+          search connection&apos;s own price per request; direct URL fetch emits{" "}
+          <code>provider_type=direct_http</code> and <code>service_type=web_fetch</code>. Both use the{" "}
+          <code>request</code> unit unless the provider response exposes a more specific metered unit.
         </p>
         <Code>{`curl -X POST "$ALPHA_ROUTER_BASE/api/admin/cost-accounting/pricing" \\
   -H "Content-Type: application/json" \\

@@ -782,13 +782,22 @@ export const userManualSections: DocSection[] = [
               <td>
                 <strong>Web search</strong>
               </td>
-              <td>Lets the model request web search results (depth settings may apply).</td>
+              <td>
+                Lets the model search the web when the answer needs current facts: it writes its own searches (up to
+                three per answer), the chat shows what it is searching, and the pages it used are listed under the
+                answer as <strong>Sources</strong>. With some models the search is made once, from your message, before
+                the answer. Shown switched off, with the reason, when your administrator has set up no search service.
+              </td>
             </tr>
             <tr>
               <td>
                 <strong>Web fetch</strong>
               </td>
-              <td>Fetches the content of a URL the model chooses (subject to server SSRF protections).</td>
+              <td>
+                Reads the pages you link in your message (up to three; a PDF is read as a document), and pages the model
+                chooses to read in full from its search results. Links inside a file you attach are not opened.
+                Internal and private addresses are refused.
+              </td>
             </tr>
             <tr>
               <td>

@@ -2030,7 +2030,8 @@ async def _search_connection_patch(conn: Connection, body: ConnectionPatch, kind
             base_url=base_after,
             priority=priority,
             price_per_request_usd=price,
-            has_stored_key=bool(conn.api_key_encrypted),
+            # A key belongs to its service: one moved to another service is asked for its own.
+            has_stored_key=bool(conn.api_key_encrypted) and provider_after == stored_provider.lower(),
         )
         if config_changed:
             stored = json.loads(str(conn.config_json or "{}")) if body.config is None else body.config

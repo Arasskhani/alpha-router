@@ -50,6 +50,8 @@ export default function WebSearchConnectionModal({ open, title, initial, onClose
   const [err, setErr] = useState("");
   const [test, setTest] = useState<WebSearchTestResult | null>(null);
   const editing = Boolean(initial);
+  // A stored key belongs to its service: moved to another one, the connection needs that service's own key.
+  const keepsKey = editing && form.provider_type === initial?.provider_type;
 
   const provider = webSearchProvider(form.provider_type) ?? WEB_SEARCH_PROVIDERS[0];
   const keyWarning = searchKeyWarning(provider.id, form.api_key);
@@ -68,7 +70,7 @@ export default function WebSearchConnectionModal({ open, title, initial, onClose
 
   function problem(): string {
     if (!form.name.trim()) return "Name is required.";
-    if (provider.needsKey && !editing && !form.api_key.trim()) return `${provider.label} needs its Web Search API key.`;
+    if (provider.needsKey && !keepsKey && !form.api_key.trim()) return `${provider.label} needs its Web Search API key.`;
     if (provider.needsBaseUrl && !form.base_url.trim()) return "Enter the address of your SearXNG server.";
     if (provider.needsEngineId && !form.engine_id.trim()) return "Enter the search engine id (cx) of your Programmable Search Engine.";
     if (!Number.isInteger(form.priority) || form.priority < 1 || form.priority > 1000) return "Priority must be a whole number from 1 to 1000.";
@@ -150,13 +152,13 @@ export default function WebSearchConnectionModal({ open, title, initial, onClose
         {provider.needsKey ? (
           <label className="connection-form__label">
             Web Search API key
-            {initial?.api_key_masked ? <span className="muted-text connection-form__hint">Current: {initial.api_key_masked}</span> : null}
+            {keepsKey && initial?.api_key_masked ? <span className="muted-text connection-form__hint">Current: {initial.api_key_masked}</span> : null}
             <input
               type="password"
               className="input-block"
               value={form.api_key}
               onChange={(e) => setForm((f) => ({ ...f, api_key: e.target.value }))}
-              placeholder={editing ? "Leave blank to keep the current key" : `${provider.label} API key`}
+              placeholder={keepsKey ? "Leave blank to keep the current key" : `${provider.label} API key`}
               autoComplete="off"
               aria-describedby={keyWarning ? "web-search-key-warning" : undefined}
             />

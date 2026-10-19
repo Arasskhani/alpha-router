@@ -167,7 +167,23 @@ class TestTheAdminApi:
         # Switching to Google needs its engine id.
         resp = await client.patch(url, json={"provider_type": "google_pse"}, headers=headers)
         assert resp.status_code == 400
-        resp = await client.patch(url, json={"provider_type": "google_pse", "config": {"cx": "abc"}}, headers=headers)
+        resp = await client.patch(
+            url,
+            json={"provider_type": "google_pse", "config": {"cx": "abc"}, "api_key": "AIza-google"},
+            headers=headers,
+        )
         assert resp.status_code == 200, resp.text
         await db_session.refresh(search)
         assert search.config_json == '{"cx": "abc"}'
+
+    async def test_a_key_is_not_carried_to_another_search_service(self, client, db_session, admin):
+        headers = _sign_in(client, admin)
+        search = await _connection(db_session, "Brave", "brave", "web_search")
+        url = f"/api/admin/connections/{search.id}"
+        # Brave's key would be sent to Tavily: Tavily's own is asked for.
+        resp = await client.patch(url, json={"provider_type": "tavily"}, headers=headers)
+        assert resp.status_code == 400, resp.text
+        resp = await client.patch(url, json={"provider_type": "tavily", "api_key": "tvly-own"}, headers=headers)
+        assert resp.status_code == 200, resp.text
+        # The same service keeps its stored key.
+        assert (await client.patch(url, json={"priority": 5}, headers=headers)).status_code == 200

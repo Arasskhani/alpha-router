@@ -172,6 +172,24 @@ describe("the Connections page", () => {
     });
   });
 
+  it("asks for the new service's own key when an edited connection changes service", async () => {
+    await render();
+    await act(async () => tab(/Web search/).click());
+    const row = [...host.querySelectorAll("tbody tr")].find((r) => r.textContent?.includes("Brave"))!;
+    await act(async () => row.querySelector<HTMLButtonElement>(".row-actions-trigger")!.click());
+    const edit = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find((b) => b.textContent?.trim() === "Edit")!;
+    await act(async () => edit.click());
+    const form = host.ownerDocument.querySelector(".connection-form")!;
+    expect(form.textContent).toContain("Current: BSA…wxyz");
+    await act(async () => form.querySelector<HTMLInputElement>('input[value="tavily"]')!.click());
+    expect(form.textContent).not.toContain("Current: BSA…wxyz");
+    await act(async () => {
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    expect(form.textContent).toContain("Tavily needs its Web Search API key.");
+    expect(calls.some((c) => c.init?.method === "PATCH")).toBe(false);
+  });
+
   it("turns the DuckDuckGo fallback off", async () => {
     await render();
     await act(async () => tab(/Web search/).click());

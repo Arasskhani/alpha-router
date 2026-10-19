@@ -23,6 +23,7 @@ import type { AgentCitation } from "./agentChat";
 import { readSharedPages, type SharedPages } from "./sharedPages";
 import { readContextFit, type ContextFit } from "./contextFit";
 import { readRecalledChats, type RecalledChat } from "./recalledChats";
+import { readWebSources, type WebSource } from "./webSources";
 import {
   anyChatToolEnabled,
   copyFreshChatTools,
@@ -135,6 +136,8 @@ export type ChatMessage = {
   contextFit?: ContextFit;
   /** Server-owned: the person's earlier chats this answer read from. */
   recalledChats?: RecalledChat[];
+  /** Server-owned: the pages the web tools searched up or read for this answer. */
+  webSources?: WebSource[];
   feedback?: {
     rating: -1 | 1;
     reason?: string | null;
@@ -790,6 +793,7 @@ function mapApiMessage(raw: Record<string, unknown>): ChatMessage {
     pageContext: readSharedPages(raw.pageContext),
     contextFit: readContextFit(raw.contextFit),
     recalledChats: readRecalledChats(raw.recalledChats),
+    webSources: readWebSources(raw.webSources),
     feedback:
       raw.feedback &&
       typeof raw.feedback === "object" &&

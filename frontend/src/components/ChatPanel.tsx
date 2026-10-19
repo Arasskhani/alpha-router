@@ -322,6 +322,8 @@ import {
 } from "../lib/sharedPages";
 import { contextFitLabel, contextFitNote, readContextFit, type ContextFit } from "../lib/contextFit";
 import { readRecalledChats, recalledChatsLabel, type RecalledChat } from "../lib/recalledChats";
+import { readWebSources, webActivityLabel, type WebSource } from "../lib/webSources";
+import WebSourceList from "./chat/WebSourceList";
 import {
   shortModelName,
   readAudioMessage,
@@ -592,6 +594,7 @@ export default function ChatPanel({
   const restoringComposerRef = useRef(false);
   const [streamingSessions, setStreamingSessions] = useState<Record<string, boolean>>({});
   const [turnPhases, setTurnPhases] = useState<Record<string, TurnPhase>>({});
+  const [turnActivity, setTurnActivity] = useState<Record<string, string>>({});
   const [chatError, setChatError] = useState("");
   const [copiedMessageKey, setCopiedMessageKey] = useState<string | null>(null);
   const [costDetailsLog, setCostDetailsLog] = useState<RequestLogSummary | null>(null);
@@ -669,6 +672,7 @@ export default function ChatPanel({
   }, [activeId]);
   const streamingSessionsRef = useRef<Record<string, boolean>>({});
   const turnPhasesRef = useRef<Record<string, TurnPhase>>({});
+  const turnActivityRef = useRef<Record<string, string>>({});
   const streamingMsgsPendingRef = useRef<{ sessionId: string; msgs: ChatMessage[] } | null>(null);
   const streamingMsgsRafRef = useRef<number | null>(null);
   const drainPromisesRef = useRef<Record<string, Promise<void>>>({});
@@ -721,6 +725,7 @@ export default function ChatPanel({
       messagesHavePendingVideo(messages) ||
       messagesHavePendingSpeech(messages));
   const activeTurnPhase = activeId ? turnPhases[activeId] : undefined;
+  const activeTurnActivity = activeId ? turnActivity[activeId] : undefined;
   const activeQueue = activeId ? promptQueues[activeId] || [] : [];
   const returningChatUser = isReturningChatUser(sessions);
   const welcomeHeading = getChatWelcomeHeading({
@@ -3802,12 +3807,14 @@ export default function ChatPanel({
       includeUserMessage?: boolean;
     },
     privateMode = false,
+    onWebActivity?: (label: string) => void,
   ): Promise<{
     content: string;
     requestLogId?: number;
     agentMetadata?: AgentCompletionMetadata;
     contextFit?: ContextFit;
     recalledChats?: RecalledChat[];
+    webSources?: WebSource[];
   }> {
     const res = await authFetch("/api/chat/completions", {
       method: "POST",
@@ -3840,6 +3847,7 @@ export default function ChatPanel({
     let agentMetadata: AgentCompletionMetadata | undefined;
     let contextFit: ContextFit | undefined;
     let recalledChats: RecalledChat[] | undefined;
+    let webSources: WebSource[] | undefined;
 
     // readSseEvents also delivers a trailing `data:` line without a newline
     // and cancels the reader if this loop exits early (error / Stop).
@@ -3864,6 +3872,9 @@ export default function ChatPanel({
         }
         contextFit = readContextFit(json?.alpha_router?.context_fit) ?? contextFit;
         recalledChats = readRecalledChats(json?.alpha_router?.recalled_chats) ?? recalledChats;
+        webSources = readWebSources(json?.alpha_router?.web_sources) ?? webSources;
+        const activity = webActivityLabel(json?.alpha_router?.web_activity);
+        if (activity) onWebActivity?.(activity);
         const nextAgentMetadata = agentCompletionMetadataFromSse(
           json?.alpha_router,
         );
@@ -3889,6 +3900,7 @@ export default function ChatPanel({
       ...(agentMetadata ? { agentMetadata } : {}),
       ...(contextFit ? { contextFit } : {}),
       ...(recalledChats ? { recalledChats } : {}),
+      ...(webSources ? { webSources } : {}),
     };
   }
 
@@ -4353,6 +4365,7 @@ export default function ChatPanel({
       agentMetadata?: AgentCompletionMetadata,
       contextFit?: ContextFit,
       recalledChats?: RecalledChat[],
+      webSources?: WebSource[],
     ) => {
       const current = getSessionMessages(sid);
       const idx = current.findIndex((m) => m.clientMessageId === assistantClientMessageId);
@@ -4367,6 +4380,7 @@ export default function ChatPanel({
         ...(agentMetadata || {}),
         ...(contextFit ? { contextFit } : {}),
         ...(recalledChats ? { recalledChats } : {}),
+        ...(webSources ? { webSources } : {}),
       };
       if (idx >= 0) {
         const next = [...current];
@@ -4383,7 +4397,7 @@ export default function ChatPanel({
       primaryModel,
       controller.signal,
       (content) => {
-        if (turnPhasesRef.current[sid] !== "writing") {
+        if (turnPhasesRef.current[sid] !== "writing" || turnActivityRef.current[sid]) {
           setTurnPhase(sid, "writing");
         }
         applyMessagesStreaming(sid, patchAssistantInSession(content));
@@ -4398,6 +4412,7 @@ export default function ChatPanel({
           }
         : undefined,
       sessionPrivateMode(sid),
+      (label) => setTurnPhase(sid, "searching", label),
     );
     const receivedAt = Date.now();
     const finalContent = streamed.content.trim() ? streamed.content : emptyReply;
@@ -4408,6 +4423,7 @@ export default function ChatPanel({
       streamed.agentMetadata,
       streamed.contextFit,
       streamed.recalledChats,
+      streamed.webSources,
     );
     applyMessages(sid, finalMsgs);
     applyAgentMetadataToSession(sid, streamed.agentMetadata);
@@ -4680,15 +4696,24 @@ export default function ChatPanel({
     void drainSessionQueue(sessionId);
   }
 
-  function setTurnPhase(sessionId: string, phase: TurnPhase | undefined) {
+  /** The turn's phase, and what a running web tool is doing ("Searching the web: …"), cleared by any other phase. */
+  function setTurnPhase(sessionId: string, phase: TurnPhase | undefined, activity?: string) {
     const next = { ...turnPhasesRef.current };
+    const nextActivity = { ...turnActivityRef.current };
     if (phase) {
       next[sessionId] = phase;
     } else {
       delete next[sessionId];
     }
+    if (activity) {
+      nextActivity[sessionId] = activity;
+    } else {
+      delete nextActivity[sessionId];
+    }
     turnPhasesRef.current = next;
+    turnActivityRef.current = nextActivity;
     setTurnPhases({ ...next });
+    setTurnActivity(nextActivity);
   }
 
   function setSessionStreaming(sessionId: string, value: boolean) {
@@ -6919,28 +6944,33 @@ export default function ChatPanel({
                   if (m.role === "assistant") {
                     const streamingThisMessage =
                       isSessionStreaming && i === messages.length - 1;
+                    const hasWords = Boolean(m.content?.trim());
+                    // While a web tool runs the status shows even under words already written ("Let me check").
+                    const statusLabel = activeTurnActivity
+                      || (activeTurnPhase ? turnPhaseLabel(activeTurnPhase) : "");
                     const showTurnStatus =
-                      streamingThisMessage && !m.content?.trim() && activeTurnPhase;
+                      streamingThisMessage && Boolean(activeTurnPhase) && (!hasWords || Boolean(activeTurnActivity));
+                    const turnStatus = showTurnStatus ? (
+                      <p
+                        className="alpha-router-turn-status"
+                        aria-live="polite"
+                        aria-label={`${statusLabel}...`}
+                      >
+                        <span className="alpha-router-turn-status__pulse" aria-hidden />
+                        <span className="alpha-router-turn-status__label">
+                          {statusLabel}
+                          <TurnStatusDots />
+                        </span>
+                      </p>
+                    ) : null;
                     const displayContent = formatAgentAnswerForDisplay(
                       fallback,
                       m.citations,
                     );
                     return (
                       <>
-                        {showTurnStatus ? (
-                          <p
-                            className="alpha-router-turn-status"
-                            aria-live="polite"
-                            aria-label={`${turnPhaseLabel(activeTurnPhase)}...`}
-                          >
-                            <span className="alpha-router-turn-status__pulse" aria-hidden />
-                            <span className="alpha-router-turn-status__label">
-                              {turnPhaseLabel(activeTurnPhase)}
-                              <TurnStatusDots />
-                            </span>
-                          </p>
-                        ) : null}
-                        {m.content?.trim() || !showTurnStatus ? (
+                        {hasWords ? null : turnStatus}
+                        {hasWords || !showTurnStatus ? (
                           <MarkdownContent
                             content={displayContent}
                             className={`alpha-router-markdown${streamingThisMessage ? " alpha-router-markdown--streaming" : ""}`}
@@ -6948,6 +6978,7 @@ export default function ChatPanel({
                             images={answerImages(m)}
                           />
                         ) : null}
+                        {hasWords ? turnStatus : null}
                       </>
                     );
                   }
@@ -6955,6 +6986,7 @@ export default function ChatPanel({
                   return plain;
                 })()}
               </div>
+              {m.role === "assistant" && m.webSources ? <WebSourceList sources={m.webSources} /> : null}
               {m.role === "assistant" ? (
                 <AgentCitationList
                   runId={m.agentRunId}

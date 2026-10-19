@@ -7160,6 +7160,51 @@ table.data-table--api-logs {
   line-height: 1.4;
 }
 
+/* The pages the web tools read for an answer, under it: wrapping chips, each a link in a new tab. */
+.alpha-router-msg-sources {
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+}
+.alpha-router-msg-sources__label {
+  display: block;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 0.25rem;
+}
+.alpha-router-msg-sources__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.alpha-router-msg-sources__list a {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  max-width: min(22rem, 100%);
+  padding: 0.2rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: inherit;
+  text-decoration: none;
+}
+.alpha-router-msg-sources__list a:hover,
+.alpha-router-msg-sources__list a:focus-visible {
+  border-color: var(--accent);
+}
+.alpha-router-msg-sources__title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.alpha-router-msg-sources__host {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
 /* Each earlier chat an answer read from: a link back to it. */
 .alpha-router-msg-recall-link {
   background: none;

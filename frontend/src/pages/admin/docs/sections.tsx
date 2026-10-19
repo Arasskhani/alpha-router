@@ -1065,6 +1065,231 @@ export const docSections: DocSection[] = [
     ),
   },
 
+  {
+    id: "security-guardrails",
+    title: "Guardrails",
+    group: "Security",
+    content: (
+      <>
+        <h2>Guardrails</h2>
+        <p>
+          Path: <code>/admin/guardrails</code> (<strong>Security → Guardrails</strong>). Guardrails stop the
+          organisation&apos;s data from leaving through AI models: card numbers, national codes, keys, internal host
+          names, project code names — whatever an administrator describes. Everything here is the
+          administrator&apos;s:
+        </p>
+        <ul>
+          <li>
+            <strong>Nothing is on until you turn it on.</strong> A fresh install has no rules; the library patterns
+            detect nothing until a rule uses them.
+          </li>
+          <li>
+            <strong>Users cannot override a rule.</strong> There is no &ldquo;send anyway&rdquo;. Super Admins,
+            Private mode chats and Gateway API keys are checked like everyone else; an exception exists only where a
+            rule&apos;s <em>Who</em> list says so.
+          </li>
+          <li>
+            <strong>Values are never stored.</strong> Events keep which rule matched, how many times and a short hint
+            (<code>6037…3453</code>), not the text.
+          </li>
+        </ul>
+
+        <h3>Patterns — what to detect</h3>
+        <p>
+          The <strong>Patterns</strong> tab lists 14 library patterns (bank card with a Luhn check, IBAN/Sheba,
+          Iranian national code and mobile number, email, IPv4, OpenAI/Anthropic, AWS, GitHub and Google keys, private
+          keys, JWTs, a written-out password, database connection strings) and your own. A pattern is one of:
+        </p>
+        <DocsTable>
+          <thead>
+            <tr>
+              <th>Kind</th>
+              <th>Matches</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Regular expression</td>
+              <td>
+                RE2 syntax (as in Go and Google products): no back-references or look-arounds, and a match always takes
+                time in proportion to the text, so no expression can hang the server. Up to 1000 characters.
+              </td>
+            </tr>
+            <tr>
+              <td>Word list</td>
+              <td>Whole words or phrases, one per line (up to 500), such as project code names.</td>
+            </tr>
+            <tr>
+              <td>Domain list</td>
+              <td>A host and every subdomain of it (<code>intranet.example</code> also matches <code>wiki.intranet.example</code>).</td>
+            </tr>
+          </tbody>
+        </DocsTable>
+        <p>
+          Options: case sensitivity; <em>normalise</em> (Persian and Arabic digits and letters are read as one, and
+          zero-width characters are ignored, so a card number typed in Persian digits is still a card); <em>context
+          words</em> that must appear within a distance; a <em>validator</em> (Luhn, IBAN, national code);{" "}
+          <em>never match</em> values (known test numbers); and the <em>mask label</em> (<code>CARD</code> gives{" "}
+          <code>[CARD_1]</code>). Each pattern holds samples it must and must not match; the form tries them, and
+          any text you paste, as you type, and refuses to save an expression RE2 rejects or a sample that fails.
+          Patterns move between installations with <strong>Export</strong> / <strong>Import</strong>.
+        </p>
+
+        <h3>Rules — what to do</h3>
+        <p>
+          A rule joins patterns (<em>any</em> or <em>all</em> of them, at least <em>n</em> matches) to the channels it
+          watches, the destinations it cares about, an action and who it applies to.
+        </p>
+        <DocsTable>
+          <thead>
+            <tr>
+              <th>Channel</th>
+              <th>What is checked</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Chat messages</td>
+              <td>What a person types in the web chat, and the conversation so far.</td>
+            </tr>
+            <tr>
+              <td>Attached files</td>
+              <td>The text extracted from files attached to a chat message.</td>
+            </tr>
+            <tr>
+              <td>Context</td>
+              <td>What the platform adds: memory, project files, knowledge, the chat&apos;s summary, an Agent&apos;s prompt.</td>
+            </tr>
+            <tr>
+              <td>Browser extension</td>
+              <td>Turns sent from the extension, including pages shared from the browser.</td>
+            </tr>
+            <tr>
+              <td>Gateway</td>
+              <td>Requests to <code>/v1</code> with an API key.</td>
+            </tr>
+            <tr>
+              <td>Web search</td>
+              <td>The queries the model sends to a search service.</td>
+            </tr>
+            <tr>
+              <td>Web fetch</td>
+              <td>The addresses the model asks to read.</td>
+            </tr>
+          </tbody>
+        </DocsTable>
+        <DocsTable>
+          <thead>
+            <tr>
+              <th>Action</th>
+              <th>Effect</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Block</td>
+              <td>Nothing is sent; the person sees the rule&apos;s message. A search service is skipped for the next one.</td>
+            </tr>
+            <tr>
+              <td>Redact</td>
+              <td>
+                Each value is replaced with a placeholder before it leaves. With <em>Give values back</em> on (the
+                default) the reply shows the real values again; the model never saw them. Not for Web fetch.
+              </td>
+            </tr>
+            <tr>
+              <td>Route</td>
+              <td>
+                The turn goes to the model you name — normally one on an <em>Internal</em> connection — instead of the
+                one chosen. Chat, attached files, extension and Gateway only. An Agent&apos;s turn, and a match found
+                in the context, are blocked instead (their model cannot change mid-turn).
+              </td>
+            </tr>
+          </tbody>
+        </DocsTable>
+        <p>
+          When several rules match, block wins over route, and route over redact. Each rule has a mode:{" "}
+          <strong>Off</strong>, <strong>Monitor</strong> (records what it would have done, changes nothing — use it to
+          tune a rule on real traffic) and <strong>Enforce</strong>. New rules start in Monitor. The <em>Who</em>{" "}
+          editor uses the same Public/Private and allow/deny lists as models: deny wins, so a rule can apply to
+          everyone except a named group. The <code>{"{model}"}</code> placeholder in a message names the model a
+          routed turn went to.
+        </p>
+
+        <h3>Destinations</h3>
+        <p>
+          Every model connection and search service has a trust level: <strong>Internal</strong> (on your own
+          servers), <strong>Trusted external</strong> (a provider under contract) or <strong>Public</strong> (the
+          default). A rule limited to <em>Public</em> lets the same text go to an internal model. Set the levels on the{" "}
+          <strong>Destinations</strong> tab.
+        </p>
+
+        <h3>Test a text, events and the overview</h3>
+        <ul>
+          <li>
+            <strong>Test a text</strong> runs the rules in force against a text, channel and destination you choose,
+            and shows the decision and the masked text. Nothing is sent or recorded.
+          </li>
+          <li>
+            <strong>Events</strong> lists every block, redact, route, monitor match and engine error, filterable and
+            exportable as CSV. <strong>Overview</strong> sums the last seven days.
+          </li>
+        </ul>
+
+        <h3>Settings</h3>
+        <DocsTable>
+          <thead>
+            <tr>
+              <th>Setting</th>
+              <th>Default</th>
+              <th>Meaning</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>When a text cannot be checked</td>
+              <td>Stop it (fail closed)</td>
+              <td>If the engine fails, the request is refused; or let it through and record an engine error.</td>
+            </tr>
+            <tr>
+              <td>Give masked values back in replies</td>
+              <td>On</td>
+              <td>Off keeps the placeholders in what the person reads.</td>
+            </tr>
+            <tr>
+              <td>Keep events for</td>
+              <td>180 days</td>
+              <td>Older events are deleted every night at 04:45.</td>
+            </tr>
+            <tr>
+              <td>Alert emails</td>
+              <td>None</td>
+              <td>Told when a rule blocks something; at most one email per rule every 10 minutes (needs SMTP).</td>
+            </tr>
+          </tbody>
+        </DocsTable>
+
+        <h3>Access</h3>
+        <p>
+          The <code>guardrails</code> menu (Security category) grants the page. A read-only role sees rules, patterns
+          and events but cannot change them or use <em>Test a text</em> and the pattern tester. Every change is in
+          Admin Logs and takes effect on the next request, on every worker.
+        </p>
+
+        <Warn>
+          <p>Limits to know:</p>
+          <ul>
+            <li>Replies are not scanned; only what is sent to a model, search service or address is.</li>
+            <li>Text in images and scanned PDFs (OCR) and names found by meaning (NER) are not detected.</li>
+            <li>What memory extraction sends to its model is not checked yet.</li>
+            <li>Exceptions do not expire, and there is no second approver for rule changes.</li>
+            <li>A rule&apos;s history is in Admin Logs, not on the rule.</li>
+          </ul>
+        </Warn>
+      </>
+    ),
+  },
+
   // ── Overview ──────────────────────────────────────────────────────────────
   {
     id: "admin-menu",
@@ -1111,7 +1336,7 @@ export const docSections: DocSection[] = [
             </tr>
             <tr>
               <td>Security</td>
-              <td>Security Settings (HTTPS certificates and admin IP allowlist)</td>
+              <td>Security Settings (HTTPS certificates and admin IP allowlist), Guardrails</td>
             </tr>
             <tr>
               <td>Integrations</td>

@@ -878,6 +878,40 @@ export const userManualSections: DocSection[] = [
     ),
   },
   {
+    id: "chat-guardrails",
+    title: "Guardrails",
+    group: "Chat",
+    content: (
+      <>
+        <h2>Guardrails</h2>
+        <p>
+          Your organisation may set Guardrails: rules that keep certain data — card numbers, national codes, keys,
+          internal names — from being sent to AI models. They apply to the web chat, attached files, the browser
+          extension, API keys and the web tools, in Private mode too.
+        </p>
+        <ul>
+          <li>
+            <strong>Blocked:</strong> the message is not sent, and you see why. Remove the data and send again; there
+            is no way to send it anyway.
+          </li>
+          <li>
+            <strong>Masked:</strong> values are replaced with placeholders such as <code>[CARD_1]</code> before the
+            message leaves. The answer normally shows the real values again; the model never saw them. A note under the
+            answer says what was masked.
+          </li>
+          <li>
+            <strong>Routed:</strong> the message was answered by another model your organisation chose, usually one on
+            its own servers. The note under the answer names it.
+          </li>
+        </ul>
+        <Note>
+          Only your administrators decide the rules. If one stops ordinary work, tell them; they can change it or make
+          an exception.
+        </Note>
+      </>
+    ),
+  },
+  {
     id: "chat-memory",
     title: "Memory",
     group: "Chat",

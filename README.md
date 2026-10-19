@@ -45,6 +45,10 @@ run the same Compose stack on Linux or any other Docker-capable environment.
   user’s plan
 - **Governance** — RBAC menus, model Public/Private ACL, retention, API logs,
   Activity exports, and Prometheus metrics
+- **Guardrails** — administrator-defined rules (RE2 patterns, word and domain
+  lists, a library of common identifiers and keys) that block, mask or route
+  what chat, files, the extension, the Gateway and the web tools send to
+  models, with monitor mode, events and alerts
 - **Knowledge** — document review, ClamAV malware scan, parser sandbox, Qdrant
   indexing, and citation-backed retrieval
 

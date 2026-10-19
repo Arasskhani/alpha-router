@@ -328,3 +328,24 @@ describe("Feature Access in the guides", () => {
     expect(html).toContain("Nothing is deleted");
   });
 });
+
+describe("Guardrails in the guides", () => {
+  it("the Admin Guide puts them under Security and says the administrator decides everything", () => {
+    const section = (docSections as Section[]).find((s) => s.id === "security-guardrails");
+    expect(section?.group).toBe("Security");
+    const html = sectionHtml(docSections as Section[], "security-guardrails");
+    expect(html).toContain("/admin/guardrails");
+    expect(html).toContain("Nothing is on until you turn it on.");
+    expect(html).toContain("Users cannot override a rule.");
+    expect(html).toContain("RE2");
+    expect(html).toContain("Replies are not scanned");
+    expect(sectionHtml(docSections as Section[], "admin-menu")).toContain("Guardrails");
+  });
+
+  it("the User Manual says what a person sees", () => {
+    const html = sectionHtml(userManualSections as Section[], "chat-guardrails");
+    expect(html).toContain("there is no way to send it anyway");
+    expect(html).toContain("[CARD_1]");
+    expect(html).toContain("Only your administrators decide the rules.");
+  });
+});

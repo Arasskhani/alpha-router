@@ -92,7 +92,7 @@ from app.services.chat_markers import (
 from app.services.chat_session_access import resolve_owned_chat_session
 from app.services.chat_title_service import generate_chat_title
 from app.services.chat_tool_access_service import assert_tool_for_user, permitted_tool_keys
-from app.services.guardrail_turn import MODEL_PINNED_BODY_KEY, VIA_EXTENSION_BODY_KEY
+from app.services.guardrail_turn import MODEL_PINNED_BODY_KEY, VIA_EXTENSION_BODY_KEY, GuardedTexts, guard_texts
 from app.services.chat_tool_registry import CHAT_TOOLS
 from app.services.chat_turn_context import earlier_page_answers
 from app.services.chat_xlsx_service import ChatExportError as XlsxExportError
@@ -131,6 +131,7 @@ from app.services.project_media_service import (
     ProjectMediaValidationError,
     persist_scoped_chat_media,
 )
+from app.services.model_resolution_service import resolve_model_and_key
 from app.services.proxy_service import (
     STREAM_SSE_HEADERS,
     preflight_stream_chat,
@@ -762,11 +763,24 @@ async def enhance_prompt(
         raise HTTPException(status_code=400, detail="Invalid enhancement mode")
     if body.context not in ENHANCE_CONTEXTS:
         raise HTTPException(status_code=400, detail="Invalid enhancement context")
+    guarded = await _guarded_prompt(db, user, body.model, body.prompt)
     try:
-        text = await enhance_user_prompt(db, user, body.model, body.prompt, body.mode, context=body.context)
+        text = await enhance_user_prompt(db, user, body.model, guarded.texts[0], body.mode, context=body.context)
     except PromptEnhanceError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return {"prompt": text}
+    return {"prompt": guarded.restore(text)}
+
+
+async def _guarded_prompt(db: AsyncSession, user: User, model_ref: str, prompt: str) -> GuardedTexts:
+    """The administrator's Guardrails on a prompt sent for improving, as for a chat turn: refused (422), or masked."""
+    ai_model = (await resolve_model_and_key(db, model_ref))[0] if model_ref and prompt else None
+    if ai_model is None:
+        return GuardedTexts([prompt])
+    guarded = await guard_texts(
+        db, [prompt], channel="chat", ai_model=ai_model, user_id=int(user.id), source="alpha_router_chat"
+    )
+    guarded.raise_if_refused()
+    return guarded
 
 
 @router.post("/enhance-image-prompt")
@@ -778,11 +792,12 @@ async def enhance_image_prompt(
     """Legacy endpoint — image context only."""
     if body.mode not in ENHANCE_MODES:
         raise HTTPException(status_code=400, detail="Invalid enhancement mode")
+    guarded = await _guarded_prompt(db, user, body.model, body.prompt)
     try:
-        text = await enhance_image_generation_prompt(db, user, body.model, body.prompt, body.mode)
+        text = await enhance_image_generation_prompt(db, user, body.model, guarded.texts[0], body.mode)
     except PromptEnhanceError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return {"prompt": text}
+    return {"prompt": guarded.restore(text)}
 
 
 @router.post("/completions")

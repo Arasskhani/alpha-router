@@ -420,6 +420,15 @@ async def review_action(
     )
     shown_crop = usable_crop(crop) if can_see_crop else None
     prompt = review_prompt(task, tool, site, target, arguments, history, with_image=bool(shown_crop))
+    from app.services.guardrail_turn import guard_texts
+
+    # The administrator's Guardrails, as for the extension's turns: a refused review is left to the person.
+    guarded = await guard_texts(
+        db, [prompt], channel="extension", ai_model=ai_model, user_id=int(user.id), source="alpha_router_chat"
+    )
+    if guarded.refusal is not None:
+        return _ask(guarded.refusal)
+    prompt = guarded.texts[0]
     user_content: Any = (
         [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": shown_crop}}]
         if shown_crop

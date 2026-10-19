@@ -49,6 +49,8 @@ async def test_the_api_stores_and_reports_the_format_that_was_delivered(monkeypa
     finalize = AsyncMock()
     for name, value in {
         "assert_tool_for_user": AsyncMock(),
+        # No Guardrails rule in this fake database: the text goes as typed.
+        "guard_media_prompt": AsyncMock(side_effect=lambda db, text, **_kwargs: text),
         "assert_session_allows_model_generation": AsyncMock(),
         "check_generation_rate_limit": AsyncMock(),
         "_resolve_speech_model": AsyncMock(

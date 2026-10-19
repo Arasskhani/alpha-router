@@ -150,6 +150,16 @@ async def generate_chat_title(
         return _sanitize_title(_fallback_title(messages))
     if not await _may_title_with(db, user, ai_model, chat_session_id):
         return _sanitize_title(_fallback_title(messages))
+    excerpt = _format_turns(messages)
+    from app.services.guardrail_turn import guard_texts
+
+    # The administrator's Guardrails, as for the turn itself: a refused excerpt is titled here, without a model.
+    guarded = await guard_texts(
+        db, [excerpt], channel="chat", ai_model=ai_model, user_id=int(user.id), source="alpha_router_chat"
+    )
+    if guarded.refusal is not None:
+        return _sanitize_title(_fallback_title(messages))
+    excerpt = guarded.texts[0]
 
     model = _litellm_model_for_provider(ai_model.external_id, provider_type or ai_model.provider_type)
     kwargs: dict = {
@@ -157,7 +167,7 @@ async def generate_chat_title(
             {"role": "system", "content": _TITLE_SYSTEM},
             {
                 "role": "user",
-                "content": (f"Conversation excerpt:\n\n{_format_turns(messages)}\n\nTitle:"),
+                "content": (f"Conversation excerpt:\n\n{excerpt}\n\nTitle:"),
             },
         ],
         "api_key": api_key,
@@ -192,7 +202,7 @@ async def generate_chat_title(
         if response.choices:
             content = getattr(response.choices[0].message, "content", None) or ""
         completion_text = content
-        title = _sanitize_title(content or _fallback_title(messages))
+        title = _sanitize_title(guarded.restore(content) or _fallback_title(messages))
         success = True
         if title == "New chat":
             return _sanitize_title(_fallback_title(messages))

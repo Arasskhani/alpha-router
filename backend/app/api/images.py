@@ -25,6 +25,7 @@ from app.database import AsyncSessionLocal, get_db
 from app.models.connection import Connection
 from app.models.model_catalog import AIModel
 from app.models.user import User
+from app.services.guardrail_turn import guard_media_prompt
 from app.services.budget_reservation_service import (
     reservation_hold_usd,
     reservation_key,
@@ -989,7 +990,10 @@ async def generate_image(  # noqa: C901 -- Phase 4 split; complexity must not gr
             aspect_ratio=body.aspect_ratio,
             size=body.size,
         )
-        upstream_prompt = prepare_image_generation_prompt(body.prompt)
+        # The administrator's Guardrails on the prompt, as for a chat message (checked for the chosen model).
+        upstream_prompt = prepare_image_generation_prompt(
+            await guard_media_prompt(db, body.prompt, ai_model=ai_model, user_id=int(user.id))
+        )
 
         async def _attempt_one_model(  # noqa: C901 -- Phase 4 split; complexity must not grow
             *,

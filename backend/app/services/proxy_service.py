@@ -1827,6 +1827,41 @@ def _finish_cut_short(attempt: ProviderAttempt) -> str:
         return ""
 
 
+async def _guard_embedding_input(
+    db: AsyncSession,
+    body: dict,
+    *,
+    ai_model: AIModel | None,
+    user_id: int | None,
+    alpha_router_api_key_id: int | None,
+    source: str | None,
+) -> None:
+    """Guardrails on the texts to embed (the Gateway channel): masked in place, or refused (422)."""
+    from app.services.guardrail_turn import guard_texts
+
+    if ai_model is None:
+        return
+    value = body.get("input")
+    single = isinstance(value, str)
+    items = [value] if single else list(value) if isinstance(value, list) else []
+    texts = [item if isinstance(item, str) else "" for item in items]
+    if not any(texts):
+        return  # token arrays: no text to read
+    guarded = await guard_texts(
+        db,
+        texts,
+        channel="gateway",
+        ai_model=ai_model,
+        user_id=user_id,
+        alpha_router_api_key_id=alpha_router_api_key_id,
+        source=source,
+    )
+    guarded.raise_if_refused()
+    if guarded.values:
+        masked = [new if isinstance(old, str) else old for old, new in zip(items, guarded.texts, strict=True)]
+        body["input"] = masked[0] if single else masked
+
+
 def _embedding_input_text(input_value) -> str:
     if isinstance(input_value, str):
         return input_value
@@ -1871,6 +1906,14 @@ async def create_embedding(
         skip_budget=skip_budget,
         alpha_router_api_key_id=alpha_router_api_key_id,
         operation="embedding",
+        source=source,
+    )
+    await _guard_embedding_input(
+        db,
+        body,
+        ai_model=resolved.ai_model,
+        user_id=user_id,
+        alpha_router_api_key_id=alpha_router_api_key_id,
         source=source,
     )
     await db.commit()

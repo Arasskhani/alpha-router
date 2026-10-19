@@ -23,6 +23,7 @@ from app.models.model_catalog import AIModel
 from app.models.user import User
 from app.models.video import VideoGenerationJob
 from app.services import object_storage_service as oss
+from app.services.guardrail_turn import guard_media_prompt
 from app.services.budget_reservation_service import (
     reservation_hold_usd,
     reservation_key,
@@ -160,6 +161,8 @@ async def generate_video(
     )
     if not api_key or ai_model is None:
         raise HTTPException(status_code=400, detail="Video model is not available")
+    # The administrator's Guardrails on the prompt, as for a chat message.
+    prompt = await guard_media_prompt(db, prompt, ai_model=ai_model, user_id=int(user.id))
     try:
         connection = await db.get(Connection, ai_model.connection_id)
         adapter_key = (getattr(connection, "adapter_key", None) or provider_type or "unknown").strip().lower()

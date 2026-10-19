@@ -870,6 +870,19 @@ async def ask_extractor[T](
     ai_model, api_key, base_url, provider_type = await resolve_model_and_key(db, f"model::{int(model_id)}")
     if not ai_model or not api_key:
         raise RuntimeError("Memory extraction model is unavailable")
+    from app.services.guardrail_policy import GuardrailBlocked, restore_text
+    from app.services.guardrail_turn import guard_texts
+
+    # The administrator's Guardrails on what the platform sends (the context channel): the chat is read
+    # masked and the values put back in the answer (escaped, as it is JSON), so a memory keeps what was said
+    # and each later turn checks it as it checks any context.
+    guarded = await guard_texts(
+        db, [user_content], channel="context", ai_model=ai_model, user_id=billing.user_id, source="memory"
+    )
+    if guarded.refusal is not None:
+        raise GuardrailBlocked(guarded.refusal)
+    user_content = guarded.texts[0]
+    json_values = {token: json.dumps(value, ensure_ascii=False)[1:-1] for token, value in guarded.values.items()}
     model = litellm_model_for_provider(ai_model.external_id, provider_type or ai_model.provider_type)
     kwargs: dict[str, Any] = {
         "model": model,
@@ -901,7 +914,7 @@ async def ask_extractor[T](
             started_at=started_at,
             phase="repair" if len(messages) > 2 else "primary",
         )
-        return text, _finish_reason(response)
+        return restore_text(text, json_values), _finish_reason(response)
 
     return await _parsed_answer(
         _call,

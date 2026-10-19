@@ -20,6 +20,7 @@ Gateway drops server keys; the web chat builds its body itself).
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass, field
 from typing import Any
 
 from fastapi import HTTPException
@@ -38,6 +39,7 @@ from app.services.guardrail_policy import (
     inspect,
     mask_messages,
     message_segments,
+    restore_text,
 )
 
 #: Server-owned body key: ``{"values": {placeholder: value}, "notices": [str]}``.
@@ -260,3 +262,67 @@ async def guardrail_reply_state(db: AsyncSession, body: dict[str, Any]) -> tuple
         if not (await load_settings(db)).restore_replies:
             values = {}
     return values, notices
+
+
+@dataclass
+class GuardedTexts:
+    """Texts as they may leave: masked where a rule said so, or the reason they may not leave at all."""
+
+    texts: list[str]
+    values: dict[str, str] = field(default_factory=dict)
+    refusal: str | None = None
+
+    def restore(self, text: str) -> str:
+        return restore_text(text, self.values)
+
+    def raise_if_refused(self) -> None:
+        if self.refusal is not None:
+            raise HTTPException(status_code=422, detail={"code": BLOCKED_CODE, "message": self.refusal})
+
+
+async def guard_texts(
+    db: AsyncSession,
+    texts: list[str],
+    *,
+    channel: str,
+    ai_model: Any,
+    user_id: int | None,
+    alpha_router_api_key_id: int | None = None,
+    source: str | None,
+) -> GuardedTexts:
+    """Guardrails on texts sent to a model outside a chat turn (a title, a summary, embeddings, a prompt).
+
+    Nothing is routed here - the model was chosen for a job - so a rule that
+    would route blocks instead, as does a text that cannot be checked when the
+    administrator chose to stop those.
+    """
+    if not texts or not await _rules_watch(db):
+        return GuardedTexts(list(texts))
+    segments = [Segment(channel, text, index, None, 0) for index, text in enumerate(texts) if text]
+    if not segments:
+        return GuardedTexts(list(texts))
+    destination = await model_destination(db, ai_model)
+    ctx = await _event_context(db, user_id=user_id, alpha_router_api_key_id=alpha_router_api_key_id, source=source)
+    try:
+        verdict = await inspect(db, segments, destination=destination, ctx=ctx, route_as_block=True)
+    except GuardrailEngineError as exc:
+        return GuardedTexts(list(texts), refusal=str(exc))
+    if verdict.blocked:
+        notices = verdict.notices()
+        return GuardedTexts(list(texts), refusal=notices[0] if notices else "This was not sent.")
+    if not verdict.to_mask:
+        return GuardedTexts(list(texts))
+    masker = Masker()
+    as_messages = mask_messages([{"content": text} for text in texts], verdict.to_mask, masker)
+    return GuardedTexts([str(m["content"]) for m in as_messages], values=dict(masker.values))
+
+
+async def guard_media_prompt(db: AsyncSession, text: str, *, ai_model: Any, user_id: int | None) -> str:
+    """A prompt for an image, video or speech model, as the chat channel's rules let it go: masked, or refused."""
+    if ai_model is None or not text:
+        return text
+    guarded = await guard_texts(
+        db, [text], channel="chat", ai_model=ai_model, user_id=user_id, source="alpha_router_chat"
+    )
+    guarded.raise_if_refused()
+    return guarded.texts[0]

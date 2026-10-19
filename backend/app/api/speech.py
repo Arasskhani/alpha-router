@@ -18,6 +18,7 @@ from app.database import AsyncSessionLocal, get_db
 from app.models.connection import Connection
 from app.models.model_catalog import AIModel
 from app.models.user import User
+from app.services.guardrail_turn import guard_media_prompt
 from app.services.budget_reservation_service import (
     reservation_hold_usd,
     reservation_key,
@@ -279,6 +280,8 @@ async def generate_speech(  # noqa: C901 -- Phase 4 split; complexity must not g
 
         if not api_key:
             raise HTTPException(status_code=400, detail="Connection has no API key configured.")
+        # The administrator's Guardrails on the text to read, as for a chat message.
+        text = await guard_media_prompt(db, text, ai_model=ai_model, user_id=settle_user_id)
         if not provider_type:
             raise HTTPException(status_code=400, detail="Connection has no provider type configured.")
 

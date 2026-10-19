@@ -628,6 +628,22 @@ async def _complete(
     ai_model, api_key, base_url, provider_type = await resolve_model_and_key(db, f"model::{int(model_id)}")
     if not ai_model or not api_key:
         raise RuntimeError("The summary model is unavailable")
+    from app.services.guardrail_policy import GuardrailBlocked
+    from app.services.guardrail_turn import guard_texts
+
+    # The administrator's Guardrails on what the platform sends (the context channel): the chat is summarized
+    # masked and its values put back, so each later turn checks the summary as it checks any context.
+    guarded = await guard_texts(
+        db,
+        [user_content],
+        channel="context",
+        ai_model=ai_model,
+        user_id=int(row.user_id) if row.user_id is not None else None,
+        source="chat_summary",
+    )
+    if guarded.refusal is not None:
+        raise GuardrailBlocked(guarded.refusal)
+    user_content = guarded.texts[0]
     messages = [{"role": "system", "content": system}, {"role": "user", "content": user_content}]
     kwargs: dict[str, Any] = {
         "model": litellm_model_for_provider(str(ai_model.external_id), str(provider_type or ai_model.provider_type)),
@@ -645,7 +661,7 @@ async def _complete(
         kwargs["custom_llm_provider"] = llm_provider
     started_at = dt.datetime.utcnow()
     response = await acompletion(**kwargs)
-    text = _completion_text(response).strip()
+    text = guarded.restore(_completion_text(response).strip())
     # A key of the call's own: the attempts start again with every run, and a chat rewritten from its
     # start summarizes its first message again - a repeated key would leave a paid call unrecorded.
     key_prefix = f"{purpose}:{row.session_id}:{int(row.attempt_count or 0)}:{first_sequence}:{uuid.uuid4().hex[:10]}"

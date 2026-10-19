@@ -23,6 +23,7 @@ from app.api import (
     admin_extension,
     admin_knowledge,
     admin_logs,
+    admin_web_search,
     admin_memory,
     admin_security,
     sign_in_activity,
@@ -786,6 +787,7 @@ app.include_router(admin_chat_tools.router)
 app.include_router(admin_feature_access.router)
 app.include_router(admin_extension.router)
 app.include_router(admin_logs.router)
+app.include_router(admin_web_search.router)
 app.include_router(sign_in_activity.router)
 app.include_router(admin_memory.router)
 if settings.agents_platform_enabled:

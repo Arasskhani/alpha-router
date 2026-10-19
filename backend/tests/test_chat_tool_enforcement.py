@@ -248,7 +248,20 @@ class TestTheEndpointTheComposerReads:
         assert [row["key"] for row in rows] == [spec.key for spec in CHAT_TOOLS]
         # Every tool is what its registry entry says until an admin saves a policy.
         assert [row["permitted"] for row in rows] == [spec.default_access == "public" for spec in CHAT_TOOLS]
-        assert {"key", "title", "description", "icon", "permitted"} == set(rows[0])
+        assert {"key", "title", "description", "icon", "permitted", "available"} == set(rows[0])
+        # With DuckDuckGo as the fallback (the default), Web Search has a service to ask.
+        assert all(row["available"] for row in rows)
+
+    async def test_web_search_without_a_service_is_shown_off_saying_why(self, client, db_session, user):
+        from app.services.web_search_service import WebSearchSettings, save_web_search_settings
+
+        await save_web_search_settings(db_session, WebSearchSettings(duckduckgo_fallback=False))
+        await db_session.commit()
+        _sign_in(client, user)
+        rows = {row["key"]: row for row in (await client.get("/api/chat/tools")).json()}
+        assert rows["web_search"]["available"] is False
+        assert "Connections" in rows["web_search"]["unavailable_reason"]
+        assert rows["web_fetch"]["available"] is True
 
     async def test_a_restricted_tool_comes_back_not_permitted(self, client, db_session, user):
         await set_chat_tool_access(db_session, "code_interpreter", access_type="private", grants=[])

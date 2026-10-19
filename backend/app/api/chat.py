@@ -30,6 +30,7 @@ from app.models.chat import ChatSession
 from app.models.connection import Connection
 from app.models.model_catalog import AIModel
 from app.models.user import User
+from app.services.web_search_service import web_search_availability
 from app.services.connection_kinds import model_connection
 from app.services.client_ip import resolve_client_ip
 from app.services.extension_access import AGENT_TOOL, CONTROL_TOOL, permitted_extension_tools
@@ -710,6 +711,8 @@ async def chat_tools(
     """
     subject = await resolve_resource_access_subject(db, user_id=user.id)
     permitted = await permitted_tool_keys(db, subject)
+    # Web Search needs a search service; without one it is shown off, saying why.
+    unavailable = {"web_search": await web_search_availability(db)}
     return [
         {
             "key": spec.key,
@@ -717,6 +720,8 @@ async def chat_tools(
             "description": spec.description,
             "icon": spec.icon,
             "permitted": spec.key in permitted,
+            "available": unavailable.get(spec.key) is None,
+            **({"unavailable_reason": unavailable[spec.key]} if unavailable.get(spec.key) else {}),
         }
         for spec in CHAT_TOOLS
     ]

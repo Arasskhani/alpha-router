@@ -97,7 +97,10 @@ class TestGoogle:
         rows = await _search(SearchTarget("google_pse", api_key="AIza-secret", config={"cx": "abc"}), rec, limit=20)
         assert rows[0].url == "https://g.example"
         params = rec.requests[0].url.params
-        assert (params["key"], params["cx"], params["num"]) == ("AIza-secret", "abc", "10")
+        assert (params["cx"], params["num"]) == ("abc", "10")
+        # In a header, not the address, which request logs keep.
+        assert rec.requests[0].headers["x-goog-api-key"] == "AIza-secret"
+        assert "AIza-secret" not in str(rec.requests[0].url)
         failing = Recorder(error=httpx.ConnectError("boom https://www.googleapis.com/customsearch/v1?key=AIza-secret"))
         with pytest.raises(WebSearchError) as raised:
             await _search(SearchTarget("google_pse", api_key="AIza-secret", config={"cx": "abc"}), failing)

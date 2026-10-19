@@ -199,7 +199,9 @@ async def search_google(target: SearchTarget, query: str, limit: int, **kwargs: 
         "Google Programmable Search",
         "GET",
         "https://www.googleapis.com/customsearch/v1",
-        params={"key": target.api_key, "cx": cx, "q": query, "num": min(limit, 10)},
+        # The key goes in a header, never the address: an address ends up in request logs.
+        headers={"X-goog-api-key": target.api_key or ""},
+        params={"cx": cx, "q": query, "num": min(limit, 10)},
         client_factory=kwargs.get("client_factory"),
     )
     rows = _list(data.get("items") if isinstance(data, dict) else None)

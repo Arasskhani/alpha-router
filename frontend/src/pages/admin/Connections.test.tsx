@@ -98,6 +98,14 @@ function button(text: string | RegExp): HTMLButtonElement {
   )!;
 }
 
+/** Pick a search service the way a person does: open the search box, type, and choose a suggestion. */
+async function pickService(form: Element, query: string, id: string) {
+  const box = form.querySelector<HTMLInputElement>('[data-testid="web-search-service"]')!;
+  await act(async () => box.focus());
+  await type(box, query);
+  await act(async () => form.querySelector<HTMLButtonElement>(`[data-service="${id}"]`)!.click());
+}
+
 async function type(input: HTMLInputElement, value: string) {
   await act(async () => {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
@@ -135,15 +143,31 @@ describe("the Connections page", () => {
     await act(async () => tab(/Web search/).click());
     await act(async () => button(/New web search connection/).click());
     const form = host.ownerDocument.querySelector(".connection-form")!;
-    const services = [...form.querySelectorAll<HTMLInputElement>('input[type="radio"]')].map((r) => r.value);
-    expect(services).toEqual(["brave", "tavily", "google_pse", "searxng", "duckduckgo"]);
+    // A search box like the model provider's, not a list: focused, it offers every service; typing narrows it.
+    const box = form.querySelector<HTMLInputElement>('[data-testid="web-search-service"]')!;
+    expect(box.getAttribute("role")).toBe("combobox");
+    expect(box.value).toBe("Brave Search");
+    expect(form.querySelector('input[type="radio"]')).toBeNull();
+    await act(async () => box.focus());
+    const offered = () => [...form.querySelectorAll<HTMLButtonElement>("[data-service]")].map((b) => b.dataset.service);
+    expect(offered()).toEqual(["brave", "tavily", "google_pse", "searxng", "duckduckgo"]);
+    await type(box, "goo");
+    expect(offered()).toEqual(["google_pse"]);
+    await type(box, "nothing like it");
+    expect(form.textContent).toContain("No search service matches.");
+    // Escape closes the list, not the dialog, and puts the chosen service back.
+    await act(async () => box.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    expect(box.value).toBe("Brave Search");
+    expect(box.isConnected).toBe(true);
+    expect(form.querySelector("[data-service]")).toBeNull();
     expect(form.textContent).toContain("Web Search API key");
-    await type(form.querySelector<HTMLInputElement>('input[type="password"]')!, "sk-proj-abc");
+    const key = form.querySelector<HTMLInputElement>('input[type="password"]')!;
+    await type(key, "sk-proj-abc");
     expect(form.textContent).toContain("looks like a model provider's API key");
     // Google needs its engine id; SearXNG its address and no key.
-    await act(async () => form.querySelector<HTMLInputElement>('input[value="google_pse"]')!.click());
+    await pickService(form, "google", "google_pse");
     expect(form.textContent).toContain("Search engine id (cx)");
-    await act(async () => form.querySelector<HTMLInputElement>('input[value="searxng"]')!.click());
+    await pickService(form, "searx", "searxng");
     expect(form.textContent).toContain("SearXNG address");
     expect(form.querySelector('input[type="password"]')).toBeNull();
   });
@@ -181,7 +205,7 @@ describe("the Connections page", () => {
     await act(async () => edit.click());
     const form = host.ownerDocument.querySelector(".connection-form")!;
     expect(form.textContent).toContain("Current: BSA…wxyz");
-    await act(async () => form.querySelector<HTMLInputElement>('input[value="tavily"]')!.click());
+    await pickService(form, "tav", "tavily");
     expect(form.textContent).not.toContain("Current: BSA…wxyz");
     await act(async () => {
       form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));

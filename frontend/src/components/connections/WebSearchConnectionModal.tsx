@@ -1,4 +1,4 @@
-import { type FormEvent, useState } from "react";
+import { type FormEvent, type KeyboardEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 
 import Modal from "../Modal";
 import { searchKeyWarning, WEB_SEARCH_PROVIDERS, webSearchProvider, type WebSearchProviderId } from "../../lib/webSearchProviders";
@@ -50,6 +50,12 @@ export default function WebSearchConnectionModal({ open, title, initial, onClose
   const [err, setErr] = useState("");
   const [test, setTest] = useState<WebSearchTestResult | null>(null);
   const editing = Boolean(initial);
+  // The service is picked like a model provider: a search box whose suggestions narrow as you type.
+  const [serviceQuery, setServiceQuery] = useState<string | null>(null);
+  const [serviceOpen, setServiceOpen] = useState(false);
+  const [activeService, setActiveService] = useState(0);
+  const serviceWrapRef = useRef<HTMLDivElement>(null);
+  const serviceListboxId = useId();
   // A stored key belongs to its service: moved to another one, the connection needs that service's own key.
   const keepsKey = editing && form.provider_type === initial?.provider_type;
 
@@ -66,6 +72,62 @@ export default function WebSearchConnectionModal({ open, title, initial, onClose
       price_per_request_usd: editing ? f.price_per_request_usd : next.suggestedPrice,
       name: !f.name.trim() || WEB_SEARCH_PROVIDERS.some((p) => p.label === f.name) ? next.label : f.name,
     }));
+  }
+
+  const serviceSuggestions = useMemo(() => {
+    const q = (serviceQuery ?? "").trim().toLowerCase();
+    if (!q) return [...WEB_SEARCH_PROVIDERS];
+    return WEB_SEARCH_PROVIDERS.filter(
+      (p) => p.label.toLowerCase().includes(q) || p.id.includes(q) || p.blurb.toLowerCase().includes(q),
+    );
+  }, [serviceQuery]);
+
+  useEffect(() => {
+    if (!serviceOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      if (serviceWrapRef.current && !serviceWrapRef.current.contains(e.target as Node)) closeServices();
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [serviceOpen]);
+
+  /** Closing the list puts the chosen service's name back in the box: only a listed service can be chosen. */
+  function closeServices() {
+    setServiceOpen(false);
+    setServiceQuery(null);
+    setActiveService(0);
+  }
+
+  function pickService(id: WebSearchProviderId) {
+    chooseProvider(id);
+    closeServices();
+  }
+
+  function onServiceKeyDown(e: KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Escape") {
+      if (serviceOpen) {
+        // Escape closes the list first; the dialog closes on the next one.
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      closeServices();
+      return;
+    }
+    if (!serviceOpen) {
+      if (e.key === "ArrowDown") setServiceOpen(true);
+      return;
+    }
+    if (serviceSuggestions.length === 0) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActiveService((i) => (i + 1) % serviceSuggestions.length);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActiveService((i) => (i - 1 + serviceSuggestions.length) % serviceSuggestions.length);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      pickService((serviceSuggestions[activeService] ?? serviceSuggestions[0]).id);
+    }
   }
 
   function problem(): string {
@@ -127,24 +189,64 @@ export default function WebSearchConnectionModal({ open, title, initial, onClose
           A <strong>web search</strong> connection: its key is sent only to the search service, for the chat&apos;s Web
           Search. Model providers (OpenAI, OpenRouter…) are added in the Model providers tab.
         </p>
-        <fieldset className="connection-form__label web-search-providers">
-          <legend>Search service</legend>
-          {WEB_SEARCH_PROVIDERS.map((p) => (
-            <label key={p.id} className="web-search-provider">
-              <input
-                type="radio"
-                name="web-search-provider"
-                value={p.id}
-                checked={form.provider_type === p.id}
-                onChange={() => chooseProvider(p.id)}
-              />
-              <span>
-                <strong>{p.label}</strong>
-                <span className="muted-text"> — {p.blurb}</span>
-              </span>
-            </label>
-          ))}
-        </fieldset>
+        <label className="connection-form__label">
+          Search service
+          <div className="connection-provider-combobox" ref={serviceWrapRef}>
+            <input
+              className="input-block"
+              value={serviceQuery ?? provider.label}
+              onChange={(e) => {
+                setServiceQuery(e.target.value);
+                setServiceOpen(true);
+                setActiveService(0);
+              }}
+              onFocus={(e) => {
+                setServiceOpen(true);
+                e.currentTarget.select();
+              }}
+              onKeyDown={onServiceKeyDown}
+              placeholder="Type or pick a search service (e.g. brave, tavily)"
+              autoComplete="off"
+              aria-autocomplete="list"
+              aria-expanded={serviceOpen}
+              aria-controls={serviceListboxId}
+              role="combobox"
+              data-testid="web-search-service"
+            />
+            {serviceOpen ? (
+              <div className="connection-provider-combobox__panel card" role="listbox" id={serviceListboxId}>
+                {serviceSuggestions.length ? (
+                  <ul className="connection-provider-combobox__list">
+                    {serviceSuggestions.map((p, index) => (
+                      <li key={p.id}>
+                        <button
+                          type="button"
+                          role="option"
+                          aria-selected={p.id === form.provider_type}
+                          data-service={p.id}
+                          className={`connection-provider-combobox__item${
+                            index === activeService ? " connection-provider-combobox__item--active" : ""
+                          }`}
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => pickService(p.id)}
+                        >
+                          <span className="connection-provider-combobox__label">{p.label}</span>
+                          <span className="connection-provider-combobox__meta">
+                            <code>{p.id}</code>
+                            <span className="muted-text">{p.blurb}</span>
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="muted-text connection-provider-combobox__empty">No search service matches.</p>
+                )}
+              </div>
+            ) : null}
+          </div>
+          <span className="muted-text connection-form__hint">{provider.blurb}</span>
+        </label>
         <label className="connection-form__label">
           Name
           <input className="input-block" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} required />

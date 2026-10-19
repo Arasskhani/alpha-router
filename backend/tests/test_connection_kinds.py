@@ -94,3 +94,77 @@ class TestWhereModelsAreChosen:
         resp = await client.get("/api/admin/models", headers=headers)
         assert resp.status_code == 200, resp.text
         assert resp.json() == [] or resp.json().get("items") == []
+
+
+class TestTheAdminApi:
+    async def test_a_search_connection_is_made_and_listed_with_its_fields(self, client, db_session, admin):
+        headers = _sign_in(client, admin)
+        body = {
+            "name": "Google search",
+            "kind": "web_search",
+            "provider_type": "google",
+            "api_key": "AIza-test-key",
+            "config": {"cx": "a1b2c3:xyz", "ignored": "x"},
+            "priority": 5,
+            "price_per_request_usd": 0.005,
+        }
+        resp = await client.post("/api/admin/connections", json=body, headers=headers)
+        assert resp.status_code == 200, resp.text
+        row = await db_session.get(Connection, resp.json()["id"])
+        assert (row.kind, row.sync_enabled, row.priority) == ("web_search", False, 5)
+        assert row.config_json == '{"cx": "a1b2c3:xyz"}'
+        listed = (await client.get("/api/admin/connections", headers=headers)).json()
+        assert listed[0]["kind"] == "web_search"
+        assert listed[0]["config"] == {"cx": "a1b2c3:xyz"}
+        assert listed[0]["price_per_request_usd"] == pytest.approx(0.005)
+        changelog = (await client.get(f"/api/admin/connections/{row.id}/changelog", headers=headers)).json()
+        assert "Kind" in str(changelog)
+
+    @pytest.mark.parametrize(
+        ("body", "message"),
+        [
+            ({"kind": "web_search", "provider_type": "openai", "api_key": "sk-x"}, "web search connection is one of"),
+            ({"kind": "models", "provider_type": "tavily", "api_key": "tvly-x"}, "is a web search service"),
+            ({"kind": "web_search", "provider_type": "brave", "api_key": ""}, "needs its API key"),
+            ({"kind": "web_search", "provider_type": "google", "api_key": "k"}, "search engine id"),
+            ({"kind": "web_search", "provider_type": "searxng"}, "address of your SearXNG"),
+            ({"kind": "web_search", "provider_type": "brave", "api_key": "k", "priority": 0}, "Priority"),
+            ({"kind": "web_search", "provider_type": "brave", "api_key": "k", "price_per_request_usd": -1}, "price"),
+        ],
+    )
+    async def test_a_connection_that_does_not_fit_its_kind_is_refused(self, client, admin, body, message):
+        headers = _sign_in(client, admin)
+        resp = await client.post("/api/admin/connections", json={"name": "x", **body}, headers=headers)
+        assert resp.status_code == 400, resp.text
+        assert message in resp.json()["detail"]
+
+    async def test_duckduckgo_takes_no_key(self, client, admin):
+        headers = _sign_in(client, admin)
+        body = {"name": "DDG", "kind": "web_search", "provider_type": "duckduckgo"}
+        resp = await client.post("/api/admin/connections", json=body, headers=headers)
+        assert resp.status_code == 200, resp.text
+
+    async def test_a_kind_never_changes_and_a_provider_stays_within_it(self, client, db_session, admin):
+        headers = _sign_in(client, admin)
+        search = await _connection(db_session, "Brave", "brave", "web_search")
+        model = await _connection(db_session, "OpenAI", "openai")
+        url = f"/api/admin/connections/{search.id}"
+        assert (await client.patch(url, json={"kind": "models"}, headers=headers)).status_code == 400
+        assert (await client.patch(url, json={"provider_type": "openai"}, headers=headers)).status_code == 400
+        resp = await client.patch(
+            f"/api/admin/connections/{model.id}", json={"provider_type": "brave"}, headers=headers
+        )
+        assert resp.status_code == 400
+        resp = await client.patch(f"/api/admin/connections/{model.id}", json={"priority": 3}, headers=headers)
+        assert resp.status_code == 400
+        resp = await client.patch(url, json={"priority": 7, "price_per_request_usd": 0.01}, headers=headers)
+        assert resp.status_code == 200, resp.text
+        await db_session.refresh(search)
+        assert (search.priority, float(search.price_per_request_usd)) == (7, pytest.approx(0.01))
+        # Switching to Google needs its engine id.
+        resp = await client.patch(url, json={"provider_type": "google"}, headers=headers)
+        assert resp.status_code == 400
+        resp = await client.patch(url, json={"provider_type": "google", "config": {"cx": "abc"}}, headers=headers)
+        assert resp.status_code == 200, resp.text
+        await db_session.refresh(search)
+        assert search.config_json == '{"cx": "abc"}'

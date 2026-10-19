@@ -18,6 +18,10 @@ FIELD_LABELS: dict[str, str] = {
     "base_url": "Base URL",
     "sync_interval_hours": "Sync interval (hours)",
     "is_active": "Active",
+    "kind": "Kind",
+    "priority": "Priority",
+    "price_per_request_usd": "Price per search (USD)",
+    "search_engine_id": "Search engine id",
 }
 
 
@@ -36,13 +40,29 @@ def _serialize_value(field: str, value: Any) -> Any:
 
 
 def connection_snapshot(conn: Connection) -> dict[str, Any]:
-    return {
+    snap: dict[str, Any] = {
         "name": conn.name,
+        "kind": conn.kind or "models",
         "provider_type": conn.provider_type,
         "base_url": conn.base_url or "",
         "sync_interval_hours": conn.sync_interval_hours,
         "is_active": conn.is_active,
     }
+    if conn.kind == "web_search":
+        snap.pop("sync_interval_hours")
+        snap["priority"] = conn.priority
+        snap["price_per_request_usd"] = float(conn.price_per_request_usd or 0)
+        snap["search_engine_id"] = search_engine_id(conn)
+    return snap
+
+
+def search_engine_id(conn: Connection) -> str:
+    """A Google search connection's engine id (cx), or ""; never a secret."""
+    try:
+        config = json.loads(conn.config_json or "{}")
+    except (TypeError, ValueError):
+        return ""
+    return str(config.get("cx") or "") if isinstance(config, dict) else ""
 
 
 async def log_connection_audit(

@@ -3,9 +3,11 @@
 import asyncio
 import csv
 import io
+from dataclasses import dataclass
+import json
 from collections.abc import AsyncIterator
 from datetime import date, datetime, timedelta
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
@@ -45,7 +47,14 @@ from app.models.media import MediaAsset
 from app.models.model_catalog import AIModel, ModelToolCompatibilityEvent
 from app.models.user import User, UserGroup, UserRoleAssignment, user_group_members
 from app.services import activity_rollup_service, activity_service
-from app.services.connection_kinds import CONNECTION_KIND_MODELS, model_connection
+from app.services.connection_kinds import (
+    CONNECTION_KIND_MODELS,
+    CONNECTION_KIND_WEB_SEARCH,
+    kind_mismatch,
+    model_connection,
+    search_config,
+    search_fields,
+)
 from app.services.activity_pdf_service import ActivityPdfError, render_activity_page_pdf
 from app.services.alpha_router_api_key_audit import (
     fetch_api_key_changelog,
@@ -83,6 +92,7 @@ from app.services.connection_audit import (
     log_connection_deleted,
     log_connection_status,
     log_connection_updated,
+    search_engine_id,
     touch_connection_modified,
 )
 from app.services.db_monitor_service import collect_database_monitor
@@ -292,9 +302,15 @@ async def list_rbac_roles(_: User = Depends(require_role_catalog)):
 class ConnectionIn(BaseModel):
     name: str
     provider_type: str
-    api_key: str
+    api_key: str = ""
     base_url: str | None = None
     sync_interval_hours: int = 6
+    #: ``models`` or ``web_search``: fixed once the connection exists.
+    kind: Literal["models", "web_search"] = "models"
+    #: Web search only: provider options that are not a key (Google's ``cx``).
+    config: dict[str, Any] | None = None
+    priority: int = 100
+    price_per_request_usd: float = 0.0
 
 
 #: A stored token typed as a connection's API key. Saved unchanged, it would be
@@ -338,12 +354,35 @@ async def create_connection(
     provider = (body.provider_type or "").strip().lower()
     if not provider:
         raise HTTPException(400, detail="Provider is required")
+    mismatch = kind_mismatch(body.kind, provider)
+    if mismatch:
+        raise HTTPException(400, detail=mismatch)
+    config: dict[str, Any] = {}
+    if body.kind == CONNECTION_KIND_WEB_SEARCH:
+        try:
+            search_fields(
+                provider,
+                api_key=body.api_key,
+                base_url=base_url,
+                priority=body.priority,
+                price_per_request_usd=body.price_per_request_usd,
+            )
+            config = search_config(provider, body.config)
+        except ValueError as exc:
+            raise HTTPException(400, detail=str(exc)) from None
+    searching = body.kind == CONNECTION_KIND_WEB_SEARCH
     conn = Connection(
         name=body.name.strip(),
+        kind=body.kind,
         provider_type=provider,
         api_key_encrypted=_encrypt_typed_api_key(body.api_key),
         base_url=base_url,
         sync_interval_hours=body.sync_interval_hours,
+        # A search connection has no models to sync.
+        sync_enabled=not searching,
+        config_json=json.dumps(config) if config else None,
+        priority=body.priority if searching else 100,
+        price_per_request_usd=body.price_per_request_usd if searching else 0.0,
     )
     db.add(conn)
     await db.flush()
@@ -351,7 +390,7 @@ async def create_connection(
     await db.refresh(conn)
     synced = 0
     sync_error = None
-    if sync_now:
+    if sync_now and not searching:
         try:
             synced = await sync_connection_models(db, conn, body.api_key)
         except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
@@ -380,6 +419,7 @@ async def list_connections(db: AsyncSession = Depends(get_db), _: User = Depends
         {
             "id": c.id,
             "name": c.name,
+            "kind": c.kind or CONNECTION_KIND_MODELS,
             "provider_type": c.provider_type,
             "base_url": c.base_url,
             "is_active": c.is_active,
@@ -390,6 +430,15 @@ async def list_connections(db: AsyncSession = Depends(get_db), _: User = Depends
             "updated_at": c.updated_at.isoformat() if c.updated_at else None,
             "api_key_masked": mask_secret(c.api_key_encrypted),
             "usage_usd": usage_map.get(c.id, 0.0),
+            **(
+                {
+                    "priority": c.priority,
+                    "price_per_request_usd": float(c.price_per_request_usd or 0),
+                    "config": {"cx": search_engine_id(c)} if search_engine_id(c) else {},
+                }
+                if c.kind == CONNECTION_KIND_WEB_SEARCH
+                else {}
+            ),
         }
         for c in rows
     ]
@@ -1934,6 +1983,79 @@ class ConnectionPatch(BaseModel):
     base_url: str | None = None
     sync_interval_hours: int | None = None
     is_active: bool | None = None
+    #: Only to be refused when it differs: a connection's kind never changes.
+    kind: str | None = None
+    config: dict[str, Any] | None = None
+    priority: int | None = None
+    price_per_request_usd: float | None = None
+
+
+@dataclass
+class _SearchPatch:
+    """What a PATCH changes of a web search connection, checked; None fields are left as they are."""
+
+    config_json: str | None
+    config_changed: bool
+    priority: int | None
+    price_per_request_usd: float | None
+
+
+async def _search_connection_patch(conn: Connection, body: ConnectionPatch, kind: str) -> _SearchPatch | None:
+    """Refuse what a connection of ``kind`` cannot become; the search fields a PATCH sets, or None for a model one."""
+    if body.kind is not None and body.kind != kind:
+        raise HTTPException(
+            400, detail="A connection's kind cannot change: add a new connection of the other kind instead."
+        )
+    stored_provider = str(conn.provider_type or "")
+    provider_after = (body.provider_type or stored_provider).strip().lower()
+    mismatch = kind_mismatch(kind, provider_after)
+    if mismatch:
+        raise HTTPException(400, detail=mismatch)
+    if kind != CONNECTION_KIND_WEB_SEARCH:
+        if body.config is not None or body.priority is not None or body.price_per_request_usd is not None:
+            raise HTTPException(400, detail="Priority, price and search options are for web search connections only.")
+        return None
+    stored_base = str(conn.base_url) if conn.base_url else None
+    base_after = await _validated_connection_base_url(body.base_url) if body.base_url is not None else stored_base
+    priority = body.priority if body.priority is not None else int(conn.priority or 100)
+    price = (
+        body.price_per_request_usd if body.price_per_request_usd is not None else float(conn.price_per_request_usd or 0)
+    )
+    config_changed = body.config is not None or provider_after != stored_provider.lower()
+    config_json: str | None = None
+    try:
+        search_fields(
+            provider_after,
+            api_key=body.api_key,
+            base_url=base_after,
+            priority=priority,
+            price_per_request_usd=price,
+            has_stored_key=bool(conn.api_key_encrypted),
+        )
+        if config_changed:
+            stored = json.loads(str(conn.config_json or "{}")) if body.config is None else body.config
+            config = search_config(provider_after, stored if isinstance(stored, dict) else {})
+            config_json = json.dumps(config) if config else None
+    except ValueError as exc:
+        raise HTTPException(400, detail=str(exc)) from None
+    return _SearchPatch(
+        config_json=config_json,
+        config_changed=config_changed,
+        priority=body.priority,
+        price_per_request_usd=body.price_per_request_usd,
+    )
+
+
+def _apply_search_patch(conn: Connection, search: _SearchPatch, patches: dict[str, object]) -> None:
+    if search.config_changed:
+        conn.config_json = search.config_json  # type: ignore[assignment]
+        patches["search_engine_id"] = search_engine_id(conn)
+    if search.priority is not None:
+        conn.priority = search.priority  # type: ignore[assignment]
+        patches["priority"] = search.priority
+    if search.price_per_request_usd is not None:
+        conn.price_per_request_usd = search.price_per_request_usd  # type: ignore[assignment]
+        patches["price_per_request_usd"] = float(search.price_per_request_usd)
 
 
 @router.patch("/connections/{conn_id}")
@@ -1948,6 +2070,8 @@ async def update_connection(
         raise HTTPException(404)
     # Checked before anything changes, so a refused key leaves the row as it was.
     new_api_key = _encrypt_typed_api_key(body.api_key) if body.api_key else None
+    kind = str(conn.kind or CONNECTION_KIND_MODELS)
+    search = await _search_connection_patch(conn, body, kind)
     before = connection_snapshot(conn)
     patches: dict[str, object] = {}
     if body.name is not None:
@@ -1964,9 +2088,11 @@ async def update_connection(
     if body.base_url is not None:
         conn.base_url = await _validated_connection_base_url(body.base_url)
         patches["base_url"] = conn.base_url or ""
-    if body.sync_interval_hours is not None:
+    if body.sync_interval_hours is not None and kind == CONNECTION_KIND_MODELS:
         conn.sync_interval_hours = body.sync_interval_hours
         patches["sync_interval_hours"] = conn.sync_interval_hours
+    if search is not None:
+        _apply_search_patch(conn, search, patches)
     if body.is_active is not None and conn.is_active != body.is_active:
         conn.is_active = body.is_active
         patches["is_active"] = conn.is_active

@@ -278,6 +278,7 @@ class TestTheStreamedCalls:
     def test_an_id_is_made_up_when_the_provider_sends_none(self):
         attempt = ProviderAttempt.__new__(ProviderAttempt)
         attempt._tool_calls = {}
+        attempt._slot_by_index = {}
         attempt.tool_call_chars = 0
         attempt._record_tool_calls(_call(0, name="web_search", arguments='{"query":"x"}'))
         attempt._record_tool_calls(_call(1, call_id="real", name="web_fetch"))
@@ -285,6 +286,31 @@ class TestTheStreamedCalls:
             {"id": "call_0", "name": "web_search", "arguments": '{"query":"x"}'},
             {"id": "real", "name": "web_fetch", "arguments": ""},
         ]
+
+    def test_parallel_calls_sent_at_one_index_stay_apart(self):
+        attempt = ProviderAttempt.__new__(ProviderAttempt)
+        attempt._tool_calls = {}
+        attempt._slot_by_index = {}
+        attempt.tool_call_chars = 0
+        for chunk in (
+            _call(0, call_id="a", name="web_search"),
+            _call(0, arguments='{"query":"one"}'),
+            _call(0, call_id="b", name="web_search"),
+            _call(0, arguments='{"query":"two"}'),
+        ):
+            attempt._record_tool_calls(chunk)
+        assert attempt.tool_calls() == [
+            {"id": "a", "name": "web_search", "arguments": '{"query":"one"}'},
+            {"id": "b", "name": "web_search", "arguments": '{"query":"two"}'},
+        ]
+
+    def test_made_up_ids_differ_from_round_to_round(self):
+        attempt = ProviderAttempt.__new__(ProviderAttempt)
+        attempt._tool_calls = {}
+        attempt._slot_by_index = {}
+        attempt.tool_call_chars = 0
+        attempt._record_tool_calls(_call(0, name="web_search", arguments="{}"))
+        assert attempt.tool_calls(fallback_prefix="call_r2")[0]["id"] == "call_r2_0"
 
 
 class TestThePromptsOrder:

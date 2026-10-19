@@ -132,8 +132,10 @@ class ProviderAttempt:
         self.cached_tokens = 0
         self.content = ""
         self.last_chunk_at: float | None = None
-        #: The model's tool calls as they stream in, by index: name and arguments so far.
+        #: The model's tool calls as they stream in, in the order they began: name and arguments so far.
         self._tool_calls: dict[int, dict[str, str]] = {}
+        #: Which of them each streamed index is filling now.
+        self._slot_by_index: dict[int, int] = {}
         #: Characters of tool-call names and arguments received, for the running budget check.
         self.tool_call_chars = 0
 
@@ -170,11 +172,17 @@ class ProviderAttempt:
             return
         for position, delta in enumerate(deltas or ()):
             index = _field(delta, "index")
-            call = self._tool_calls.setdefault(
-                index if isinstance(index, int) else position, {"name": "", "arguments": "", "id": ""}
-            )
+            index = index if isinstance(index, int) else position
             call_id = _field(delta, "id")
-            if isinstance(call_id, str) and call_id and not call.get("id"):
+            call_id = call_id if isinstance(call_id, str) else ""
+            slot = self._slot_by_index.get(index)
+            # A new id on an index already in use is a new call: some servers send every parallel call at index 0.
+            if slot is None or (call_id and self._tool_calls[slot]["id"] and self._tool_calls[slot]["id"] != call_id):
+                slot = len(self._tool_calls)
+                self._slot_by_index[index] = slot
+                self._tool_calls[slot] = {"name": "", "arguments": "", "id": ""}
+            call = self._tool_calls[slot]
+            if call_id and not call["id"]:
                 call["id"] = call_id
             function = _field(delta, "function")
             name = _field(function, "name")
@@ -191,10 +199,14 @@ class ProviderAttempt:
         """Whether the model answered with tool calls (an answer without words, and not an empty one)."""
         return any(call["name"] or call["arguments"] for call in self._tool_calls.values())
 
-    def tool_calls(self) -> list[dict[str, str]]:
-        """The model's tool calls in order: ``{"id", "name", "arguments"}`` (an id made up when it sent none)."""
+    def tool_calls(self, fallback_prefix: str = "call") -> list[dict[str, str]]:
+        """The model's tool calls in order: ``{"id", "name", "arguments"}``.
+
+        A call the provider sent without an id is given ``{fallback_prefix}_{n}``: a caller that asks again with
+        the calls of several rounds passes a prefix per round, as a provider refuses two calls with one id.
+        """
         return [
-            {"id": call.get("id") or f"call_{index}", "name": call["name"], "arguments": call["arguments"]}
+            {"id": call.get("id") or f"{fallback_prefix}_{index}", "name": call["name"], "arguments": call["arguments"]}
             for index, call in sorted(self._tool_calls.items())
             if call["name"] or call["arguments"]
         ]

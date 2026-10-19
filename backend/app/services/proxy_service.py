@@ -1195,7 +1195,11 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
                 # Tool calls count only when tools were offered: asked without them (the web tools' last round), a
                 # model that calls one anyway is not run again, so the rounds always end.
                 offered_tools = bool(completion_kwargs.get("tools"))
-                round_calls = attempt.tool_calls() if web_tools is not None and offered_tools else []
+                round_calls = (
+                    attempt.tool_calls(fallback_prefix=f"call_r{web_tools.rounds + 1}")
+                    if web_tools is not None and offered_tools
+                    else []
+                )
                 # A reply of tool calls alone (the browser extension's agent) has no
                 # words and is not empty.
                 empty_completion = not iteration_content.strip() and not (attempt.has_tool_calls and offered_tools)

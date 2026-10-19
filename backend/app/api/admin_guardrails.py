@@ -262,13 +262,17 @@ def _hits_since() -> datetime.datetime:
 async def _pattern_hits(db: AsyncSession) -> dict[str, int]:
     """Finds per pattern ref over the last 7 days, from the events' findings."""
     out: dict[str, int] = {}
-    rows = (
-        await db.execute(select(GuardrailEvent.findings_json).where(GuardrailEvent.created_at >= _hits_since()))
-    ).scalars()
-    for value in rows:
+    # Events with the same findings are counted together by the database: far fewer rows than events.
+    rows = await db.execute(
+        select(GuardrailEvent.findings_json, func.count())
+        .where(GuardrailEvent.created_at >= _hits_since())
+        .group_by(GuardrailEvent.findings_json)
+    )
+    for value, times in rows.all():
         for finding in json_list(value):
             if isinstance(finding, dict) and finding.get("ref"):
-                out[str(finding["ref"])] = out.get(str(finding["ref"]), 0) + int(finding.get("count") or 0)
+                ref = str(finding["ref"])
+                out[ref] = out.get(ref, 0) + int(finding.get("count") or 0) * int(times)
     return out
 
 
@@ -1145,14 +1149,17 @@ async def overview(db: AsyncSession = Depends(get_db), _: User = Depends(require
     for i in range(30):
         day = (since30 + datetime.timedelta(days=i)).date().isoformat()
         days[day] = {"block": 0, "redact": 0, "route": 0, "monitor": 0}
-    for created_at, action in (
+    day_of = func.date(GuardrailEvent.created_at)
+    for day_value, action, count in (
         await db.execute(
-            select(GuardrailEvent.created_at, GuardrailEvent.action).where(GuardrailEvent.created_at >= since30)
+            select(day_of, GuardrailEvent.action, func.count())
+            .where(GuardrailEvent.created_at >= since30)
+            .group_by(day_of, GuardrailEvent.action)
         )
     ).all():
-        day = created_at.date().isoformat()
+        day = day_value.isoformat() if hasattr(day_value, "isoformat") else str(day_value)[:10]
         if day in days and action in days[day]:
-            days[day][str(action)] += 1
+            days[day][str(action)] += int(count)
     return {
         "rules": modes,
         "totals_7d": totals,

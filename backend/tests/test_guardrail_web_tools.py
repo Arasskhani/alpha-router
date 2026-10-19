@@ -177,3 +177,33 @@ class TestOnlyWhatIsTried:
         async with session_factory() as db:
             rows = (await db.execute(select(GuardrailEvent))).scalars().all()
         assert [(r.action, r.destination) for r in rows] == [("monitor", "Web search · Our SearXNG")]
+
+
+class TestARedirect:
+    async def test_an_address_a_page_redirects_to_is_checked_too(self, db_session, monkeypatch, user):
+        pattern = GuardrailPattern(
+            name="Intranet",
+            kind="domains",
+            entries_json=json.dumps(["intranet.example"]),
+            case_sensitive=False,
+            normalize=True,
+            context_window=50,
+            redact_label="HOST",
+            version=1,
+        )
+        db_session.add(pattern)
+        await db_session.flush()
+        await add_rule(
+            db_session,
+            patterns_json=json.dumps([f"custom:{pattern.id}"]),
+            channels_json=json.dumps(["web_fetch"]),
+            user_message="Intranet pages are not read for AI models.",
+        )
+
+        async def fetch_page(url, *, max_bytes, check_redirect=None):
+            await check_redirect("https://wiki.intranet.example/hr")
+            raise AssertionError("the redirect must be stopped")
+
+        monkeypatch.setattr(chat_tools_service, "fetch_page", fetch_page)
+        with pytest.raises(GuardrailBlocked, match="Intranet pages are not read"):
+            await chat_tools_service.fetch_url_text("https://short.example/x", user_id=user.id, reserve_budget=False)

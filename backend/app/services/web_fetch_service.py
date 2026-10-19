@@ -24,6 +24,7 @@ import re
 from collections import Counter
 from dataclasses import dataclass
 from html.parser import HTMLParser
+from collections.abc import Awaitable, Callable
 from typing import Any
 from urllib.parse import urlparse
 
@@ -271,7 +272,9 @@ async def page_from_bytes(url: str, raw: bytes, content_type: str, *, truncated:
     return FetchedPage(url=url, title="", text=text.strip(), truncated=truncated)
 
 
-async def fetch_page(url: str, *, max_bytes: int) -> FetchedPage:
+async def fetch_page(
+    url: str, *, max_bytes: int, check_redirect: Callable[[str], Awaitable[None]] | None = None
+) -> FetchedPage:
     """Read one link through the SSRF-guarded client; raises on a refused or failed fetch."""
     from app.branding import OUTBOUND_USER_AGENT
     from app.services.bounded_io import bounded_get_bytes_truncating
@@ -286,7 +289,9 @@ async def fetch_page(url: str, *, max_bytes: int) -> FetchedPage:
             "Accept": "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5",
         }
     ) as client:
-        raw, content_type, truncated = await bounded_get_bytes_truncating(client, url, max_bytes=max_bytes)
+        raw, content_type, truncated = await bounded_get_bytes_truncating(
+            client, url, max_bytes=max_bytes, check_redirect=check_redirect
+        )
     return await page_from_bytes(url, raw, content_type, truncated=truncated)
 
 

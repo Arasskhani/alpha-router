@@ -161,6 +161,11 @@ async def fetch_url_text(
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         raise ValueError("Invalid URL")
     await _guard_fetch(url, user_id=user_id, alpha_router_api_key_id=alpha_router_api_key_id, username=username)
+
+    async def guard_redirect(target: str) -> None:
+        # A page that sends the reader elsewhere is checked again there: the rules hold for every address read.
+        await _guard_fetch(target, user_id=user_id, alpha_router_api_key_id=alpha_router_api_key_id, username=username)
+
     metered = (
         await start_metered_usage(
             user_id=user_id,
@@ -178,7 +183,7 @@ async def fetch_url_text(
     )
     try:
         byte_limit = clamp_limit(get_settings().max_web_fetch_bytes, minimum=256 * 1024, maximum=5 * 1024 * 1024)
-        page = await fetch_page(url, max_bytes=byte_limit)
+        page = await fetch_page(url, max_bytes=byte_limit, check_redirect=guard_redirect)
     except BaseException as exc:
         if metered is not None:
             await finish_metered_usage(

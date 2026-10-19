@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+from collections.abc import Awaitable, Callable
 from urllib.parse import urljoin
 
 import httpx
@@ -177,8 +178,11 @@ async def bounded_get_bytes_truncating(
     url: str,
     *,
     max_bytes: int,
+    check_redirect: Callable[[str], Awaitable[None]] | None = None,
 ) -> tuple[bytes, str, bool]:
     """GET ``url`` (redirects checked hop by hop, as ``bounded_get_bytes``), reading at most ``max_bytes``.
+
+    ``check_redirect`` is awaited with each address a redirect leads to, before it is asked: it raises to stop.
 
     For reading a web page: a page larger than the limit is cut there rather
     than refused. Returns the bytes read, the full ``Content-Type`` header
@@ -199,6 +203,8 @@ async def bounded_get_bytes_truncating(
                 if hop >= 4:
                     raise BoundedIOError("Remote response exceeded the redirect limit")
                 current_url = urljoin(current_url, location)
+                if check_redirect is not None:
+                    await check_redirect(current_url)
                 continue
             response.raise_for_status()
             output = bytearray()

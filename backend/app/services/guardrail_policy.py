@@ -21,6 +21,7 @@ still leaves its record.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import re
@@ -202,6 +203,10 @@ class CompiledRule:
     broken: list[str] = field(default_factory=list)
 
     def applies_to(self, subject: ResourceAccessSubject) -> bool:
+        # A request is checked whoever sends it: a key whose owner was deactivated still works, so an
+        # inactive subject is matched like an active one rather than escaping every rule.
+        if not subject.active:
+            subject = dataclasses.replace(subject, active=True)
         return evaluate_access(access_type=self.access_type, assignments=self.grants, subject=subject)
 
 
@@ -321,7 +326,8 @@ class Segment:
     offset: int = 0
 
 
-_ATTACHMENT_NOTE = re.compile(r"\n\n--- [^\n]{1,300} ---\n")
+#: Where the first attached file begins: after the typed text, or at the start when nothing was typed.
+_ATTACHMENT_NOTE = re.compile(r"(?:^|\n\n)--- [^\n]{1,300} ---\n")
 
 
 def _text_parts(content: Any) -> list[tuple[int | None, str]]:
@@ -624,9 +630,22 @@ class EventContext:
     source: str | None = None
 
 
-def events_for(verdict: Verdict, destination: Destination, ctx: EventContext) -> list[GuardrailEvent]:
+def events_for(
+    verdict: Verdict, destination: Destination, ctx: EventContext, *, new_from: int | None = None
+) -> list[GuardrailEvent]:
+    """The events for a verdict.
+
+    ``new_from``: the index of the first message new in this request. A find
+    only in the conversation sent again is not recorded again - unless its rule
+    blocked or routed the request, which is always recorded.
+    """
     rows: list[GuardrailEvent] = []
     for hit, kind in [(h, "monitor") for h in verdict.monitored] + [(h, "enforce") for h in verdict.enforced]:
+        if new_from is not None and not (kind == "enforce" and hit is verdict.deciding):
+            fresh = [(seg, m) for seg, m in hit.matches if seg.message is None or seg.message >= new_from]
+            if not fresh:
+                continue
+            hit = RuleHit(rule=hit.rule, channel=hit.channel, matches=fresh, action=hit.action)
         action = hit.action
         if kind == "enforce" and not verdict.applied(hit):
             # Outranked by a stricter rule: recorded as what it would have done.
@@ -704,6 +723,7 @@ async def inspect(
     ignore_route_to: int | None = None,
     route_as_block: bool = False,
     session_factory: Any = None,
+    new_from: int | None = None,
 ) -> Verdict:
     """Apply the rules to what is about to leave, record what they did, and say what they decided.
 
@@ -740,7 +760,7 @@ async def inspect(
         if settings.fail_closed:
             raise GuardrailEngineError("Guardrails could not check this request, so it was not sent.") from exc
         return Verdict()
-    await write_events(events_for(verdict, destination, ctx), session_factory)
+    await write_events(events_for(verdict, destination, ctx, new_from=new_from), session_factory)
     return verdict
 
 

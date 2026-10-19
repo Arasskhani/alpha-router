@@ -139,6 +139,10 @@ class TestWhereARuleLooks:
         attached = chat(f"summarise this\n\n--- list.csv ---\n{CARD}")
         verdict = await check(db_session, session_factory, attached, user=user)
         assert verdict.action == "redact" and verdict.to_mask[0][0].channel == "attachments"
+        # A file sent with nothing typed starts the text.
+        only_file = chat(f"--- list.csv ---\n{CARD}")
+        verdict = await check(db_session, session_factory, only_file, user=user)
+        assert verdict.action == "redact" and verdict.to_mask[0][0].channel == "attachments"
 
     async def test_a_rule_watches_only_the_destinations_it_names(self, db_session, session_factory, user):
         await rule(db_session, destinations=["public"])
@@ -191,9 +195,39 @@ class TestWhoARuleAppliesTo:
         assert (await check(db_session, session_factory, chat(CARD), user=user)).action is None
         assert (await check(db_session, session_factory, chat(CARD), user=admin)).action == "redact"
 
+    async def test_a_deactivated_owner_does_not_take_a_key_out_of_the_rules(self, db_session, session_factory, user):
+        await rule(db_session, action="block")
+        user.is_active = False
+        await db_session.commit()
+        assert (await check(db_session, session_factory, chat(CARD), user=user)).blocked
+
     async def test_no_implicit_exception_for_a_super_admin(self, db_session, session_factory, admin):
         await rule(db_session, action="block")
         assert (await check(db_session, session_factory, chat(CARD), user=admin)).blocked
+
+
+class TestWhatIsRecorded:
+    async def test_a_find_sent_again_with_the_conversation_is_not_recorded_again(
+        self, db_session, session_factory, user
+    ):
+        await rule(db_session)
+        messages = [
+            {"role": "user", "content": f"card {CARD}"},
+            {"role": "assistant", "content": "ok"},
+            {"role": "user", "content": "thanks"},
+        ]
+        segments = message_segments(messages, channel="chat")
+        verdict = await check(db_session, session_factory, segments, user=user, new_from=2)
+        assert verdict.action == "redact"  # the old message is still masked
+        assert await events(session_factory) == []
+        await check(db_session, session_factory, segments, user=user, new_from=0)
+        assert [e.action for e in await events(session_factory)] == ["redact"]
+
+    async def test_a_block_is_recorded_wherever_its_find_is(self, db_session, session_factory, user):
+        await rule(db_session, action="block")
+        messages = [{"role": "user", "content": CARD}, {"role": "user", "content": "again"}]
+        await check(db_session, session_factory, message_segments(messages, channel="chat"), user=user, new_from=1)
+        assert [e.action for e in await events(session_factory)] == ["block"]
 
 
 class TestWhenTheTextCannotBeChecked:

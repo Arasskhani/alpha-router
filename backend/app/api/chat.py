@@ -92,7 +92,7 @@ from app.services.chat_markers import (
 from app.services.chat_session_access import resolve_owned_chat_session
 from app.services.chat_title_service import generate_chat_title
 from app.services.chat_tool_access_service import assert_tool_for_user, permitted_tool_keys
-from app.services.guardrail_turn import VIA_EXTENSION_BODY_KEY
+from app.services.guardrail_turn import MODEL_PINNED_BODY_KEY, VIA_EXTENSION_BODY_KEY
 from app.services.chat_tool_registry import CHAT_TOOLS
 from app.services.chat_turn_context import earlier_page_answers
 from app.services.chat_xlsx_service import ChatExportError as XlsxExportError
@@ -570,6 +570,7 @@ async def _browser_agent_tools(
     check_agent_images(body.messages, full_control=settings.full_control and CONTROL_TOOL in permitted, vision=vision)
     if model is not None:
         payload["model"] = f"model::{model.id}"
+        payload[MODEL_PINNED_BODY_KEY] = True
     payload[BROWSER_TOOLS_BODY_KEY] = [tool.model_dump() for tool in body.browser_tools]
     if body.browser_tool_choice is not None:
         payload[BROWSER_TOOL_CHOICE_BODY_KEY] = body.browser_tool_choice
@@ -623,6 +624,7 @@ async def _declared_page_shares(
         raise HTTPException(status_code=exc.status, detail=exc.detail()) from None
     if model is not None:
         payload["model"] = f"model::{model.id}"
+        payload[MODEL_PINNED_BODY_KEY] = True
     return shares
 
 
@@ -657,6 +659,7 @@ async def _page_chat_model(db: AsyncSession, body: ChatRequest, payload: dict) -
         raise HTTPException(status_code=exc.status, detail=exc.detail()) from None
     if model is not None:
         payload["model"] = f"model::{model.id}"
+        payload[MODEL_PINNED_BODY_KEY] = True
 
 
 class ChatTitleIn(BaseModel):

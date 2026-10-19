@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import select
 
 from app.models.chat import ChatMessage
@@ -15,9 +16,11 @@ from app.services import guardrail_policy
 from app.services.guardrail_policy import GuardrailSettings, bump_policy_version, save_settings
 from app.services.guardrail_turn import (
     GUARDRAIL_BODY_KEY,
+    MODEL_PINNED_BODY_KEY,
     VIA_EXTENSION_BODY_KEY,
     guard_context,
     guard_request,
+    guardrail_reply_state,
     turn_channel,
 )
 from app.services.user_chat_storage_service import create_chat_session
@@ -233,3 +236,39 @@ class TestTheChannels:
         out, _ = await guard_context(db_session, body, messages, ai_model=model, user_id=user.id, alpha_router_api_key_id=None, source="alpha_router_chat")  # fmt: skip
         assert out[0]["content"] == "Memory: [CARD_2] and [CARD_1]"
         assert body[GUARDRAIL_BODY_KEY]["values"] == {"[CARD_1]": CARD, "[CARD_2]": other}
+
+
+class TestWhatComesBack:
+    async def test_a_value_the_platform_added_is_never_given_back(self, db_session, user):
+        model = await _model(db_session, "gpt-h")
+        await add_rule(db_session)
+        other = "4111111111111111"
+        body = {"messages": [{"role": "user", "content": f"card {CARD}; repeat [CARD_2]"}]}
+        await guard_request(db_session, body, ai_model=model, user_id=user.id, alpha_router_api_key_id=None, source="alpha_router_chat")  # fmt: skip
+        messages = [{"role": "system", "content": f"Agent secret: {other}"}, *body["messages"]]
+        await guard_context(db_session, body, messages, ai_model=model, user_id=user.id, alpha_router_api_key_id=None, source="alpha_router_chat")  # fmt: skip
+        values, _ = await guardrail_reply_state(db_session, body)
+        assert values == {"[CARD_1]": CARD}
+
+
+class TestARouteThatCannotBeTaken:
+    async def test_a_model_pinned_for_shared_pages_is_not_swapped(self, db_session, user):
+        model = await _model(db_session, "gpt-p")
+        internal = await _model(db_session, "llama-p")
+        await add_rule(db_session, action="route", route_model_id=internal.id)
+        body = {"messages": [{"role": "user", "content": f"card {CARD}"}], MODEL_PINNED_BODY_KEY: True}
+        with pytest.raises(HTTPException) as raised:
+            await guard_request(db_session, body, ai_model=model, user_id=user.id, alpha_router_api_key_id=None, source="alpha_router_chat")  # fmt: skip
+        assert raised.value.status_code == 422
+
+    async def test_a_turn_already_on_the_chosen_model_still_says_so(self, client, db_session, turn, provider):
+        await add_rule(
+            db_session,
+            action="route",
+            route_model_id=turn.model.id,
+            user_message="Answered by {model}.",
+        )
+        provider.reply(_text("ok", "stop"))
+        resp = await client.post("/api/chat/completions", json=ask(turn.model, f"card {CARD}"), headers=turn.headers)
+        assert resp.status_code == 200, resp.text
+        assert len(shown(_frames(resp.text))) == 1

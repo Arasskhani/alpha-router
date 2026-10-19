@@ -44,6 +44,9 @@ from app.services.guardrail_policy import (
 GUARDRAIL_BODY_KEY = "_guardrail"
 #: Server-owned body key set by the web chat for a turn from the browser extension.
 VIA_EXTENSION_BODY_KEY = "_via_extension"
+#: Server-owned body key set by the web chat when the turn's model was checked and pinned for shared page
+#: content: a rule that would route such a turn elsewhere blocks it instead.
+MODEL_PINNED_BODY_KEY = "_model_pinned"
 BLOCKED_CODE = "guardrail_blocked"
 UNAVAILABLE_CODE = "guardrail_unavailable"
 
@@ -91,11 +94,21 @@ async def _rules_watch(db: AsyncSession) -> bool:
 def turn_state(body: dict[str, Any]) -> dict[str, Any]:
     state = body.get(GUARDRAIL_BODY_KEY)
     if not isinstance(state, dict):
-        state = {"values": {}, "notices": []}
+        state = {"values": {}, "notices": [], "hidden": []}
         body[GUARDRAIL_BODY_KEY] = state
     state.setdefault("values", {})
     state.setdefault("notices", [])
+    #: Placeholders for values the platform added (an Agent's prompt, memory): never given back in a reply.
+    state.setdefault("hidden", [])
     return state
+
+
+def _new_from(messages: list[dict[str, Any]]) -> int:
+    """The first message new in this request: the last one the person wrote (the rest was sent before)."""
+    for index in range(len(messages) - 1, -1, -1):
+        if messages[index].get("role") == "user":
+            return index
+    return max(len(messages) - 1, 0)
 
 
 def masker_for(state: dict[str, Any]) -> Masker:
@@ -146,8 +159,10 @@ async def guard_request(
             destination=destination,
             ctx=ctx,
             ignore_route_to=routed_from,
-            # An Agent's model is its own: a rule that would route its turn stops it instead.
-            route_as_block=agent_turn or routed_from is not None,
+            # An Agent's model is its own, and a model pinned for shared page content stays: a rule that
+            # would route such a turn stops it instead.
+            route_as_block=agent_turn or routed_from is not None or bool(body.get(MODEL_PINNED_BODY_KEY)),
+            new_from=_new_from(messages),
         )
     except GuardrailEngineError as exc:
         raise _unavailable(exc) from exc
@@ -220,8 +235,11 @@ async def guard_context(
     state = turn_state(body)
     if verdict.to_mask:
         masker = masker_for(state)
+        before = set(masker.values)
         messages = mask_messages(messages, verdict.to_mask, masker)
         state["values"] = dict(masker.values)
+        # A value first seen here was not the person's to see: the model may be asked to repeat it.
+        state["hidden"] = sorted(set(state["hidden"]) | (set(masker.values) - before))
     for notice in verdict.notices():
         if notice not in state["notices"]:
             state["notices"].append(notice)
@@ -233,7 +251,8 @@ async def guardrail_reply_state(db: AsyncSession, body: dict[str, Any]) -> tuple
     state = body.get(GUARDRAIL_BODY_KEY)
     if not isinstance(state, dict):
         return {}, []
-    values = {str(k): str(v) for k, v in (state.get("values") or {}).items()}
+    hidden = {str(t) for t in state.get("hidden") or []}
+    values = {str(k): str(v) for k, v in (state.get("values") or {}).items() if str(k) not in hidden}
     notices = [str(n) for n in state.get("notices") or []]
     if values:
         from app.services.guardrail_policy import load_settings

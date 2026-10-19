@@ -23,6 +23,7 @@ import type { AgentCitation } from "./agentChat";
 import { readSharedPages, type SharedPages } from "./sharedPages";
 import { readContextFit, type ContextFit } from "./contextFit";
 import { readRecalledChats, type RecalledChat } from "./recalledChats";
+import { readGuardrailNotices } from "./guardrailNotices";
 import { readWebSources, type WebSource } from "./webSources";
 import {
   anyChatToolEnabled,
@@ -138,6 +139,8 @@ export type ChatMessage = {
   recalledChats?: RecalledChat[];
   /** Server-owned: the pages the web tools searched up or read for this answer. */
   webSources?: WebSource[];
+  /** Server-owned: what the administrator's Guardrails did to this turn (masked, routed), said plainly. */
+  guardrailNotices?: string[];
   feedback?: {
     rating: -1 | 1;
     reason?: string | null;
@@ -794,6 +797,7 @@ function mapApiMessage(raw: Record<string, unknown>): ChatMessage {
     contextFit: readContextFit(raw.contextFit),
     recalledChats: readRecalledChats(raw.recalledChats),
     webSources: readWebSources(raw.webSources),
+    guardrailNotices: readGuardrailNotices(raw.guardrailNotices),
     feedback:
       raw.feedback &&
       typeof raw.feedback === "object" &&

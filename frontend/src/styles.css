@@ -20156,3 +20156,7 @@ p.error,
   font-size: 0.75rem;
   color: var(--muted);
 }
+
+.alpha-router-msg-guardrail__line {
+  display: block;
+}

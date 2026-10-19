@@ -51,6 +51,7 @@ describe("what fitting left out of an answer, the chats it read from and its web
           contextFit: { dropped: 30, summarized: 20 },
           recalledChats: [{ id: "s-9", title: "Workout" }],
           webSources: [{ title: "Squats", url: "https://a.example/squats" }],
+          guardrailNotices: ["Card numbers were masked before sending."],
         },
         { role: "assistant", content: "message 3", sequence: 3, clientMessageId: "m3", contextFit: { dropped: "x" } },
       ],
@@ -61,7 +62,9 @@ describe("what fitting left out of an answer, the chats it read from and its web
     expect(messages[1].contextFit).toEqual({ dropped: 30, summarized: 20 });
     expect(messages[1].recalledChats).toEqual([{ id: "s-9", title: "Workout" }]);
     expect(messages[1].webSources).toEqual([{ title: "Squats", url: "https://a.example/squats" }]);
+    expect(messages[1].guardrailNotices).toEqual(["Card numbers were masked before sending."]);
     expect(messages[2].webSources).toBeUndefined();
+    expect(messages[2].guardrailNotices).toBeUndefined();
     expect(messages[2].contextFit).toBeUndefined();
   });
 });

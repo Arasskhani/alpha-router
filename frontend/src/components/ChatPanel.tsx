@@ -324,6 +324,8 @@ import { contextFitLabel, contextFitNote, readContextFit, type ContextFit } from
 import { readRecalledChats, recalledChatsLabel, type RecalledChat } from "../lib/recalledChats";
 import { readWebSources, webActivityLabel, type WebSource } from "../lib/webSources";
 import WebSourceList from "./chat/WebSourceList";
+import GuardrailNotices from "./chat/GuardrailNotices";
+import { readGuardrailNotices } from "../lib/guardrailNotices";
 import {
   shortModelName,
   readAudioMessage,
@@ -3815,6 +3817,7 @@ export default function ChatPanel({
     contextFit?: ContextFit;
     recalledChats?: RecalledChat[];
     webSources?: WebSource[];
+    guardrailNotices?: string[];
   }> {
     const res = await authFetch("/api/chat/completions", {
       method: "POST",
@@ -3848,6 +3851,7 @@ export default function ChatPanel({
     let contextFit: ContextFit | undefined;
     let recalledChats: RecalledChat[] | undefined;
     let webSources: WebSource[] | undefined;
+    let guardrailNotices: string[] | undefined;
 
     // readSseEvents also delivers a trailing `data:` line without a newline
     // and cancels the reader if this loop exits early (error / Stop).
@@ -3873,6 +3877,7 @@ export default function ChatPanel({
         contextFit = readContextFit(json?.alpha_router?.context_fit) ?? contextFit;
         recalledChats = readRecalledChats(json?.alpha_router?.recalled_chats) ?? recalledChats;
         webSources = readWebSources(json?.alpha_router?.web_sources) ?? webSources;
+        guardrailNotices = readGuardrailNotices(json?.alpha_router?.guardrail?.notices) ?? guardrailNotices;
         const activity = webActivityLabel(json?.alpha_router?.web_activity);
         if (activity) onWebActivity?.(activity);
         const nextAgentMetadata = agentCompletionMetadataFromSse(
@@ -3901,6 +3906,7 @@ export default function ChatPanel({
       ...(contextFit ? { contextFit } : {}),
       ...(recalledChats ? { recalledChats } : {}),
       ...(webSources ? { webSources } : {}),
+      ...(guardrailNotices ? { guardrailNotices } : {}),
     };
   }
 
@@ -4366,6 +4372,7 @@ export default function ChatPanel({
       contextFit?: ContextFit,
       recalledChats?: RecalledChat[],
       webSources?: WebSource[],
+      guardrailNotices?: string[],
     ) => {
       const current = getSessionMessages(sid);
       const idx = current.findIndex((m) => m.clientMessageId === assistantClientMessageId);
@@ -4381,6 +4388,7 @@ export default function ChatPanel({
         ...(contextFit ? { contextFit } : {}),
         ...(recalledChats ? { recalledChats } : {}),
         ...(webSources ? { webSources } : {}),
+        ...(guardrailNotices ? { guardrailNotices } : {}),
       };
       if (idx >= 0) {
         const next = [...current];
@@ -4424,6 +4432,7 @@ export default function ChatPanel({
       streamed.contextFit,
       streamed.recalledChats,
       streamed.webSources,
+      streamed.guardrailNotices,
     );
     applyMessages(sid, finalMsgs);
     applyAgentMetadataToSession(sid, streamed.agentMetadata);
@@ -6987,6 +6996,7 @@ export default function ChatPanel({
                 })()}
               </div>
               {m.role === "assistant" && m.webSources ? <WebSourceList sources={m.webSources} /> : null}
+              {m.role === "assistant" && m.guardrailNotices ? <GuardrailNotices notices={m.guardrailNotices} /> : null}
               {m.role === "assistant" ? (
                 <AgentCitationList
                   runId={m.agentRunId}

@@ -2074,6 +2074,7 @@ async def update_connection(
     kind = str(conn.kind or CONNECTION_KIND_MODELS)
     search = await _search_connection_patch(conn, body, kind)
     before = connection_snapshot(conn)
+    endpoint_before = (conn.provider_type, conn.base_url)
     patches: dict[str, object] = {}
     if body.name is not None:
         conn.name = body.name.strip()
@@ -2105,6 +2106,11 @@ async def update_connection(
                 (await db.execute(select(AIModel.id).where(AIModel.connection_id == conn_id))).scalars().all()
             )
             await clear_global_default_if_ids(db, list(disabled_ids))
+    if (conn.provider_type, conn.base_url) != endpoint_before and (conn.trust_level or "public") != "public":
+        # Guardrails: a trust level was given to an endpoint, not to a name. Pointed elsewhere, the
+        # connection is Public again until a Guardrails administrator says otherwise.
+        conn.trust_level = "public"  # type: ignore[assignment]
+        patches["trust_level"] = "public"
     if patches:
         touch_connection_modified(conn)
         await log_connection_updated(db, conn=conn, actor=admin, before=before, after_patches=patches)

@@ -187,3 +187,18 @@ class TestTheAdminApi:
         assert resp.status_code == 200, resp.text
         # The same service keeps its stored key.
         assert (await client.patch(url, json={"priority": 5}, headers=headers)).status_code == 200
+
+
+class TestATrustLevelBelongsToItsEndpoint:
+    async def test_pointing_a_connection_elsewhere_makes_it_public_again(self, client, db_session, admin):
+        headers = _sign_in(client, admin)
+        conn = await _connection(db_session, "Ours", "openai")
+        conn.trust_level = "internal"
+        await db_session.commit()
+        url = f"/api/admin/connections/{conn.id}"
+        assert (await client.patch(url, json={"name": "Ours, renamed"}, headers=headers)).status_code == 200
+        await db_session.refresh(conn)
+        assert conn.trust_level == "internal"
+        assert (await client.patch(url, json={"provider_type": "anthropic"}, headers=headers)).status_code == 200
+        await db_session.refresh(conn)
+        assert conn.trust_level == "public"

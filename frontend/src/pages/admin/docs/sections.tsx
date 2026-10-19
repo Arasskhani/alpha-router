@@ -1798,6 +1798,7 @@ export const docSections: DocSection[] = [
           <li>
             Active search connections by <strong>priority</strong> (a lower number first), then DuckDuckGo when the{" "}
             <strong>DuckDuckGo fallback</strong> switch is on (it is, by default). The tab shows the resulting order.
+            Changing a connection to another service asks for that service&apos;s own key.
           </li>
           <li>
             A service that fails — a wrong key, a used-up quota, a timeout — passes the search to the next; when none

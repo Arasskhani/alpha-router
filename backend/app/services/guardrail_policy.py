@@ -21,7 +21,9 @@ still leaves its record.
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
+import datetime
 import json
 import logging
 import re
@@ -31,6 +33,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy import text as sql_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.guardrail import GuardrailEvent, GuardrailPattern, GuardrailRule, GuardrailRuleAssignment
@@ -691,20 +694,65 @@ def engine_error_event(channel: str, destination: Destination, ctx: EventContext
     )
 
 
+#: How long recording an event may wait for a row lock: the request being checked may hold one on a row the
+#: event refers to (the person's, while their budget is held), and it is waiting for this very write.
+EVENT_LOCK_TIMEOUT_MS = 1500
+#: When a write had to give up, it is tried again later, once the request's own transaction has ended.
+EVENT_RETRY_DELAYS_S = (2.0, 10.0, 30.0)
+_pending_writes: set[asyncio.Task[None]] = set()
+
+
+def _event_values(row: GuardrailEvent) -> dict[str, Any]:
+    values = {
+        column.key: getattr(row, column.key)
+        for column in GuardrailEvent.__table__.columns
+        if column.key != "id" and getattr(row, column.key, None) is not None
+    }
+    values.setdefault("created_at", datetime.datetime.utcnow())
+    return values
+
+
+async def _insert_events(values: list[dict[str, Any]], session_factory: Any) -> None:
+    async with session_factory() as db:
+        if db.get_bind().dialect.name == "postgresql":
+            await db.execute(sql_text(f"SET LOCAL lock_timeout = '{int(EVENT_LOCK_TIMEOUT_MS)}ms'"))
+        db.add_all([GuardrailEvent(**v) for v in values])
+        await db.commit()
+
+
+async def _retry_events(values: list[dict[str, Any]], rows: Sequence[GuardrailEvent], session_factory: Any) -> None:
+    for delay in EVENT_RETRY_DELAYS_S:
+        await asyncio.sleep(delay)
+        try:
+            await _insert_events(values, session_factory)
+        except Exception:  # noqa: BLE001 -- tried again below, then given up with a log line
+            continue
+        from app.services.guardrail_alerts import alert_blocked
+
+        await alert_blocked(rows, session_factory)
+        return
+    logger.error("Gave up recording %d guardrail event(s)", len(values))
+
+
 async def write_events(rows: Sequence[GuardrailEvent], session_factory: Any = None) -> None:
-    """Record events in a session of their own: a refused request still leaves its record."""
+    """Record events in a session of their own: a refused request still leaves its record.
+
+    Never waits long: a write that cannot take its locks at once is tried again in the background.
+    """
     if not rows:
         return
     if session_factory is None:
         from app.database import AsyncSessionLocal
 
         session_factory = AsyncSessionLocal
+    values = [_event_values(row) for row in rows]
     try:
-        async with session_factory() as db:
-            db.add_all(list(rows))
-            await db.commit()
+        await _insert_events(values, session_factory)
     except Exception:  # noqa: BLE001 -- the record failing must not change what the rules decided
-        logger.exception("Could not record %d guardrail event(s)", len(rows))
+        logger.warning("Could not record %d guardrail event(s) now; trying again shortly", len(rows), exc_info=True)
+        task = asyncio.create_task(_retry_events(values, rows, session_factory))
+        _pending_writes.add(task)
+        task.add_done_callback(_pending_writes.discard)
         return
     from app.services.guardrail_alerts import alert_blocked
 

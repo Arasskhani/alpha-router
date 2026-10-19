@@ -278,3 +278,26 @@ class TestMaskingAndGivingBack:
         out += restorer.flush()
         assert out == f"Your card {CARD} and a@b.com. [note"
         assert restore_text("[UNKNOWN_1] stays", {"[CARD_1]": CARD}) == "[UNKNOWN_1] stays"
+
+
+class TestRecordingNeverWaitsLong:
+    async def test_a_write_that_cannot_be_made_now_is_made_shortly(self, session_factory, monkeypatch):
+        import asyncio
+
+        from app.services.guardrail_policy import write_events
+
+        real = guardrail_policy._insert_events
+        calls: list[int] = []
+
+        async def busy_once(values, factory):
+            calls.append(len(values))
+            if len(calls) == 1:
+                raise TimeoutError("canceling statement due to lock timeout")
+            await real(values, factory)
+
+        monkeypatch.setattr(guardrail_policy, "_insert_events", busy_once)
+        monkeypatch.setattr(guardrail_policy, "EVENT_RETRY_DELAYS_S", (0.0,))
+        await write_events([GuardrailEvent(action="monitor", channel="chat", match_count=1)], session_factory)
+        await asyncio.gather(*list(guardrail_policy._pending_writes))
+        assert calls == [1, 1]
+        assert [e.action for e in await events(session_factory)] == ["monitor"]

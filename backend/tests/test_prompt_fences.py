@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
 
+from app.services.web_search_providers import SearchResult
+from app.services.web_search_service import WebSearchOutcome
 from app.core.prompt_fences import RUNTIME_POLICY, untrusted_preamble, wrap_untrusted
 from app.services import chat_tools_service
 from app.services.chat_tools_service import ChatToolsConfig, augment_messages_with_tools
@@ -28,10 +30,12 @@ def test_preamble_names_the_kind_of_content():
 
 async def test_default_chat_fetch_and_search_are_fenced_and_policy_leads():
     messages = [{"role": "user", "content": "summarise https://evil.test/page please"}]
-    rows = [{"title": "T", "href": "https://r.test", "body": INJECTION}]
+    outcome = WebSearchOutcome(
+        results=[SearchResult(title="T", url="https://r.test", snippet=INJECTION)], label="Brave"
+    )
     with (
         patch.object(chat_tools_service, "fetch_url_text", new=AsyncMock(return_value=INJECTION)),
-        patch.object(chat_tools_service, "_run_duckduckgo_search", return_value=rows),
+        patch.object(chat_tools_service, "search_web", new=AsyncMock(return_value=outcome)),
     ):
         out = await augment_messages_with_tools(
             None,

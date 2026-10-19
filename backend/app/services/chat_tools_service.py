@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import re
 from dataclasses import dataclass
 from html.parser import HTMLParser
@@ -16,6 +15,8 @@ from app.services.metered_usage_service import (
     start_metered_usage,
 )
 from app.services.provider_utils import extract_prompt_text
+from app.services.web_search_providers import SearchResult
+from app.services.web_search_service import WebSearchUnavailable, search_web
 
 URL_RE = re.compile(r"https?://[^\s<>\[\]()\"']+", re.IGNORECASE)
 
@@ -54,13 +55,6 @@ def _search_result_limit(depth: str) -> int:
     return {"low": 3, "medium": 5, "high": 8}.get(depth, 5)
 
 
-def _run_duckduckgo_search(query: str, max_results: int) -> list[dict[str, str]]:
-    from duckduckgo_search import DDGS
-
-    with DDGS() as ddgs:
-        return list(ddgs.text(query, max_results=max_results))
-
-
 async def web_search_context(
     query: str,
     depth: str,
@@ -70,63 +64,49 @@ async def web_search_context(
     username: str | None = None,
     reserve_budget: bool = True,
 ) -> str:
+    """Search results for the model, or - when no service answered - a note saying so and why.
+
+    The note matters: without it the model answers as if it had searched.
+    """
     if not query.strip():
         return ""
     limit = _search_result_limit(depth)
-    metered = (
-        await start_metered_usage(
+    try:
+        outcome = await search_web(
+            query,
+            limit,
             user_id=user_id,
             alpha_router_api_key_id=alpha_router_api_key_id,
             username=username,
-            provider_type="duckduckgo",
-            service_type="web_search",
-            operation_name="web_search",
-            model_id="duckduckgo-search",
-            metadata={"depth": depth, "max_results": limit},
             reserve_budget=reserve_budget,
         )
-        if user_id is not None or alpha_router_api_key_id is not None
-        else None
+    except WebSearchUnavailable as exc:
+        return search_failed_note(exc.message)
+    return format_search_results(outcome.results, label=outcome.label)
+
+
+def search_failed_note(reason: str) -> str:
+    """What the model is told when Web Search found nothing to read: say it to the user, never pretend."""
+    return (
+        "Web search was asked for, but it did not work this time: "
+        f"{reason} Tell the user that the web search failed and why, and answer only from what you know, "
+        "saying that it may be out of date. Do not claim to have searched."
     )
-    try:
-        rows = await asyncio.to_thread(_run_duckduckgo_search, query, limit)
-    except asyncio.CancelledError as exc:
-        if metered is not None:
-            await finish_metered_usage(
-                metered,
-                success=False,
-                quantity=None,
-                unit=None,
-                error_message=str(exc) or "Search cancelled",
-            )
-        raise
-    except Exception as exc:  # noqa: BLE001 -- error text is surfaced to the caller
-        if metered is not None:
-            await finish_metered_usage(
-                metered,
-                success=False,
-                quantity=None,
-                unit=None,
-                error_message=failure_message(exc),
-            )
-        return ""
-    if metered is not None:
-        await finish_metered_usage(
-            metered,
-            success=True,
-            quantity=1,
-            unit="request",
-        )
+
+
+def format_search_results(rows: list[SearchResult], *, label: str) -> str:
     if not rows:
-        return ""
+        return (
+            f"Web search ({label}) found nothing for this. Tell the user so if it matters, and answer from what "
+            "you know, saying that it may be out of date."
+        )
     lines = []
     for i, row in enumerate(rows, 1):
-        title = (row.get("title") or "").strip()
-        href = (row.get("href") or row.get("link") or "").strip()
-        body = (row.get("body") or row.get("snippet") or "").strip()
-        lines.append(f"{i}. {title}\n   URL: {href}\n   {body}")
+        lines.append(f"{i}. {row.title}\n   URL: {row.url}\n   {row.snippet}")
+        if row.content and row.content != row.snippet:
+            lines.append(f"   Page text: {row.content}")
     return (
-        "Web search results (use for up-to-date facts; cite sources when relevant). "
+        f"Web search results from {label} (use for up-to-date facts; cite the URLs you use). "
         + untrusted_preamble("search result text")
         + "\n"
         + wrap_untrusted("WEB_SEARCH_RESULTS", "\n".join(lines))

@@ -24,6 +24,8 @@ _SPAN = 400
 _EVERY_KIND = {
     # The Connections page lists both kinds, each in its tab.
     ("api/admin.py", "select(Connection).order_by(Connection.id.desc())"),
+    # Guardrails' destinations: every connection either kind sends text to has a trust level.
+    ("api/admin_guardrails.py", "select(Connection).order_by(Connection.kind, Connection.name)"),
 }
 
 

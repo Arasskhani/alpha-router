@@ -29,6 +29,7 @@ from app.models.connection import Connection
 from app.models.user import User
 from app.services.guardrail_policy import (
     Destination,
+    load_policy,
     EventContext,
     GuardrailEngineError,
     Masker,
@@ -79,6 +80,14 @@ async def _event_context(
     )
 
 
+async def _rules_watch(db: AsyncSession) -> bool:
+    """Whether any rule is on: a turn with no rule to apply costs one read of the policy version."""
+    try:
+        return (await load_policy(db)).active
+    except Exception:  # noqa: BLE001 -- a policy that cannot be read is checked (and recorded) by inspect()
+        return True
+
+
 def turn_state(body: dict[str, Any]) -> dict[str, Any]:
     state = body.get(GUARDRAIL_BODY_KEY)
     if not isinstance(state, dict):
@@ -121,6 +130,8 @@ async def guard_request(
     routed_from: int | None = None,
 ) -> int | None:
     """Check what the client sent; mask in place, raise to block, or return the model id to route to."""
+    if not await _rules_watch(db):
+        return None
     channel = turn_channel(body, source)
     messages = list(body.get("messages") or [])
     segments = message_segments(messages, channel=channel)
@@ -179,6 +190,8 @@ async def guard_context(
     source: str | None,
 ) -> tuple[list[dict[str, Any]], str | None]:
     """Check what the platform added to the turn; the messages to send, or the message to end the turn with."""
+    if not await _rules_watch(db):
+        return messages, None
     sent = _client_contents(body)
     channel = turn_channel(body, source)
     skip = {

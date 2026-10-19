@@ -356,7 +356,7 @@ const PROBE_FILTERS: { key: ProbeFilter; label: string }[] = [
 ];
 
 /** Rows shown before "Show all", when no search or filter narrows the list. */
-export const PROBE_ROWS_SHOWN = 10;
+const PROBE_ROWS_SHOWN = 10;
 
 function probeState(result: ProbeResult | undefined): Exclude<ProbeFilter, "all"> {
   if (!result) return "none";

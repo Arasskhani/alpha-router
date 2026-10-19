@@ -959,6 +959,9 @@ async def generate_image(  # noqa: C901 -- Phase 4 split; complexity must not gr
             billing.ai_model = ai_model
             billing.provider_type = provider_type
         body.model = model_id
+        # The administrator's Guardrails on the prompt, as for a chat message (checked for the chosen model),
+        # before anything is held or spent.
+        guarded_prompt = await guard_media_prompt(db, body.prompt, ai_model=ai_model, user_id=int(user.id))
 
         hold_body = body.model_dump()
         if request.headers.get("Idempotency-Key"):
@@ -990,10 +993,7 @@ async def generate_image(  # noqa: C901 -- Phase 4 split; complexity must not gr
             aspect_ratio=body.aspect_ratio,
             size=body.size,
         )
-        # The administrator's Guardrails on the prompt, as for a chat message (checked for the chosen model).
-        upstream_prompt = prepare_image_generation_prompt(
-            await guard_media_prompt(db, body.prompt, ai_model=ai_model, user_id=int(user.id))
-        )
+        upstream_prompt = prepare_image_generation_prompt(guarded_prompt)
 
         async def _attempt_one_model(  # noqa: C901 -- Phase 4 split; complexity must not grow
             *,

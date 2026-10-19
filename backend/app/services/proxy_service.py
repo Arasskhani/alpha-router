@@ -1185,10 +1185,13 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
 
                 attempt.finish()
                 iteration_content = attempt.content
-                round_calls = attempt.tool_calls() if web_tools is not None else []
+                # Tool calls count only when tools were offered: asked without them (the web tools' last round), a
+                # model that calls one anyway is not run again, so the rounds always end.
+                offered_tools = bool(completion_kwargs.get("tools"))
+                round_calls = attempt.tool_calls() if web_tools is not None and offered_tools else []
                 # A reply of tool calls alone (the browser extension's agent) has no
                 # words and is not empty.
-                empty_completion = not iteration_content.strip() and not attempt.has_tool_calls
+                empty_completion = not iteration_content.strip() and not (attempt.has_tool_calls and offered_tools)
                 attempt_error = "Upstream model returned an empty completion." if empty_completion else None
                 # Stopped before a word came (while the model thought, kept alive): cancelled, not the model's failure.
                 stopped_first = empty_completion and client_disconnected
@@ -1210,7 +1213,9 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
                     web_tools.rounds += 1
                     for call in calls:
                         yield _sse_alpha_router_frame({"web_activity": web_tools.activity(call)})
-                    running = asyncio.ensure_future(asyncio.gather(*(web_tools.run(call) for call in calls)))
+                    running = asyncio.ensure_future(
+                        asyncio.gather(*(web_tools.run(call) for call in calls), return_exceptions=True)
+                    )
                     stopped = False
                     try:
                         while not running.done():
@@ -1230,7 +1235,12 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
                     if stopped:
                         client_disconnected = True
                         break
-                    results = running.result()
+                    results = [
+                        result
+                        if isinstance(result, str)
+                        else f"The {call.name} call failed: {failure_message(result)}. Tell the user."
+                        for call, result in zip(calls, running.result(), strict=True)
+                    ]
                     if web_tools.sources:
                         if persister:
                             persister.set_message_metadata({WEB_SOURCES_META_KEY: list(web_tools.sources)})
@@ -1256,7 +1266,8 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
                         # and with the rounds told as words, since a request without tools may not carry tool calls.
                         completion_kwargs.pop("tools", None)
                         completion_kwargs.pop("tool_choice", None)
-                        completion_kwargs["messages"] = flatten_tool_rounds(current_messages)
+                        current_messages = flatten_tool_rounds(current_messages)
+                        completion_kwargs["messages"] = current_messages
                     continue
 
                 if empty_completion and tools.code_interpreter:
@@ -1413,7 +1424,10 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
             # tool calls with its words - goes out as one frame. Without it, a stream the provider refused
             # (no endpoint for tools or images, a context too long) says only that the request failed.
             tools_turn = bool(completion_kwargs.get("tools")) and web_tools is None
-            if _should_retry_non_stream(provider, exc) and (not tools_turn or sent_chunks == 0):
+            # A turn with web tools is asked again whole only while nothing reached the client: the answer asked
+            # again would replace words already shown (and an earlier round's words with them).
+            whole_reply_only = tools_turn or web_tools is not None
+            if _should_retry_non_stream(provider, exc) and (not whole_reply_only or sent_chunks == 0):
                 retry = NonStreamRetry(
                     ai_model=ai_model,
                     provider_type=provider_type,

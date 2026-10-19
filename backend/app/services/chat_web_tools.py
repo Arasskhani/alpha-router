@@ -18,6 +18,7 @@ of the person's own words (``pre_search_query``) put before their message.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
@@ -35,6 +36,8 @@ MAX_ROUNDS = 6
 PRE_SEARCH_QUERY_CHARS = 300
 #: A source list is kept to this many entries.
 MAX_SOURCES = 20
+#: How long one call may take, all in: a search tries each service in turn; a page that trickles in is cut off.
+CALL_TIMEOUT_S = {"web_search": 45.0, "web_fetch": 30.0}
 
 WEB_SEARCH_TOOL: dict[str, Any] = {
     "type": "function",
@@ -214,15 +217,20 @@ class WebToolLoop:
         return {"tool": "web_fetch", "url": url[:500], "host": urlparse(url).hostname or ""}
 
     async def run(self, call: ToolCall) -> str:
-        """One call, carried out: the tool message's content, never an exception."""
-        if call.name == "web_search":
-            return await self._search(call)
-        if call.name == "web_fetch":
-            return await self._fetch(call)
-        return f"There is no tool named {call.name!r}. The tools are web_search and web_fetch."
+        """One call, carried out within its time: the tool message's content, never an exception."""
+        if call.name not in CALL_TIMEOUT_S:
+            return f"There is no tool named {call.name!r}. The tools are web_search and web_fetch."
+        timeout = CALL_TIMEOUT_S[call.name]
+        try:
+            return await asyncio.wait_for(
+                self._search(call) if call.name == "web_search" else self._fetch(call), timeout
+            )
+        except TimeoutError:
+            return f"The {call.name} call did not finish within {timeout:g} s. Tell the user it timed out."
 
     async def _search(self, call: ToolCall) -> str:
         from app.services.chat_tools_service import format_search_results
+        from app.services.failure_details import failure_message
         from app.services.web_search_service import WebSearchUnavailable, search_web
 
         if not self.search:
@@ -244,6 +252,9 @@ class WebToolLoop:
             )
         except WebSearchUnavailable as exc:
             return f"The web search failed: {exc.message} Tell the user, and do not claim to have searched."
+        except Exception as exc:  # noqa: BLE001 -- a budget refusal or a fault: the model is told, the turn goes on
+            reason = (failure_message(exc) or type(exc).__name__).rstrip(". ")
+            return f"The web search failed: {reason}. Tell the user, and do not claim to have searched."
         for row in outcome.results:
             self._add_source(row.title, row.url)
         return format_search_results(outcome.results, label=outcome.label)

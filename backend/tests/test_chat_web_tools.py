@@ -137,6 +137,28 @@ class TestTheLoop:
         assert text.startswith("The web search failed:")
         assert "do not claim to have searched" in text
 
+    async def test_a_search_the_budget_refuses_is_told_to_the_model(self, monkeypatch):
+        from fastapi import HTTPException
+
+        async def refused(query, limit, **kwargs):
+            raise HTTPException(status_code=402, detail="Your budget is used up.")
+
+        monkeypatch.setattr("app.services.web_search_service.search_web", refused)
+        text = await WebToolLoop(search=True, fetch=False).run(_search_call("x"))
+        assert text.startswith("The web search failed:") and "budget" in text
+
+    async def test_a_call_that_hangs_is_cut_off(self, monkeypatch):
+        import asyncio
+
+        async def trickle(url, **kwargs):
+            await asyncio.sleep(10)
+            return "never"
+
+        monkeypatch.setattr(chat_tools_service, "fetch_url_text", trickle)
+        monkeypatch.setitem(chat_web_tools.CALL_TIMEOUT_S, "web_fetch", 0.05)
+        text = await WebToolLoop(search=False, fetch=True).run(_fetch_call("https://slow.example"))
+        assert text == "The web_fetch call did not finish within 0.05 s. Tell the user it timed out."
+
     async def test_a_query_is_needed_and_a_tool_that_is_off_is_not_run(self, searches):
         assert await WebToolLoop(search=True, fetch=False).run(ToolCall("c", "web_search", "{}")) == (
             "web_search needs a query."
@@ -370,6 +392,16 @@ class TestATurnWithTheTools:
         assert "tools" not in second
         assert all(m["role"] != "tool" and "tool_calls" not in m for m in second["messages"])
         assert "https://a.example/1" in second["messages"][-1]["content"]
+
+    async def test_a_model_that_calls_a_tool_it_was_not_offered_does_not_go_round_again(
+        self, client, turn, provider, searches, monkeypatch
+    ):
+        monkeypatch.setattr(chat_web_tools, "MAX_ROUNDS", 1)
+        provider.reply(*SEARCH_REPLY).reply(*SEARCH_REPLY)
+        resp = await client.post("/api/chat/completions", json=_ask(turn.model), headers=turn.headers)
+        assert resp.status_code == 200
+        assert len(provider.calls) == 2
+        assert searches.queries == ["gold price today"]
 
     async def test_words_before_the_calls_are_kept_apart_from_the_answer(self, client, turn, provider, searches):
         provider.reply(_text("Let me check."), *SEARCH_REPLY).reply(_text("Done.", "stop"))

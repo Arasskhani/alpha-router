@@ -15,6 +15,7 @@ from litellm import atranscription
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.connection_kinds import model_connection
 from app.branding import CHAT_CLIENT_APP
 from app.models.connection import Connection
 from app.models.model_catalog import AIModel
@@ -341,7 +342,7 @@ async def _resolve_transcription_provider(
     rows = (
         (
             await db.execute(
-                select(Connection).where(Connection.is_active == True).order_by(Connection.id)  # noqa: E712
+                select(Connection).where(Connection.is_active == True, model_connection()).order_by(Connection.id)  # noqa: E712
             )
         )
         .scalars()

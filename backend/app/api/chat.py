@@ -30,6 +30,7 @@ from app.models.chat import ChatSession
 from app.models.connection import Connection
 from app.models.model_catalog import AIModel
 from app.models.user import User
+from app.services.connection_kinds import model_connection
 from app.services.client_ip import resolve_client_ip
 from app.services.extension_access import AGENT_TOOL, CONTROL_TOOL, permitted_extension_tools
 from app.services.extension_page_context import (
@@ -159,7 +160,9 @@ router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 @router.get("/models")
 async def chat_models(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    conn_count = (await db.execute(select(func.count()).select_from(Connection))).scalar() or 0
+    conn_count = (
+        await db.execute(select(func.count()).select_from(Connection).where(model_connection()))
+    ).scalar() or 0
     if conn_count == 0:
         # No connections -> no usable models. Orphan catalog rows (FK cascade
         # off) are removed by DELETE /api/admin/connections/{id}; a GET must

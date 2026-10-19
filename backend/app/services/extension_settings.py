@@ -42,6 +42,7 @@ import idna
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.connection_kinds import model_connection
 from app.models.connection import Connection
 from app.models.model_catalog import AIModel
 from app.models.system import SystemSetting
@@ -602,7 +603,9 @@ async def _connection_list(db: AsyncSession, values: list[int]) -> tuple[int, ..
         ids.add(value)
     if not ids:
         return ()
-    found = set((await db.execute(select(Connection.id).where(Connection.id.in_(ids)))).scalars().all())
+    found = set(
+        (await db.execute(select(Connection.id).where(Connection.id.in_(ids), model_connection()))).scalars().all()
+    )
     missing = sorted(ids - {int(i) for i in found})
     if missing:
         raise ExtensionSettingsError(f"Connections inside the organisation: connection {missing[0]} does not exist.")
@@ -733,7 +736,14 @@ async def connection_choices(db: AsyncSession, settings: ExtensionSettings) -> l
     so it can be seen and removed.
     """
     rows = (
-        (await db.execute(select(Connection).order_by(Connection.name, Connection.id).limit(ADMIN_LIST_HARD_CAP)))
+        (
+            await db.execute(
+                select(Connection)
+                .where(model_connection())
+                .order_by(Connection.name, Connection.id)
+                .limit(ADMIN_LIST_HARD_CAP)
+            )
+        )
         .scalars()
         .all()
     )

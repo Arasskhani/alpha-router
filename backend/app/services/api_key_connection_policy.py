@@ -5,6 +5,7 @@ from __future__ import annotations
 from sqlalchemy import delete, insert, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.connection_kinds import model_connection
 from app.models.api_key import AlphaRouterApiKey, alpha_router_api_key_connections
 from app.models.connection import Connection
 from app.models.model_catalog import AIModel
@@ -100,7 +101,7 @@ async def replace_key_allowed_connections(
     if not clean:
         return []
 
-    rows = (await db.execute(select(Connection).where(Connection.id.in_(clean)))).scalars().all()
+    rows = (await db.execute(select(Connection).where(Connection.id.in_(clean), model_connection()))).scalars().all()
     found = {int(c.id): c for c in rows}
     missing = [cid for cid in clean if cid not in found]
     if missing:

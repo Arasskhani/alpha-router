@@ -45,6 +45,7 @@ from app.models.media import MediaAsset
 from app.models.model_catalog import AIModel, ModelToolCompatibilityEvent
 from app.models.user import User, UserGroup, UserRoleAssignment, user_group_members
 from app.services import activity_rollup_service, activity_service
+from app.services.connection_kinds import CONNECTION_KIND_MODELS, model_connection
 from app.services.activity_pdf_service import ActivityPdfError, render_activity_page_pdf
 from app.services.alpha_router_api_key_audit import (
     fetch_api_key_changelog,
@@ -428,6 +429,8 @@ async def sync_models(conn_id: int, db: AsyncSession = Depends(get_db), _: User 
     conn = await db.get(Connection, conn_id)
     if not conn:
         raise HTTPException(404)
+    if conn.kind != CONNECTION_KIND_MODELS:
+        raise HTTPException(400, detail="A web search connection has no models to sync.")
     result = await sync_connection_with_flash(db, conn, decrypt_secret(conn.api_key_encrypted))
     await db.commit()
     return result
@@ -440,7 +443,9 @@ async def list_admin_models(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_models),
 ):
-    conn_count = (await db.execute(select(func.count()).select_from(Connection))).scalar() or 0
+    conn_count = (
+        await db.execute(select(func.count()).select_from(Connection).where(model_connection()))
+    ).scalar() or 0
     if conn_count == 0:
         # Read-only: orphan rows are cleaned when the last connection is deleted.
         return []
@@ -1996,7 +2001,8 @@ async def delete_connection(
     await clear_global_default_if_ids(db, list(catalog_ids))
     await db.execute(delete(AIModel).where(AIModel.connection_id == conn_id))
     await db.delete(conn)
-    remaining = (await db.execute(select(func.count()).select_from(Connection))).scalar() or 0
+    # The last model provider gone takes any models left behind with it; a web search connection holds none.
+    remaining = (await db.execute(select(func.count()).select_from(Connection).where(model_connection()))).scalar() or 0
     if remaining == 0:
         await db.execute(delete(AIModel))
     await db.commit()
@@ -2021,7 +2027,15 @@ async def list_api_key_connection_options(
     _: User = Depends(require_api_keys),
 ):
     """Connection picker for API key allowlists (api_keys menu access only)."""
-    rows = (await db.execute(select(Connection).order_by(Connection.name.asc(), Connection.id.asc()))).scalars().all()
+    rows = (
+        (
+            await db.execute(
+                select(Connection).where(model_connection()).order_by(Connection.name.asc(), Connection.id.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
     return {"items": [connection_brief(c) for c in rows]}
 
 

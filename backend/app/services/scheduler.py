@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select
 
+from app.services.connection_kinds import model_connection
 from app.config import get_settings
 from app.database import AsyncSessionLocal
 from app.models.connection import Connection
@@ -37,7 +38,11 @@ async def job_sync_all_models():
     """Auto-sync connections that are due (per sync_interval_hours), with model flash like Sync Now."""
     now = datetime.utcnow()
     async with AsyncSessionLocal() as db:
-        conns = (await db.execute(select(Connection).where(Connection.sync_enabled == True))).scalars().all()  # noqa: E712
+        conns = (
+            (await db.execute(select(Connection).where(Connection.sync_enabled.is_(True), model_connection())))
+            .scalars()
+            .all()
+        )  # noqa: E712
         # Decide what is due from plain values first. A rollback below expires
         # every loaded instance, and reading an expired attribute lazy-loads,
         # which an async session cannot do outside an await - so the loop
@@ -118,6 +123,7 @@ async def job_reconcile_provider_costs():
                     select(Connection.id).where(
                         Connection.is_active.is_(True),
                         Connection.provider_type.in_(providers),
+                        model_connection(),
                     )
                 )
             )

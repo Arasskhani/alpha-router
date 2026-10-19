@@ -149,10 +149,12 @@ def _clear_process_caches():
     """Module-level caches are global state; no test may inherit another's."""
 
     from app.api import admin_logs
-    from app.services import code_interpreter_capacity_service
+    from app.services import code_interpreter_capacity_service, guardrail_policy
 
     admin_logs.reset_filter_options_cache()
     code_interpreter_capacity_service.reset_capacity_policy_cache()
+    guardrail_policy.reset_policy_cache()
     yield
     admin_logs.reset_filter_options_cache()
     code_interpreter_capacity_service.reset_capacity_policy_cache()
+    guardrail_policy.reset_policy_cache()

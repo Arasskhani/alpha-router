@@ -1150,7 +1150,10 @@ export const docSections: DocSection[] = [
           <tbody>
             <tr>
               <td>Chat messages</td>
-              <td>What a person types in the web chat, and the conversation so far.</td>
+              <td>
+                What a person types in the web chat and the conversation so far; also chat titles, prompts sent
+                for improving, and image, video and speech prompts.
+              </td>
             </tr>
             <tr>
               <td>Attached files</td>
@@ -1158,15 +1161,18 @@ export const docSections: DocSection[] = [
             </tr>
             <tr>
               <td>Context</td>
-              <td>What the platform adds: memory, project files, knowledge, the chat&apos;s summary, an Agent&apos;s prompt.</td>
+              <td>
+                What the platform adds: memory, project files, knowledge, the chat&apos;s summary, an Agent&apos;s
+                prompt; also what is sent to make a summary or extract memories (sent masked, values put back).
+              </td>
             </tr>
             <tr>
               <td>Browser extension</td>
-              <td>Turns sent from the extension, including pages shared from the browser.</td>
+              <td>Turns sent from the extension, including pages shared from the browser, and the agent&apos;s review model.</td>
             </tr>
             <tr>
               <td>Gateway</td>
-              <td>Requests to <code>/v1</code> with an API key.</td>
+              <td>Requests to <code>/v1</code> with an API key, embeddings included.</td>
             </tr>
             <tr>
               <td>Web search</td>
@@ -1174,7 +1180,7 @@ export const docSections: DocSection[] = [
             </tr>
             <tr>
               <td>Web fetch</td>
-              <td>The addresses the model asks to read.</td>
+              <td>The addresses the model asks to read, and every address a page redirects to.</td>
             </tr>
           </tbody>
         </DocsTable>
@@ -1212,7 +1218,7 @@ export const docSections: DocSection[] = [
           <strong>Off</strong>, <strong>Monitor</strong> (records what it would have done, changes nothing — use it to
           tune a rule on real traffic) and <strong>Enforce</strong>. New rules start in Monitor. The <em>Who</em>{" "}
           editor uses the same Public/Private and allow/deny lists as models: deny wins, so a rule can apply to
-          everyone except a named group. The <code>{"{model}"}</code> placeholder in a message names the model a
+          everyone except a named group. A key whose owner was deactivated is still checked. The <code>{"{model}"}</code> placeholder in a message names the model a
           routed turn went to.
         </p>
 
@@ -1281,7 +1287,15 @@ export const docSections: DocSection[] = [
           <ul>
             <li>Replies are not scanned; only what is sent to a model, search service or address is.</li>
             <li>Text in images and scanned PDFs (OCR) and names found by meaning (NER) are not detected.</li>
-            <li>What memory extraction sends to its model is not checked yet.</li>
+            <li>An Agent&apos;s knowledge search embeds the question before the turn is checked.</li>
+            <li>
+              Tool-call arguments in Gateway requests are not read; masked values reach tools as placeholders.
+            </li>
+            <li>An image prompt is checked for the model chosen, not again for a fallback model.</li>
+            <li>
+              Paths that are not chat turns (titles, summaries, embeddings, media) never route: a route rule blocks
+              them.
+            </li>
             <li>Exceptions do not expire, and there is no second approver for rule changes.</li>
             <li>A rule&apos;s history is in Admin Logs, not on the rule.</li>
           </ul>

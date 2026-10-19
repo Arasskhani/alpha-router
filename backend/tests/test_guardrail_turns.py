@@ -272,3 +272,14 @@ class TestARouteThatCannotBeTaken:
         resp = await client.post("/api/chat/completions", json=ask(turn.model, f"card {CARD}"), headers=turn.headers)
         assert resp.status_code == 200, resp.text
         assert len(shown(_frames(resp.text))) == 1
+
+
+class TestTheEndOfAReply:
+    async def test_words_held_back_come_before_the_finish(self, client, db_session, turn, provider):
+        await add_rule(db_session)
+        provider.reply(_text("Charged [CARD_1], see [ref"), _text("", "stop"))
+        resp = await client.post("/api/chat/completions", json=ask(turn.model, f"card {CARD}"), headers=turn.headers)
+        frames = [f for f in _frames(resp.text) if isinstance(f, dict) and f.get("choices")]
+        assert words(frames) == f"Charged {CARD}, see [ref"
+        finish = next(i for i, f in enumerate(frames) if f["choices"][0].get("finish_reason"))
+        assert words(frames[: finish + 1]) == f"Charged {CARD}, see [ref"

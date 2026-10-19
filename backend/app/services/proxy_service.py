@@ -1242,7 +1242,16 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
                         attempt.record_text(delta)
                         if guardrail_restorer is not None:
                             delta = guardrail_restorer.feed(delta)
-                            _set_delta_text(chunk, delta)
+                    if guardrail_restorer is not None and _finish_reason(chunk):
+                        # Anything held back goes with the last words, before a client reads the finish.
+                        delta = (delta or "") + guardrail_restorer.flush()
+                    loose_words = ""
+                    if guardrail_restorer is not None and (delta or ProviderAttempt.delta_text(chunk)):
+                        _set_delta_text(chunk, delta)
+                        if delta and ProviderAttempt.delta_text(chunk) != delta:
+                            # A finish chunk with no place for words: they go just before it.
+                            loose_words = delta
+                    if delta:
                         collected_content += delta
                     # Tool calls are output the provider bills like words, so they count too.
                     generated_len = len(collected_content) + attempt.tool_call_chars
@@ -1263,6 +1272,9 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
                                 sent_chunks += 1
                                 yield _sse_delta_chunk(delta)
                         else:
+                            if loose_words:
+                                sent_chunks += 1
+                                yield _sse_delta_chunk(loose_words)
                             sent_chunks += 1
                             yield f"data: {_serialize_stream_chunk(chunk)}\n\n".encode()
                     # Persist after yield and without awaiting DB: token printing
@@ -1746,6 +1758,13 @@ def _without_web_tools(completion_kwargs: dict[str, Any]) -> dict[str, Any]:
     if isinstance(kwargs.get("messages"), list):
         kwargs["messages"] = flatten_tool_rounds(kwargs["messages"])
     return kwargs
+
+
+def _finish_reason(chunk: Any) -> str | None:
+    try:
+        return getattr(chunk.choices[0], "finish_reason", None) if chunk.choices else None
+    except (AttributeError, IndexError, TypeError):
+        return None
 
 
 def _set_delta_text(chunk: Any, text: str) -> None:

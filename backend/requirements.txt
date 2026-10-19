@@ -41,6 +41,8 @@ python-docx>=1.1
 aiosmtplib>=3.0.2
 python-multipart>=0.0.17
 ddgs>=9.16.0,<10
+# Guardrails: administrators' patterns run in linear time (RE2), never a catastrophic backtrack.
+google-re2>=1.1.20251105,<2
 boto3>=1.35.0
 Pillow>=11.0.0
 pypdf>=5.1.0

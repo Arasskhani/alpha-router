@@ -103,6 +103,43 @@ def format_search_results(rows: list[SearchResult], *, label: str) -> str:
 PAGE_CHARS_FOR_MODEL = 8000
 
 
+async def _guard_fetch(
+    url: str, *, user_id: int | None, alpha_router_api_key_id: int | None, username: str | None
+) -> None:
+    """The administrator's Guardrails on an address about to be read: raises GuardrailBlocked to stop it.
+
+    An address cannot be masked - a page asked for with another address is another page - so a rule that
+    would mask or route it stops it instead.
+    """
+    from app.database import AsyncSessionLocal
+    from app.services.guardrail_policy import (
+        Destination,
+        EventContext,
+        GuardrailBlocked,
+        GuardrailEngineError,
+        Segment,
+        inspect,
+    )
+
+    host = urlparse(url).hostname or url
+    ctx = EventContext(
+        user_id=user_id, username=username, alpha_router_api_key_id=alpha_router_api_key_id, source="web_fetch"
+    )
+    async with AsyncSessionLocal() as db:
+        try:
+            verdict = await inspect(
+                db,
+                [Segment("web_fetch", url)],
+                destination=Destination(label=f"Web page · {host}", trust="public"),
+                ctx=ctx,
+            )
+        except GuardrailEngineError as exc:
+            raise GuardrailBlocked(str(exc)) from exc
+    if verdict.action is not None:
+        notices = verdict.notices()
+        raise GuardrailBlocked(notices[0] if notices else "Your organisation does not allow this page to be read.")
+
+
 async def fetch_url_text(
     url: str,
     max_chars: int = 14_000,
@@ -123,6 +160,7 @@ async def fetch_url_text(
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         raise ValueError("Invalid URL")
+    await _guard_fetch(url, user_id=user_id, alpha_router_api_key_id=alpha_router_api_key_id, username=username)
     metered = (
         await start_metered_usage(
             user_id=user_id,

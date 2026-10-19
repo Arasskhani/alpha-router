@@ -269,7 +269,9 @@ def test_the_chat_monitoring_prefix_does_not_claim_the_chat_tools_page():
 def test_security_category_and_settings_menu():
     assert CATEGORY_LABELS["security"] == "Security"
     assert MENU_GROUP_KEYS["security_settings"] == "security"
-    assert MENUS_BY_CATEGORY["security"] == ("security_settings",)
+    assert MENUS_BY_CATEGORY["security"] == ("security_settings", "guardrails")
+    assert path_to_menu("/admin/guardrails") == "guardrails"
+    assert not can_access_menu(API_KEY_ADMIN_SLUG, "guardrails")
     assert path_to_menu("/admin/security-settings") == "security_settings"
     assert can_access_menu(SUPER_ADMIN_SLUG, "security_settings")
     assert not can_access_menu(API_KEY_ADMIN_SLUG, "security_settings")

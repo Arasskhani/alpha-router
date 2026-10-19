@@ -31,6 +31,7 @@ MenuKey = Literal[
     "admin_guide",
     "user_manual",
     "security_settings",
+    "guardrails",
 ]
 
 # Nav group label shown in the Roles table Category column.
@@ -99,6 +100,7 @@ MENU_DEFINITIONS: tuple[tuple[MenuKey, str, CategoryKey], ...] = (
     ("admin_guide", "Admin Guide", "developer"),
     ("user_manual", "User Manual", "developer"),
     ("security_settings", "Security Settings", "security"),
+    ("guardrails", "Guardrails", "security"),
 )
 
 # Only API Keys keeps a dedicated assignable admin role (API Key Admin).
@@ -225,6 +227,9 @@ MENU_PATH_PREFIXES: dict[MenuKey, tuple[str, ...]] = {
     "admin_guide": ("/admin/docs",),
     "user_manual": ("/admin/manual",),
     "security_settings": ("/admin/security-settings",),
+    # Its own key rather than folded into security_settings: what may leave the organisation is a policy a
+    # security officer keeps, and the day a scoped role is wanted for it, it must be separable.
+    "guardrails": ("/admin/guardrails",),
 }
 
 MENUS_BY_CATEGORY: dict[CategoryKey, tuple[MenuKey, ...]] = {}

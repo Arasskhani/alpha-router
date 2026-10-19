@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 from urllib.parse import urljoin
@@ -187,7 +188,8 @@ async def bounded_get_bytes_truncating(
 
     current_url = url
     for hop in range(5):
-        assert_url_safe(current_url)
+        # The address is resolved to check it: off the event loop, as a slow DNS answer would stall every turn.
+        await asyncio.to_thread(assert_url_safe, current_url)
         async with client.stream("GET", current_url) as response:
             assert_response_target_safe(response)
             if response.status_code in {301, 302, 303, 307, 308}:

@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import codecs
 import re
+from collections import Counter
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import Any
@@ -109,6 +110,9 @@ _VOID = frozenset(
 )
 #: The page's own chrome, kept out of the main content when it is marked as such.
 _CHROME = frozenset({"nav", "footer", "aside"})
+#: Elements nested deeper than this are read as text without being tracked: a page of
+#: endless unclosed tags cannot make the reading of it slow.
+_MAX_DEPTH = 512
 
 
 class _PageText(HTMLParser):
@@ -120,6 +124,8 @@ class _PageText(HTMLParser):
         self._chrome = 0
         self._main = 0
         self._stack: list[str] = []
+        #: How many of each tag are open: whether an end tag closes anything, without searching the stack.
+        self._open: Counter[str] = Counter()
         self.all: list[str] = []
         self.main: list[str] = []
 
@@ -135,7 +141,10 @@ class _PageText(HTMLParser):
             if tag in ("br", "hr"):
                 self._emit("\n")
             return
+        if len(self._stack) >= _MAX_DEPTH:
+            return
         self._stack.append(tag)
+        self._open[tag] += 1
         if tag in _SKIP:
             self._skip += 1
             return
@@ -153,11 +162,13 @@ class _PageText(HTMLParser):
     def handle_endtag(self, tag: str) -> None:
         if tag == "title":
             self._in_title = False
-        if tag in _VOID or tag not in self._stack:
+        if tag in _VOID or not self._open[tag]:
             return
-        # Close up to the matching tag: unclosed children of it (an unclosed <p>) end with it.
+        # Close up to the matching tag: unclosed children of it (an unclosed <p>) end with it. Each tag is
+        # pushed and popped once, so reading a page stays linear in its size.
         while self._stack:
             open_tag = self._stack.pop()
+            self._open[open_tag] -= 1
             if open_tag in _SKIP:
                 self._skip = max(0, self._skip - 1)
             if open_tag in _CHROME:
@@ -254,7 +265,8 @@ async def page_from_bytes(url: str, raw: bytes, content_type: str, *, truncated:
         return FetchedPage(url=url, title="", text=f"(Not a text page: {mime or 'unknown type'}.)")
     text = raw.decode(_charset(content_type, raw), errors="replace")
     if "html" in mime or looks_html:
-        title, body = html_to_text(text)
+        # A large page takes a moment to read: off the event loop, so other turns go on meanwhile.
+        title, body = await asyncio.to_thread(html_to_text, text)
         return FetchedPage(url=url, title=title, text=body, truncated=truncated)
     return FetchedPage(url=url, title="", text=text.strip(), truncated=truncated)
 

@@ -177,3 +177,29 @@ class TestFetching:
         assert 'source="https://up.example"' in context and "content of https://up.example" in context
         assert 'source="https://down.example"' in context
         assert "could not be read: Connection refused" in context
+
+
+class TestAHostilePage:
+    def test_endless_unclosed_tags_are_read_in_linear_time(self):
+        import time
+
+        html = "<div>" * 100_000 + "deep text" + "</a>" * 100_000
+        started = time.perf_counter()
+        _, text = html_to_text(html)
+        assert time.perf_counter() - started < 5
+        assert "deep text" in text
+
+    async def test_a_page_is_read_off_the_event_loop(self, monkeypatch):
+        import threading
+
+        seen: list[bool] = []
+        real = html_to_text
+
+        def spy(html):
+            seen.append(threading.current_thread() is threading.main_thread())
+            return real(html)
+
+        monkeypatch.setattr("app.services.web_fetch_service.html_to_text", spy)
+        page = await page_from_bytes("https://a.example", b"<html><body><p>hi</p></body></html>", "text/html")
+        assert page.text == "hi"
+        assert seen == [False]

@@ -346,53 +346,148 @@ function probeSummary(result: ProbeResult | undefined): { text: string; tone: "o
   return { text: `${result.passed ? "Passed" : "Failed"}: ${result.hits} of ${result.trials}${date}`, tone: result.passed ? "ok" : "bad" };
 }
 
+type ProbeFilter = "all" | "passed" | "failed" | "none";
+
+const PROBE_FILTERS: { key: ProbeFilter; label: string }[] = [
+  { key: "all", label: "All" },
+  { key: "passed", label: "Passed" },
+  { key: "failed", label: "Failed" },
+  { key: "none", label: "Not probed" },
+];
+
+/** Rows shown before "Show all", when no search or filter narrows the list. */
+export const PROBE_ROWS_SHOWN = 10;
+
+function probeState(result: ProbeResult | undefined): Exclude<ProbeFilter, "all"> {
+  if (!result) return "none";
+  return result.passed && result.vision && result.tool_calling ? "passed" : "failed";
+}
+
+/** The agent's models first, then passed, failed and never probed; by name within each. */
+function probeRank(m: ModelChoice, probes: Record<string, ProbeResult>, agentRefs: ReadonlySet<string>): number {
+  if (agentRefs.has(m.ref)) return 0;
+  return { passed: 1, failed: 2, none: 3 }[probeState(probes[m.ref])];
+}
+
 function ProbeTable({
   models,
   probes,
   probing,
   disabled,
+  agentRefs,
   onProbe,
 }: {
   models: ModelChoice[];
   probes: Record<string, ProbeResult>;
   probing: string | null;
   disabled: boolean;
+  /** The agent's models (Agent models, and the recommended one): listed first, marked as such. */
+  agentRefs: ReadonlySet<string>;
   onProbe: (ref: string) => void;
 }) {
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<ProbeFilter>("all");
+  const [showAll, setShowAll] = useState(false);
   const candidates = models.filter((m) => m.state === "ok" && m.vision);
   if (!candidates.length) return <p className="muted-text api-key-form__hint">No enabled chat model reads images.</p>;
+
+  const counts: Record<ProbeFilter, number> = { all: candidates.length, passed: 0, failed: 0, none: 0 };
+  for (const m of candidates) counts[probeState(probes[m.ref])] += 1;
+  const q = query.trim().toLowerCase();
+  const matching = candidates
+    .filter((m) => filter === "all" || probeState(probes[m.ref]) === filter)
+    .filter((m) => !q || `${m.label} ${m.ref} ${m.provider ?? ""}`.toLowerCase().includes(q))
+    .sort(
+      (a, b) =>
+        probeRank(a, probes, agentRefs) - probeRank(b, probes, agentRefs) || a.label.localeCompare(b.label),
+    );
+  // A search or a filter shows everything it finds; the whole list starts short.
+  const narrowed = Boolean(q) || filter !== "all";
+  const rows = narrowed || showAll ? matching : matching.slice(0, PROBE_ROWS_SHOWN);
+  const hidden = matching.length - rows.length;
+
   return (
-    <table className="extension-admin__probes">
-      <thead>
-        <tr>
-          <th scope="col">Model</th>
-          <th scope="col">Last probe</th>
-          <th scope="col">
-            <span className="sr-only">Run</span>
-          </th>
-        </tr>
-      </thead>
-      <tbody>
-        {candidates.map((m) => {
-          const summary = probeSummary(probes[m.ref]);
-          return (
-            <tr key={m.ref}>
-              <td>{choiceLabel(m)}</td>
-              <td className={`extension-admin__probe extension-admin__probe--${summary.tone}`} title={probes[m.ref]?.detail}>
-                {summary.text}
-              </td>
-              <td>
-                {disabled ? null : (
-                  <button type="button" className="btn btn--ghost" disabled={probing !== null} onClick={() => onProbe(m.ref)}>
-                    {probing === m.ref ? "Probing…" : "Run probe"}
-                  </button>
-                )}
-              </td>
+    <div className="extension-admin__probe-list">
+      <div className="extension-admin__probe-tools">
+        <input
+          type="search"
+          className="input-block"
+          placeholder="Search models…"
+          aria-label="Search the probed models"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={keepEnterHere}
+        />
+        <div className="activity-segmented" role="group" aria-label="Show models by probe result">
+          {PROBE_FILTERS.map((f) => (
+            <button
+              key={f.key}
+              type="button"
+              aria-pressed={filter === f.key}
+              className={`activity-segmented__btn${filter === f.key ? " activity-segmented__btn--active" : ""}`}
+              onClick={() => setFilter(f.key)}
+            >
+              {f.label} ({counts[f.key]})
+            </button>
+          ))}
+        </div>
+      </div>
+      {rows.length === 0 ? (
+        <p className="muted-text api-key-form__hint">No models match this search.</p>
+      ) : (
+        <table className="extension-admin__probes">
+          <thead>
+            <tr>
+              <th scope="col">Model</th>
+              <th scope="col">Last probe</th>
+              <th scope="col">
+                <span className="sr-only">Run</span>
+              </th>
             </tr>
-          );
-        })}
-      </tbody>
-    </table>
+          </thead>
+          <tbody>
+            {rows.map((m) => {
+              const summary = probeSummary(probes[m.ref]);
+              return (
+                <tr key={m.ref}>
+                  <td>
+                    {choiceLabel(m)}
+                    {agentRefs.has(m.ref) ? <span className="extension-admin__probe-tag">Agent</span> : null}
+                  </td>
+                  <td
+                    className={`extension-admin__probe extension-admin__probe--${summary.tone}`}
+                    title={probes[m.ref]?.detail}
+                  >
+                    {summary.text}
+                  </td>
+                  <td className="extension-admin__probe-run">
+                    {disabled ? null : (
+                      <button
+                        type="button"
+                        className="btn btn--ghost btn-sm"
+                        disabled={probing !== null}
+                        onClick={() => onProbe(m.ref)}
+                      >
+                        {probing === m.ref ? "Probing…" : "Run probe"}
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+      {hidden > 0 ? (
+        <button type="button" className="btn btn--ghost btn-sm extension-admin__probe-more" onClick={() => setShowAll(true)}>
+          Show all {matching.length} models
+        </button>
+      ) : showAll && !narrowed && matching.length > PROBE_ROWS_SHOWN ? (
+        <button type="button" className="btn btn--ghost btn-sm extension-admin__probe-more" onClick={() => setShowAll(false)}>
+          Show fewer
+        </button>
+      ) : null}
+    </div>
   );
 }
 
@@ -510,6 +605,8 @@ export default function ExtensionSettingsCard() {
   const review = form?.agent_review_model ? choiceFor(form.agent_review_model, models) : null;
   const reviewNote = review ? unavailableNote(review) : null;
   // The agent's models never include Auto Router; one already chosen is still shown, to be removed.
+  // The models the agent runs on: listed first in the probe table, so their results are found at once.
+  const agentRefs = new Set([...(form?.agent_models ?? []), ...(form?.agent_recommended_model ? [form.agent_recommended_model] : [])]);
   const agentModelChoices = models.filter((m) => !m.auto_router || form?.agent_models.includes(m.ref));
   // The model the Agent tab starts with: one of the agent's models when they are listed, and one that may read pages.
   const recommendedOptions = offered
@@ -1030,7 +1127,14 @@ export default function ExtensionSettingsCard() {
               agent&apos;s own tool. A model that cannot read the screenshot, or answers in words instead of a click,
               will waste clicks and approvals under full control. Three small vision calls, billed to you.
             </span>
-            <ProbeTable models={models} probes={probes} probing={probing} disabled={readOnly} onProbe={(ref) => void probe(ref)} />
+            <ProbeTable
+              models={models}
+              probes={probes}
+              probing={probing}
+              disabled={readOnly}
+              agentRefs={agentRefs}
+              onProbe={(ref) => void probe(ref)}
+            />
           </div>
 
           <h3 className="settings-subsection-title">Full control: always ask before</h3>

@@ -19454,7 +19454,7 @@ p.error,
 
 .extension-admin__probes th,
 .extension-admin__probes td {
-  padding: 0.35rem 0.5rem;
+  padding: 0.25rem 0.5rem;
   border-bottom: 1px solid var(--border);
   text-align: start;
   vertical-align: middle;
@@ -19463,6 +19463,58 @@ p.error,
 .extension-admin__probes th {
   font-weight: 600;
   color: var(--muted);
+}
+
+.extension-admin__probe-list {
+  display: grid;
+  gap: 0.5rem;
+}
+
+/* The search and the result filter above the probe table, side by side when there is room. */
+.extension-admin__probe-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.extension-admin__probe-tools .input-block {
+  flex: 1 1 14rem;
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+.extension-admin__probe-tools .activity-segmented {
+  flex-wrap: wrap;
+}
+
+/* On a phone the four filters sit two by two under the search, full width. */
+@media (max-width: 640px) {
+  .extension-admin__probe-tools .activity-segmented {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    width: 100%;
+  }
+}
+
+.extension-admin__probes td.extension-admin__probe-run {
+  text-align: end;
+  white-space: nowrap;
+}
+
+.extension-admin__probe-tag {
+  display: inline-block;
+  margin-inline-start: 0.4rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  color: var(--accent);
+  vertical-align: middle;
+}
+
+.extension-admin__probe-more {
+  justify-self: start;
 }
 
 .extension-admin__probe--ok {

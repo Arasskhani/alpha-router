@@ -438,6 +438,72 @@ describe("the browser_control probe", () => {
   });
 });
 
+describe("a long list of models to probe", () => {
+  // 24 models that read images: Model 01..24. Two passed, one failed, the rest never probed.
+  const MANY = Array.from({ length: 24 }, (_, i) => {
+    const n = String(i + 1).padStart(2, "0");
+    return { ref: `model::${i + 1}`, label: `Model ${n}`, provider: "openrouter", state: "ok", vision: true };
+  });
+  const result = (ref: string, passed: boolean) => ({
+    model_ref: ref, ran_at: "2026-10-01T10:00:00Z", vision: true, tool_calling: true, hits: passed ? 3 : 0, trials: 3, passed, detail: "",
+  });
+  const PROBES = { "model::20": result("model::20", true), "model::5": result("model::5", true), "model::9": result("model::9", false) };
+  const names = () => [...host.querySelectorAll(".extension-admin__probes tbody tr td:first-child")].map((td) => td.textContent);
+  const filterButton = (label: RegExp) =>
+    [...host.querySelectorAll<HTMLButtonElement>('[aria-label="Show models by probe result"] button')].find((b) => label.test(b.textContent ?? ""))!;
+  const search = () => host.querySelector<HTMLInputElement>('input[aria-label="Search the probed models"]')!;
+
+  async function typeIn(input: HTMLInputElement, value: string) {
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+
+  it("starts with ten: the agent's models first, then passed, failed and never probed", async () => {
+    serve({ models: MANY, probes: PROBES, settings: { agent_models: ["model::17"], agent_recommended_model: "model::17" } });
+    await render();
+    expect(names()).toEqual([
+      "Model 17 · openrouterAgent",
+      "Model 05 · openrouter",
+      "Model 20 · openrouter",
+      "Model 09 · openrouter",
+      "Model 01 · openrouter",
+      "Model 02 · openrouter",
+      "Model 03 · openrouter",
+      "Model 04 · openrouter",
+      "Model 06 · openrouter",
+      "Model 07 · openrouter",
+    ]);
+    const more = [...host.querySelectorAll("button")].find((b) => b.textContent === "Show all 24 models")!;
+    await act(async () => more.click());
+    expect(names()).toHaveLength(24);
+    await act(async () => [...host.querySelectorAll("button")].find((b) => b.textContent === "Show fewer")!.click());
+    expect(names()).toHaveLength(10);
+  });
+
+  it("filters by result, with counts, and searches by name", async () => {
+    serve({ models: MANY, probes: PROBES });
+    await render();
+    expect(filterButton(/^All/).textContent).toBe("All (24)");
+    expect(filterButton(/^Passed/).textContent).toBe("Passed (2)");
+    expect(filterButton(/^Failed/).textContent).toBe("Failed (1)");
+    expect(filterButton(/^Not probed/).textContent).toBe("Not probed (21)");
+    await act(async () => filterButton(/^Passed/).click());
+    expect(filterButton(/^Passed/).getAttribute("aria-pressed")).toBe("true");
+    expect(names()).toEqual(["Model 05 · openrouter", "Model 20 · openrouter"]);
+    await act(async () => filterButton(/^Not probed/).click());
+    // A filter shows all it finds, past the first ten.
+    expect(names()).toHaveLength(21);
+    expect([...host.querySelectorAll("button")].some((b) => b.textContent?.startsWith("Show all"))).toBe(false);
+    await act(async () => filterButton(/^All/).click());
+    await typeIn(search(), "model 2");
+    expect(names()).toEqual(["Model 20 · openrouter", "Model 21 · openrouter", "Model 22 · openrouter", "Model 23 · openrouter", "Model 24 · openrouter"]);
+    await typeIn(search(), "nothing like it");
+    expect(host.textContent).toContain("No models match this search.");
+  });
+});
+
 describe("the numbers the card takes as text", () => {
   it("are checked against their range, by name", () => {
     expect(numberField("agent_max_minutes", " 30 ")).toEqual({ value: 30 });

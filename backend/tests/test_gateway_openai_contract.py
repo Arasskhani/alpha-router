@@ -280,3 +280,58 @@ async def test_a_body_that_is_not_an_object_is_refused(client) -> None:
         "/v1/chat/completions", json=["not", "an", "object"], headers={"Authorization": f"Bearer {MASTER_KEY}"}
     )
     assert resp.status_code == 400
+
+
+async def test_a_gateway_turn_with_web_tools_streams_openai_chunks_alone(client) -> None:
+    """The web tools run for a Gateway client too, but what the chat shows of them is not sent."""
+    from litellm.types.utils import ChatCompletionDeltaToolCall, Function
+
+    from app.services.chat_web_tools import WebToolLoop
+
+    call = ModelResponseStream(
+        id="chatcmpl-t",
+        model="vendor/good",
+        choices=[
+            StreamingChoices(
+                index=0,
+                delta=Delta(
+                    content=None,
+                    tool_calls=[
+                        ChatCompletionDeltaToolCall(
+                            id="call_1",
+                            type="function",
+                            index=0,
+                            function=Function(name="web_search", arguments='{"query":"q"}'),
+                        )
+                    ],
+                ),
+                finish_reason="tool_calls",
+            )
+        ],
+    )
+    replies = [_Provider([call]), _Provider([_chunk("Answer"), _chunk(None, finish="stop")])]
+
+    async def acompletion(**kwargs):
+        return replies.pop(0)
+
+    async def run(self, tool_call):
+        self.sources.append({"title": "T", "url": "https://t.example"})
+        return "results"
+
+    patches = [
+        p for p in _patches(replies[0]) if getattr(p, "attribute", None) not in ("acompletion", "parse_tools_config")
+    ]
+    patches += [
+        patch.object(proxy_service, "acompletion", side_effect=acompletion),
+        patch.object(proxy_service, "parse_tools_config", return_value=ChatToolsConfig(web_search=True)),
+        patch.object(chat_turn_context, "parse_tools_config", return_value=ChatToolsConfig(web_search=True)),
+        patch.object(chat_turn_context, "model_calls_functions", return_value=True),
+        patch.object(WebToolLoop, "run", run),
+    ]
+    with _enter_all(patches):
+        resp = await _post(client, {**_BODY, "web_search": True})
+    assert resp.status_code == 200, resp.text
+    payloads = [json.loads(f) for f in _frames(resp.text) if f != "[DONE]"]
+    assert replies == []  # the search round and the answer
+    assert not any("web_activity" in json.dumps(p) or "web_sources" in json.dumps(p) for p in payloads)
+    assert "".join((p["choices"][0]["delta"].get("content") or "") for p in payloads if p.get("choices")) == "Answer"

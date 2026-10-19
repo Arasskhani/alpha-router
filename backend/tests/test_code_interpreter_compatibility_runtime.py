@@ -6,6 +6,7 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from app.services.chat_tools_service import ChatToolsConfig
 from app.services import chat_turn_context, proxy_service, turn_settlement
 from app.services.usage_accounting_service import NormalizedUsage
 
@@ -73,7 +74,7 @@ async def _run_empty_completion_records_failure() -> tuple[list[dict], list[dict
     fake_ctx = MagicMock()
     fake_ctx.__aenter__ = AsyncMock(return_value=fake_db)
     fake_ctx.__aexit__ = AsyncMock(return_value=None)
-    tools = SimpleNamespace(code_interpreter=True)
+    tools = ChatToolsConfig(code_interpreter=True)
     recorded: list[dict] = []
 
     async def fake_record(_db, **kwargs):
@@ -304,8 +305,8 @@ async def _run_final_answer_after_execution() -> tuple[list[dict], int]:
         patch.object(proxy_service, "AsyncSessionLocal", return_value=fake_ctx),
         patch.object(chat_turn_context, "AsyncSessionLocal", return_value=fake_ctx),
         patch.object(turn_settlement, "AsyncSessionLocal", return_value=fake_ctx),
-        patch.object(proxy_service, "parse_tools_config", return_value=SimpleNamespace(code_interpreter=True)),
-        patch.object(chat_turn_context, "parse_tools_config", return_value=SimpleNamespace(code_interpreter=True)),
+        patch.object(proxy_service, "parse_tools_config", return_value=ChatToolsConfig(code_interpreter=True)),
+        patch.object(chat_turn_context, "parse_tools_config", return_value=ChatToolsConfig(code_interpreter=True)),
         patch.object(
             chat_turn_context, "augment_messages_with_tools", AsyncMock(side_effect=lambda db, m, t, **_kwargs: m)
         ),

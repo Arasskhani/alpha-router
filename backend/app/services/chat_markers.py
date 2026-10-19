@@ -39,6 +39,9 @@ CONTEXT_FIT_META_KEY = "contextFit"
 #: Assistant message meta, ``[{"id": session_id, "title": ...}]``: the person's
 #: earlier chats this answer read from (recall).
 RECALLED_CHATS_META_KEY = "recalledChats"
+#: Assistant message meta, ``[{"title": ..., "url": ...}]``: the pages the model
+#: searched up or read with the web tools while answering.
+WEB_SOURCES_META_KEY = "webSources"
 #: Server-owned body keys: the function tools the browser extension's agent
 #: offers the model for one step, and the tool choice. The turn hands them to
 #: the provider as ``tools`` / ``tool_choice`` and streams the model's tool

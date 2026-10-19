@@ -8,6 +8,7 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from app.services.chat_tools_service import ChatToolsConfig
 from app.services import chat_turn_context, proxy_service, turn_settlement
 
 
@@ -115,11 +116,11 @@ async def _run_stop_during_sandbox() -> dict:
             patch.object(
                 proxy_service,
                 "parse_tools_config",
-                return_value=SimpleNamespace(code_interpreter=True),
+                return_value=ChatToolsConfig(code_interpreter=True),
             )
         )
         _stack.enter_context(
-            patch.object(chat_turn_context, "parse_tools_config", return_value=SimpleNamespace(code_interpreter=True))
+            patch.object(chat_turn_context, "parse_tools_config", return_value=ChatToolsConfig(code_interpreter=True))
         )
         _stack.enter_context(
             patch.object(
@@ -243,11 +244,11 @@ async def _run_stop_before_sandbox() -> dict:
             patch.object(
                 proxy_service,
                 "parse_tools_config",
-                return_value=SimpleNamespace(code_interpreter=True),
+                return_value=ChatToolsConfig(code_interpreter=True),
             )
         )
         _stack.enter_context(
-            patch.object(chat_turn_context, "parse_tools_config", return_value=SimpleNamespace(code_interpreter=True))
+            patch.object(chat_turn_context, "parse_tools_config", return_value=ChatToolsConfig(code_interpreter=True))
         )
         _stack.enter_context(
             patch.object(
@@ -340,11 +341,11 @@ async def _run_partial_flush_stops_after_cancel() -> list[str]:
             patch.object(
                 proxy_service,
                 "parse_tools_config",
-                return_value=SimpleNamespace(code_interpreter=False),
+                return_value=ChatToolsConfig(code_interpreter=False),
             )
         )
         _stack.enter_context(
-            patch.object(chat_turn_context, "parse_tools_config", return_value=SimpleNamespace(code_interpreter=False))
+            patch.object(chat_turn_context, "parse_tools_config", return_value=ChatToolsConfig(code_interpreter=False))
         )
         _stack.enter_context(
             patch.object(

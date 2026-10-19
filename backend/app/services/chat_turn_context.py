@@ -41,7 +41,13 @@ from app.services.chat_markers import (
     RECALLED_CHATS_META_KEY,
     PAGE_CONTEXT_META_KEY,
 )
-from app.services.chat_tools_service import ChatToolsConfig, augment_messages_with_tools, parse_tools_config
+from app.services.chat_tools_service import (
+    ChatToolsConfig,
+    augment_messages_with_tools,
+    parse_tools_config,
+    search_result_limit,
+)
+from app.services.chat_web_tools import WebToolLoop, model_calls_functions
 from app.services.code_interpreter_capacity_service import (
     CapacityPermit,
     heartbeat_code_interpreter_turn,
@@ -182,6 +188,8 @@ class TurnContext:
     recalled_chats: list[dict] | None = None
     #: What the turn was given beside its messages, for its request log (``memory_context``); None when nothing.
     memory_context: dict | None = None
+    #: The web tools the model calls itself this turn (Web Search / Web Fetch on a model that calls functions).
+    web_tools: WebToolLoop | None = None
 
 
 def memory_context(
@@ -559,6 +567,27 @@ async def build_turn_context(  # noqa: C901 -- straight-line preparation moved o
             if effort in _REASONING_EFFORTS:
                 completion_kwargs.update(reasoning_hint(model, provider or None, effort))
 
+        # Web Search and Web Fetch: tools the model calls itself, when it can call functions; else the older way.
+        web_tools: WebToolLoop | None = None
+        if (
+            agent_turn is None
+            and not browser_tools
+            and (tools.web_search or tools.web_fetch)
+            and model_calls_functions(model, provider or None)
+        ):
+            web_tools = WebToolLoop(
+                search=tools.web_search,
+                fetch=tools.web_fetch,
+                user_id=user_id,
+                alpha_router_api_key_id=alpha_router_api_key_id,
+                username=username,
+                reserve_budget=not skip_budget,
+                search_limit=search_result_limit(tools.web_search_depth),
+            )
+            completion_kwargs["tools"] = web_tools.definitions()
+            # A cached answer would be yesterday's search.
+            completion_kwargs["caching"] = False
+
         if agent_turn is None:
             try:
                 messages = await augment_messages_with_tools(
@@ -569,6 +598,7 @@ async def build_turn_context(  # noqa: C901 -- straight-line preparation moved o
                     alpha_router_api_key_id=alpha_router_api_key_id,
                     username=username,
                     reserve_budget=not skip_budget,
+                    model_driven=web_tools is not None,
                 )
             except BaseException:
                 await lease.abandon("tool setup error")
@@ -762,6 +792,7 @@ async def build_turn_context(  # noqa: C901 -- straight-line preparation moved o
             budget_hold_usd=budget_hold_usd,
             context_fit=fitted.metadata(),
             recalled_chats=recalled_chats or None,
+            web_tools=web_tools,
             memory_context=memory_context(
                 memories=injected_memory_ids,
                 project_memories=injected_project_memory_ids,

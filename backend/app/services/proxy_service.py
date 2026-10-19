@@ -62,9 +62,11 @@ from app.services.budget_reservation_service import (
 )
 from app.services.chat_tool_access_service import assert_tools_permitted
 from app.services.chat_tool_registry import requested_tool_keys
+from app.services.chat_markers import WEB_SOURCES_META_KEY
 from app.services.chat_tools_service import (
     parse_tools_config,
 )
+from app.services.chat_web_tools import ToolCall, flatten_tool_rounds
 from app.services.chat_turn_context import (
     NonGeneratingReply,
     _adaptive_openrouter_extra_body,
@@ -900,6 +902,8 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
         injected_memory_ids = ctx.injected_memory_ids
         injected_project_memory_ids = ctx.injected_project_memory_ids
         budget_hold_usd = ctx.budget_hold_usd
+        #: Web Search / Web Fetch called by the model itself: their calls are run here and never reach the client.
+        web_tools = ctx.web_tools
 
         prompt_tokens = completion_tokens = cached_tokens = 0
         total_cost = 0.0
@@ -1165,8 +1169,14 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
                             yield _sse_error_frame(BUDGET_EXCEEDED_MESSAGE)
                             break
                     if not client_disconnected and agent_turn is None:
-                        sent_chunks += 1
-                        yield f"data: {_serialize_stream_chunk(chunk)}\n\n".encode()
+                        if web_tools is not None and _web_tool_chunk(chunk):
+                            # The model's own call of a web tool is the server's to run: only its words go on.
+                            if delta:
+                                sent_chunks += 1
+                                yield _sse_delta_chunk(delta)
+                        else:
+                            sent_chunks += 1
+                            yield f"data: {_serialize_stream_chunk(chunk)}\n\n".encode()
                     # Persist after yield and without awaiting DB: token printing
                     # must not wait on commit. A partial flush after Stop would
                     # re-mark the message as streaming, so skip once cancelled.
@@ -1175,6 +1185,7 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
 
                 attempt.finish()
                 iteration_content = attempt.content
+                round_calls = attempt.tool_calls() if web_tools is not None else []
                 # A reply of tool calls alone (the browser extension's agent) has no
                 # words and is not empty.
                 empty_completion = not iteration_content.strip() and not attempt.has_tool_calls
@@ -1193,6 +1204,60 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
 
                 if client_disconnected:
                     break
+
+                if web_tools is not None and round_calls:
+                    calls = [ToolCall(id=c["id"], name=c["name"], arguments=c["arguments"]) for c in round_calls]
+                    web_tools.rounds += 1
+                    for call in calls:
+                        yield _sse_alpha_router_frame({"web_activity": web_tools.activity(call)})
+                    running = asyncio.ensure_future(asyncio.gather(*(web_tools.run(call) for call in calls)))
+                    stopped = False
+                    try:
+                        while not running.done():
+                            await asyncio.wait({running}, timeout=WEB_TOOL_POLL_S)
+                            if running.done():
+                                break
+                            if await _client_stopped():
+                                stopped = True
+                                break
+                            # A search can take a while: the connection is kept alive meanwhile.
+                            yield SSE_KEEP_ALIVE
+                    finally:
+                        if not running.done():
+                            running.cancel()
+                            with contextlib.suppress(asyncio.CancelledError, Exception):
+                                await running
+                    if stopped:
+                        client_disconnected = True
+                        break
+                    results = running.result()
+                    if web_tools.sources:
+                        if persister:
+                            persister.set_message_metadata({WEB_SOURCES_META_KEY: list(web_tools.sources)})
+                        yield _sse_alpha_router_frame({"web_sources": list(web_tools.sources)})
+                    if iteration_content.strip():
+                        # Words before the calls ("Let me look that up") are kept apart from the answer after them.
+                        collected_content += "\n\n"
+                        yield _sse_delta_chunk("\n\n")
+                    current_messages = current_messages + [
+                        {
+                            "role": "assistant",
+                            "content": iteration_content or None,
+                            "tool_calls": [call.as_message_call() for call in calls],
+                        },
+                        *(
+                            {"role": "tool", "tool_call_id": call.id, "content": result}
+                            for call, result in zip(calls, results, strict=True)
+                        ),
+                    ]
+                    completion_kwargs["messages"] = current_messages
+                    if web_tools.last_round:
+                        # The rounds are used up: the next answer is asked for with no tools, so it is an answer -
+                        # and with the rounds told as words, since a request without tools may not carry tool calls.
+                        completion_kwargs.pop("tools", None)
+                        completion_kwargs.pop("tool_choice", None)
+                        completion_kwargs["messages"] = flatten_tool_rounds(current_messages)
+                    continue
 
                 if empty_completion and tools.code_interpreter:
                     await _record_ci_failure(active_event, attempt_error or "Empty Code Interpreter response")
@@ -1347,13 +1412,16 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
             # With function tools, only while nothing reached the client yet: then the whole reply - its
             # tool calls with its words - goes out as one frame. Without it, a stream the provider refused
             # (no endpoint for tools or images, a context too long) says only that the request failed.
-            tools_turn = bool(completion_kwargs.get("tools"))
+            tools_turn = bool(completion_kwargs.get("tools")) and web_tools is None
             if _should_retry_non_stream(provider, exc) and (not tools_turn or sent_chunks == 0):
                 retry = NonStreamRetry(
                     ai_model=ai_model,
                     provider_type=provider_type,
                     model=model,
-                    completion_kwargs=completion_kwargs,
+                    # Asked again whole, a turn with web tools answers from what it has: the calls are not run again.
+                    completion_kwargs=(
+                        _without_web_tools(completion_kwargs) if web_tools is not None else completion_kwargs
+                    ),
                     completion_fn=acompletion,
                 )
                 retry_stopped = False
@@ -1519,6 +1587,35 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
                 yield f"data: {meta_payload}\n\n".encode()
             if not was_cancelled and not client_disconnected:
                 yield b"data: [DONE]\n\n"
+
+
+#: How often a running web tool call checks for Stop, and keeps the connection alive.
+WEB_TOOL_POLL_S = 2.0
+
+
+def _without_web_tools(completion_kwargs: dict[str, Any]) -> dict[str, Any]:
+    """A turn's request asked again whole without its web tools: the rounds so far told as words."""
+    kwargs = {k: v for k, v in completion_kwargs.items() if k not in ("tools", "tool_choice")}
+    if isinstance(kwargs.get("messages"), list):
+        kwargs["messages"] = flatten_tool_rounds(kwargs["messages"])
+    return kwargs
+
+
+def _web_tool_chunk(chunk: Any) -> bool:
+    """A chunk of the model's call of a web tool, or the end of one: the server's, never the client's."""
+    try:
+        choice = chunk.choices[0] if chunk.choices else None
+    except (AttributeError, IndexError, TypeError):
+        return False
+    if choice is None:
+        return False
+    delta = getattr(choice, "delta", None)
+    return bool(getattr(delta, "tool_calls", None)) or getattr(choice, "finish_reason", None) == "tool_calls"
+
+
+def _sse_alpha_router_frame(payload: dict[str, Any]) -> bytes:
+    """An OpenAI-shaped chunk with no choices, carrying what the chat shows beside the answer."""
+    return f"data: {json.dumps({'choices': [], 'alpha_router': payload}, ensure_ascii=False)}\n\n".encode()
 
 
 async def _end_request_transaction(db: AsyncSession) -> None:

@@ -20,6 +20,7 @@ import anyio
 import pytest
 
 from app.services import chat_turn_context, proxy_service, turn_settlement
+from app.services.chat_tools_service import ChatToolsConfig
 
 
 def _chunk(content: str) -> SimpleNamespace:
@@ -121,9 +122,9 @@ def _patches(provider: _SlowProvider, persister: _FakePersister, log_usage: Asyn
         patch.object(
             proxy_service,
             "parse_tools_config",
-            return_value=SimpleNamespace(code_interpreter=True),
+            return_value=ChatToolsConfig(code_interpreter=True),
         ),
-        patch.object(chat_turn_context, "parse_tools_config", return_value=SimpleNamespace(code_interpreter=True)),
+        patch.object(chat_turn_context, "parse_tools_config", return_value=ChatToolsConfig(code_interpreter=True)),
         patch.object(
             chat_turn_context, "augment_messages_with_tools", AsyncMock(side_effect=lambda db, m, t, **_kwargs: m)
         ),

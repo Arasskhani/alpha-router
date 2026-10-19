@@ -42,17 +42,16 @@ async def test_default_chat_fetch_and_search_are_fenced_and_policy_leads():
             messages,
             ChatToolsConfig(web_search=True, web_fetch=True, code_interpreter=False),
         )
-    system = out[0]["content"]
-    assert out[0]["role"] == "system"
-    assert system.startswith(RUNTIME_POLICY.splitlines()[0])
+    # The rules come first, alone; what the tools found follows in a message of its own.
+    assert [m["role"] for m in out] == ["system", "system", "user"]
+    assert out[0]["content"].startswith(RUNTIME_POLICY.splitlines()[0])
+    assert "BEGIN_UNTRUSTED_" not in out[0]["content"]
+    system = out[1]["content"]
     assert 'BEGIN_UNTRUSTED_WEB_PAGE source="https://evil.test/page"' in system
     assert "END_UNTRUSTED_WEB_PAGE" in system
     assert "BEGIN_UNTRUSTED_WEB_SEARCH_RESULTS" in system
     # The injected text is present but only inside a fence.
-    pos_policy = system.index("ALPHAROUTER_RUNTIME_POLICY_V1")
-    pos_first_fence = system.index("BEGIN_UNTRUSTED_")
-    pos_injection = system.index(INJECTION)
-    assert pos_policy < pos_first_fence < pos_injection
+    assert system.index("BEGIN_UNTRUSTED_") < system.index(INJECTION)
     # Every occurrence of the injection sits between a BEGIN and its END.
     cursor = 0
     while (hit := system.find(INJECTION, cursor)) != -1:
@@ -60,7 +59,7 @@ async def test_default_chat_fetch_and_search_are_fenced_and_policy_leads():
         end = system.find("END_UNTRUSTED_", hit)
         assert begin != -1 and end != -1
         cursor = hit + 1
-    assert out[1] == messages[0]
+    assert out[2] == messages[0]
 
 
 async def test_fetch_failure_is_also_fenced():

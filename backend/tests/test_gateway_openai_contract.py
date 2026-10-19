@@ -29,6 +29,7 @@ import pytest
 from litellm.types.utils import Delta, ModelResponseStream, StreamingChoices
 from pydantic import BaseModel, ConfigDict
 
+from app.services.chat_tools_service import ChatToolsConfig
 from app.api import gateway
 from app.services import chat_turn_context, proxy_service, turn_settlement
 
@@ -139,8 +140,8 @@ def _patches(provider: _Provider):
         patch.object(proxy_service, "AsyncSessionLocal", return_value=fake_ctx),
         patch.object(chat_turn_context, "AsyncSessionLocal", return_value=fake_ctx),
         patch.object(turn_settlement, "AsyncSessionLocal", return_value=fake_ctx),
-        patch.object(proxy_service, "parse_tools_config", return_value=SimpleNamespace(code_interpreter=False)),
-        patch.object(chat_turn_context, "parse_tools_config", return_value=SimpleNamespace(code_interpreter=False)),
+        patch.object(proxy_service, "parse_tools_config", return_value=ChatToolsConfig(code_interpreter=False)),
+        patch.object(chat_turn_context, "parse_tools_config", return_value=ChatToolsConfig(code_interpreter=False)),
         patch.object(
             chat_turn_context, "augment_messages_with_tools", AsyncMock(side_effect=lambda db, m, t, **_kw: m)
         ),

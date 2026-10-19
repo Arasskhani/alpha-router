@@ -171,8 +171,11 @@ class ProviderAttempt:
         for position, delta in enumerate(deltas or ()):
             index = _field(delta, "index")
             call = self._tool_calls.setdefault(
-                index if isinstance(index, int) else position, {"name": "", "arguments": ""}
+                index if isinstance(index, int) else position, {"name": "", "arguments": "", "id": ""}
             )
+            call_id = _field(delta, "id")
+            if isinstance(call_id, str) and call_id and not call.get("id"):
+                call["id"] = call_id
             function = _field(delta, "function")
             name = _field(function, "name")
             arguments = _field(function, "arguments")
@@ -187,6 +190,14 @@ class ProviderAttempt:
     def has_tool_calls(self) -> bool:
         """Whether the model answered with tool calls (an answer without words, and not an empty one)."""
         return any(call["name"] or call["arguments"] for call in self._tool_calls.values())
+
+    def tool_calls(self) -> list[dict[str, str]]:
+        """The model's tool calls in order: ``{"id", "name", "arguments"}`` (an id made up when it sent none)."""
+        return [
+            {"id": call.get("id") or f"call_{index}", "name": call["name"], "arguments": call["arguments"]}
+            for index, call in sorted(self._tool_calls.items())
+            if call["name"] or call["arguments"]
+        ]
 
     @property
     def tool_call_text(self) -> str:

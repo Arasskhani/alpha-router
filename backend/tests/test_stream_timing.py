@@ -6,6 +6,7 @@ import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from app.services.chat_tools_service import ChatToolsConfig
 from app.services import chat_turn_context, proxy_service, turn_settlement
 
 
@@ -141,7 +142,7 @@ async def _run_empty_code_interpreter_test() -> None:
     fake_ctx = MagicMock()
     fake_ctx.__aenter__ = AsyncMock(return_value=fake_db)
     fake_ctx.__aexit__ = AsyncMock(return_value=None)
-    tools = SimpleNamespace(code_interpreter=True)
+    tools = ChatToolsConfig(code_interpreter=True)
     body = {
         "model": "openrouter/auto",
         "messages": [{"role": "user", "content": "Analyze data"}],

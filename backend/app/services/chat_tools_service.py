@@ -37,7 +37,7 @@ def parse_tools_config(body: dict) -> ChatToolsConfig:
     )
 
 
-def _search_result_limit(depth: str) -> int:
+def search_result_limit(depth: str) -> int:
     return {"low": 3, "medium": 5, "high": 8}.get(depth, 5)
 
 
@@ -56,7 +56,7 @@ async def web_search_context(
     """
     if not query.strip():
         return ""
-    limit = _search_result_limit(depth)
+    limit = search_result_limit(depth)
     try:
         outcome = await search_web(
             query,
@@ -199,54 +199,68 @@ async def augment_messages_with_tools(
     alpha_router_api_key_id: int | None = None,
     username: str | None = None,
     reserve_budget: bool = True,
+    model_driven: bool = False,
 ) -> list[dict]:
-    """Prepend tool context as system messages; return new message list."""
+    """The turn's messages with what the tools add, rules first; a new list.
+
+    When the model calls the web tools itself (``model_driven``, chat_web_tools) only
+    their instructions are added - the results come later, as tool messages.
+    Otherwise the person's own words are searched once and the links they
+    typed are read, before the model is asked.
+
+    The order is the runtime policy, then the chat's own system message (its
+    instructions stay near the top, the same from turn to turn), then what
+    the tools found - so untrusted text never comes before the rules.
+    """
     if not messages:
         return messages
-    system_blocks: list[str] = []
-    user_query = latest_user_text(messages)
+    static_blocks: list[str] = []
+    found_blocks: list[str] = []
+    user_text = latest_user_text(messages)
 
-    if tools.web_search and user_query:
-        ctx = await web_search_context(
-            user_query,
-            tools.web_search_depth,
-            user_id=user_id,
-            alpha_router_api_key_id=alpha_router_api_key_id,
-            username=username,
-            reserve_budget=reserve_budget,
-        )
-        if ctx:
-            system_blocks.append(ctx)
+    if model_driven:
+        from app.services.chat_web_tools import web_tools_instructions
 
-    if tools.web_fetch:
-        ctx = await web_fetch_context(
-            messages,
-            user_id=user_id,
-            alpha_router_api_key_id=alpha_router_api_key_id,
-            username=username,
-            reserve_budget=reserve_budget,
-        )
-        if ctx:
-            system_blocks.append(ctx)
+        static_blocks.append(web_tools_instructions(search=tools.web_search, fetch=tools.web_fetch))
+    else:
+        from app.services.chat_web_tools import pre_search_query
+
+        query = pre_search_query(user_text)
+        if tools.web_search and query:
+            ctx = await web_search_context(
+                query,
+                tools.web_search_depth,
+                user_id=user_id,
+                alpha_router_api_key_id=alpha_router_api_key_id,
+                username=username,
+                reserve_budget=reserve_budget,
+            )
+            if ctx:
+                found_blocks.append(ctx)
+        if tools.web_fetch:
+            ctx = await web_fetch_context(
+                messages,
+                user_id=user_id,
+                alpha_router_api_key_id=alpha_router_api_key_id,
+                username=username,
+                reserve_budget=reserve_budget,
+            )
+            if ctx:
+                found_blocks.append(ctx)
 
     if tools.code_interpreter:
         from app.services.code_interpreter_service import code_interpreter_system_message
 
-        system_blocks.insert(0, code_interpreter_system_message())
+        static_blocks.insert(0, code_interpreter_system_message())
 
-    if not system_blocks:
+    if not static_blocks and not found_blocks:
         return list(messages)
 
-    # Untrusted content is about to enter the prompt: state the rules first.
-    system_blocks.insert(0, RUNTIME_POLICY)
-
-    prefix = [{"role": "system", "content": "\n\n".join(system_blocks)}]
     out = list(messages)
-    if out and out[0].get("role") == "system":
-        merged = out[0].get("content", "")
-        if isinstance(merged, str):
-            out[0] = {"role": "system", "content": f"{merged}\n\n{system_blocks[0]}"}
-            prefix = []
-            if len(system_blocks) > 1:
-                prefix = [{"role": "system", "content": "\n\n".join(system_blocks[1:])}]
-    return prefix + out
+    head = [RUNTIME_POLICY]
+    if out and out[0].get("role") == "system" and isinstance(out[0].get("content"), str):
+        head.append(str(out[0]["content"]))
+        out = out[1:]
+    first = {"role": "system", "content": "\n\n".join([*head, *static_blocks])}
+    found = [{"role": "system", "content": "\n\n".join(found_blocks)}] if found_blocks else []
+    return [first, *found, *out]

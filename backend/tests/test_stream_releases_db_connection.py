@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 import app.models  # noqa: F401
+from app.services.chat_tools_service import ChatToolsConfig
 from app.database import Base
 from app.services import chat_turn_context, proxy_service, turn_settlement
 
@@ -73,7 +74,7 @@ async def test_request_session_transaction_is_closed_before_provider_call():
                     patch.object(chat_turn_context, "AsyncSessionLocal", tracking_factory),
                     patch.object(turn_settlement, "AsyncSessionLocal", tracking_factory),
                     patch.object(
-                        proxy_service, "parse_tools_config", return_value=SimpleNamespace(code_interpreter=False)
+                        proxy_service, "parse_tools_config", return_value=ChatToolsConfig(code_interpreter=False)
                     ),
                     patch.object(
                         chat_turn_context,

@@ -234,7 +234,12 @@ async def search_searxng(target: SearchTarget, query: str, limit: int, **kwargs:
 def _ddgs_text(query: str, limit: int) -> list[dict[str, Any]]:
     from ddgs import DDGS
 
-    return list(DDGS(timeout=int(SEARCH_TIMEOUT_S)).text(query, max_results=limit))
+    # DuckDuckGo itself: left to "auto", ddgs spreads a query over Bing, Google, Yandex and others, which is
+    # more services than the administrator chose.
+    return list(DDGS(timeout=int(SEARCH_TIMEOUT_S)).text(query, max_results=limit, backend=DDGS_BACKEND))
+
+
+DDGS_BACKEND = "duckduckgo"
 
 
 async def search_duckduckgo(target: SearchTarget, query: str, limit: int, **kwargs: Any) -> list[SearchResult]:

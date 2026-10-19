@@ -181,3 +181,22 @@ async def test_results_are_cut_to_size_and_an_unknown_provider_is_refused():
     assert len(row.title) <= 200 and len(row.snippet) <= wsp.MAX_SNIPPET_CHARS
     with pytest.raises(WebSearchError):
         await run_search(SearchTarget("openai"), "q", 5)
+
+
+def test_duckduckgo_asks_duckduckgo_alone(monkeypatch):
+    """ddgs left to "auto" would spread the query over other engines too."""
+    from app.services import web_search_providers
+
+    seen: dict = {}
+
+    class FakeDDGS:
+        def __init__(self, timeout):
+            pass
+
+        def text(self, query, **kwargs):
+            seen.update(kwargs)
+            return [{"title": "T", "href": "https://t.example", "body": "b"}]
+
+    monkeypatch.setattr("ddgs.DDGS", FakeDDGS)
+    assert web_search_providers._ddgs_text("q", 3)[0]["href"] == "https://t.example"
+    assert seen == {"max_results": 3, "backend": "duckduckgo"}

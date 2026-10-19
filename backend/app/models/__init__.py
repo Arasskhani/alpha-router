@@ -65,6 +65,7 @@ from app.models.evaluation import (
 from app.models.extension import ExtensionEvent, ExtensionSession
 from app.models.feature_access import FeatureAccessRule
 from app.models.governance import GovernanceAuditEvent
+from app.models.guardrail import GuardrailEvent, GuardrailPattern, GuardrailRule, GuardrailRuleAssignment
 from app.models.knowledge import (
     ConnectorSyncRun,
     DeletionTombstone,
@@ -160,6 +161,10 @@ __all__ = [
     "EvaluationResult",
     "EvaluationRun",
     "GovernanceAuditEvent",
+    "GuardrailEvent",
+    "GuardrailPattern",
+    "GuardrailRule",
+    "GuardrailRuleAssignment",
     "ImageGenerationAttempt",
     "IngestionJob",
     "KnowledgeAuditEvent",

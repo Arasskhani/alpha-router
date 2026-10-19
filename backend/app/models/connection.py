@@ -16,7 +16,10 @@ from app.database import Base, MoneyUSD
 
 class Connection(Base):
     __tablename__ = "connections"
-    __table_args__ = (CheckConstraint("kind IN ('models', 'web_search')", name="chk_connections_kind"),)
+    __table_args__ = (
+        CheckConstraint("kind IN ('models', 'web_search')", name="chk_connections_kind"),
+        CheckConstraint("trust_level IN ('internal', 'trusted', 'public')", name="chk_connections_trust_level"),
+    )
 
     id = Column(Integer, primary_key=True)
     #: ``models`` or ``web_search`` (app.services.connection_kinds); set when the connection is made.
@@ -33,6 +36,10 @@ class Connection(Base):
     priority = Column(Integer, nullable=False, default=100, server_default="100")
     #: Web search: what one search costs, charged to the person's budget (0: free, as for SearXNG).
     price_per_request_usd = Column(MoneyUSD, nullable=False, default=0.0, server_default="0")
+    #: Guardrails: how far what is sent here may be trusted - ``internal`` (run by the organisation),
+    #: ``trusted`` (an outside service under contract) or ``public``. Set only by an administrator; new
+    #: connections start as ``public``, the strictest.
+    trust_level = Column(String(16), nullable=False, default="public", server_default="public")
 
     # Scheduled model sync
     sync_enabled = Column(Boolean, default=True)

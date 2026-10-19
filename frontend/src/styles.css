@@ -4379,6 +4379,48 @@ table.data-table--api-logs {
   position: relative;
 }
 
+/* Web search connections: the service picker, priority and price side by side, the fallback switch. */
+.web-search-providers {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+}
+
+.web-search-providers legend {
+  padding: 0 0.3rem;
+}
+
+.web-search-provider {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  padding: 0.3rem 0;
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+.web-search-provider input {
+  margin-top: 0.2rem;
+}
+
+.web-search-numbers {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: 0 1rem;
+}
+
+.web-search-fallback {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-bottom: 1rem;
+}
+
+.web-search-order {
+  margin: 0;
+}
+
+
 .connection-provider-combobox__panel {
   position: absolute;
   top: calc(100% + 0.25rem);

@@ -3,6 +3,11 @@ import { useNavigate } from "react-router-dom";
 import { api } from "../../api";
 import AdminPage from "../../components/AdminPage";
 import ConnectionFormModal, { type ConnectionFormValues } from "../../components/connections/ConnectionFormModal";
+import WebSearchConnectionsPanel, {
+  type SearchConn,
+  type WebSearchOverview,
+} from "../../components/connections/WebSearchConnectionsPanel";
+import Tabs, { TabPanel } from "../../components/Tabs";
 import RowActionsMenu from "../../components/RowActionsMenu";
 import { formatLocalDateTime } from "../../lib/dateTime";
 import { useConfirm } from "../../context/ConfirmContext";
@@ -13,6 +18,7 @@ import { useTableCards } from "../../hooks/useTableCards";
 type Conn = {
   id: number;
   name: string;
+  kind?: "models" | "web_search";
   provider_type: string;
   base_url: string | null;
   is_active: boolean;
@@ -57,12 +63,21 @@ export default function Connections() {
   const [err, setErr] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [editConn, setEditConn] = useState<Conn | null>(null);
+  const [searchOverview, setSearchOverview] = useState<WebSearchOverview | null>(null);
+  // Model providers and web search services are kept apart: a tab each, a form each, and a key field that says which.
+  const [tab, setTab] = useState<"models" | "web_search">(() =>
+    new URLSearchParams(window.location.search).get("tab") === "web-search" ? "web_search" : "models",
+  );
 
   const load = useCallback(async () => {
     try {
       setErr("");
-      const data = await api<Conn[]>("/api/admin/connections");
+      const [data, overview] = await Promise.all([
+        api<Conn[]>("/api/admin/connections"),
+        api<WebSearchOverview>("/api/admin/web-search"),
+      ]);
       setList(data);
+      setSearchOverview(overview);
     } catch (e) {
       setErr(String(e));
     }
@@ -72,7 +87,9 @@ export default function Connections() {
     void load();
   }, [load]);
 
-  const filtered = list.filter((c) => {
+  const models = list.filter((c) => (c.kind ?? "models") === "models");
+  const searches = list.filter((c) => c.kind === "web_search") as unknown as SearchConn[];
+  const filtered = models.filter((c) => {
     const q = search.trim().toLowerCase();
     if (!q) return true;
     return (
@@ -150,16 +167,50 @@ export default function Connections() {
       title="Connections"
       actions={
         <button type="button" className="btn connections-new-btn" onClick={() => setCreateOpen(true)}>
-          + New Connection
+          {tab === "models" ? "+ New model connection" : "+ New web search connection"}
         </button>
       }
     >
-      <p className="muted-text connections-lead">
-        Upstream provider accounts (OpenRouter, OpenAI, …). Set a custom <strong>Base URL</strong> per connection for
-        chat, embeddings, video, or other API paths — then sync models for that endpoint.
-      </p>
       {msg && <p className="alert alert-success">{msg}</p>}
       {err && <p className="alert alert-error" role="alert">{err}</p>}
+
+      <Tabs
+        idBase="connections"
+        ariaLabel="Kinds of connection"
+        items={[
+          { id: "models", label: `Model providers (${models.length})` },
+          { id: "web_search", label: `Web search (${searches.length})` },
+        ]}
+        value={tab}
+        onChange={(next) => {
+          setTab(next);
+          setCreateOpen(false);
+        }}
+      />
+
+      {tab === "web_search" ? (
+        <TabPanel idBase="connections" id="web_search">
+          <p className="muted-text connections-lead">
+            Search services for the chat&apos;s <strong>Web Search</strong>. Their keys go only to the search service;
+            a search asks them by priority and moves to the next when one fails.
+          </p>
+          <WebSearchConnectionsPanel
+            rows={searches}
+            overview={searchOverview}
+            setOverview={setSearchOverview}
+            reload={load}
+            setMsg={setMsg}
+            setErr={setErr}
+            createOpen={createOpen}
+            onCreateClose={() => setCreateOpen(false)}
+          />
+        </TabPanel>
+      ) : (
+      <TabPanel idBase="connections" id="models">
+      <p className="muted-text connections-lead">
+        Upstream model provider accounts (OpenRouter, OpenAI, …). Set a custom <strong>Base URL</strong> per connection
+        for chat, embeddings, video, or other API paths — then sync models for that endpoint.
+      </p>
 
       <div className="connections-toolbar card">
         <input
@@ -188,7 +239,7 @@ export default function Connections() {
             {filtered.length === 0 && (
               <tr>
                 <td colSpan={7} className="muted-text">
-                  {list.length === 0 ? "No connections yet. Add one with + New Connection." : "No matches."}
+                  {models.length === 0 ? "No model connections yet. Add one with + New model connection." : "No matches."}
                 </td>
               </tr>
             )}
@@ -232,11 +283,19 @@ export default function Connections() {
         </table>
       </div>
 
-      <ConnectionFormModal open={createOpen} title="Add connection" onClose={() => setCreateOpen(false)} onSubmit={createConnection} />
+      </TabPanel>
+      )}
+
+      <ConnectionFormModal
+        open={createOpen && tab === "models"}
+        title="Add model connection"
+        onClose={() => setCreateOpen(false)}
+        onSubmit={createConnection}
+      />
 
       <ConnectionFormModal
         open={!!editConn}
-        title="Edit connection"
+        title="Edit model connection"
         initial={
           editConn
             ? {

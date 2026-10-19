@@ -6,6 +6,7 @@ import {
   suggestConnectionProviders,
   type ConnectionProviderPreset,
 } from "../../lib/connectionProviders";
+import { modelKeyWarning } from "../../lib/webSearchProviders";
 
 export type ConnectionFormValues = {
   name: string;
@@ -267,7 +268,7 @@ export default function ConnectionFormModal({ open, title, initial, onClose, onS
           </span>
         </label>
         <label className="connection-form__label">
-          API key
+          Model API key
           {initial?.api_key_masked ? (
             <span className="muted-text connection-form__hint">Current: {initial.api_key_masked}</span>
           ) : null}
@@ -276,10 +277,15 @@ export default function ConnectionFormModal({ open, title, initial, onClose, onS
             className="input-block"
             value={form.api_key}
             onChange={(e) => setForm((f) => ({ ...f, api_key: e.target.value }))}
-            placeholder={initial ? "Leave blank to keep current key" : "Provider API key"}
+            placeholder={initial ? "Leave blank to keep current key" : "Model provider API key"}
             autoComplete="off"
             required={!initial}
           />
+          {modelKeyWarning(form.api_key) ? (
+            <span className="alert alert-warning connection-form__hint" role="status">
+              {modelKeyWarning(form.api_key)}
+            </span>
+          ) : null}
         </label>
         <label className="connection-form__label">
           Sync schedule (hours between auto-sync)

@@ -10,7 +10,7 @@ export type Channel = "chat" | "attachments" | "context" | "extension" | "gatewa
 export type TrustLevel = "internal" | "trusted" | "public";
 export type RuleAction = "block" | "redact" | "route";
 export type RuleMode = "off" | "monitor" | "enforce";
-export type PatternKind = "regex" | "words" | "domains";
+type PatternKind = "regex" | "words" | "domains";
 
 export type LibraryPattern = {
   ref: string;

@@ -42,6 +42,9 @@ RECALLED_CHATS_META_KEY = "recalledChats"
 #: Assistant message meta, ``[{"title": ..., "url": ...}]``: the pages the model
 #: searched up or read with the web tools while answering.
 WEB_SOURCES_META_KEY = "webSources"
+#: Assistant message meta, ``[str]``: what Guardrails told the person about their request (values masked
+#: before sending, the request sent to another model), as the administrator worded it.
+GUARDRAIL_META_KEY = "guardrailNotices"
 #: Server-owned body keys: the function tools the browser extension's agent
 #: offers the model for one step, and the tool choice. The turn hands them to
 #: the provider as ``tools`` / ``tool_choice`` and streams the model's tool

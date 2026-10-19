@@ -63,6 +63,9 @@ async def _run_stream_timing_test() -> None:
             chat_turn_context, "augment_messages_with_tools", AsyncMock(side_effect=lambda db, m, t, **_kwargs: m)
         ),
         patch.object(
+            chat_turn_context, "guard_context", AsyncMock(side_effect=lambda db, body, m, **_kwargs: (m, None))
+        ),
+        patch.object(
             chat_turn_context, "augment_messages_with_profile", AsyncMock(side_effect=lambda db, m, **_kwargs: m)
         ),
         patch.object(
@@ -156,6 +159,9 @@ async def _run_empty_code_interpreter_test() -> None:
         patch.object(chat_turn_context, "parse_tools_config", return_value=tools),
         patch.object(
             chat_turn_context, "augment_messages_with_tools", AsyncMock(side_effect=lambda db, m, t, **_kwargs: m)
+        ),
+        patch.object(
+            chat_turn_context, "guard_context", AsyncMock(side_effect=lambda db, body, m, **_kwargs: (m, None))
         ),
         patch.object(
             chat_turn_context, "augment_messages_with_profile", AsyncMock(side_effect=lambda db, m, **_kwargs: m)

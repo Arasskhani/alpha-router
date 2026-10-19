@@ -128,6 +128,9 @@ def _patches(provider: _SlowProvider, persister: _FakePersister, log_usage: Asyn
         patch.object(
             chat_turn_context, "augment_messages_with_tools", AsyncMock(side_effect=lambda db, m, t, **_kwargs: m)
         ),
+        patch.object(
+            chat_turn_context, "guard_context", AsyncMock(side_effect=lambda db, body, m, **_kwargs: (m, None))
+        ),
         patch.object(proxy_service, "apply_prompt_cache_breakpoints", side_effect=lambda m: m),
         patch.object(chat_turn_context, "apply_prompt_cache_breakpoints", side_effect=lambda m: m),
         patch.object(proxy_service, "acompletion", side_effect=fake_acompletion),

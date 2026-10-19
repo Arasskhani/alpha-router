@@ -371,6 +371,17 @@ class RuleHit:
     rule: CompiledRule
     channel: str
     matches: list[tuple[Segment, Match]]
+    #: What the hit does: the rule's action, or ``block`` for a route that cannot be taken here.
+    action: str = ""
+
+    def __post_init__(self) -> None:
+        self.action = self.action or self.rule.action
+
+    @property
+    def message(self) -> str:
+        if self.action != self.rule.action:
+            return DEFAULT_MESSAGES[self.action]
+        return self.rule.user_message or DEFAULT_MESSAGES[self.action]
 
     @property
     def count(self) -> int:
@@ -405,7 +416,7 @@ class Verdict:
 
     def applied(self, hit: RuleHit) -> bool:
         """Whether a matching enforcing rule's action was carried out (a stricter one may outrank it)."""
-        action = hit.rule.action
+        action = hit.action
         if self.action == "block":
             return hit is self.deciding
         if self.action == "route":
@@ -418,8 +429,7 @@ class Verdict:
         for hit in self.enforced:
             if not self.applied(hit):
                 continue
-            message = hit.rule.user_message or DEFAULT_MESSAGES[hit.rule.action]
-            message = message.replace("{model}", model_label or "another model")
+            message = hit.message.replace("{model}", model_label or "another model")
             if message not in out:
                 out.append(message)
         return out
@@ -432,8 +442,13 @@ def decide(
     destination: Destination,
     subject: ResourceAccessSubject,
     ignore_route_to: int | None = None,
+    route_as_block: bool = False,
 ) -> Verdict:
-    """Apply every rule to the segments; nothing is written and nothing changed."""
+    """Apply every rule to the segments; nothing is written and nothing changed.
+
+    ``route_as_block``: the turn cannot be sent to another model here (an Agent's turn, a turn routed once
+    already, the context added after the model was chosen), so a rule that would route it stops it instead.
+    """
     verdict = Verdict()
     if not segments or not policy.active:
         return verdict
@@ -449,6 +464,7 @@ def decide(
             continue
         if rule.action == "route" and (rule.route_model_id is None or rule.route_model_id == ignore_route_to):
             continue
+        action = "block" if rule.action == "route" and route_as_block else rule.action
         found: list[tuple[Segment, Match]] = []
         for segment in watched:
             for pattern in rule.patterns:
@@ -464,18 +480,18 @@ def decide(
             continue
         if len(found) < rule.min_matches:
             continue
-        hit = RuleHit(rule=rule, channel=_main_channel(found), matches=found)
+        hit = RuleHit(rule=rule, channel=_main_channel(found), matches=found, action=action)
         if rule.mode == "monitor":
             verdict.monitored.append(hit)
             continue
         verdict.enforced.append(hit)
-        if rule.action == "redact":
+        if action == "redact":
             labels = {p.spec.ref: p.spec.redact_label for p in rule.patterns}
             verdict.to_mask.extend((seg, m, labels.get(m.ref, "REDACTED")) for seg, m in found)
         current = _STRICTNESS.get(verdict.action or "", 0)
-        if _STRICTNESS[rule.action] > current:
-            verdict.action = rule.action
-            if rule.action in ("block", "route"):
+        if _STRICTNESS[action] > current:
+            verdict.action = action
+            if action in ("block", "route"):
                 verdict.deciding = hit
     if verdict.action is None and verdict.to_mask:
         verdict.action = "redact"
@@ -599,7 +615,7 @@ class EventContext:
 def events_for(verdict: Verdict, destination: Destination, ctx: EventContext) -> list[GuardrailEvent]:
     rows: list[GuardrailEvent] = []
     for hit, kind in [(h, "monitor") for h in verdict.monitored] + [(h, "enforce") for h in verdict.enforced]:
-        action = hit.rule.action
+        action = hit.action
         if kind == "enforce" and not verdict.applied(hit):
             # Outranked by a stricter rule: recorded as what it would have done.
             kind = "outranked"
@@ -621,7 +637,7 @@ def events_for(verdict: Verdict, destination: Destination, ctx: EventContext) ->
                 model_ref=(destination.model_ref or "")[:255] or None,
                 match_count=hit.count,
                 findings_json=json.dumps(hit.findings(), ensure_ascii=False),
-                message=(hit.rule.user_message or DEFAULT_MESSAGES[action]) if kind == "enforce" else None,
+                message=hit.message if kind == "enforce" else None,
             )
         )
     return rows
@@ -670,6 +686,7 @@ async def inspect(
     destination: Destination,
     ctx: EventContext,
     ignore_route_to: int | None = None,
+    route_as_block: bool = False,
     session_factory: Any = None,
 ) -> Verdict:
     """Apply the rules to what is about to leave, record what they did, and say what they decided.
@@ -690,7 +707,14 @@ async def inspect(
         subject = await resolve_resource_access_subject(
             db, user_id=ctx.user_id, alpha_router_api_key_id=ctx.alpha_router_api_key_id, source=ctx.source
         )
-        verdict = decide(policy, segments, destination=destination, subject=subject, ignore_route_to=ignore_route_to)
+        verdict = decide(
+            policy,
+            segments,
+            destination=destination,
+            subject=subject,
+            ignore_route_to=ignore_route_to,
+            route_as_block=route_as_block,
+        )
     except Exception as exc:  # noqa: BLE001 -- what the administrator chose for an unchecked text decides
         logger.exception("Guardrails could not check a %s text", channel)
         settings = await _settings_or_default(db)

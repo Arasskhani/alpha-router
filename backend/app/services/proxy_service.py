@@ -67,6 +67,7 @@ from app.services.chat_tools_service import (
     parse_tools_config,
 )
 from app.services.chat_web_tools import ToolCall, flatten_tool_rounds
+from app.services.guardrail_policy import ReplyRestorer, restore_text
 from app.services.chat_turn_context import (
     NonGeneratingReply,
     _adaptive_openrouter_extra_body,
@@ -587,6 +588,57 @@ def _code_interpreter_capacity_lease_id(body: dict, subject: str) -> str | None:
     )
 
 
+async def _apply_guardrails(
+    db: AsyncSession,
+    body: dict,
+    *,
+    resolved: tuple[AIModel, str, str | None, str | None],
+    user_id: int | None,
+    alpha_router_api_key_id: int | None,
+    source: str | None,
+    agent_turn: bool,
+) -> tuple[AIModel, str, str | None, str | None]:
+    """The administrator's Guardrails on what the client sent: mask, block (raises), or route to another model."""
+    from app.services.guardrail_turn import guard_request
+
+    ai_model = resolved[0]
+    route_to = await guard_request(
+        db,
+        body,
+        ai_model=ai_model,
+        user_id=user_id,
+        alpha_router_api_key_id=alpha_router_api_key_id,
+        source=source,
+        agent_turn=agent_turn,
+    )
+    if route_to is None or route_to == ai_model.id:
+        return resolved
+    # The administrator's choice: the person need not have that model, nor the key its connection.
+    routed_model, routed_key, routed_base_url, routed_provider = await resolve_model_and_key(db, f"model::{route_to}")
+    if not routed_model or not routed_key:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "guardrail_route_unavailable",
+                "message": "Your organisation sends this request to a model that is not available now.",
+            },
+        )
+    assert_model_supports_text_chat(routed_model)
+    body["model"] = f"model::{route_to}"
+    # Checked again for where it now goes; a second route is not taken.
+    await guard_request(
+        db,
+        body,
+        ai_model=routed_model,
+        user_id=user_id,
+        alpha_router_api_key_id=alpha_router_api_key_id,
+        source=source,
+        agent_turn=agent_turn,
+        routed_from=route_to,
+    )
+    return routed_model, routed_key, routed_base_url, routed_provider
+
+
 async def preflight_stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
     db: AsyncSession,
     body: dict,
@@ -708,6 +760,16 @@ async def preflight_stream_chat(  # noqa: C901 -- Phase 4 split; complexity must
     )
     if not await user_can_access_model(db, ai_model, subject):
         raise HTTPException(status_code=404, detail=f"Model not enabled: {selected_model}")
+    if operation == "chat":
+        ai_model, api_key, base_url, provider_type = await _apply_guardrails(
+            db,
+            body,
+            resolved=(ai_model, api_key, base_url, provider_type),
+            user_id=user_id,
+            alpha_router_api_key_id=alpha_router_api_key_id,
+            source=source,
+            agent_turn=agent_turn is not None,
+        )
     # Both ways into a chat turn - the browser and the Gateway - come through
     # here, so this is the one place a tool has to be checked. An agent turn
     # composes its own tool set below and is not the caller's to ask for.
@@ -904,6 +966,11 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
         budget_hold_usd = ctx.budget_hold_usd
         #: Web Search / Web Fetch called by the model itself: their calls are run here and never reach the client.
         web_tools = ctx.web_tools
+        #: Guardrails: the values masked before sending, given back in the reply as it streams.
+        guardrail_restorer = ReplyRestorer(ctx.guardrail_values) if ctx.guardrail_values else None
+        if ctx.guardrail_notices and source == "alpha_router_chat":
+            # What the administrator's rules did to the request, before the first word of the answer.
+            yield _sse_alpha_router_frame({"guardrail": {"notices": list(ctx.guardrail_notices)}})
 
         prompt_tokens = completion_tokens = cached_tokens = 0
         total_cost = 0.0
@@ -1161,7 +1228,11 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
                         break
                     delta = ProviderAttempt.delta_text(chunk)
                     if delta:
+                        # The model's own words (placeholders and all) are what it is billed for and shown again.
                         attempt.record_text(delta)
+                        if guardrail_restorer is not None:
+                            delta = guardrail_restorer.feed(delta)
+                            _set_delta_text(chunk, delta)
                         collected_content += delta
                     # Tool calls are output the provider bills like words, so they count too.
                     generated_len = len(collected_content) + attempt.tool_call_chars
@@ -1191,6 +1262,15 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
                         persister.schedule_content(collected_content)
 
                 attempt.finish()
+                if guardrail_restorer is not None:
+                    tail = guardrail_restorer.flush()
+                    if tail:
+                        collected_content += tail
+                        if not client_disconnected and agent_turn is None:
+                            sent_chunks += 1
+                            yield _sse_delta_chunk(tail)
+                            if persister:
+                                persister.schedule_content(collected_content)
                 iteration_content = attempt.content
                 # Tool calls count only when tools were offered: asked without them (the web tools' last round), a
                 # model that calls one anyway is not run again, so the rounds always end.
@@ -1549,15 +1629,19 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
                         yield _sse_error_frame(error_message)
                     else:
                         stream_end_at = time.perf_counter()
-                        collected_content = retry.content
+                        collected_content = (
+                            restore_text(retry.content, guardrail_restorer.values)
+                            if guardrail_restorer is not None
+                            else retry.content
+                        )
                         usage_events.append(retry.usage_event(attempt_index=len(usage_events), status="succeeded"))
                         prompt_tokens += retry.prompt_tokens
                         completion_tokens += retry.completion_tokens
                         cached_tokens += retry.cached_tokens
                         if tools_turn and agent_turn is None:
-                            yield _sse_message_frame(retry.content, retry.tool_calls())
+                            yield _sse_message_frame(collected_content, retry.tool_calls())
                         elif retry.content and agent_turn is None:
-                            yield _sse_delta_chunk(retry.content)
+                            yield _sse_delta_chunk(collected_content)
                             await _persist_content(collected_content)
                         _compute_cost()
                         if agent_turn is not None:
@@ -1652,6 +1736,12 @@ def _without_web_tools(completion_kwargs: dict[str, Any]) -> dict[str, Any]:
     if isinstance(kwargs.get("messages"), list):
         kwargs["messages"] = flatten_tool_rounds(kwargs["messages"])
     return kwargs
+
+
+def _set_delta_text(chunk: Any, text: str) -> None:
+    """Put ``text`` in place of a chunk's words (a masked value given back), whatever the chunk's shape."""
+    with contextlib.suppress(AttributeError, IndexError, TypeError):
+        chunk.choices[0].delta.content = text
 
 
 def _web_tool_chunk(chunk: Any) -> bool:

@@ -127,6 +127,11 @@ async def _run_stop_during_sandbox() -> dict:
                 chat_turn_context, "augment_messages_with_tools", AsyncMock(side_effect=lambda db, m, t, **_kwargs: m)
             )
         )
+        _stack.enter_context(
+            patch.object(
+                chat_turn_context, "guard_context", AsyncMock(side_effect=lambda db, body, m, **_kwargs: (m, None))
+            )
+        )
         _stack.enter_context(patch.object(proxy_service, "apply_prompt_cache_breakpoints", side_effect=lambda m: m))
         _stack.enter_context(patch.object(chat_turn_context, "apply_prompt_cache_breakpoints", side_effect=lambda m: m))
         _stack.enter_context(patch.object(proxy_service, "acompletion", side_effect=fake_acompletion))
@@ -255,6 +260,11 @@ async def _run_stop_before_sandbox() -> dict:
                 chat_turn_context, "augment_messages_with_tools", AsyncMock(side_effect=lambda db, m, t, **_kwargs: m)
             )
         )
+        _stack.enter_context(
+            patch.object(
+                chat_turn_context, "guard_context", AsyncMock(side_effect=lambda db, body, m, **_kwargs: (m, None))
+            )
+        )
         _stack.enter_context(patch.object(proxy_service, "apply_prompt_cache_breakpoints", side_effect=lambda m: m))
         _stack.enter_context(patch.object(chat_turn_context, "apply_prompt_cache_breakpoints", side_effect=lambda m: m))
         _stack.enter_context(patch.object(proxy_service, "acompletion", side_effect=fake_acompletion))
@@ -350,6 +360,11 @@ async def _run_partial_flush_stops_after_cancel() -> list[str]:
         _stack.enter_context(
             patch.object(
                 chat_turn_context, "augment_messages_with_tools", AsyncMock(side_effect=lambda db, m, t, **_kwargs: m)
+            )
+        )
+        _stack.enter_context(
+            patch.object(
+                chat_turn_context, "guard_context", AsyncMock(side_effect=lambda db, body, m, **_kwargs: (m, None))
             )
         )
         _stack.enter_context(patch.object(proxy_service, "apply_prompt_cache_breakpoints", side_effect=lambda m: m))

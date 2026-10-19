@@ -279,6 +279,11 @@ async def _test_agent_stream_is_buffered_until_post_generation_review() -> None:
         )
         _stack.enter_context(
             patch.object(
+                chat_turn_context, "guard_context", AsyncMock(side_effect=lambda db, body, m, **_kwargs: (m, None))
+            )
+        )
+        _stack.enter_context(
+            patch.object(
                 chat_turn_context,
                 "augment_messages_with_profile",
                 AsyncMock(side_effect=lambda _db, messages, **_kwargs: messages),

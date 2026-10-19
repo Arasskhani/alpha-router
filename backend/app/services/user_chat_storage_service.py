@@ -36,6 +36,7 @@ from app.services.chat_markers import (
     VIDEO_MESSAGE_PREFIX,
     VIDEO_PENDING_MARKER,
     WEB_SOURCES_META_KEY,
+    GUARDRAIL_META_KEY,
     is_answer_in_progress,
     is_whole_reply,
 )
@@ -364,6 +365,7 @@ _SERVER_OWNED_META_KEYS = frozenset(
         CONTEXT_FIT_META_KEY,
         RECALLED_CHATS_META_KEY,
         WEB_SOURCES_META_KEY,
+        GUARDRAIL_META_KEY,
     }
 )
 
@@ -402,6 +404,7 @@ def _message_to_client(row: ChatMessage) -> dict[str, Any]:
         CONTEXT_FIT_META_KEY,
         RECALLED_CHATS_META_KEY,
         WEB_SOURCES_META_KEY,
+        GUARDRAIL_META_KEY,
     ):
         if meta.get(key) is not None:
             out[key] = meta[key]

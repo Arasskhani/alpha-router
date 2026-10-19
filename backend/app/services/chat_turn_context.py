@@ -40,6 +40,7 @@ from app.services.chat_markers import (
     PAGE_CONTEXT_BODY_KEY,
     RECALLED_CHATS_META_KEY,
     PAGE_CONTEXT_META_KEY,
+    GUARDRAIL_META_KEY,
 )
 from app.services.chat_tools_service import (
     ChatToolsConfig,
@@ -48,6 +49,8 @@ from app.services.chat_tools_service import (
     search_result_limit,
 )
 from app.services.chat_web_tools import WebToolLoop, model_calls_functions
+from app.services.guardrail_turn import BLOCKED_CODE as GUARDRAIL_BLOCKED_CODE
+from app.services.guardrail_turn import guard_context, guardrail_reply_state
 from app.services.code_interpreter_capacity_service import (
     CapacityPermit,
     heartbeat_code_interpreter_turn,
@@ -70,7 +73,7 @@ from app.services.prompt_cache_service import (
     apply_prompt_cache_breakpoints,
     apply_system_cache_breakpoint,
 )
-from app.services.provider_utils import apply_litellm_provider_kwargs, sse_delta_chunk
+from app.services.provider_utils import apply_litellm_provider_kwargs, sse_delta_chunk, sse_error_frame
 from app.services.resource_access_service import resolve_resource_access_subject
 from app.services.turn_settlement import agent_identity_metadata
 from app.services.user_memory_service import augment_messages_with_memory, extract_query_text
@@ -190,6 +193,10 @@ class TurnContext:
     memory_context: dict | None = None
     #: The web tools the model calls itself this turn (Web Search / Web Fetch on a model that calls functions).
     web_tools: WebToolLoop | None = None
+    #: Guardrails: the values masked in this turn, to give back in the reply (empty: nothing to give back).
+    guardrail_values: dict[str, str] = field(default_factory=dict)
+    #: Guardrails: what the person is told about their request (masked, sent to another model).
+    guardrail_notices: list[str] = field(default_factory=list)
 
 
 def memory_context(
@@ -690,6 +697,23 @@ async def build_turn_context(  # noqa: C901 -- straight-line preparation moved o
             await lease.abandon("context fitting error")
             raise
         messages = fitted.messages
+        # Guardrails on what the platform added (memory, project files, knowledge, the chat's summary) and on an
+        # Agent's prompt: what the client sent was checked in the preflight.
+        messages, refusal = await guard_context(
+            db,
+            body,
+            messages,
+            ai_model=ai_model,
+            user_id=user_id,
+            alpha_router_api_key_id=alpha_router_api_key_id,
+            source=source,
+        )
+        if refusal is not None:
+            await lease.abandon("guardrail block")
+            return NonGeneratingReply(
+                frames=[sse_error_frame(refusal, error_type=GUARDRAIL_BLOCKED_CODE), b"data: [DONE]\n\n"]
+            )
+        guardrail_values, guardrail_notices = await guardrail_reply_state(db, body)
         if provider == "openrouter" and fitted.window is not None:
             # The turn was measured against the window here: OpenRouter is not to cut its middle out as well.
             completion_kwargs["extra_body"] = {**(completion_kwargs.get("extra_body") or {}), "transforms": []}
@@ -747,6 +771,8 @@ async def build_turn_context(  # noqa: C901 -- straight-line preparation moved o
                         persister.set_message_metadata({CONTEXT_FIT_META_KEY: fitted.metadata()})
                     if recalled_chats:
                         persister.set_message_metadata({RECALLED_CHATS_META_KEY: recalled_chats})
+                    if guardrail_notices:
+                        persister.set_message_metadata({GUARDRAIL_META_KEY: guardrail_notices})
                     if page_sites:
                         persister.set_message_metadata({PAGE_CONTEXT_META_KEY: {"sites": page_sites}})
                     elif earlier:
@@ -794,6 +820,8 @@ async def build_turn_context(  # noqa: C901 -- straight-line preparation moved o
             context_fit=fitted.metadata(),
             recalled_chats=recalled_chats or None,
             web_tools=web_tools,
+            guardrail_values=guardrail_values,
+            guardrail_notices=guardrail_notices,
             memory_context=memory_context(
                 memories=injected_memory_ids,
                 project_memories=injected_project_memory_ids,

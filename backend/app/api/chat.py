@@ -92,6 +92,7 @@ from app.services.chat_markers import (
 from app.services.chat_session_access import resolve_owned_chat_session
 from app.services.chat_title_service import generate_chat_title
 from app.services.chat_tool_access_service import assert_tool_for_user, permitted_tool_keys
+from app.services.guardrail_turn import VIA_EXTENSION_BODY_KEY
 from app.services.chat_tool_registry import CHAT_TOOLS
 from app.services.chat_turn_context import earlier_page_answers
 from app.services.chat_xlsx_service import ChatExportError as XlsxExportError
@@ -832,6 +833,9 @@ async def chat_completions(
             messages=list(body.messages),
             history_from_sequence=body.history_from_sequence,
         )
+    if _extension_session_id(request):
+        # Guardrails: a turn from the browser extension travels in a channel of its own.
+        payload[VIA_EXTENSION_BODY_KEY] = True
     client_app = _client_app(request)
     await _browser_agent_tools(db, request, body, payload, tools, user)
     shares = await _declared_page_shares(db, request, body, payload, tools)

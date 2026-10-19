@@ -97,6 +97,9 @@ async def _run_empty_completion_records_failure() -> tuple[list[dict], list[dict
         patch.object(
             chat_turn_context, "augment_messages_with_tools", AsyncMock(side_effect=lambda db, m, t, **_kwargs: m)
         ),
+        patch.object(
+            chat_turn_context, "guard_context", AsyncMock(side_effect=lambda db, body, m, **_kwargs: (m, None))
+        ),
         patch.object(proxy_service, "apply_prompt_cache_breakpoints", side_effect=lambda m: m),
         patch.object(chat_turn_context, "apply_prompt_cache_breakpoints", side_effect=lambda m: m),
         patch.object(proxy_service, "acompletion", side_effect=fake_acompletion),
@@ -309,6 +312,9 @@ async def _run_final_answer_after_execution() -> tuple[list[dict], int]:
         patch.object(chat_turn_context, "parse_tools_config", return_value=ChatToolsConfig(code_interpreter=True)),
         patch.object(
             chat_turn_context, "augment_messages_with_tools", AsyncMock(side_effect=lambda db, m, t, **_kwargs: m)
+        ),
+        patch.object(
+            chat_turn_context, "guard_context", AsyncMock(side_effect=lambda db, body, m, **_kwargs: (m, None))
         ),
         patch.object(proxy_service, "apply_prompt_cache_breakpoints", side_effect=lambda m: m),
         patch.object(chat_turn_context, "apply_prompt_cache_breakpoints", side_effect=lambda m: m),

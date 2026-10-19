@@ -140,3 +140,17 @@ class TestTheChain:
         [event] = (await db_session.execute(select(UsageEvent))).scalars().all()
         assert event.provider_type == "duckduckgo"
         assert not float(event.final_cost_usd or 0)
+
+    async def test_the_hold_covers_the_connection_s_own_price(self, db_session, monkeypatch, user):
+        await _search_connection(db_session, "Pricey", "brave", priority=1, price=2.0)
+        fake, _ = _answers({"brave": ROW})
+        monkeypatch.setattr(service, "run_search", fake)
+        held: list[float] = []
+
+        async def reserve(db, **kwargs):
+            held.append(kwargs["amount_usd"])
+            return None
+
+        monkeypatch.setattr("app.services.metered_usage_service.reserve", reserve)
+        await search_web("q", 5, user_id=user.id, reserve_budget=True)
+        assert held and held[0] >= 2.0

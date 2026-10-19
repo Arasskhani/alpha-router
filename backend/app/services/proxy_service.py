@@ -1005,8 +1005,13 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
         # while it is still small, and costs almost nothing.
         budget_checked_at_len = 0
 
-        #: The prompt's tokens, counted at the first check and kept for the turn.
+        #: The prompt's tokens, counted at the first check and kept for the request in flight.
         prompt_count: int | None = None
+        #: With web tools, each round asks again with the whole chat and what the tools returned: the
+        #: earlier rounds' prompts, their tool calls, and the messages the next round sends.
+        earlier_prompt_tokens = 0
+        web_calls_text = ""
+        budget_messages = messages
 
         async def _hold_covering(text: str, hold_usd: float) -> float | None:
             """The hold, grown if the reply outgrew it; None when the budget left cannot bear the reply.
@@ -1018,17 +1023,19 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
                 prompt_count = count_prompt_tokens(
                     provider_type=provider_type,
                     model=model,
-                    messages=messages,
+                    messages=budget_messages,
                     tools=completion_kwargs.get("tools"),
                 )
+            if web_calls_text:
+                text = f"{text}\n{web_calls_text}"
             if attempt is not None and attempt.tool_call_chars:
                 text = f"{text}\n{attempt.tool_call_text}"
             return await grow_hold_to_turn_cost(
                 ai_model=ai_model,
                 provider_type=provider_type,
                 model=model,
-                messages=messages,
-                prompt_tokens=prompt_count,
+                messages=budget_messages,
+                prompt_tokens=earlier_prompt_tokens + prompt_count if prompt_count else 0,
                 completion_text=text,
                 hold_usd=hold_usd,
                 reservation_id=stream_reservation_id,
@@ -1261,6 +1268,29 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
                         ),
                     ]
                     completion_kwargs["messages"] = current_messages
+                    # The next round's prompt, and this round's calls, are priced before it is asked: a turn whose
+                    # rounds outgrow the budget left stops here rather than being charged past it.
+                    if budget_hold_usd is not None and prompt_count is None:
+                        # This round's prompt, counted now when no check counted it while the round streamed.
+                        prompt_count = count_prompt_tokens(
+                            provider_type=provider_type,
+                            model=model,
+                            messages=budget_messages,
+                            tools=completion_kwargs.get("tools"),
+                        )
+                    earlier_prompt_tokens += prompt_count or 0
+                    prompt_count = None
+                    web_calls_text = "\n".join(
+                        filter(None, [web_calls_text, *(f"{c.name}({c.arguments})" for c in calls)])
+                    )
+                    budget_messages = current_messages
+                    if budget_hold_usd is not None:
+                        budget_hold_usd = await _hold_covering(collected_content, budget_hold_usd)
+                        if budget_hold_usd is None:
+                            budget_exceeded = True
+                            client_disconnected = True
+                            yield _sse_error_frame(BUDGET_EXCEEDED_MESSAGE)
+                            break
                     if web_tools.last_round:
                         # The rounds are used up: the next answer is asked for with no tools, so it is an answer -
                         # and with the rounds told as words, since a request without tools may not carry tool calls.

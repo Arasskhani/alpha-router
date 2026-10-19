@@ -77,6 +77,7 @@ async def start_metered_usage(
     platform: bool = False,
     pricing_model: AIModel | None = None,
     charge_budget: bool = True,
+    hold_floor_usd: float = 0.0,
 ) -> MeteredUsageCall:
     """Reserve a conservative hold before one external metered call.
 
@@ -84,6 +85,9 @@ async def start_metered_usage(
     recorded and priced so the spend is visible, but nobody's budget is held
     or charged, because nobody asked for it. A user or key and ``platform``
     together is a contradiction and is refused.
+
+    ``hold_floor_usd`` is the least the hold may be: the call's own known price
+    (a search connection's price per request), when the rate table has none.
     """
 
     call_id = str(uuid.uuid4())
@@ -126,6 +130,7 @@ async def start_metered_usage(
                 quantity=max(0.0, float(quantity)),
                 unit=unit,
             )
+            hold_amount = max(float(hold_amount), max(0.0, float(hold_floor_usd)))
             hold = await reserve(
                 db,
                 user_id=int(user_id) if user_id is not None else None,

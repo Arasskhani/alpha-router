@@ -201,6 +201,7 @@ async def search_web(
                 connection_id=step.connection_id,
                 metadata={"connection": step.label, "max_results": limit},
                 reserve_budget=reserve_budget,
+                hold_floor_usd=step.price_usd,
             )
             if metering
             else None

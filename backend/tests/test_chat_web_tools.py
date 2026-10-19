@@ -453,6 +453,26 @@ class TestATurnWithTheTools:
         assert {"web_sources": [{"title": "Report", "url": "https://r.example/report"}]} in _alpha_router(frames)
         assert [t["function"]["name"] for t in provider.calls[0]["tools"]] == ["web_fetch"]
 
+    async def test_each_round_s_prompt_is_priced_before_it_is_asked(
+        self, client, turn, provider, searches, monkeypatch
+    ):
+        from app.services import proxy_service
+
+        checks: list[tuple[int, str]] = []
+
+        async def grow(**kwargs):
+            checks.append((kwargs["prompt_tokens"], kwargs["completion_text"]))
+            return None  # the budget left cannot bear the next round
+
+        monkeypatch.setattr(proxy_service, "grow_hold_to_turn_cost", grow)
+        provider.reply(*SEARCH_REPLY).reply(_text("never asked", "stop"))
+        resp = await client.post("/api/chat/completions", json=_ask(turn.model), headers=turn.headers)
+        assert len(provider.calls) == 1
+        assert "used up the budget" in resp.text
+        ((prompt_tokens, completion_text),) = checks
+        assert prompt_tokens > 0
+        assert 'web_search({"query":"gold price today"})' in completion_text
+
     async def test_words_before_the_calls_are_kept_apart_from_the_answer(self, client, turn, provider, searches):
         provider.reply(_text("Let me check."), *SEARCH_REPLY).reply(_text("Done.", "stop"))
         resp = await client.post("/api/chat/completions", json=_ask(turn.model), headers=turn.headers)

@@ -49,6 +49,10 @@ MAX_MATCHES_PER_PATTERN = 5_000
 _LABEL_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,30}$")
 
 
+class TooManyMatches(RuntimeError):
+    """More finds than a pattern may report: the text is not checked rather than checked in part."""
+
+
 class PatternError(ValueError):
     """A pattern that cannot be saved, and why."""
 
@@ -85,7 +89,14 @@ class NormalizedText:
         return first, last
 
 
+_TRANSLATE = {**_DIGITS, **_LETTERS}
+_DROPPED_RE = re.compile("[" + "".join(re.escape(chr(c)) for c in sorted(_DROPPED)) + "]")
+
+
 def normalize(text: str) -> NormalizedText:
+    if not _DROPPED_RE.search(text):
+        # Nothing dropped: every character keeps its place, so spans need no map (and C does the work).
+        return NormalizedText(original=text, text=text.translate(_TRANSLATE), origin=())
     out: list[str] = []
     origin: list[int] = []
     for index, char in enumerate(text):
@@ -268,10 +279,16 @@ class CompiledPattern:
             chunk = view.text[offset : offset + WINDOW_CHARS + WINDOW_MARGIN]
             window_covered = covered
             # One pass over each window: RE2 reads the text once, whatever the number of finds.
+            last_window = offset + len(chunk) >= len(view.text)
             for match in self.regex.finditer(chunk):
-                if len(found) >= MAX_MATCHES_PER_PATTERN:
-                    break
                 start, end = (offset + match.start(), offset + match.end())
+                if not last_window and match.end() == len(chunk):
+                    # It may go on past this window: the next one sees it whole, or it is read on from here.
+                    if start >= offset + WINDOW_CHARS:
+                        continue
+                    longer = self.regex.match(view.text[start : start + WINDOW_CHARS + WINDOW_MARGIN])
+                    if longer is not None:
+                        end = start + longer.end()
                 if end <= start or start < window_covered or not _edges_ok(self.spec.kind, view.text, start, end):
                     continue
                 value_norm = view.text[start:end]
@@ -282,6 +299,8 @@ class CompiledPattern:
                 if context and not self._near(view.text, start, end, context):
                     continue
                 covered = max(covered, end)
+                if len(found) >= MAX_MATCHES_PER_PATTERN:
+                    raise TooManyMatches(f"{self.spec.name}: more than {MAX_MATCHES_PER_PATTERN} finds in one text.")
                 o_start, o_end = view.span(start, end)
                 found.setdefault((o_start, o_end), Match(self.spec.ref, o_start, o_end, text[o_start:o_end]))
         return sorted(found.values(), key=lambda m: (m.start, m.end))
@@ -340,9 +359,26 @@ def check_samples(compiled: CompiledPattern) -> list[str]:
     return problems
 
 
-def hint(value: str) -> str:
+#: Library patterns whose finds are secrets: events show only their length, never a character of them.
+SECRET_REFS = frozenset(
+    {
+        "lib:openai_key",
+        "lib:aws_key",
+        "lib:github_token",
+        "lib:google_key",
+        "lib:private_key",
+        "lib:jwt",
+        "lib:password",
+        "lib:connection_string",
+    }
+)
+
+
+def hint(value: str, *, secret: bool = False) -> str:
     """A find as events show it: never the value, only enough to recognise its kind."""
     compact = "".join(value.split())
+    if secret:
+        return f"••• ({len(compact)} chars)"
     if len(compact) >= 12:
         return f"{compact[:3]}…{compact[-3:]}"
     if len(compact) >= 6:

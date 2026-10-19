@@ -39,6 +39,7 @@ from app.services.guardrail_patterns import (
     Match,
     PatternError,
     PatternSpec,
+    SECRET_REFS,
     compile_pattern,
     hint,
     library_pattern,
@@ -391,7 +392,7 @@ class RuleHit:
         names = {p.spec.ref: p.spec.name for p in self.rule.patterns}
         grouped: dict[str, list[str]] = {}
         for _, match in self.matches:
-            grouped.setdefault(match.ref, []).append(hint(match.value))
+            grouped.setdefault(match.ref, []).append(hint(match.value, secret=match.ref in SECRET_REFS))
         return [
             {"ref": ref, "name": names.get(ref, ref), "count": len(hints), "hints": hints[:5]}
             for ref, hints in grouped.items()
@@ -470,9 +471,13 @@ def decide(
             for pattern in rule.patterns:
                 key = (id(segment), pattern.spec.ref)
                 if key not in cache:
-                    if id(segment) not in views:
-                        views[id(segment)] = normalize(segment.text)
-                    cache[key] = pattern.find(segment.text, views[id(segment)])
+                    view = None
+                    if pattern.spec.normalize:
+                        # Made once per text, and only for the patterns that read the normalised form.
+                        if id(segment) not in views:
+                            views[id(segment)] = normalize(segment.text)
+                        view = views[id(segment)]
+                    cache[key] = pattern.find(segment.text, view)
                 found.extend((segment, m) for m in cache[key])
         if not found:
             continue
@@ -526,13 +531,20 @@ class Masker:
         return self._by_value[key]
 
     def mask(self, text: str, finds: Iterable[tuple[int, int, str]]) -> str:
-        """``text`` with each ``(start, end, label)`` find replaced; overlapping finds are merged."""
-        spans = sorted(finds)
+        """``text`` with each ``(start, end, label)`` find replaced; overlapping finds become one placeholder.
+
+        Two finds that overlap are masked as their union, under the label of the one that starts first:
+        no part of either is left in clear.
+        """
+        merged: list[list[Any]] = []
+        for start, end, label in sorted(finds, key=lambda f: (f[0], -f[1])):
+            if merged and start < merged[-1][1]:
+                merged[-1][1] = max(merged[-1][1], end)
+                continue
+            merged.append([start, end, label])
         out: list[str] = []
         cursor = 0
-        for start, end, label in spans:
-            if start < cursor:
-                continue
+        for start, end, label in merged:
             out.append(text[cursor:start])
             out.append(self.placeholder(label, text[start:end]))
             cursor = end

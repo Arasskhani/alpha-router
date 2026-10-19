@@ -11,6 +11,7 @@ from app.services.guardrail_patterns import (
     LIBRARY_BY_REF,
     PatternError,
     PatternSpec,
+    TooManyMatches,
     check_samples,
     compile_pattern,
     find_all,
@@ -126,3 +127,35 @@ class TestTheEngine:
         assert hint("sk-proj-abcdefghijklmnop") == "sk-…nop"
         assert hint("0912345") == "0…5"
         assert hint("abc") == "•••"
+        assert hint("password: hunter22", secret=True) == "••• (17 chars)"
+
+    def test_a_text_with_nothing_to_drop_keeps_its_positions(self):
+        view = normalize("کارت ۶۰۳۷ يك")
+        assert view.text == "کارت 6037 یک"
+        assert view.origin == () and view.span(5, 9) == (5, 9)
+
+    def test_a_long_find_cut_by_a_window_is_masked_whole(self):
+        from app.services import guardrail_patterns
+
+        body = "A" * (guardrail_patterns.WINDOW_MARGIN * 2)
+        key = f"-----BEGIN RSA PRIVATE KEY-----\n{body}\n-----END RSA PRIVATE KEY-----"
+        text = "x" * (guardrail_patterns.WINDOW_CHARS - 10) + key + " tail"
+        (found,) = compile_pattern(LIBRARY_BY_REF["lib:private_key"]).find(text)
+        assert found.value == key
+
+    def test_a_find_ending_at_a_window_edge_is_not_cut(self):
+        from app.services import guardrail_patterns
+
+        edge = guardrail_patterns.WINDOW_CHARS + guardrail_patterns.WINDOW_MARGIN
+        email = "someone@example.com"
+        # The first window ends after "someone@example.co": a find there, but not the whole address.
+        before = edge - len("someone@example.co")
+        text = "x" * (before - 1) + " " + email + " more"
+        assert values(LIBRARY_BY_REF["lib:email"], text) == [email]
+
+    def test_more_finds_than_allowed_stop_the_check(self, monkeypatch):
+        from app.services import guardrail_patterns
+
+        monkeypatch.setattr(guardrail_patterns, "MAX_MATCHES_PER_PATTERN", 3)
+        with pytest.raises(TooManyMatches):
+            compile_pattern(LIBRARY_BY_REF["lib:email"]).find("a@b.co c@d.co e@f.co g@h.co")

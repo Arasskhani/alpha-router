@@ -231,6 +231,13 @@ class TestMaskingAndGivingBack:
         (m2,) = compile_pattern(LIBRARY_BY_REF["lib:bank_card"]).find(query.text)
         assert mask_text(query.text, [(query, m2, "CARD")], masker) == "[CARD_1]"
 
+    def test_overlapping_finds_are_masked_as_one(self):
+        masker = Masker()
+        text = "Project Falcon-7731 is late"
+        assert masker.mask(text, [(0, 14, "WORD"), (8, 19, "CODE")]) == "[WORD_1] is late"
+        assert masker.values == {"[WORD_1]": "Project Falcon-7731"}
+        assert Masker().mask("ab cd", [(0, 2, "A"), (0, 5, "B"), (3, 5, "C")]) == "[B_1]"
+
     def test_a_reply_gets_its_values_back_even_cut_between_chunks(self):
         restorer = ReplyRestorer({"[CARD_1]": CARD, "[EMAIL_2]": "a@b.com"})
         out = restorer.feed("Your card [CA") + restorer.feed("RD_1] and [EMA") + restorer.feed("IL_2]. [note")

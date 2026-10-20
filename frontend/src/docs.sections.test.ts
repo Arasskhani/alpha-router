@@ -339,13 +339,15 @@ describe("Guardrails in the guides", () => {
     expect(html).toContain("Users cannot override a rule.");
     expect(html).toContain("RE2");
     expect(html).toContain("Replies are not scanned");
+    expect(html).toContain("never as a model&#x27;s error");
     expect(sectionHtml(docSections as Section[], "admin-menu")).toContain("Guardrails");
   });
 
   it("the User Manual says what a person sees", () => {
     const html = sectionHtml(userManualSections as Section[], "chat-guardrails");
-    expect(html).toContain("there is no way to send it anyway");
+    expect(html).toContain("There is no way to send it anyway");
     expect(html).toContain("[CARD_1]");
     expect(html).toContain("Only your administrators decide the rules.");
+    expect(html).toContain("never sent to a model again");
   });
 });

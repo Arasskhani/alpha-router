@@ -891,17 +891,22 @@ export const userManualSections: DocSection[] = [
         </p>
         <ul>
           <li>
-            <strong>Blocked:</strong> the message is not sent, and you see why. Remove the data and send again; there
-            is no way to send it anyway.
+            <strong>Blocked:</strong> the message is not sent. In place of an answer you see your administrator&apos;s
+            message in a red box (&ldquo;Not sent: your organisation&apos;s policy&rdquo;), and your words go back
+            to the message box so you can remove the data and send again. There is no way to send it anyway.
+          </li>
+          <li>
+            Your blocked message stays in the chat with the data hidden (for example <code>603…453</code>). It is
+            never sent to a model again, so you can carry on in the same chat.
           </li>
           <li>
             <strong>Masked:</strong> values are replaced with placeholders such as <code>[CARD_1]</code> before the
-            message leaves. The answer normally shows the real values again; the model never saw them. A note under the
+            message leaves. The answer shows the real values again; the model never saw them. An amber box above the
             answer says what was masked.
           </li>
           <li>
             <strong>Routed:</strong> the message was answered by another model your organisation chose, usually one on
-            its own servers. The note under the answer names it.
+            its own servers. A blue box above the answer names it.
           </li>
         </ul>
         <Note>

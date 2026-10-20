@@ -1214,6 +1214,14 @@ export const docSections: DocSection[] = [
           </tbody>
         </DocsTable>
         <p>
+          What the person sees: a block shows the rule&apos;s message in place of the answer, as the
+          organisation&apos;s, never as a model&apos;s error. The blocked message is kept in the chat with the found
+          values replaced by hints, is never sent to a model again, and its words go back to the message box. Redact
+          and route put a note above the answer. When values were masked, the model is told that the placeholders
+          stand for real values, so it does not comment on them. The rule form warns when a message speaks of
+          another action than the rule takes (&ldquo;blocked&rdquo; on a rule that masks).
+        </p>
+        <p>
           When several rules match, block wins over route, and route over redact. Each rule has a mode:{" "}
           <strong>Off</strong>, <strong>Monitor</strong> (records what it would have done, changes nothing — use it to
           tune a rule on real traffic) and <strong>Enforce</strong>. New rules start in Monitor. The <em>Who</em>{" "}

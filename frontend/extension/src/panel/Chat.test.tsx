@@ -1389,3 +1389,42 @@ describe("right-click actions", () => {
     expect(host.textContent).toContain("still answering");
   });
 });
+
+describe("Guardrails", () => {
+  it("shows a refused question as the organisation's, hides its value, gives its words back and never sends it again", async () => {
+    server.routes["POST /api/chat/completions"] = () =>
+      json(422, {
+        detail: {
+          code: "guardrail_blocked",
+          message: "National codes may not be sent to AI models.",
+          user_content: "my code is 491…640",
+          persisted: true,
+        },
+      });
+    await render();
+    await send("my code is 4911681640");
+    const refusal = host.querySelector(".guardrail-refusal")!;
+    expect(refusal.textContent).toContain("Not sent: your organisation's policy");
+    expect(refusal.textContent).toContain("National codes may not be sent to AI models.");
+    expect(host.textContent).not.toContain("4911681640 ");
+    expect(host.querySelector(".turn__text")!.textContent).toBe("my code is 491…640");
+    expect((host.querySelector("textarea") as HTMLTextAreaElement).value).toBe("my code is 4911681640");
+    answerWith([textFrame("Hello.")]);
+    await send("hello");
+    const next = server.callsTo("POST", "/api/chat/completions")[1].body as Record<string, unknown>;
+    expect(next.messages).toEqual([{ role: "user", content: "hello" }]);
+  });
+
+  it("says what was masked above the answer, and shows a refusal of what the platform added", async () => {
+    answerWith([
+      frame({ choices: [], alpha_router: { guardrail: { notices: [{ action: "redact", message: "Card numbers were masked." }] } } }),
+      textFrame("Done."),
+    ]);
+    await render();
+    await send("pay it");
+    expect(host.querySelector(".guardrail-note--redact")!.textContent).toBe("Card numbers were masked.");
+    answerWith([frame({ choices: [], alpha_router: { guardrail: { blocked: { message: "Memory holds a card.", persisted: true } } } })]);
+    await send("what do you remember?");
+    expect(host.querySelectorAll(".guardrail-refusal")[0].textContent).toContain("Memory holds a card.");
+  });
+});

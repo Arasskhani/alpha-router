@@ -925,3 +925,42 @@ button {
   overflow-wrap: anywhere;
   unicode-bidi: plaintext;
 }
+
+/* Guardrails: what the organisation's rules did to an answer, and a question they refused. */
+.guardrail-note {
+  margin: 0 0 0.45rem;
+  padding: 0.45rem 0.6rem;
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--warning-surface);
+  color: var(--text);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.guardrail-note--redact {
+  border-left-color: #d97706;
+}
+
+.guardrail-note--route {
+  border-left-color: #0284c7;
+}
+
+.guardrail-refusal {
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--danger);
+  border-left-width: 4px;
+  border-radius: var(--radius-sm);
+  background: var(--danger-surface);
+  color: var(--text);
+  line-height: 1.45;
+}
+
+.guardrail-refusal p {
+  margin: 0.2rem 0 0.3rem;
+}
+
+.guardrail-refusal__from {
+  color: var(--muted);
+  font-size: 0.78rem;
+}

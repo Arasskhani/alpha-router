@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ApiError } from "../lib/api";
+import { readGuardrailNotices, refusalFromDetail, refusalFromStream } from "../../../src/lib/guardrailNotices";
 import { ChatStreamError, readChatStream } from "../lib/chatStream";
 import { getClient } from "../lib/client";
 import { fromOwnPages, isExtensionMessage } from "../lib/messages";
@@ -596,10 +597,32 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
       });
       if (!response.ok) throw await ApiError.from(response);
       const result = await readChatStream(response, { onText: (full) => update({ content: full }) });
-      update({ content: result.text, streaming: false });
+      const guardrail = (result.meta.guardrail ?? {}) as { notices?: unknown; blocked?: unknown };
+      const platformRefusal = guardrail.blocked ? refusalFromStream(guardrail.blocked) : null;
+      if (platformRefusal) {
+        // What the platform added (memory, project files) was refused: the question stays as it was.
+        update({ content: "", streaming: false, blocked: platformRefusal.message });
+        return;
+      }
+      const notices = readGuardrailNotices(guardrail.notices);
+      update({ content: result.text, streaming: false, ...(notices ? { notices } : {}) });
       if (sid && history.length === 0 && result.text) void nameTheChat(sid, text, result.text, model);
     } catch (err) {
-      if (abort.signal.aborted) update({ streaming: false, stopped: true });
+      const refusal = err instanceof ApiError && err.status === 422 ? refusalFromDetail({ code: err.code, message: err.message, ...err.detail }) : null;
+      if (refusal) {
+        // A Guardrails rule refused the question: kept with its values hidden, never sent again; its words go
+        // back to the box to edit, and the administrator's message stands in place of an answer.
+        setTurns((all) =>
+          all.map((turn) =>
+            turn.id === user.id
+              ? { ...turn, content: refusal.userContent ?? turn.content, heldBack: true }
+              : turn.id === assistant.id
+                ? { ...turn, content: "", streaming: false, blocked: refusal.message }
+                : turn,
+          ),
+        );
+        setDraft((current) => (current.trim() ? current : text));
+      } else if (abort.signal.aborted) update({ streaming: false, stopped: true });
       else if (err instanceof DisconnectedError) disconnected.current();
       else {
         if (err instanceof ApiError && err.code === "site_not_allowed" && typeof err.detail.site === "string") {
@@ -873,6 +896,18 @@ export default function Chat({ me, server, onDisconnect, onDisconnected }: Props
                       </span>
                     </p>
                   ),
+                )}
+                {turn.notices?.map((notice) => (
+                  <p key={notice.message} className={`guardrail-note guardrail-note--${notice.action}`} role="note" dir="auto">
+                    {notice.message}
+                  </p>
+                ))}
+                {turn.blocked && (
+                  <div className="guardrail-refusal" role="alert">
+                    <strong>Not sent: your organisation&apos;s policy</strong>
+                    <p dir="auto">{turn.blocked}</p>
+                    <span className="guardrail-refusal__from">Message from your administrator</span>
+                  </div>
                 )}
                 {turn.role === "user" ? <p className="turn__text">{turn.content}</p> : turn.content && <PanelMarkdown text={turn.content} />}
                 {turn.streaming && !turn.content && <p className="turn__pending">Thinking…</p>}

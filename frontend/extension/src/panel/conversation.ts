@@ -6,6 +6,7 @@
  * component, since .tsx comes first in the resolver's extensions.
  */
 
+import type { GuardrailNotice } from "../../../src/lib/guardrailNotices";
 import { modelSupportsTextChat } from "../../../src/lib/chatModels";
 import { declaredSites, pageMessageContent, type MessageContent, type PageContext } from "../lib/pageContext";
 
@@ -28,6 +29,12 @@ export type Turn = {
   /** Shown instead of (or after) the content; never sent back to the model. */
   error?: string;
   stopped?: boolean;
+  /** An answer a Guardrails rule refused: the administrator's message, shown in place of an answer. */
+  blocked?: string;
+  /** A question a Guardrails rule refused, kept with its values hidden: never sent to the model again. */
+  heldBack?: boolean;
+  /** What Guardrails did to this answer (masked, routed), shown above it. */
+  notices?: GuardrailNotice[];
   /** Pages the user shared with this question. They go to the model with it on every later turn too. */
   pages?: PageContext[];
 };
@@ -47,9 +54,11 @@ export function pickModel(models: ChatModel[], remembered: string | null): ChatM
   );
 }
 
-/** The turns the model reads: failed and empty answers left out. */
+/** The turns the model reads: failed and empty answers left out, and every turn Guardrails refused. */
 function sentTurns(turns: Turn[]): Turn[] {
-  return turns.filter((turn) => turn.role === "user" || (turn.content && !turn.error));
+  return turns.filter(
+    (turn) => !turn.heldBack && !turn.blocked && (turn.role === "user" || (turn.content && !turn.error)),
+  );
 }
 
 /**

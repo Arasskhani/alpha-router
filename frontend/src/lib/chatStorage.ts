@@ -2525,6 +2525,8 @@ function _clipTitle(text: string): string {
 }
 
 export function sessionTitleFromMessages(messages: ChatMessage[]): string {
+  // A turn Guardrails refused never names the chat.
+  messages = messages.filter((m) => !refusedByGuardrails(m));
   const user = messages.find((m) => m.role === "user" && normalizeMessageForTitle(m.content));
   if (user) return _clipTitle(normalizeMessageForTitle(user.content));
 

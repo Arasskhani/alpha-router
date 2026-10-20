@@ -16,6 +16,7 @@ import {
   historyFromSequence,
   insertFetchedSession,
   overlayLatestPage,
+  sessionTitleFromMessages,
   type ChatMessage,
   type ChatSession,
 } from "./chatStorage";
@@ -165,5 +166,15 @@ describe("a turn Guardrails refused", () => {
       { role: "user", content: "and now?" },
     ];
     expect(historyForModelRequest(chat).map((m) => m.content)).toEqual(["hello", "Hi.", "and now?"]);
+  });
+
+  it("never names the chat", () => {
+    expect(
+      sessionTitleFromMessages([
+        { role: "user", content: "refund 603…453", guardrailHeldBack: true },
+        { role: "assistant", content: "", guardrailBlocked: { message: "No cards." } },
+        { role: "user", content: "Plan the trip" },
+      ]),
+    ).toBe("Plan the trip");
   });
 });

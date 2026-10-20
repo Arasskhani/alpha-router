@@ -60,6 +60,7 @@ import {
   markPendingDelete,
   fetchChatSessionTitle,
   normalizeMessageForTitle,
+  refusedByGuardrails,
   sessionTitleFromMessages,
   sessionTools,
   historyForModelRequest,
@@ -1428,7 +1429,8 @@ export default function ChatPanel({
       const session = sessionsRef.current.find((s) => s.id === sid);
       if (!session || session.titleLocked || session.titleGenerated) return;
 
-      const plainMsgs = msgs.map((m) => ({
+      // A turn Guardrails refused is never sent to the title model either.
+      const plainMsgs = msgs.filter((m) => !refusedByGuardrails(m)).map((m) => ({
         role: m.role,
         content: normalizeMessageForTitle(m.content),
       })) as ChatMessage[];
@@ -4083,7 +4085,9 @@ export default function ChatPanel({
       typedText?: string;
     },
   ) {
-    const refusedUser: ChatMessage = refusal.heldBack
+    // Only the turn that sent the question holds it back: a sibling model's refusal leaves it as it is.
+    const holdBack = refusal.heldBack && turn.withUser;
+    const refusedUser: ChatMessage = holdBack
       ? { ...turn.userMsg, content: refusal.userContent ?? turn.userMsg.content, guardrailHeldBack: true }
       : turn.userMsg;
     const refusedAnswer: ChatMessage = {
@@ -4100,11 +4104,19 @@ export default function ChatPanel({
       ? current.map((m) => (m.clientMessageId === turn.userMsg.clientMessageId ? refusedUser : m))
       : [...current, refusedUser];
     const idx = withUser.findIndex((m) => m.clientMessageId === turn.assistantClientMessageId);
-    applyMessages(
-      sessionId,
-      idx >= 0 ? withUser.map((m, j) => (j === idx ? refusedAnswer : m)) : [...withUser, refusedAnswer],
-    );
-    if (refusal.heldBack && turn.typedText && activeIdRef.current === sessionId) {
+    const refusedMsgs =
+      idx >= 0 ? withUser.map((m, j) => (j === idx ? refusedAnswer : m)) : [...withUser, refusedAnswer];
+    applyMessages(sessionId, refusedMsgs);
+    const session = sessionsRef.current.find((s) => s.id === sessionId);
+    if (holdBack && session && !session.titleLocked && session.title === sessionTitleFromMessages([turn.userMsg])) {
+      // The chat was named from the refused words before they were sent: named again without them.
+      persistSessions(
+        (prev) => prev.map((s) => (s.id === sessionId ? { ...s, title: sessionTitleFromMessages(refusedMsgs) } : s)),
+        { debounce: false, metadataSessionIds: [sessionId] },
+      );
+      if (!sessionPrivateMode(sessionId)) void pushSessionMetadataToServer(sessionId).catch(() => {});
+    }
+    if (holdBack && turn.typedText && activeIdRef.current === sessionId) {
       const typed = turn.typedText;
       setInput((draft) => (draft.trim() ? draft : typed));
     }
@@ -5320,6 +5332,8 @@ export default function ChatPanel({
               withUser: i === 0,
               typedText: i === 0 ? userText : undefined,
             });
+            // The question was held back: the other models would be sent the chat without it.
+            if (i === 0 && err.refusal.heldBack) break;
             continue;
           }
           const friendly = friendlyTurnError(err);
@@ -5859,6 +5873,7 @@ export default function ChatPanel({
               model: turnModel,
               withUser: i === 0,
             });
+            if (i === 0 && err.refusal.heldBack) break;
             continue;
           }
           const friendly = friendlyTurnError(err);

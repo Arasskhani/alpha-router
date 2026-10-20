@@ -20148,15 +20148,72 @@ p.error,
 }
 
 /* What Guardrails did to a chat message: masked before sending, or sent to another model. */
+/* What Guardrails did to a turn: a box above the answer, coloured by kind. */
 .alpha-router-msg-guardrail {
+  --guardrail-tone: var(--accent);
   display: flex;
-  gap: 0.4rem;
+  gap: 0.6rem;
   align-items: flex-start;
-  margin-top: 0.4rem;
-  font-size: 0.75rem;
-  color: var(--muted);
+  margin: 0.25rem 0 0.6rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--guardrail-tone) 45%, var(--border));
+  border-inline-start-width: 4px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--guardrail-tone) 9%, var(--surface));
+  color: var(--text);
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
+.alpha-router-msg-guardrail > svg {
+  flex: none;
+  margin-top: 0.1rem;
+  color: var(--guardrail-tone);
+}
+.alpha-router-msg-guardrail--redact {
+  --guardrail-tone: #d97706;
+}
+.alpha-router-msg-guardrail--route {
+  --guardrail-tone: #0284c7;
+}
+.alpha-router-msg-guardrail__title {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 0.1rem;
 }
 
 .alpha-router-msg-guardrail__line {
   display: block;
+}
+
+/* A turn Guardrails refused, in place of an answer: the administrator's message, never a model's error. */
+.alpha-router-guardrail-refusal {
+  display: flex;
+  gap: 0.7rem;
+  align-items: flex-start;
+  margin: 0.25rem 0;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--border));
+  border-inline-start-width: 4px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--danger) 9%, var(--surface));
+  color: var(--text);
+  line-height: 1.5;
+}
+.alpha-router-guardrail-refusal > svg {
+  flex: none;
+  margin-top: 0.15rem;
+  color: var(--danger);
+}
+.alpha-router-guardrail-refusal__title {
+  display: block;
+  font-weight: 700;
+}
+.alpha-router-guardrail-refusal__message {
+  margin: 0.2rem 0 0.35rem;
+  font-size: 1rem;
+  white-space: pre-wrap;
+}
+.alpha-router-guardrail-refusal__from {
+  font-size: 0.78rem;
+  color: var(--muted);
 }

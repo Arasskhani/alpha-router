@@ -324,8 +324,15 @@ import { contextFitLabel, contextFitNote, readContextFit, type ContextFit } from
 import { readRecalledChats, recalledChatsLabel, type RecalledChat } from "../lib/recalledChats";
 import { readWebSources, webActivityLabel, type WebSource } from "../lib/webSources";
 import WebSourceList from "./chat/WebSourceList";
-import GuardrailNotices from "./chat/GuardrailNotices";
-import { readGuardrailNotices } from "../lib/guardrailNotices";
+import GuardrailNotices, { GuardrailRefusal } from "./chat/GuardrailNotices";
+import {
+  GuardrailRefusalError,
+  readGuardrailNotices,
+  refusalFromDetail,
+  refusalFromStream,
+  type GuardrailNotice,
+  type GuardrailRefusal as GuardrailRefusalInfo,
+} from "../lib/guardrailNotices";
 import {
   shortModelName,
   readAudioMessage,
@@ -444,6 +451,20 @@ type ParsedChatApiError = {
   code?: string;
   retryAfterSeconds?: number;
 };
+
+/** When a refused turn was answered: now. */
+function refusalTime(): number {
+  return Date.now();
+}
+
+/** A failed response's ``detail``, whatever else it holds; null when it is not JSON. */
+function detailOf(raw: string): unknown {
+  try {
+    return (JSON.parse(raw) as { detail?: unknown }).detail ?? null;
+  } catch {
+    return null;
+  }
+}
 
 class ChatCompletionApiError extends Error {
   readonly status: number;
@@ -3817,7 +3838,7 @@ export default function ChatPanel({
     contextFit?: ContextFit;
     recalledChats?: RecalledChat[];
     webSources?: WebSource[];
-    guardrailNotices?: string[];
+    guardrailNotices?: GuardrailNotice[];
   }> {
     const res = await authFetch("/api/chat/completions", {
       method: "POST",
@@ -3830,7 +3851,11 @@ export default function ChatPanel({
       signal,
     });
     if (!res.ok) {
-      const parsed = parseApiError(await res.text(), res.status);
+      const raw = await res.text();
+      // A Guardrails rule refused the turn: the chat shows the organisation's message, not an error.
+      const refusal = res.status === 422 ? refusalFromDetail(detailOf(raw)) : null;
+      if (refusal) throw new GuardrailRefusalError(refusal);
+      const parsed = parseApiError(raw, res.status);
       const retryAfterHeader = Number(res.headers.get("Retry-After"));
       if (
         parsed.retryAfterSeconds == null
@@ -3851,7 +3876,7 @@ export default function ChatPanel({
     let contextFit: ContextFit | undefined;
     let recalledChats: RecalledChat[] | undefined;
     let webSources: WebSource[] | undefined;
-    let guardrailNotices: string[] | undefined;
+    let guardrailNotices: GuardrailNotice[] | undefined;
 
     // readSseEvents also delivers a trailing `data:` line without a newline
     // and cancels the reader if this loop exits early (error / Stop).
@@ -3878,6 +3903,10 @@ export default function ChatPanel({
         recalledChats = readRecalledChats(json?.alpha_router?.recalled_chats) ?? recalledChats;
         webSources = readWebSources(json?.alpha_router?.web_sources) ?? webSources;
         guardrailNotices = readGuardrailNotices(json?.alpha_router?.guardrail?.notices) ?? guardrailNotices;
+        const streamRefusal = json?.alpha_router?.guardrail?.blocked
+          ? refusalFromStream(json.alpha_router.guardrail.blocked)
+          : null;
+        if (streamRefusal) throw new GuardrailRefusalError(streamRefusal);
         const activity = webActivityLabel(json?.alpha_router?.web_activity);
         if (activity) onWebActivity?.(activity);
         const nextAgentMetadata = agentCompletionMetadataFromSse(
@@ -4036,6 +4065,58 @@ export default function ChatPanel({
     const textModel = models.find((m) => !isDedicatedMediaModel(m));
     if (textModel) return textModel.id;
     return (mediaModelId || "").trim();
+  }
+
+  /**
+   * A turn Guardrails refused, in the chat: the organisation's message in place of the answer, and the
+   * person's message as the chat keeps it (its values hidden), never sent to a model again. The server
+   * keeps the turn itself when it can (``persisted``); the person's own words go back to the box to edit.
+   */
+  function applyGuardrailRefusal(
+    sessionId: string,
+    refusal: GuardrailRefusalInfo,
+    turn: {
+      userMsg: ChatMessage;
+      assistantClientMessageId: string;
+      model: { id: string; name: string };
+      withUser: boolean;
+      typedText?: string;
+    },
+  ) {
+    const refusedUser: ChatMessage = refusal.heldBack
+      ? { ...turn.userMsg, content: refusal.userContent ?? turn.userMsg.content, guardrailHeldBack: true }
+      : turn.userMsg;
+    const refusedAnswer: ChatMessage = {
+      role: "assistant",
+      content: "",
+      receivedAt: refusalTime(),
+      clientMessageId: turn.assistantClientMessageId,
+      modelId: turn.model.id,
+      modelName: turn.model.name,
+      guardrailBlocked: { message: refusal.message },
+    };
+    const current = getSessionMessages(sessionId);
+    const withUser = current.some((m) => m.clientMessageId === turn.userMsg.clientMessageId)
+      ? current.map((m) => (m.clientMessageId === turn.userMsg.clientMessageId ? refusedUser : m))
+      : [...current, refusedUser];
+    const idx = withUser.findIndex((m) => m.clientMessageId === turn.assistantClientMessageId);
+    applyMessages(
+      sessionId,
+      idx >= 0 ? withUser.map((m, j) => (j === idx ? refusedAnswer : m)) : [...withUser, refusedAnswer],
+    );
+    if (refusal.heldBack && turn.typedText && activeIdRef.current === sessionId) {
+      const typed = turn.typedText;
+      setInput((draft) => (draft.trim() ? draft : typed));
+    }
+    if (!refusal.persisted && !sessionPrivateMode(sessionId)) {
+      void finalizeAssistantOnServer(sessionId, `Error: ${refusal.message}`, {
+        receivedAt: refusedAnswer.receivedAt,
+        modelId: turn.model.id,
+        modelName: turn.model.name,
+        clientMessageId: turn.assistantClientMessageId,
+        userMessage: turn.withUser ? refusedUser : undefined,
+      }).catch((e) => reportSyncError(e, sessionId));
+    }
   }
 
   function friendlyTurnError(err: unknown): string {
@@ -4372,7 +4453,7 @@ export default function ChatPanel({
       contextFit?: ContextFit,
       recalledChats?: RecalledChat[],
       webSources?: WebSource[],
-      guardrailNotices?: string[],
+      guardrailNotices?: GuardrailNotice[],
     ) => {
       const current = getSessionMessages(sid);
       const idx = current.findIndex((m) => m.clientMessageId === assistantClientMessageId);
@@ -5147,6 +5228,16 @@ export default function ChatPanel({
           }
           return;
         }
+        if (err instanceof GuardrailRefusalError) {
+          applyGuardrailRefusal(sessionId, err.refusal, {
+            userMsg,
+            assistantClientMessageId,
+            model: validModel,
+            withUser: true,
+            typedText: userText,
+          });
+          return;
+        }
         const friendly = friendlyTurnError(err);
         const errAssistant: ChatMessage = {
           role: "assistant",
@@ -5221,6 +5312,16 @@ export default function ChatPanel({
           );
         } catch (err) {
           if (err instanceof DOMException && err.name === "AbortError") throw err;
+          if (err instanceof GuardrailRefusalError) {
+            applyGuardrailRefusal(sessionId, err.refusal, {
+              userMsg,
+              assistantClientMessageId,
+              model: turnModel,
+              withUser: i === 0,
+              typedText: i === 0 ? userText : undefined,
+            });
+            continue;
+          }
           const friendly = friendlyTurnError(err);
           const current = getSessionMessages(sessionId);
           const idx = current.findIndex((m) => m.clientMessageId === assistantClientMessageId);
@@ -5751,6 +5852,15 @@ export default function ChatPanel({
           );
         } catch (err) {
           if (err instanceof DOMException && err.name === "AbortError") throw err;
+          if (err instanceof GuardrailRefusalError) {
+            applyGuardrailRefusal(sid, err.refusal, {
+              userMsg,
+              assistantClientMessageId,
+              model: turnModel,
+              withUser: i === 0,
+            });
+            continue;
+          }
           const friendly = friendlyTurnError(err);
           const current = getSessionMessages(sid);
           const idx = current.findIndex((m) => m.clientMessageId === assistantClientMessageId);
@@ -6740,7 +6850,15 @@ export default function ChatPanel({
               <h2>{welcomeHeading}</h2>
             </div>
           )}
-          {messages.map((m, i) => (
+          {messages.map((m, i) => m.role === "assistant" && m.guardrailBlocked ? (
+            // A turn Guardrails refused: the organisation's message, with nothing of a model's answer around it.
+            <article key={messageKeys[i]} className="alpha-router-msg alpha-router-msg-assistant alpha-router-msg-refused">
+              <GuardrailRefusal
+                message={m.guardrailBlocked.message}
+                heldBack={Boolean(messages[i - 1]?.guardrailHeldBack) && i === messages.length - 1}
+              />
+            </article>
+          ) : (
             <article
               // A stable identity per message: with the index as key, deleting or
               // inserting one message re-mounted (and re-parsed) every row below it.
@@ -6794,6 +6912,7 @@ export default function ChatPanel({
                   />
                 </div>
               ) : null}
+              {m.role === "assistant" && m.guardrailNotices ? <GuardrailNotices notices={m.guardrailNotices} /> : null}
               {isProjectChat && m.role === "user" && m.authorDisplayName ? (
                 <div className="alpha-router-msg-author-label">{m.authorDisplayName}</div>
               ) : null}
@@ -6996,7 +7115,6 @@ export default function ChatPanel({
                 })()}
               </div>
               {m.role === "assistant" && m.webSources ? <WebSourceList sources={m.webSources} /> : null}
-              {m.role === "assistant" && m.guardrailNotices ? <GuardrailNotices notices={m.guardrailNotices} /> : null}
               {m.role === "assistant" ? (
                 <AgentCitationList
                   runId={m.agentRunId}
@@ -7114,15 +7232,17 @@ export default function ChatPanel({
                 })()}
                 {m.role === "user" && (
                   <>
-                    <button
-                      type="button"
-                      className="alpha-router-msg-action-btn"
-                      onClick={() => void retryUserPromptAt(i)}
-                      title="Retry"
-                      aria-label="Retry prompt"
-                    >
-                      ↻
-                    </button>
+                    {m.guardrailHeldBack ? null : (
+                      <button
+                        type="button"
+                        className="alpha-router-msg-action-btn"
+                        onClick={() => void retryUserPromptAt(i)}
+                        title="Retry"
+                        aria-label="Retry prompt"
+                      >
+                        ↻
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="alpha-router-msg-action-btn"

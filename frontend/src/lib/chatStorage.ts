@@ -23,7 +23,7 @@ import type { AgentCitation } from "./agentChat";
 import { readSharedPages, type SharedPages } from "./sharedPages";
 import { readContextFit, type ContextFit } from "./contextFit";
 import { readRecalledChats, type RecalledChat } from "./recalledChats";
-import { readGuardrailNotices } from "./guardrailNotices";
+import { readGuardrailBlocked, readGuardrailNotices, type GuardrailNotice } from "./guardrailNotices";
 import { readWebSources, type WebSource } from "./webSources";
 import {
   anyChatToolEnabled,
@@ -140,7 +140,11 @@ export type ChatMessage = {
   /** Server-owned: the pages the web tools searched up or read for this answer. */
   webSources?: WebSource[];
   /** Server-owned: what the administrator's Guardrails did to this turn (masked, routed), said plainly. */
-  guardrailNotices?: string[];
+  guardrailNotices?: GuardrailNotice[];
+  /** Server-owned: a Guardrails rule refused this turn; shown in place of an answer, never sent to a model. */
+  guardrailBlocked?: { message: string };
+  /** Server-owned: the message a Guardrails rule refused, kept with its values hidden; never sent to a model. */
+  guardrailHeldBack?: boolean;
   feedback?: {
     rating: -1 | 1;
     reason?: string | null;
@@ -257,9 +261,14 @@ export async function saveThemeToServer(theme: UserTheme): Promise<UserTheme> {
   return prefs.theme;
 }
 
-/** Non-empty messages for model API requests. */
+/** Whether a message belongs to a turn Guardrails refused: it is never sent to a model again. */
+export function refusedByGuardrails(m: ChatMessage): boolean {
+  return Boolean(m.guardrailHeldBack || m.guardrailBlocked);
+}
+
+/** Non-empty messages for model API requests; a turn Guardrails refused is left out. */
 export function historyForModelRequest(messages: ChatMessage[]): ChatMessage[] {
-  return messages.filter((m) => (m.content || "").trim());
+  return messages.filter((m) => (m.content || "").trim() && !refusedByGuardrails(m));
 }
 
 /**
@@ -798,6 +807,8 @@ function mapApiMessage(raw: Record<string, unknown>): ChatMessage {
     recalledChats: readRecalledChats(raw.recalledChats),
     webSources: readWebSources(raw.webSources),
     guardrailNotices: readGuardrailNotices(raw.guardrailNotices),
+    guardrailBlocked: readGuardrailBlocked(raw.guardrailBlocked),
+    guardrailHeldBack: raw.guardrailHeldBack === true ? true : undefined,
     feedback:
       raw.feedback &&
       typeof raw.feedback === "object" &&

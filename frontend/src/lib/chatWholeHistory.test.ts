@@ -12,6 +12,7 @@ import { api } from "../api";
 import {
   fetchChatSessionById,
   fetchSessionMessagesFromServer,
+  historyForModelRequest,
   historyFromSequence,
   insertFetchedSession,
   overlayLatestPage,
@@ -51,9 +52,11 @@ describe("what fitting left out of an answer, the chats it read from and its web
           contextFit: { dropped: 30, summarized: 20 },
           recalledChats: [{ id: "s-9", title: "Workout" }],
           webSources: [{ title: "Squats", url: "https://a.example/squats" }],
-          guardrailNotices: ["Card numbers were masked before sending."],
+          guardrailNotices: [{ action: "redact", message: "Card numbers were masked before sending." }],
         },
         { role: "assistant", content: "message 3", sequence: 3, clientMessageId: "m3", contextFit: { dropped: "x" } },
+        { role: "user", content: "refund 603…453", sequence: 4, clientMessageId: "m4", guardrailHeldBack: true },
+        { role: "assistant", content: "", sequence: 5, clientMessageId: "m5", guardrailBlocked: { message: "No cards." } },
       ],
       has_more: false,
       revision: 3,
@@ -62,7 +65,10 @@ describe("what fitting left out of an answer, the chats it read from and its web
     expect(messages[1].contextFit).toEqual({ dropped: 30, summarized: 20 });
     expect(messages[1].recalledChats).toEqual([{ id: "s-9", title: "Workout" }]);
     expect(messages[1].webSources).toEqual([{ title: "Squats", url: "https://a.example/squats" }]);
-    expect(messages[1].guardrailNotices).toEqual(["Card numbers were masked before sending."]);
+    expect(messages[1].guardrailNotices).toEqual([{ action: "redact", message: "Card numbers were masked before sending." }]);
+    expect(messages[3].guardrailHeldBack).toBe(true);
+    expect(messages[4].guardrailBlocked).toEqual({ message: "No cards." });
+    expect(messages[2].guardrailHeldBack).toBeUndefined();
     expect(messages[2].webSources).toBeUndefined();
     expect(messages[2].guardrailNotices).toBeUndefined();
     expect(messages[2].contextFit).toBeUndefined();
@@ -146,5 +152,18 @@ describe("a chat an answer read from, opened by id", () => {
   it("leaves a list that holds it as it is", () => {
     const list = [listed("a"), listed("b")];
     expect(insertFetchedSession(list, listed("b", "fresh copy"))).toBe(list);
+  });
+});
+
+describe("a turn Guardrails refused", () => {
+  it("is never sent to a model again, so the chat goes on", () => {
+    const chat: ChatMessage[] = [
+      { role: "user", content: "hello" },
+      { role: "assistant", content: "Hi." },
+      { role: "user", content: "refund 603…453", guardrailHeldBack: true },
+      { role: "assistant", content: "", guardrailBlocked: { message: "No cards." } },
+      { role: "user", content: "and now?" },
+    ];
+    expect(historyForModelRequest(chat).map((m) => m.content)).toEqual(["hello", "Hi.", "and now?"]);
   });
 });

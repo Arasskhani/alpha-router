@@ -405,3 +405,17 @@ class TestARefusedTurnInTheChat:
         question, refusal = rows
         assert question.content == "what do you remember?" and not question.meta.get("guardrailHeldBack")
         assert refusal.meta["guardrailBlocked"] == {"message": "Memory holds a card."}
+
+
+class TestKeepingARefusal:
+    async def test_an_agents_run_does_not_stop_the_refusal_being_kept(self, db_session, user):
+        from app.services.guardrail_chat import keep_refused_turn
+
+        body = {
+            "persist_chat": True,
+            "chat_session_id": "r9",
+            "user_message": {"role": "user", "content": "x", "clientMessageId": "u9"},
+            "assistant_client_message_id": "a9",
+            "_agent_run_id": "run-rolled-back",
+        }
+        assert await keep_refused_turn(db_session, user_id=user.id, body=body, message="No.", user_content="x", held_back=True)  # fmt: skip

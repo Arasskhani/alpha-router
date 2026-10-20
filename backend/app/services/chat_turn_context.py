@@ -737,8 +737,12 @@ async def build_turn_context(  # noqa: C901 -- straight-line preparation moved o
         if masked_this_turn(body):
             # The model reads placeholders: told what they are, so its reply makes sense with the values given back.
             messages = list(messages)
-            if messages and messages[0].get("role") == "system" and isinstance(messages[0].get("content"), str):
-                messages[0] = {**messages[0], "content": f"{messages[0]['content']}\n\n{PLACEHOLDER_NOTE}"}
+            first = messages[0] if messages and messages[0].get("role") == "system" else None
+            if first is not None and isinstance(first.get("content"), str):
+                messages[0] = {**first, "content": f"{first['content']}\n\n{PLACEHOLDER_NOTE}"}
+            elif first is not None and isinstance(first.get("content"), list):
+                # Kept in the same message, so the turn keeps its length (and the agent its cache point).
+                messages[0] = {**first, "content": [*first["content"], {"type": "text", "text": PLACEHOLDER_NOTE}]}
             else:
                 messages = [{"role": "system", "content": PLACEHOLDER_NOTE}, *messages]
         if provider == "openrouter" and fitted.window is not None:

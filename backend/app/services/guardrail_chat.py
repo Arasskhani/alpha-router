@@ -65,6 +65,8 @@ async def keep_refused_turn(
         return False
     if persister is None:
         return False
+    # Nothing of an Agent's run is kept with a refusal: its run was rolled back with the refused request.
+    persister.agent_run_id = None
     if persister.user_message is not None and user_content is not None:
         persister.user_message = {**persister.user_message, "content": user_content}
     persister.set_message_metadata({GUARDRAIL_BLOCKED_META_KEY: {"message": message}})
@@ -89,6 +91,10 @@ async def keep_refused_turn(
             .scalars()
             .all()
         )
+        if not any(str(row.client_message_id) == persister.assistant_client_message_id for row in rows):
+            # Not written (a chat this person may read but not write in): the client keeps the turn instead.
+            await db.rollback()
+            return False
         for row in rows:
             current: dict[str, Any] = row.meta if isinstance(row.meta, dict) else {}
             cast(Any, row).meta = {**current, **marks[str(row.client_message_id)]}

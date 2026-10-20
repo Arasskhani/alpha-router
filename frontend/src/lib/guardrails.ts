@@ -223,3 +223,26 @@ export function formatWhen(value: string | null): string {
   const date = new Date(value.endsWith("Z") ? value : `${value}Z`);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }
+
+const BLOCK_WORDS = /\b(block(ed)?|not sent|denied|forbidden|refused)\b|مسدود|بلاک|ارسال نشد|ممنوع|اجازه\s+(ارسال|داده)\s+نمی/i;
+const MASK_WORDS = /\b(mask(ed)?|redact(ed)?|hidden)\b|پوشانده|مخفی/i;
+
+/** A message that speaks of another action than the rule takes, said plainly; "" when it matches. */
+export function messageMismatch(action: RuleAction, message: string): string {
+  const text = message.trim();
+  if (!text) return "";
+  if (action !== "block" && BLOCK_WORDS.test(text)) {
+    return action === "redact"
+      ? "This message speaks of blocking, but the rule masks: the text is still sent, with the values hidden. Choose Block to stop it."
+      : "This message speaks of blocking, but the rule routes: the text is still answered, by the model you chose. Choose Block to stop it.";
+  }
+  if (action === "block" && MASK_WORDS.test(text)) {
+    return "This message speaks of masking, but the rule blocks: nothing is sent and this message stands in place of the answer.";
+  }
+  return "";
+}
+
+/** Where the person reads a rule's message, by its action. */
+export function messageLabel(action: RuleAction): string {
+  return action === "block" ? "Message shown in place of the answer" : "Note shown above the answer";
+}

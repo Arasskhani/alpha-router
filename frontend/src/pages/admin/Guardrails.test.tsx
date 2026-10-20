@@ -15,7 +15,7 @@ const readOnly = vi.hoisted(() => ({ value: false }));
 vi.mock("../../context/ReadOnlyContext", () => ({ useReadOnly: () => readOnly.value }));
 
 import { api } from "../../api";
-import { ruleProblem, type GuardrailsMeta } from "../../lib/guardrails";
+import { messageMismatch, ruleProblem, type GuardrailsMeta } from "../../lib/guardrails";
 import Guardrails from "./Guardrails";
 
 const META: GuardrailsMeta = {
@@ -210,5 +210,16 @@ describe("a rule's own checks", () => {
     expect(ruleProblem({ ...base, action: "route", route_model_id: 9, channels: ["web_fetch"] }, META)).toContain("routed");
     expect(ruleProblem({ ...base, channels: ["web_fetch"] }, META)).toContain("cannot be masked");
     expect(ruleProblem({ ...base, patterns: [] }, META)).toBe("Choose at least one pattern to detect.");
+  });
+});
+
+describe("a rule's message", () => {
+  it("is flagged when it speaks of another action than the rule takes", () => {
+    expect(messageMismatch("redact", "block by admin")).toContain("the rule masks");
+    expect(messageMismatch("route", "این پیام مسدود شد")).toContain("the rule routes");
+    expect(messageMismatch("block", "Card numbers were masked.")).toContain("the rule blocks");
+    expect(messageMismatch("block", "Card numbers may not be sent; blocked.")).toBe("");
+    expect(messageMismatch("redact", "Card numbers were masked.")).toBe("");
+    expect(messageMismatch("redact", "")).toBe("");
   });
 });

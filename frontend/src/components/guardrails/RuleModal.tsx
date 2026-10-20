@@ -5,6 +5,8 @@ import { api, formatApiError } from "../../api";
 import {
   EMPTY_RULE,
   GUARDRAILS_BASE,
+  messageLabel,
+  messageMismatch,
   ruleProblem,
   type Channel,
   type GuardrailsMeta,
@@ -204,7 +206,7 @@ export default function RuleModal({ title, initial, meta, onClose, onSubmit }: P
             </label>
           ) : null}
           <label className="connection-form__label">
-            Message shown to the person
+            {messageLabel(form.action)}
             <textarea
               className="input-block"
               rows={2}
@@ -216,6 +218,11 @@ export default function RuleModal({ title, initial, meta, onClose, onSubmit }: P
             <span className="muted-text connection-form__hint">
               Empty: the default above.{form.action === "route" ? " {model} is replaced by the model's name." : ""}
             </span>
+            {messageMismatch(form.action, form.user_message) ? (
+              <span className="alert alert-warning guardrails-hint" role="status">
+                {messageMismatch(form.action, form.user_message)}
+              </span>
+            ) : null}
           </label>
         </fieldset>
         <label className="connection-form__label">

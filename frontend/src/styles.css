@@ -20217,3 +20217,9 @@ p.error,
   font-size: 0.78rem;
   color: var(--muted);
 }
+
+.guardrails-hint {
+  display: block;
+  margin-top: 0.4rem;
+  font-size: 0.8125rem;
+}

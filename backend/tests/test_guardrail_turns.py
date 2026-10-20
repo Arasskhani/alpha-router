@@ -110,7 +110,9 @@ class TestAMaskedTurn:
         assert CARD not in sent and "[CARD_1]" in sent
         frames = _frames(resp.text)
         assert words(frames) == f"I will charge {CARD} today."
-        assert shown(frames) == [{"notices": ["Card numbers were masked before sending."]}]
+        assert shown(frames) == [
+            {"notices": [{"action": "redact", "message": "Card numbers were masked before sending."}]}
+        ]
         answer = (
             await db_session.execute(
                 select(ChatMessage).where(ChatMessage.session_id == "g1", ChatMessage.role == "assistant")
@@ -118,7 +120,9 @@ class TestAMaskedTurn:
         ).scalar_one()
         await db_session.refresh(answer)
         assert answer.content == f"I will charge {CARD} today."
-        assert answer.meta["guardrailNotices"] == ["Card numbers were masked before sending."]
+        assert answer.meta["guardrailNotices"] == [
+            {"action": "redact", "message": "Card numbers were masked before sending."}
+        ]
         (event,) = await events(session_factory)
         assert (event.action, event.channel, event.user_id) == ("redact", "chat", user.id)
         assert CARD not in (event.findings_json or "")
@@ -142,6 +146,8 @@ class TestABlockedTurn:
         assert resp.json()["detail"] == {
             "code": "guardrail_blocked",
             "message": "Card numbers may not be sent to AI models.",
+            "persisted": False,
+            "user_content": "card 603…453",
         }
         assert provider.calls == []
         assert [e.action for e in await events(session_factory)] == ["block"]
@@ -183,7 +189,11 @@ class TestARoutedTurn:
         # The value is not masked: the internal model may see it.
         assert CARD in json.dumps(provider.calls[0]["messages"])
         assert shown(_frames(resp.text)) == [
-            {"notices": ["Answered by Model llama-internal, as your organisation requires."]}
+            {
+                "notices": [
+                    {"action": "route", "message": "Answered by Model llama-internal, as your organisation requires."}
+                ]
+            }
         ]
         assert [e.action for e in await events(session_factory)] == ["route"]
 
@@ -283,3 +293,113 @@ class TestTheEndOfAReply:
         assert words(frames) == f"Charged {CARD}, see [ref"
         finish = next(i for i, f in enumerate(frames) if f["choices"][0].get("finish_reason"))
         assert words(frames[: finish + 1]) == f"Charged {CARD}, see [ref"
+
+
+class TestARefusedTurnInTheChat:
+    async def test_it_is_kept_with_the_value_hidden_and_never_sent_again(self, client, db_session, turn, provider):
+        await add_rule(db_session, action="block", user_message="Card numbers may not be sent to AI models.")
+        resp = await client.post(
+            "/api/chat/completions",
+            json=ask(
+                turn.model,
+                f"refund {CARD}",
+                chat_session_id="r1",
+                persist_chat=True,
+                user_message={"role": "user", "content": f"refund {CARD}", "clientMessageId": "u1"},
+                assistant_client_message_id="a1",
+            ),
+            headers=turn.headers,
+        )
+        assert resp.status_code == 422
+        detail = resp.json()["detail"]
+        assert detail["persisted"] is True and detail["user_content"] == "refund 603…453"
+        rows = (
+            (
+                await db_session.execute(
+                    select(ChatMessage).where(ChatMessage.session_id == "r1").order_by(ChatMessage.sequence)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for row in rows:
+            await db_session.refresh(row)
+        question, refusal = rows
+        assert question.content == "refund 603…453" and question.meta["guardrailHeldBack"] is True
+        assert CARD not in json.dumps([r.content for r in rows])
+        assert refusal.content == "" and refusal.meta["guardrailBlocked"] == {
+            "message": "Card numbers may not be sent to AI models."
+        }
+        assert refusal.meta["streaming"] is False
+        # The next turn goes on: the refused question is not read back into its history.
+        provider.reply(_text("Hello.", "stop"))
+        resp = await client.post(
+            "/api/chat/completions",
+            json=ask(
+                turn.model,
+                "hello",
+                chat_session_id="r1",
+                persist_chat=True,
+                history_from_sequence=3,
+                user_message={"role": "user", "content": "hello", "clientMessageId": "u2"},
+                assistant_client_message_id="a2",
+            ),
+            headers=turn.headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert "603" not in json.dumps(provider.calls[0]["messages"])
+
+    async def test_a_client_rewriting_the_chat_cannot_put_the_value_back(self, db_session, user):
+        from app.services.user_chat_storage_service import replace_session_messages
+
+        await create_chat_session(db_session, user.id, {"id": "r2", "title": "t"})
+        await db_session.commit()
+        row = ChatMessage(id="m1", session_id="r2", user_id=user.id, role="user", content="refund 603…453", sequence=1,
+                          client_message_id="u1", meta={"guardrailHeldBack": True})  # fmt: skip
+        db_session.add(row)
+        await db_session.commit()
+        await replace_session_messages(
+            db_session, user.id, "r2", [{"role": "user", "content": f"refund {CARD}", "clientMessageId": "u1"}]
+        )
+        await db_session.commit()
+        kept = (await db_session.execute(select(ChatMessage).where(ChatMessage.session_id == "r2"))).scalar_one()
+        assert kept.content == "refund 603…453" and kept.meta["guardrailHeldBack"] is True
+
+    async def test_a_refusal_of_what_the_platform_added_is_shown_in_the_chat(
+        self, client, db_session, turn, provider, monkeypatch
+    ):
+        from app.services import chat_turn_context
+
+        async def refused(db, body, messages, **kwargs):
+            return messages, "Memory holds a card."
+
+        monkeypatch.setattr(chat_turn_context, "guard_context", refused)
+        resp = await client.post(
+            "/api/chat/completions",
+            json=ask(
+                turn.model,
+                "what do you remember?",
+                chat_session_id="r3",
+                persist_chat=True,
+                user_message={"role": "user", "content": "what do you remember?", "clientMessageId": "u3"},
+                assistant_client_message_id="a3",
+            ),
+            headers=turn.headers,
+        )
+        assert resp.status_code == 200
+        assert shown(_frames(resp.text)) == [{"blocked": {"message": "Memory holds a card.", "persisted": True}}]
+        assert provider.calls == []
+        rows = (
+            (
+                await db_session.execute(
+                    select(ChatMessage).where(ChatMessage.session_id == "r3").order_by(ChatMessage.sequence)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for row in rows:
+            await db_session.refresh(row)
+        question, refusal = rows
+        assert question.content == "what do you remember?" and not question.meta.get("guardrailHeldBack")
+        assert refusal.meta["guardrailBlocked"] == {"message": "Memory holds a card."}

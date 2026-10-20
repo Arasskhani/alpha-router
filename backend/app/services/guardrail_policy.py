@@ -435,14 +435,27 @@ class Verdict:
 
     def notices(self, model_label: str = "") -> list[str]:
         """What the person is told, one line per rule that changed their request."""
-        out: list[str] = []
+        return [item["message"] for item in self.notice_items(model_label)]
+
+    def notice_items(self, model_label: str = "") -> list[dict[str, str]]:
+        """``notices``, each with the action it tells of (block, redact or route), so it is shown as such."""
+        out: list[dict[str, str]] = []
         for hit in self.enforced:
             if not self.applied(hit):
                 continue
             message = hit.message.replace("{model}", model_label or "another model")
-            if message not in out:
-                out.append(message)
+            if all(item["message"] != message for item in out):
+                out.append({"action": hit.action, "message": message})
         return out
+
+    def found_values(self) -> list[str]:
+        """Every value any rule found - to keep out of what is stored - longest first."""
+        values = {m.value for hit in [*self.enforced, *self.monitored] for _, m in hit.matches if m.value}
+        return sorted(values, key=len, reverse=True)
+
+    def secret_values(self) -> set[str]:
+        """The found values that are secrets (keys, passwords): kept as their length only."""
+        return {m.value for hit in [*self.enforced, *self.monitored] for _, m in hit.matches if m.ref in SECRET_REFS}
 
 
 def decide(
@@ -590,6 +603,24 @@ def mask_messages(
 
 def mask_text(text: str, to_mask: Sequence[tuple[Segment, Match, str]], masker: Masker) -> str:
     return masker.mask(text, [(m.start, m.end, label) for _, m, label in to_mask])
+
+
+def redact_for_storage(text: str, values: Sequence[str], *, secret_values: Iterable[str] = ()) -> str:
+    """``text`` with each found value replaced by its hint (``603…453``), as it is written or JSON-escaped.
+
+    For what is kept of a refused message: the person still recognises it, the value itself is not stored.
+    """
+    secrets = set(secret_values)
+    out = text
+    for value in sorted(set(values), key=len, reverse=True):
+        if not value:
+            continue
+        shown = hint(value, secret=value in secrets)
+        out = out.replace(value, shown)
+        escaped = json.dumps(value, ensure_ascii=False)[1:-1]
+        if escaped != value:
+            out = out.replace(escaped, json.dumps(shown, ensure_ascii=False)[1:-1])
+    return out
 
 
 def restore_text(text: str, values: dict[str, str]) -> str:

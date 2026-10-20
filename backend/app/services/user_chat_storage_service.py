@@ -36,6 +36,8 @@ from app.services.chat_markers import (
     VIDEO_MESSAGE_PREFIX,
     VIDEO_PENDING_MARKER,
     WEB_SOURCES_META_KEY,
+    GUARDRAIL_BLOCKED_META_KEY,
+    GUARDRAIL_HELD_BACK_META_KEY,
     GUARDRAIL_META_KEY,
     is_answer_in_progress,
     is_whole_reply,
@@ -366,8 +368,12 @@ _SERVER_OWNED_META_KEYS = frozenset(
         RECALLED_CHATS_META_KEY,
         WEB_SOURCES_META_KEY,
         GUARDRAIL_META_KEY,
+        GUARDRAIL_BLOCKED_META_KEY,
     }
 )
+#: User meta only the server writes: a client replacing the messages keeps them (and a held-back message its
+#: hidden values: the client's copy of its text is not taken).
+_SERVER_OWNED_USER_META_KEYS = frozenset({GUARDRAIL_HELD_BACK_META_KEY})
 
 
 def _message_to_client(row: ChatMessage) -> dict[str, Any]:
@@ -405,6 +411,8 @@ def _message_to_client(row: ChatMessage) -> dict[str, Any]:
         RECALLED_CHATS_META_KEY,
         WEB_SOURCES_META_KEY,
         GUARDRAIL_META_KEY,
+        GUARDRAIL_BLOCKED_META_KEY,
+        GUARDRAIL_HELD_BACK_META_KEY,
     ):
         if meta.get(key) is not None:
             out[key] = meta[key]
@@ -1481,6 +1489,13 @@ async def replace_session_messages(
                 if previous_meta.get(key) is not None:
                     message_meta[key] = previous_meta[key]
             agent_run_id = previous.agent_run_id
+        elif previous is not None and role == "user":
+            previous_meta = previous.meta if isinstance(previous.meta, dict) else {}
+            for key in _SERVER_OWNED_USER_META_KEYS:
+                if previous_meta.get(key) is not None:
+                    message_meta[key] = previous_meta[key]
+            if previous_meta.get(GUARDRAIL_HELD_BACK_META_KEY):
+                content = previous.content or ""
         row = ChatMessage(
             id=str(msg.get("id") or uuid.uuid4()),
             session_id=session_id,

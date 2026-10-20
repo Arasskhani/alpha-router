@@ -50,6 +50,7 @@ from app.services.chat_tools_service import (
 )
 from app.services.chat_web_tools import WebToolLoop, model_calls_functions
 from app.services.guardrail_turn import BLOCKED_CODE as GUARDRAIL_BLOCKED_CODE
+from app.services.guardrail_chat import keep_refused_turn
 from app.services.guardrail_turn import guard_context, guardrail_reply_state
 from app.services.code_interpreter_capacity_service import (
     CapacityPermit,
@@ -196,7 +197,7 @@ class TurnContext:
     #: Guardrails: the values masked in this turn, to give back in the reply (empty: nothing to give back).
     guardrail_values: dict[str, str] = field(default_factory=dict)
     #: Guardrails: what the person is told about their request (masked, sent to another model).
-    guardrail_notices: list[str] = field(default_factory=list)
+    guardrail_notices: list[dict[str, str]] = field(default_factory=list)
 
 
 def memory_context(
@@ -710,9 +711,27 @@ async def build_turn_context(  # noqa: C901 -- straight-line preparation moved o
         )
         if refusal is not None:
             await lease.abandon("guardrail block")
-            return NonGeneratingReply(
-                frames=[sse_error_frame(refusal, error_type=GUARDRAIL_BLOCKED_CODE), b"data: [DONE]\n\n"]
+            if source != "alpha_router_chat" or not user_id:
+                return NonGeneratingReply(
+                    frames=[sse_error_frame(refusal, error_type=GUARDRAIL_BLOCKED_CODE), b"data: [DONE]\n\n"]
+                )
+            # What the platform added was refused, not what the person wrote: their message is kept as it is,
+            # and the chat shows the organisation's message in place of an answer.
+            persisted = await keep_refused_turn(
+                db,
+                user_id=int(user_id),
+                body=body,
+                message=refusal,
+                user_content=None,
+                held_back=False,
+                model_id=model,
+                model_name=ai_model.display_name or ai_model.external_id or model,
             )
+            frame = {
+                "choices": [],
+                "alpha_router": {"guardrail": {"blocked": {"message": refusal, "persisted": persisted}}},
+            }
+            return NonGeneratingReply(frames=[f"data: {json.dumps(frame)}\n\n".encode(), b"data: [DONE]\n\n"])
         guardrail_values, guardrail_notices = await guardrail_reply_state(db, body)
         if provider == "openrouter" and fitted.window is not None:
             # The turn was measured against the window here: OpenRouter is not to cut its middle out as well.

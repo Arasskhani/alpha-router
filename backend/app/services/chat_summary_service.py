@@ -32,6 +32,7 @@ from typing import Any
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.chat_markers import refused_by_guardrails
 from app.core.prompt_fences import wrap_untrusted
 from app.models.chat import ChatMessage, ChatSession, ChatSummary, ChatSummaryPart, is_member_channel
 from app.services.chat_history_service import message_text_for_model
@@ -588,7 +589,7 @@ async def _part(db: AsyncSession, session_id: str, *, after: int, upto: int) -> 
         text = whole[:MAX_MESSAGE_CHARS]
         if not text:
             continue
-        if restates_a_shared_page(row):
+        if restates_a_shared_page(row) or refused_by_guardrails(row.meta):
             counted += 1
             last_hash = _fingerprint(whole)
             continue

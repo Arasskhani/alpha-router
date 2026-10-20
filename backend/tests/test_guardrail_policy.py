@@ -301,3 +301,14 @@ class TestRecordingNeverWaitsLong:
         await asyncio.gather(*list(guardrail_policy._pending_writes))
         assert calls == [1, 1]
         assert [e.action for e in await events(session_factory)] == ["monitor"]
+
+
+class TestWhatIsKeptOfARefusedMessage:
+    def test_values_are_kept_as_their_hints_as_written_or_escaped(self):
+        from app.services.guardrail_policy import redact_for_storage
+
+        assert redact_for_storage(f"refund {CARD} now", [CARD]) == "refund 603…453 now"
+        quoted = 'pwd: a"b12345'
+        stored = json.dumps({"text": f"login {quoted}"}, ensure_ascii=False)
+        out = redact_for_storage(stored, [quoted], secret_values={quoted})
+        assert json.loads(out)["text"] == "login ••• (12 chars)"

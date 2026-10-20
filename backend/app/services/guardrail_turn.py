@@ -124,9 +124,28 @@ def masker_for(state: dict[str, Any]) -> Masker:
     return masker
 
 
-def _blocked(verdict: Verdict) -> HTTPException:
+class GuardrailRefused(HTTPException):
+    """A turn a rule blocked (422): what the person is told, and the values found - to keep out of what is stored."""
+
+    def __init__(self, message: str, *, values: list[str], secrets: set[str]) -> None:
+        super().__init__(status_code=422, detail={"code": BLOCKED_CODE, "message": message})
+        self.message = message
+        self.values = values
+        self.secrets = secrets
+
+
+def _blocked(verdict: Verdict) -> GuardrailRefused:
     message = verdict.notices()[0] if verdict.notices() else "This was not sent."
-    return HTTPException(status_code=422, detail={"code": BLOCKED_CODE, "message": message})
+    return GuardrailRefused(message, values=verdict.found_values(), secrets=verdict.secret_values())
+
+
+def add_notice(state: dict[str, Any], action: str, message: str) -> None:
+    if all(_notice_message(n) != message for n in state["notices"]):
+        state["notices"].append({"action": action, "message": message})
+
+
+def _notice_message(notice: Any) -> str:
+    return str(notice.get("message") or "") if isinstance(notice, dict) else str(notice)
 
 
 def _unavailable(exc: GuardrailEngineError) -> HTTPException:
@@ -179,13 +198,11 @@ async def guard_request(
     pending = state.pop("route_notice", None)
     if pending:
         # Checked again after routing: the notice names the model the turn went to.
-        state["notices"].append(str(pending).replace("{model}", label or "another model"))
+        add_notice(state, "route", str(pending).replace("{model}", label or "another model"))
     for hit in verdict.enforced:
         if not verdict.applied(hit) or hit.action == "route":
             continue
-        notice = hit.message.replace("{model}", label or "another model")
-        if notice not in state["notices"]:
-            state["notices"].append(notice)
+        add_notice(state, hit.action, hit.message.replace("{model}", label or "another model"))
     if verdict.action == "route" and verdict.deciding is not None:
         state["route_notice"] = verdict.deciding.message
         return verdict.deciding.rule.route_model_id
@@ -242,20 +259,24 @@ async def guard_context(
         state["values"] = dict(masker.values)
         # A value first seen here was not the person's to see: the model may be asked to repeat it.
         state["hidden"] = sorted(set(state["hidden"]) | (set(masker.values) - before))
-    for notice in verdict.notices():
-        if notice not in state["notices"]:
-            state["notices"].append(notice)
+    for item in verdict.notice_items():
+        add_notice(state, item["action"], item["message"])
     return messages, None
 
 
-async def guardrail_reply_state(db: AsyncSession, body: dict[str, Any]) -> tuple[dict[str, str], list[str]]:
+async def guardrail_reply_state(db: AsyncSession, body: dict[str, Any]) -> tuple[dict[str, str], list[dict[str, str]]]:
     """The values to give back in the reply (when the administrator wants them back) and the notices."""
     state = body.get(GUARDRAIL_BODY_KEY)
     if not isinstance(state, dict):
         return {}, []
     hidden = {str(t) for t in state.get("hidden") or []}
     values = {str(k): str(v) for k, v in (state.get("values") or {}).items() if str(k) not in hidden}
-    notices = [str(n) for n in state.get("notices") or []]
+    notices = [
+        {"action": str(n.get("action") or "redact"), "message": str(n.get("message") or "")}
+        if isinstance(n, dict)
+        else {"action": "redact", "message": str(n)}
+        for n in state.get("notices") or []
+    ]
     if values:
         from app.services.guardrail_policy import load_settings
 

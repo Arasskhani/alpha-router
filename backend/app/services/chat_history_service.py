@@ -21,6 +21,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.chat_markers import refused_by_guardrails
 from app.models.chat import ChatMessage
 from app.services.chat_markers import (
     ATTACHMENT_MESSAGE_PREFIX,
@@ -127,7 +128,7 @@ async def _read_older(
     while read < int(limit):
         rows = (
             await db.execute(
-                select(ChatMessage.sequence, ChatMessage.role, ChatMessage.content)
+                select(ChatMessage.sequence, ChatMessage.role, ChatMessage.content, ChatMessage.meta)
                 .where(
                     ChatMessage.session_id == session_id,
                     ChatMessage.sequence < upper,
@@ -137,7 +138,9 @@ async def _read_older(
                 .limit(min(READ_BATCH, int(limit) - read))
             )
         ).all()
-        for _sequence, role, content in rows:
+        for _sequence, role, content, meta in rows:
+            if refused_by_guardrails(meta):
+                continue  # a turn Guardrails refused never goes to a model again
             text = message_text_for_model(content)
             if not text:
                 continue

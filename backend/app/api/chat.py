@@ -92,7 +92,15 @@ from app.services.chat_markers import (
 from app.services.chat_session_access import resolve_owned_chat_session
 from app.services.chat_title_service import generate_chat_title
 from app.services.chat_tool_access_service import assert_tool_for_user, permitted_tool_keys
-from app.services.guardrail_turn import MODEL_PINNED_BODY_KEY, VIA_EXTENSION_BODY_KEY, GuardedTexts, guard_texts
+from app.services.guardrail_chat import keep_refused_turn, refused_user_content
+from app.services.guardrail_turn import BLOCKED_CODE as GUARDRAIL_BLOCKED_CODE
+from app.services.guardrail_turn import (
+    MODEL_PINNED_BODY_KEY,
+    VIA_EXTENSION_BODY_KEY,
+    GuardedTexts,
+    GuardrailRefused,
+    guard_texts,
+)
 from app.services.chat_tool_registry import CHAT_TOOLS
 from app.services.chat_turn_context import earlier_page_answers
 from app.services.chat_xlsx_service import ChatExportError as XlsxExportError
@@ -861,14 +869,18 @@ async def chat_completions(
         payload[PAGE_CONTEXT_BODY_KEY] = [share.host for share in shares]
     else:
         await _page_chat_model(db, body, payload)
-    resolved = await preflight_stream_chat(
-        db,
-        payload,
-        user_id=user.id,
-        skip_budget=False,
-        source="alpha_router_chat",
-        client_app=client_app,
-    )
+    user_id = int(user.id)
+    try:
+        resolved = await preflight_stream_chat(
+            db,
+            payload,
+            user_id=user_id,
+            skip_budget=False,
+            source="alpha_router_chat",
+            client_app=client_app,
+        )
+    except GuardrailRefused as refused:
+        raise await _refused_turn(db, user_id, payload, refused) from None
     if shares:
         # Only once the turn is going ahead: a refused request shared nothing.
         db.add_all(
@@ -919,6 +931,23 @@ async def chat_completions(
         headers=STREAM_SSE_HEADERS,
         background=BackgroundTask(release_capacity_fallback) if permit is not None else None,
     )
+
+
+async def _refused_turn(db: AsyncSession, user_id: int, payload: dict, refused: GuardrailRefused) -> HTTPException:
+    """A turn a Guardrails rule refused: kept in the chat by the server, with the values hidden; the 422 to send.
+
+    The detail tells the client what the chat keeps of the message (``user_content``) and whether the server
+    kept the turn (``persisted``), so the client shows the same and does not write it again.
+    """
+    await db.rollback()
+    user_content = refused_user_content(payload, refused.values, refused.secrets)
+    persisted = await keep_refused_turn(
+        db, user_id=user_id, body=payload, message=refused.message, user_content=user_content, held_back=True
+    )
+    detail: dict[str, object] = {"code": GUARDRAIL_BLOCKED_CODE, "message": refused.message, "persisted": persisted}
+    if user_content is not None:
+        detail["user_content"] = user_content
+    return HTTPException(status_code=422, detail=detail)
 
 
 @router.post("/voice")

@@ -55,3 +55,17 @@ BROWSER_TOOL_CHOICE_BODY_KEY = "_browser_tool_choice"
 BROWSER_REASONING_BODY_KEY = "_browser_reasoning"
 #: Where the agent's conversation settles (the index of the last message that reads the same at its next steps).
 BROWSER_CACHE_POINT_BODY_KEY = "_browser_cache_point"
+#: Assistant message meta: a Guardrails rule refused the turn; ``{"message": str}`` is shown in place of an answer.
+GUARDRAIL_BLOCKED_META_KEY = "guardrailBlocked"
+#: User message meta: the message a rule refused, kept with its values hidden and never sent to a model again.
+GUARDRAIL_HELD_BACK_META_KEY = "guardrailHeldBack"
+
+
+def refused_by_guardrails(meta: object) -> bool:
+    """A message of a turn Guardrails refused (the held-back question, or the refusal in place of an answer).
+
+    Never read back to a model: not in a turn's history, a summary or what memory learns from.
+    """
+    return isinstance(meta, dict) and bool(
+        meta.get(GUARDRAIL_HELD_BACK_META_KEY) or meta.get(GUARDRAIL_BLOCKED_META_KEY)
+    )

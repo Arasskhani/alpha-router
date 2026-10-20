@@ -15,6 +15,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import set_committed_value
 
+from app.services.chat_markers import refused_by_guardrails
 from app.models.chat import ChatMessage, ChatSession, UserMemory, is_member_channel
 from app.services.chat_markers import PAGE_CONTEXT_META_KEY
 from app.services.memory_settings_service import MEMORY_CATEGORIES, get_memory_settings
@@ -268,7 +269,7 @@ async def build_extraction_window(
     covered_to = int(rows[-1].sequence) if len(rows) >= PRE_WINDOW_MESSAGES + MAX_WINDOW_TURNS else end
     turns: list[WindowTurn] = []
     for row in rows:
-        if restates_a_shared_page(row):
+        if restates_a_shared_page(row) or refused_by_guardrails(row.meta):
             continue
         text = extract_message_text(row.content)[:MAX_MESSAGE_CHARS]
         if not text.strip():

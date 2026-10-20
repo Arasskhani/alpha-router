@@ -615,13 +615,13 @@ async def _apply_guardrails(
         return resolved
     if route_to == ai_model.id:
         # Already where the administrator sends it: the person is still told.
-        from app.services.guardrail_turn import turn_state
+        from app.services.guardrail_turn import add_notice, turn_state
 
         state = turn_state(body)
         pending = state.pop("route_notice", None)
         label = str(ai_model.display_name or ai_model.external_id or "")
-        if pending and (notice := str(pending).replace("{model}", label or "another model")) not in state["notices"]:
-            state["notices"].append(notice)
+        if pending:
+            add_notice(state, "route", str(pending).replace("{model}", label or "another model"))
         return resolved
     # The administrator's choice: the person need not have that model, nor the key its connection.
     routed_model, routed_key, routed_base_url, routed_provider = await resolve_model_and_key(db, f"model::{route_to}")

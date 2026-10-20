@@ -264,6 +264,12 @@ async def guard_context(
     return messages, None
 
 
+def masked_this_turn(body: dict[str, Any]) -> bool:
+    """Whether the turn went with placeholders in place of values: the model is told what they are."""
+    state = body.get(GUARDRAIL_BODY_KEY)
+    return isinstance(state, dict) and bool(state.get("values"))
+
+
 async def guardrail_reply_state(db: AsyncSession, body: dict[str, Any]) -> tuple[dict[str, str], list[dict[str, str]]]:
     """The values to give back in the reply (when the administrator wants them back) and the notices."""
     state = body.get(GUARDRAIL_BODY_KEY)

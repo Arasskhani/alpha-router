@@ -77,7 +77,10 @@ SETTINGS_KEY = "guardrails.settings"
 VERSION_KEY = "guardrails.policy_version"
 
 DEFAULT_MESSAGES = {
-    "block": "This was not sent: it contains information your organisation does not allow to be sent here.",
+    "block": (
+        "This was not sent: it contains information your organisation does not allow to be sent to AI models. "
+        "Remove it and send again."
+    ),
     "redact": "Some details were masked before sending, as your organisation requires.",
     "route": "Answered by {model}, as your organisation requires.",
 }
@@ -621,6 +624,15 @@ def redact_for_storage(text: str, values: Sequence[str], *, secret_values: Itera
         if escaped != value:
             out = out.replace(escaped, json.dumps(shown, ensure_ascii=False)[1:-1])
     return out
+
+
+#: Told to the model when a turn was masked, so it treats the placeholders as the values and does not talk
+#: about them: the person reads its reply with the values given back.
+PLACEHOLDER_NOTE = (
+    "Some values in this conversation were replaced by placeholders such as [CARD_1] or [EMAIL_2], as the "
+    "organisation requires. Treat each placeholder as the value it stands for and use it as it is where the value "
+    "belongs. Do not mention, explain or question the placeholders, and do not ask for the real values."
+)
 
 
 def restore_text(text: str, values: dict[str, str]) -> str:

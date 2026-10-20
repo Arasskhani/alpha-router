@@ -113,6 +113,8 @@ class TestAMaskedTurn:
         assert shown(frames) == [
             {"notices": [{"action": "redact", "message": "Card numbers were masked before sending."}]}
         ]
+        # The model was told what the placeholders are, so its reply reads right with the values back.
+        assert "placeholders" in provider.calls[0]["messages"][0]["content"]
         answer = (
             await db_session.execute(
                 select(ChatMessage).where(ChatMessage.session_id == "g1", ChatMessage.role == "assistant")

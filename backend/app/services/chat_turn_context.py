@@ -51,7 +51,8 @@ from app.services.chat_tools_service import (
 from app.services.chat_web_tools import WebToolLoop, model_calls_functions
 from app.services.guardrail_turn import BLOCKED_CODE as GUARDRAIL_BLOCKED_CODE
 from app.services.guardrail_chat import keep_refused_turn
-from app.services.guardrail_turn import guard_context, guardrail_reply_state
+from app.services.guardrail_policy import PLACEHOLDER_NOTE
+from app.services.guardrail_turn import guard_context, guardrail_reply_state, masked_this_turn
 from app.services.code_interpreter_capacity_service import (
     CapacityPermit,
     heartbeat_code_interpreter_turn,
@@ -733,6 +734,13 @@ async def build_turn_context(  # noqa: C901 -- straight-line preparation moved o
             }
             return NonGeneratingReply(frames=[f"data: {json.dumps(frame)}\n\n".encode(), b"data: [DONE]\n\n"])
         guardrail_values, guardrail_notices = await guardrail_reply_state(db, body)
+        if masked_this_turn(body):
+            # The model reads placeholders: told what they are, so its reply makes sense with the values given back.
+            messages = list(messages)
+            if messages and messages[0].get("role") == "system" and isinstance(messages[0].get("content"), str):
+                messages[0] = {**messages[0], "content": f"{messages[0]['content']}\n\n{PLACEHOLDER_NOTE}"}
+            else:
+                messages = [{"role": "system", "content": PLACEHOLDER_NOTE}, *messages]
         if provider == "openrouter" and fitted.window is not None:
             # The turn was measured against the window here: OpenRouter is not to cut its middle out as well.
             completion_kwargs["extra_body"] = {**(completion_kwargs.get("extra_body") or {}), "transforms": []}

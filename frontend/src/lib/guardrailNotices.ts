@@ -55,7 +55,7 @@ export class GuardrailRefusalError extends Error {
   }
 }
 
-export const GUARDRAIL_BLOCKED_CODE = "guardrail_blocked";
+const GUARDRAIL_BLOCKED_CODE = "guardrail_blocked";
 const FALLBACK_MESSAGE = "Your organisation does not allow this to be sent to AI models.";
 
 /** A refusal from a 422's detail (`{code: "guardrail_blocked", message, user_content, persisted}`). */

@@ -711,6 +711,9 @@ async def build_turn_context(  # noqa: C901 -- straight-line preparation moved o
             source=source,
         )
         if refusal is not None:
+            # The turn's own transaction ends first: giving the hold back locks the person's row in a session of
+            # its own, which would wait for this one (on PostgreSQL) while this one waits for it.
+            await db.commit()
             await lease.abandon("guardrail block")
             if source != "alpha_router_chat" or not user_id:
                 return NonGeneratingReply(

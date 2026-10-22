@@ -263,6 +263,7 @@ require_admin_guide, require_admin_guide_write = _menu_requires("admin_guide")
 require_user_manual, require_user_manual_write = _menu_requires("user_manual")
 require_security_settings, require_security_settings_write = _menu_requires("security_settings")
 require_guardrails, require_guardrails_write = _menu_requires("guardrails")
+require_tickets, require_tickets_write = _menu_requires("tickets")
 
 # Backward-compatible category aliases (any menu in the group — prefer menu-specific deps in new code).
 from app.services.rbac import MENUS_BY_CATEGORY  # noqa: E402

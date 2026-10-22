@@ -1,5 +1,8 @@
 """Tests for RBAC role definitions and permission checks."""
 
+import pytest
+from fastapi import HTTPException
+
 from app.services.rbac import (
     ALL_SECTIONS_CATEGORY,
     AGENT_AUDITOR_SLUG,
@@ -22,6 +25,7 @@ from app.services.rbac import (
     READ_ONLY_SUPER_ADMIN_SLUG,
     REPORTS_ACCESS_SLUG,
     SUPER_ADMIN_SLUG,
+    SUPPORT_SLUG,
     TOOL_ADMIN_SLUG,
     USER_SLUG,
     MENU_LABELS,
@@ -43,6 +47,7 @@ from app.services.rbac import (
     primary_role_slug,
     session_payload_for_slugs,
     user_can_access_menu,
+    user_can_work_tickets,
     user_can_write_menu,
     expand_legacy_role_slug,
     user_has_agent_permission,
@@ -85,6 +90,7 @@ def test_role_catalog_keeps_existing_roles_and_adds_scoped_views():
         API_KEY_ADMIN_SLUG,
         DASHBOARD_VIEW_SLUG,
         REPORTS_ACCESS_SLUG,
+        SUPPORT_SLUG,
         AGENTS_ADMIN_SLUG,
         AGENT_DESIGNER_SLUG,
         AGENT_PUBLISHER_SLUG,
@@ -417,3 +423,94 @@ class TestReadOnlySuperAdmin:
         assert expand_legacy_role_slug(READ_ONLY_FULL_ADMIN_SLUG) == [self.SLUG]
         assert expand_legacy_role_slug("read_only_administrator") == [self.SLUG]
         assert expand_legacy_role_slug(FULL_ADMIN_SLUG) == [SUPER_ADMIN_SLUG]
+
+
+class TestSupportRole:
+    """Support works the Tickets menu and nothing else; Tickets is the last item under Overview."""
+
+    def test_tickets_is_the_last_overview_menu_and_owns_its_pages(self):
+        assert MENU_LABELS["tickets"] == "Tickets"
+        assert MENU_GROUP_KEYS["tickets"] == "overview"
+        overview = MENUS_BY_CATEGORY["overview"]
+        assert overview[: overview.index("tickets") + 1] == ("dashboard", "operations", "database", "tickets")
+        for path in ("/admin/tickets", "/admin/tickets/list", "/admin/tickets/settings"):
+            assert path_to_menu(path) == "tickets", path
+
+    def test_it_is_in_the_catalog_and_assignable(self):
+        role = {r["slug"]: r for r in list_roles()}[SUPPORT_SLUG]
+        assert SUPPORT_SLUG == "support_agent"
+        assert role["name"] == "Support"
+        assert role["menu_key"] == "tickets"
+        assert role["category"] == "Overview"
+        assert role["category_key"] == "overview"
+        assert role["read_only"] is False
+        assert is_valid_role_slug(SUPPORT_SLUG)
+        # It is not mistaken for a retired menu-bundle slug on migration.
+        assert expand_legacy_role_slug(SUPPORT_SLUG) == [SUPPORT_SLUG]
+
+    def test_it_reaches_only_the_tickets_menu_and_writes_it(self):
+        held = [SUPPORT_SLUG]
+        assert is_admin_panel_role(SUPPORT_SLUG)
+        assert effective_accessible_menu_keys(held) == frozenset({"tickets"})
+        assert user_can_access_menu(held, "tickets")
+        assert user_can_write_menu(held, "tickets")
+        assert user_can_work_tickets(held)
+        for menu in MENU_LABELS:
+            if menu == "tickets" or menu in USER_APP_MENUS:
+                continue
+            assert not user_can_access_menu(held, menu), menu
+            assert not user_can_write_menu(held, menu), menu
+        assert not user_has_super_admin_access(held)
+
+    def test_the_session_shows_tickets_alone(self):
+        payload = session_payload_for_slugs([USER_SLUG, SUPPORT_SLUG])
+        assert payload["is_admin_panel"] is True
+        assert payload["read_only"] is False
+        assert payload["menus"] == ["tickets"]
+        assert payload["categories"] == ["overview"]
+
+    def test_super_admin_works_tickets_and_read_only_super_admin_only_reads(self):
+        assert user_can_work_tickets([SUPER_ADMIN_SLUG])
+        assert user_can_access_menu([READ_ONLY_SUPER_ADMIN_SLUG], "tickets")
+        assert not user_can_write_menu([READ_ONLY_SUPER_ADMIN_SLUG], "tickets")
+        assert not user_can_work_tickets([READ_ONLY_SUPER_ADMIN_SLUG])
+        # Read-only next to Support vetoes the writes, as on every other menu.
+        assert not user_can_work_tickets([SUPPORT_SLUG, READ_ONLY_SUPER_ADMIN_SLUG])
+
+    def test_other_scoped_roles_and_users_do_not_work_tickets(self):
+        for held in ([USER_SLUG], [API_KEY_ADMIN_SLUG], [REPORTS_ACCESS_SLUG], [AGENTS_ADMIN_SLUG]):
+            assert not user_can_access_menu(held, "tickets"), held
+            assert not user_can_work_tickets(held), held
+
+    def test_granting_it_needs_no_platform_wide_role(self):
+        assert actor_may_assign_roles([API_KEY_ADMIN_SLUG], [SUPPORT_SLUG])
+        assert actor_may_assign_roles([SUPER_ADMIN_SLUG], [SUPPORT_SLUG])
+
+
+async def test_the_tickets_dependencies_follow_the_role(db_session):
+    """require_tickets lets Support and Read Only Super Admin read; only Support writes."""
+
+    from app.api.deps import require_tickets, require_tickets_write
+    from app.models.user import User
+    from app.services.user_role_service import set_user_roles
+
+    people = {}
+    for name, slugs in (
+        ("support", [SUPPORT_SLUG]),
+        ("viewer", [READ_ONLY_SUPER_ADMIN_SLUG]),
+        ("keys", [API_KEY_ADMIN_SLUG]),
+    ):
+        person = User(username=name, is_active=True)
+        db_session.add(person)
+        await db_session.flush()
+        await set_user_roles(db_session, person, slugs)
+        people[name] = person
+
+    assert await require_tickets(user=people["support"], db=db_session) is people["support"]
+    assert await require_tickets_write(user=people["support"], db=db_session) is people["support"]
+    assert await require_tickets(user=people["viewer"], db=db_session) is people["viewer"]
+    with pytest.raises(HTTPException) as refused:
+        await require_tickets_write(user=people["viewer"], db=db_session)
+    assert refused.value.status_code == 403
+    with pytest.raises(HTTPException):
+        await require_tickets(user=people["keys"], db=db_session)

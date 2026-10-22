@@ -32,6 +32,7 @@ MenuKey = Literal[
     "user_manual",
     "security_settings",
     "guardrails",
+    "tickets",
 ]
 
 # Nav group label shown in the Roles table Category column.
@@ -70,6 +71,8 @@ DOMAIN_APPROVER_SLUG = "agent_domain_approver"
 TOOL_ADMIN_SLUG = "agent_tool_administrator"
 AGENT_OPERATIONS_ADMIN_SLUG = "agent_operations_administrator"
 AGENT_AUDITOR_SLUG = "agent_auditor"
+#: Works the Tickets menu: sees, answers, assigns and closes support tickets.
+SUPPORT_SLUG = "support_agent"
 
 # Explicitly re-enabled scoped roles (must stay assignable; not section-bundle generated).
 REENABLED_SCOPED_ROLE_SLUGS: frozenset[str] = frozenset({DASHBOARD_VIEW_SLUG, REPORTS_ACCESS_SLUG})
@@ -78,6 +81,7 @@ MENU_DEFINITIONS: tuple[tuple[MenuKey, str, CategoryKey], ...] = (
     ("dashboard", "Dashboard", "overview"),
     ("operations", "Operations", "overview"),
     ("database", "Database", "overview"),
+    ("tickets", "Tickets", "overview"),
     ("chat", "Chat", "overview"),
     ("media", "Media", "overview"),
     ("connections", "Connections", "models_api"),
@@ -230,6 +234,8 @@ MENU_PATH_PREFIXES: dict[MenuKey, tuple[str, ...]] = {
     # Its own key rather than folded into security_settings: what may leave the organisation is a policy a
     # security officer keeps, and the day a scoped role is wanted for it, it must be separable.
     "guardrails": ("/admin/guardrails",),
+    # Support tickets: the Overview, the queue and the settings tabs, kept by the Support role.
+    "tickets": ("/admin/tickets",),
 }
 
 MENUS_BY_CATEGORY: dict[CategoryKey, tuple[MenuKey, ...]] = {}
@@ -348,6 +354,16 @@ def _build_role_catalog() -> tuple[RoleDefinition, ...]:
             description="Access to the Reports admin menu, including preview and export.",
             category=CATEGORY_LABELS["data_reports"],
             menu_key="reports",
+            read_only=False,
+        ),
+        RoleDefinition(
+            slug=SUPPORT_SLUG,
+            name="Support",
+            description=(
+                "Sees, answers, assigns and closes support tickets. Cannot change Tickets settings or delete tickets."
+            ),
+            category=CATEGORY_LABELS["overview"],
+            menu_key="tickets",
             read_only=False,
         ),
         RoleDefinition(
@@ -857,6 +873,15 @@ def user_can_write_menu(slugs: list[str], menu: MenuKey | None = None) -> bool:
         return all(can_write_menu(s, menu) for s in contributors)
     admin_menus = [m for m in MENU_LABELS if m not in USER_APP_MENUS]
     return any(user_can_write_menu(slugs, m) for m in admin_menus)
+
+
+def user_can_work_tickets(slugs: list[str]) -> bool:
+    """Whether these roles may reply to, assign and close tickets, and be assigned one.
+
+    The Support role and Super Admin; never Read Only Super Admin, which sees the
+    menu and writes nothing. Settings and deletes need Super Admin on top.
+    """
+    return user_can_write_menu(slugs, "tickets")
 
 
 def user_is_read_only_admin(slugs: list[str]) -> bool:

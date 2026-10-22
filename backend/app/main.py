@@ -24,6 +24,8 @@ from app.api import (
     admin_knowledge,
     admin_logs,
     admin_guardrails,
+    admin_tickets,
+    admin_tickets_overview,
     admin_web_search,
     admin_memory,
     admin_security,
@@ -46,6 +48,7 @@ from app.api import (
     reports,
     smtp,
     speech,
+    support_tickets,
     user_chats,
     user_media,
     user_memories,
@@ -790,6 +793,10 @@ app.include_router(admin_extension.router)
 app.include_router(admin_logs.router)
 app.include_router(admin_web_search.router)
 app.include_router(admin_guardrails.router)
+# The overview first: its fixed paths must win over the queue's /{ticket_id}.
+app.include_router(admin_tickets_overview.router)
+app.include_router(admin_tickets.router)
+app.include_router(support_tickets.router)
 app.include_router(sign_in_activity.router)
 app.include_router(admin_memory.router)
 if settings.agents_platform_enabled:

@@ -2,8 +2,9 @@
  * @vitest-environment happy-dom
  *
  * The phone's bottom tab bar: four user sections plus "More", which opens a
- * sheet with the rest (the manual, and Administration for admins). It steps
- * aside while a field has the keyboard up.
+ * sheet with the rest (Support, the manual, and Administration for admins). It
+ * steps aside while a field has the keyboard up. Support's count shows on its
+ * item in the sheet, and on More while the sheet is closed.
  */
 import { StrictMode, act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -11,6 +12,18 @@ import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const session = vi.hoisted(() => ({ admin: false }));
+const ticketBadges = vi.hoisted(() => ({ support: 0, tickets: 0, ticketsUrgent: false, asked: [] as string[][] }));
+
+vi.mock("../hooks/useTicketBadges", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../hooks/useTicketBadges")>();
+  return {
+    ...real,
+    useTicketBadges: (keys: string[]) => {
+      ticketBadges.asked.push(keys);
+      return { support: ticketBadges.support, tickets: ticketBadges.tickets, ticketsUrgent: ticketBadges.ticketsUrgent };
+    },
+  };
+});
 
 vi.mock("../api", () => ({ getCachedSession: () => null, onSessionReady: () => () => undefined }));
 vi.mock("../lib/userPanelNav", async (importOriginal) => {
@@ -35,6 +48,8 @@ let root: Root;
 
 beforeEach(() => {
   session.admin = false;
+  ticketBadges.support = 0;
+  ticketBadges.asked = [];
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -182,5 +197,25 @@ describe("the bottom tab bar", () => {
     expect(where()).toBe("/app/manual");
     // A page under More lights up the More tab.
     expect(moreButton()?.classList.contains("is-active")).toBe(true);
+  });
+  it("shows the Support count on More, and on Support inside the sheet", async () => {
+    ticketBadges.support = 3;
+    await render("/app/chat");
+    expect(ticketBadges.asked.at(-1)).toEqual(["support"]);
+    const onMore = moreButton()!.querySelector(".nav-count-badge");
+    expect(onMore?.querySelector('[aria-hidden="true"]')?.textContent).toBe("3");
+    expect(onMore?.textContent).toContain("3 new");
+    await click(moreButton());
+    const support = sheet()!.querySelector('a[href="/app/support"]')!;
+    expect(support.querySelector(".nav-count-badge")?.textContent).toBe("3, 3 tickets with a new reply");
+    expect(sheet()!.querySelector('a[href="/app/manual"] .nav-count-badge')).toBeNull();
+  });
+
+  it("shows no count when nothing is unread", async () => {
+    await render("/app/chat");
+    expect(moreButton()!.querySelector(".nav-count-badge")).toBeNull();
+    ticketBadges.support = 12;
+    await render("/app/media");
+    expect(moreButton()!.querySelector('.nav-count-badge [aria-hidden="true"]')?.textContent).toBe("9+");
   });
 });

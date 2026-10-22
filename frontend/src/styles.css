@@ -20910,6 +20910,37 @@ p.error,
   margin: 0;
 }
 
+/* The Support count on the topbar shortcut and the phone's tab bar. Up to
+   1024px the shortcut labels are gone and the count sits on the icon's corner.
+   (Written with "screen and": the plain 1024px query is the navigation drawer's
+   block, which must stay the last of its kind; see styles.phoneLayout.test.ts.) */
+.topbar-shortcut .nav-count-badge {
+  margin-left: 0.1rem;
+}
+@media screen and (max-width: 1024px) {
+  .topbar-shortcut:has(.nav-count-badge) {
+    position: relative;
+  }
+  .topbar-shortcut .nav-count-badge {
+    position: absolute;
+    top: -3px;
+    right: -5px;
+    min-width: 15px;
+    height: 15px;
+    padding: 0 3px;
+    font-size: 0.6rem;
+  }
+}
+.bottom-tab-bar .bottom-tab {
+  position: relative;
+}
+.bottom-tab .nav-count-badge {
+  position: absolute;
+  top: 0.25rem;
+  left: calc(50% + 0.35rem);
+  margin-left: 0;
+}
+
 /* Phone: one column, the dialog the whole height, the reply box in reach. */
 @media (max-width: 640px) {
   .support-toolbar {

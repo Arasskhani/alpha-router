@@ -7,6 +7,8 @@ import { isProjectWorkspacePath, topbarShortcutsForSession } from "../lib/userPa
 import { listProjects, projectRoleLabel, type ProjectRecord } from "../lib/projectsApi";
 import type { CachedTheme } from "../lib/themeCache";
 import { NavIcon } from "./icons/navIcons";
+import { NavBadge, navBadgeKeys, navBadgeWords } from "./SidebarNav";
+import { useTicketBadges } from "../hooks/useTicketBadges";
 import UserProfile from "./UserProfile";
 
 type Theme = CachedTheme;
@@ -136,9 +138,10 @@ export default function TopbarNav({ theme, onThemeChange }: Props) {
   const user = getSessionUser();
   const location = useLocation();
   const session = useCachedSession();
+  const shortcuts = topbarShortcutsForSession(session as SessionRbac | null);
+  const badges = useTicketBadges(user ? navBadgeKeys(shortcuts) : []);
   if (!user) return null;
 
-  const shortcuts = topbarShortcutsForSession(session as SessionRbac | null);
   const inProjectWorkspace = isProjectWorkspacePath(location.pathname);
 
   return (
@@ -164,7 +167,7 @@ export default function TopbarNav({ theme, onThemeChange }: Props) {
               key={item.to}
               to={item.to}
               title={item.label}
-              aria-label={item.label}
+              aria-label={`${item.label}${navBadgeWords(item, badges)}`}
               className={({ isActive }) => {
                 const chatActive = item.icon === "chat" && inProjectWorkspace ? false : isActive;
                 return `topbar-shortcut${chatActive ? " topbar-shortcut--active" : ""}`;
@@ -172,6 +175,7 @@ export default function TopbarNav({ theme, onThemeChange }: Props) {
             >
               {item.icon ? <NavIcon name={item.icon} /> : null}
               <span className="topbar-shortcut__label">{item.label}</span>
+              <NavBadge item={item} badges={badges} />
             </NavLink>
           );
         })}

@@ -18,10 +18,21 @@ const BADGE_WORDS: Record<TicketBadgeKey, (count: number) => string> = {
   tickets: (n) => `${n} ${n === 1 ? "ticket waits" : "tickets wait"} for staff`,
 };
 
+/** The count an item shows; 0 without a badge. */
+export function navBadgeCount(item: NavItem, badges: TicketBadges): number {
+  if (!item.badge) return 0;
+  return item.badge === "support" ? badges.support : badges.tickets;
+}
+
+/** ", 2 tickets with a new reply" for an item whose name is an aria-label; "" without a count. */
+export function navBadgeWords(item: NavItem, badges: TicketBadges): string {
+  const count = navBadgeCount(item, badges);
+  return item.badge && count > 0 ? `, ${BADGE_WORDS[item.badge](count)}` : "";
+}
+
 export function NavBadge({ item, badges }: { item: NavItem; badges: TicketBadges }) {
-  if (!item.badge) return null;
-  const count = item.badge === "support" ? badges.support : badges.tickets;
-  if (count <= 0) return null;
+  const count = navBadgeCount(item, badges);
+  if (!item.badge || count <= 0) return null;
   const urgent = item.badge === "tickets" && badges.ticketsUrgent;
   return (
     <span className={`nav-count-badge${urgent ? " nav-count-badge--urgent" : ""}`}>

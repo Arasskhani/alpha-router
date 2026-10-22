@@ -7,6 +7,8 @@ import type { SessionRbac } from "../lib/rbac";
 import { topbarShortcutsForSession } from "../lib/userPanelNav";
 import type { NavItem } from "../nav/types";
 import { NavIcon } from "./icons/navIcons";
+import { NavBadge, navBadgeCount, navBadgeKeys } from "./SidebarNav";
+import { badgeText, useTicketBadges } from "../hooks/useTicketBadges";
 
 /** The sections a thumb reaches most; everything else is under "More". */
 const TAB_PATHS = ["/app/chat", "/app/projects", "/app/media", "/app/my-activity"];
@@ -36,6 +38,9 @@ export default function BottomTabBar() {
   );
   const more = items.filter((item) => !TAB_PATHS.includes(item.to));
   const moreActive = more.some((item) => isActive(path, item.to));
+  const badges = useTicketBadges(navBadgeKeys(items));
+  // A count on an item inside the sheet shows on More, so it is seen without opening it.
+  const moreCount = more.reduce((sum, item) => sum + navBadgeCount(item, badges), 0);
 
   // The sheet goes with the bar when the keyboard comes up; it does not come back on its own afterwards.
   if (typing && moreOpen) setMoreOpen(false);
@@ -95,6 +100,7 @@ export default function BottomTabBar() {
             >
               {item.icon ? <NavIcon name={item.icon} className="bottom-tab__icon" /> : null}
               <span className="bottom-tab__label">{item.label}</span>
+              <NavBadge item={item} badges={badges} />
             </Link>
           );
         })}
@@ -114,6 +120,12 @@ export default function BottomTabBar() {
               <circle cx="19" cy="12" r="1.8" fill="currentColor" />
             </svg>
             <span className="bottom-tab__label">More</span>
+            {moreCount > 0 ? (
+              <span className="nav-count-badge">
+                <span aria-hidden="true">{badgeText(moreCount)}</span>
+                <span className="sr-only">, {moreCount} new</span>
+              </span>
+            ) : null}
           </button>
         ) : null}
       </nav>
@@ -141,6 +153,7 @@ export default function BottomTabBar() {
                     >
                       {item.icon ? <NavIcon name={item.icon} className="bottom-sheet__icon" /> : null}
                       <span>{item.label}</span>
+                      <NavBadge item={item} badges={badges} />
                     </Link>
                   </li>
                 );

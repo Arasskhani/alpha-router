@@ -20257,3 +20257,104 @@ p.error,
  */
 
 /* === Tickets (admin) === */
+
+/* Tickets › Overview: Activity's header, KPI cards and lists, Operations' cards. */
+.tickets-panel-tab {
+  margin-top: 1rem;
+  min-width: 0;
+}
+
+.tickets-ov-head {
+  margin: 0 0 0.9rem;
+  align-items: center;
+}
+
+.tickets-ov-head .activity-subtitle {
+  margin: 0;
+}
+
+.tickets-ov-body.is-loading {
+  opacity: 0.6;
+  transition: opacity 0.15s ease;
+}
+
+.overview-kpi-card__change.tickets-kpi-flat {
+  color: var(--muted);
+}
+
+.tickets-ov-lists {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+}
+
+.tickets-ov-sub {
+  display: block;
+  color: var(--muted);
+  font-size: 0.74rem;
+  margin-top: 0.05rem;
+}
+
+.overview-top-list__meta {
+  min-width: 0;
+}
+
+.tickets-ov-name {
+  display: block;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tickets-ov-name:hover,
+.tickets-ov-name:focus-visible {
+  color: var(--accent);
+}
+
+.tickets-ov-unassigned .overview-top-list__name {
+  color: #b45309;
+}
+
+[data-scheme="dark"] .tickets-ov-unassigned .overview-top-list__name {
+  color: #fbbf24;
+}
+
+.overview-top-list__avatar.tickets-ov-avatar--staff {
+  background: #ddd6fe;
+  color: #3b0764;
+}
+
+[data-scheme="dark"] .overview-top-list__avatar.tickets-ov-avatar--staff {
+  background: #c4b5fd;
+  color: #1e1b4b;
+}
+
+.tickets-ov-empty {
+  padding: 1.5rem 1.1rem;
+  text-align: center;
+}
+
+.tickets-ov-empty h3 {
+  margin: 0 0 0.35rem;
+  font-size: 1rem;
+}
+
+.tickets-ov-empty p {
+  margin: 0;
+}
+
+.activity-menu-item.tickets-ov-report-link {
+  text-decoration: none;
+}
+
+.tickets-ov-report-hint {
+  margin: 0 0.55rem 0.2rem;
+}
+
+.tickets-hint {
+  color: var(--muted);
+  font-size: 0.78rem;
+}

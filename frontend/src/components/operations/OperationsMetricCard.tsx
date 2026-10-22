@@ -27,6 +27,8 @@ type Props = {
   totalLabel?: string;
   chartHeight?: number;
   changePct?: number | null;
+  /** The legend's line when every segment is zero. */
+  emptyLabel?: string;
   footer?: { label: string; value: string; secondary?: { label: string; value: string } };
 };
 
@@ -45,6 +47,7 @@ export default function OperationsMetricCard({
   totalLabel: totalLabelOverride,
   chartHeight = 140,
   changePct = null,
+  emptyLabel = "No samples yet — use Check Now",
   footer,
 }: Props) {
   const data = useMemo(
@@ -120,7 +123,7 @@ export default function OperationsMetricCard({
             <span className="activity-legend-value">{formatValue(s.value)}</span>
           </li>
         ))}
-        {breakdown.length === 0 ? <li className="activity-legend-empty">No samples yet — use Check Now</li> : null}
+        {breakdown.length === 0 ? <li className="activity-legend-empty">{emptyLabel}</li> : null}
       </ul>
       {footer ? (
         <footer className="activity-metric-card__footer">

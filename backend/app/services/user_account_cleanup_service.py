@@ -20,6 +20,7 @@ from app.models.project import (
 from app.models.user_media_prefs import UserMediaPreferences
 from app.services import object_storage_service as oss
 from app.services.storage_service import user_storage_slug
+from app.services.support_tickets import delete_user_tickets
 from app.services.user_media_service import delete_all_user_media
 
 logger = logging.getLogger(__name__)
@@ -170,6 +171,8 @@ async def purge_user_account_data(
     # The row is emptied rather than deleted, so ON DELETE CASCADE never fires:
     # the browsers this account connected are forgotten here.
     await db.execute(delete(ExtensionSession).where(ExtensionSession.user_id == user_id))
+    # Their support tickets go too, for the same reason; the images leave storage after the commit.
+    await delete_user_tickets(db, user_id)
 
     chat_deleted = 1
 

@@ -56,6 +56,7 @@ from app.services.saml_state import (
     remember_authn_request,
 )
 from app.services.session_cookie import clear_session_cookies, new_csrf_token, set_session_cookies
+from app.services.support_tickets import load_settings as load_ticket_settings
 from app.services.user_chat_storage_service import ensure_user_chat_store
 from app.services.user_lifecycle_service import record_user_login
 from app.services.user_role_service import get_user_role_slugs
@@ -112,6 +113,8 @@ async def auth_session(user: User = Depends(get_current_user), db: AsyncSession 
             "project_create": sections["project_create"].allowed,
             "api_keys": sections["api_keys"].allowed,
             "extension": sections["extension"].allowed,
+            # Tickets: whether the user panel offers Support (the administrator's on/off switch).
+            "support": (await load_ticket_settings(db)).enabled,
         },
     }
 

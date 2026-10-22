@@ -1,4 +1,4 @@
-"""Predefined admin report catalog (31 reports)."""
+"""Predefined admin report catalog (41 reports)."""
 
 from __future__ import annotations
 
@@ -342,6 +342,34 @@ REPORT_CATALOG: list[dict[str, Any]] = [
         "needs_date": True,
         "params": ["project"],
     },
+    # Support tickets (aggregates only: never a ticket's title or text)
+    {
+        "id": "ticket_summary",
+        "category": "support",
+        "title": "Ticket summary",
+        "description": (
+            "Per category: tickets opened, resolved, closed, still open, Urgent and High, auto-closed, "
+            "median first reply and median resolution. The automatic reply and internal notes are never a first reply."
+        ),
+        "needs_date": True,
+        "params": [],
+    },
+    {
+        "id": "tickets_by_department",
+        "category": "support",
+        "title": "Tickets by department",
+        "description": "Tickets opened per reporter department, with the share still open.",
+        "needs_date": True,
+        "params": [],
+    },
+    {
+        "id": "support_performance",
+        "category": "support",
+        "title": "Support performance",
+        "description": ("Per support person: tickets handled, median first reply, median resolution and open backlog."),
+        "needs_date": True,
+        "params": [],
+    },
 ]
 
 REPORT_IDS = frozenset(r["id"] for r in REPORT_CATALOG)
@@ -354,4 +382,5 @@ CATEGORY_LABELS = {
     "groups": "Groups & plans",
     "api_keys": "API keys",
     "projects": "Projects",
+    "support": "Support tickets",
 }

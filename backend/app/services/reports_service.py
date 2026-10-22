@@ -1,4 +1,4 @@
-"""Report generation: 31 predefined reports — CSV, XLS, PDF."""
+"""Report generation: 41 predefined reports — CSV, XLS, PDF."""
 
 from __future__ import annotations
 
@@ -1174,6 +1174,12 @@ async def build_report(db: AsyncSession, report_type: str, params: dict[str, Any
     start = params.get("_start")
     end = params.get("_end")
 
+    from app.services.support_ticket_reports import SUPPORT_REPORTS
+
+    if support_report := SUPPORT_REPORTS.get(report_type):
+        if start is None or end is None:
+            raise HTTPException(400, "start_date and end_date are required for this report")
+        return await support_report(db, start, end)
     if report_type == "user_budget_usage":
         return await report_user_budget_usage(db, start, end, params.get("user_id"))
     if report_type == "plan_usage":

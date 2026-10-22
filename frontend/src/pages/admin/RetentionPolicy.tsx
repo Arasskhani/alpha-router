@@ -33,6 +33,8 @@ type RetentionOverview = {
   api_logs?: ApiLogRetention;
   admin_logs?: AdminLogRetention;
   sign_in_activity?: SignInActivityRetention;
+  /** Closed support tickets: set in Admin › Tickets › Settings, shown here read-only. */
+  tickets?: { retention_days: number };
 };
 
 type SignInActivityRetention = {
@@ -80,6 +82,12 @@ function humanSize(bytes: number) {
 
 function formatServerScheduleClock(hour: number, minute: number): string {
   return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+/** The read-only Tickets line: the window lives in the Tickets settings. */
+function ticketRetentionText(days: number): string {
+  if (days <= 0) return "Closed tickets and their images are kept";
+  return `Closed tickets and their images are deleted after ${days.toLocaleString()} day${days === 1 ? "" : "s"}`;
 }
 
 function serverTimezoneHint(tz?: string): string {
@@ -651,6 +659,17 @@ export default function RetentionPolicy() {
           </button>
         </div>
       </form>
+
+      {stats?.tickets ? (
+        <div className="card">
+          <h3>Support tickets</h3>
+          <p className="muted-text" data-testid="ticket-retention">
+            {ticketRetentionText(stats.tickets.retention_days)} (set in{" "}
+            <Link to="/admin/tickets/settings">Admin › Tickets › Settings</Link>). Open tickets are never deleted by
+            time.
+          </p>
+        </div>
+      ) : null}
     </AdminPage>
   );
 }

@@ -14,6 +14,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../../api", () => ({ authFetch: vi.fn() }));
 const readOnly = vi.hoisted(() => ({ value: false }));
 vi.mock("../../context/ReadOnlyContext", () => ({ useReadOnly: () => readOnly.value }));
+const dialogs = vi.hoisted(() => ({
+  confirm: vi.fn(async () => true as boolean | "secondary"),
+  prompt: vi.fn(async () => null as string | null),
+}));
+vi.mock("../../context/ConfirmContext", () => ({ useConfirm: () => dialogs }));
 
 import { authFetch } from "../../api";
 import { TICKETS_CHANGED_EVENT, type SupportStatus, type UserTicketDetail, type UserTicketList } from "../../lib/tickets";
@@ -148,6 +153,8 @@ const onAnnounce = () => {
 
 beforeEach(() => {
   readOnly.value = false;
+  dialogs.confirm.mockReset();
+  dialogs.confirm.mockResolvedValue(true);
   calls = [];
   announced = 0;
   handler = () => undefined;
@@ -396,6 +403,79 @@ describe("a new ticket", () => {
     expect(document.querySelector('[role="dialog"] [role="alert"]')?.textContent).toContain(words);
   });
 
+  it("shows the server's own sentence for a refusal it has no special text for", async () => {
+    handler = (url, method) =>
+      url === "/api/support/tickets" && method === "POST"
+        ? refusal(422, { code: "body_too_long", message: "The description is longer than 5,000 characters." })
+        : undefined;
+    await openForm();
+    await type(byLabel<HTMLInputElement>("Title"), "T");
+    await type(byLabel<HTMLTextAreaElement>("Description"), "D");
+    await click(button("Submit ticket"));
+    expect(document.querySelector('[role="dialog"] [role="alert"]')?.textContent).toBe(
+      "The description is longer than 5,000 characters.",
+    );
+  });
+
+  it("names a refused image once, and finds it by the name the server cleaned", async () => {
+    handler = (url, method) =>
+      url === "/api/support/tickets" && method === "POST"
+        ? refusal(422, {
+            code: "image_rejected",
+            message: "screen shot.png: its contents are not an image this form accepts (PNG, JPG).",
+            file: "screen shot.png",
+          })
+        : undefined;
+    await openForm();
+    await type(byLabel<HTMLInputElement>("Title"), "T");
+    await type(byLabel<HTMLTextAreaElement>("Description"), "D");
+    await pickFiles("support-new-files", [png("screen\nshot.png"), png("other.png")]);
+    await click(button("Submit ticket"));
+    expect(document.querySelector('[role="dialog"] [role="alert"]')?.textContent).toBe(
+      "“screen shot.png” was not accepted: its contents are not an image this form accepts (PNG, JPG).",
+    );
+    const kept = [...document.querySelectorAll(".support-thumb:not(.support-thumb--refused)")];
+    expect(kept.map((el) => el.textContent)).toEqual([expect.stringContaining("other.png")]);
+    expect(document.querySelector(".support-thumb--refused")?.textContent).toContain("screen shot.png");
+  });
+
+  it("asks before throwing away a draft, and never closes while sending", async () => {
+    await openForm();
+    // Nothing written: Cancel closes at once.
+    await click(button("Cancel"));
+    expect(dialogs.confirm).not.toHaveBeenCalled();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+
+    await click(button("+ New ticket"));
+    await type(byLabel<HTMLInputElement>("Title"), "Printer");
+    dialogs.confirm.mockResolvedValueOnce(false);
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    });
+    await settle();
+    expect(dialogs.confirm).toHaveBeenCalledTimes(1);
+    expect(document.querySelector('[role="dialog"]')).toBeTruthy();
+    expect(byLabel<HTMLInputElement>("Title").value).toBe("Printer");
+
+    await click(document.querySelector('[role="dialog"] .modal-close'));
+    expect(dialogs.confirm).toHaveBeenCalledTimes(2);
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+
+    // Sending: Escape and × do nothing, and nothing is asked.
+    handler = (url, method) => (url === "/api/support/tickets" && method === "POST" ? new Promise(() => undefined) as never : undefined);
+    await click(button("+ New ticket"));
+    await type(byLabel<HTMLInputElement>("Title"), "T");
+    await type(byLabel<HTMLTextAreaElement>("Description"), "D");
+    await click(button("Submit ticket"));
+    expect(button("Sending…")).toBeTruthy();
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    });
+    await click(document.querySelector('[role="dialog"] .modal-close'));
+    expect(dialogs.confirm).toHaveBeenCalledTimes(2);
+    expect(document.querySelector('[role="dialog"]')).toBeTruthy();
+  });
+
   it("opens from ?new=1, the link a closed conversation offers", async () => {
     await render("/app/support?new=1");
     expect(document.querySelector('[role="dialog"]')).toBeTruthy();
@@ -517,6 +597,8 @@ describe("the conversation", () => {
     expect(document.querySelectorAll(".support-thread > li")).toHaveLength(4);
     expect(document.querySelector(".support-composer")).toBeNull();
     expect(text()).toContain("Your account is inactive: you can read this ticket, but not reply to it.");
+    // The read-only page greys out its header actions; going back to the list is not a change.
+    expect(document.querySelector('a.support-back[href="/app/support"]')!.classList.contains("btn-readonly-ok")).toBe(true);
   });
 
   it("says when the ticket is not there", async () => {

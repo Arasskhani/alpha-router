@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SupportLimits } from "../../lib/tickets";
-import { checkImages } from "./supportFormat";
+import { checkImages, serverFileName } from "./supportFormat";
 
 export type ImagePick = { key: string; file: File; url: string };
 export type RefusedPick = { key: string; name: string; reason: string };
@@ -76,9 +76,11 @@ export function useImagePicks(limits: SupportLimits): ImagePicks {
   }, []);
 
   const refuse = useCallback((name: string, reason: string) => {
-    const gone = live.current.filter((p) => p.file.name === name);
+    // The server names the file as it cleaned it (basename, one line, 255 characters at most).
+    const matches = (p: ImagePick) => p.file.name === name || serverFileName(p.file.name) === name;
+    const gone = live.current.filter(matches);
     gone.forEach(release);
-    live.current = live.current.filter((p) => p.file.name !== name);
+    live.current = live.current.filter((p) => !matches(p));
     setPicks(live.current);
     setRefused((list) => [...list, { key: nextKey(), name, reason }]);
   }, []);

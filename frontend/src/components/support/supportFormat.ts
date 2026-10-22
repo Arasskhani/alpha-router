@@ -93,6 +93,24 @@ export function isTicketsDisabled(err: unknown): boolean {
   return err instanceof TicketsApiError && err.status === 403 && err.code === "tickets_disabled";
 }
 
+/** What Python's str.splitlines() breaks on (the server joins the parts with a space). */
+const LINE_BREAKS = new Set(["\n", "\r", "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029"]);
+
+/**
+ * A file name as the server reports it back (`file` on image_rejected): the
+ * last path part, line breaks made spaces, trimmed, at most 255 characters.
+ */
+export function serverFileName(name: string): string {
+  const base = (name.replace(/\\/g, "/").split("/").pop() ?? "").trim();
+  const oneLine = Array.from(base.replace(/\r\n/g, "\n"), (ch) => (LINE_BREAKS.has(ch) ? " " : ch)).join("");
+  return Array.from(oneLine || "image").slice(0, 255).join("");
+}
+
+/** The server's refusal without the file name it starts with ("logo.svg: only images…" → "only images…"). */
+function withoutFileName(message: string, file: string): string {
+  return file && message.startsWith(`${file}: `) ? message.slice(file.length + 2) : message;
+}
+
 /** What a person reads when the server refuses; `file` names the image for image_rejected. */
 export function supportErrorText(err: unknown, limits?: SupportLimits | null): string {
   if (!(err instanceof TicketsApiError)) {
@@ -107,7 +125,9 @@ export function supportErrorText(err: unknown, limits?: SupportLimits | null): s
     case "reopen_window_passed":
       return "This ticket can no longer be reopened. Open a new ticket if you still need help.";
     case "image_rejected":
-      return file ? `“${file}” was not accepted: ${err.message}` : `An image was not accepted: ${err.message}`;
+      return file
+        ? `“${file}” was not accepted: ${withoutFileName(err.message, file)}`
+        : `An image was not accepted: ${err.message}`;
     case "invalid_category":
       return "That category is no longer offered. Pick another one.";
     case "tickets_disabled":
@@ -120,7 +140,9 @@ export function supportErrorText(err: unknown, limits?: SupportLimits | null): s
   }
   if (err.status === 429) return "Too many requests. Wait a little, then try again.";
   if (err.status === 404) return "This ticket was not found.";
-  if (err.status === 422) return "Something in the form is not right. Check the fields and try again.";
+  if (err.status === 422) {
+    return err.serverMessage ? err.message : "Something in the form is not right. Check the fields and try again.";
+  }
   return err.message || `Request failed (${err.status}).`;
 }
 

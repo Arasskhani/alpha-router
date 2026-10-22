@@ -165,7 +165,9 @@ export default function SupportConversation({ ticketId, status, onDisabled }: Pr
       onDisabled();
       return;
     }
-    if (err instanceof TicketsApiError && err.code === "image_rejected" && typeof err.data.file === "string") {
+    if (err instanceof TicketsApiError &&
+      (err.code === "image_rejected" || err.code === "image_too_large") &&
+      typeof err.data.file === "string") {
       images.refuse(err.data.file, "refused");
     }
     // The ticket moved on meanwhile (the reopen window passed): show it as it is now.
@@ -215,7 +217,7 @@ export default function SupportConversation({ ticketId, status, onDisabled }: Pr
   };
 
   const back = (
-    <Link to="/app/support" className="btn btn-ghost support-back">
+    <Link to="/app/support" className="btn btn-ghost btn-readonly-ok support-back">
       ← My tickets
     </Link>
   );

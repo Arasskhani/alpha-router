@@ -1,5 +1,6 @@
 import { useId, useRef, useState, type DragEvent, type FormEvent } from "react";
 import Modal from "../Modal";
+import { useConfirm } from "../../context/ConfirmContext";
 import {
   PRIORITY_LABELS,
   SUPPORT_BASE,
@@ -45,6 +46,7 @@ export function acceptAttribute(types: string[]): string {
 /** + New ticket: reporter, title, category, priority, description, screenshots, technical details. */
 export default function NewTicketModal({ status, onClose, onCreated, onDisabled, onStale }: Props) {
   const ids = useId();
+  const confirmer = useConfirm();
   const { limits, reporter } = status;
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -61,6 +63,23 @@ export default function NewTicketModal({ status, onClose, onCreated, onDisabled,
   const categoryShown = status.categories.includes(category) ? category : (status.categories[0] ?? "");
   const priorities = status.priorities?.length ? status.priorities : (Object.keys(PRIORITY_LABELS) as Priority[]);
   const ready = title.trim() !== "" && description.trim() !== "" && categoryShown !== "" && !busy;
+  const hasDraft = title.trim() !== "" || description.trim() !== "" || images.picks.length > 0;
+
+  /** Escape, × and Cancel: never while sending, and only after asking when something was written. */
+  const requestClose = async () => {
+    if (busy) return;
+    if (hasDraft) {
+      const ok = await confirmer.confirm({
+        title: "Discard this ticket?",
+        message: "What you wrote and the images you added will not be sent.",
+        confirmLabel: "Discard",
+        cancelLabel: "Keep editing",
+        danger: true,
+      });
+      if (ok !== true) return;
+    }
+    onClose();
+  };
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -84,7 +103,9 @@ export default function NewTicketModal({ status, onClose, onCreated, onDisabled,
         onDisabled();
         return;
       }
-      if (err instanceof TicketsApiError && err.code === "image_rejected" && typeof err.data.file === "string") {
+      if (err instanceof TicketsApiError &&
+      (err.code === "image_rejected" || err.code === "image_too_large") &&
+      typeof err.data.file === "string") {
         images.refuse(err.data.file, "refused");
       }
       if (err instanceof TicketsApiError && err.code === "invalid_category") onStale();
@@ -99,7 +120,13 @@ export default function NewTicketModal({ status, onClose, onCreated, onDisabled,
   };
 
   return (
-    <Modal open title="New ticket" onClose={onClose} closeOnBackdrop={false} panelClassName="support-modal">
+    <Modal
+      open
+      title="New ticket"
+      onClose={() => void requestClose()}
+      closeOnBackdrop={false}
+      panelClassName="support-modal"
+    >
       <form className="support-form" onSubmit={(e) => void submit(e)} noValidate>
         <div className="support-reporter">
           <Avatar name={reporter.name || reporter.username} />
@@ -253,7 +280,7 @@ export default function NewTicketModal({ status, onClose, onCreated, onDisabled,
         ) : null}
 
         <div className="modal-actions support-actions">
-          <button type="button" className="btn btn-ghost" onClick={onClose} disabled={busy}>
+          <button type="button" className="btn btn-ghost" onClick={() => void requestClose()} disabled={busy}>
             Cancel
           </button>
           <button type="submit" className="btn" disabled={!ready}>

@@ -73,7 +73,7 @@ export default function Support() {
         <AdminPage
           title="Support"
           actions={
-            <Link to="/app/support" className="btn btn-ghost support-back">
+            <Link to="/app/support" className="btn btn-ghost btn-readonly-ok support-back">
               ← My tickets
             </Link>
           }

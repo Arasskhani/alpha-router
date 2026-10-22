@@ -15,8 +15,8 @@ export const TICKETS_CHANGED_EVENT = "alpha-router:tickets-changed";
 
 export type Priority = "low" | "normal" | "high" | "urgent";
 export type TicketStatus = "open" | "in_progress" | "waiting" | "resolved" | "closed";
-export type MessageKind = "user" | "staff" | "note" | "auto" | "event";
-export type ClosedReason = "manual" | "auto" | "resolved";
+type MessageKind = "user" | "staff" | "note" | "auto" | "event";
+type ClosedReason = "manual" | "auto" | "resolved";
 export type StaffView = "needs_staff" | "mine" | "unassigned" | "active" | "closed" | "all";
 export type UserState = "open" | "resolved" | "all";
 
@@ -54,8 +54,8 @@ export const STAFF_VIEW_LABELS: Record<StaffView, string> = {
   all: "All",
 };
 
-export type Reporter = { name: string; username: string; email: string | null; department: string | null };
-export type PersonRef = { id: number | null; name: string };
+type Reporter = { name: string; username: string; email: string | null; department: string | null };
+type PersonRef = { id: number | null; name: string };
 
 export type Attachment = {
   id: number;
@@ -234,8 +234,8 @@ export type DeletePreview = {
 export const DELETE_ALL_PHRASE = "DELETE ALL TICKETS";
 
 export type OverviewKpi = { value: number | null; change_pct: number | null; sparkline: number[] };
-export type OverviewSegment = { key: string; label: string; color: string; value?: number };
-export type OverviewChart = { segments: OverviewSegment[]; chart: Record<string, string | number>[] };
+type OverviewSegment = { key: string; label: string; color: string; value?: number };
+type OverviewChart = { segments: OverviewSegment[]; chart: Record<string, string | number>[] };
 
 export type TicketsOverview = {
   period: string;
@@ -271,12 +271,21 @@ export class TicketsApiError extends Error {
   status: number;
   code: string | null;
   data: Record<string, unknown>;
+  /** The message is the server's own sentence, not the HTTP status text. */
+  serverMessage: boolean;
 
-  constructor(status: number, message: string, code: string | null, data: Record<string, unknown>) {
+  constructor(
+    status: number,
+    message: string,
+    code: string | null,
+    data: Record<string, unknown>,
+    serverMessage = false,
+  ) {
     super(message);
     this.status = status;
     this.code = code;
     this.data = data;
+    this.serverMessage = serverMessage;
   }
 }
 
@@ -285,19 +294,25 @@ async function readError(res: Response): Promise<TicketsApiError> {
   let message = res.statusText || `Request failed (${res.status})`;
   let code: string | null = null;
   let data: Record<string, unknown> = {};
+  let serverMessage = false;
   try {
     const body = JSON.parse(text) as { detail?: unknown };
     const detail = body.detail;
-    if (typeof detail === "string") message = detail;
-    else if (detail && typeof detail === "object") {
+    if (typeof detail === "string" && detail) {
+      message = detail;
+      serverMessage = true;
+    } else if (detail && typeof detail === "object" && !Array.isArray(detail)) {
       data = detail as Record<string, unknown>;
-      if (typeof data.message === "string") message = data.message;
+      if (typeof data.message === "string" && data.message) {
+        message = data.message;
+        serverMessage = true;
+      }
       if (typeof data.code === "string") code = data.code;
     }
   } catch {
     if (text) message = text;
   }
-  return new TicketsApiError(res.status, message, code, data);
+  return new TicketsApiError(res.status, message, code, data, serverMessage);
 }
 
 /** JSON in, JSON out; a FormData body goes as multipart. Throws TicketsApiError. */

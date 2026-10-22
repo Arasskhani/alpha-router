@@ -29,7 +29,11 @@ export function StatusBadge({ status }: { status: TicketStatus }) {
 }
 
 export function CategoryTag({ category }: { category: string }) {
-  return <span className="support-cat">{category}</span>;
+  return (
+    <span className="support-cat" dir="auto">
+      {category}
+    </span>
+  );
 }
 
 export function Avatar({ name, tone = "user" }: { name: string; tone?: "user" | "staff" | "auto" }) {

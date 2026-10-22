@@ -389,7 +389,7 @@ export default function TicketsSettingsTab({ settings, meta, canEdit, loadError,
               onChange={(e) => set({ email_user: e.target.checked })}
             />
             <span>
-              Email the user when support replies or resolves their ticket{" "}
+              Email the user when support replies or changes the status of their ticket{" "}
               <span className="muted-text">(off: they see the number on Support in the app)</span>
             </span>
           </label>

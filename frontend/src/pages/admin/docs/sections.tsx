@@ -2067,7 +2067,7 @@ export const docSections: DocSection[] = [
               <td>Never for Assign to me.</td>
             </tr>
             <tr>
-              <td>Email the user when support replies or resolves their ticket</td>
+              <td>Email the user when support replies or changes the status of their ticket</td>
               <td>Off</td>
               <td>On / off</td>
               <td>Off: the person sees the count on Support in the app.</td>

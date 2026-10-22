@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 import json
+import os
 
 import pytest
 from sqlalchemy import func, select
@@ -14,6 +16,8 @@ from app.models.user import User
 from app.services import support_tickets as st
 from app.services.rbac import READ_ONLY_SUPER_ADMIN_SLUG, SUPPORT_SLUG
 from app.services.user_role_service import set_user_roles
+
+_ON_POSTGRES = os.environ.get("TEST_DATABASE_URL", "").startswith("postgresql")
 
 NOW = datetime.datetime(2026, 10, 22, 9, 0, 0)
 
@@ -439,10 +443,41 @@ class TestJobs:
         stale.waiting_since = NOW - datetime.timedelta(days=8)
         fresh.waiting_since = NOW - datetime.timedelta(days=6)
         await db_session.commit()
-        assert await st.close_waiting_tickets(db_session, now=NOW) == 1
+        assert await st.close_waiting_tickets(db_session, now=NOW) == [stale.id]
         assert (stale.status, stale.closed_reason, stale.closed_at) == ("closed", "auto", NOW)
         assert fresh.status == "waiting"
         assert (await _events(db_session, stale))[-1] == {"type": "auto_closed", "days": 7}
+
+    def test_the_close_jobs_lock_what_they_close_and_skip_what_is_being_changed(self):
+        from sqlalchemy.dialects import postgresql
+
+        query = st._locked_batch_query(0, SupportTicket.status == "waiting")
+        assert str(query.compile(dialect=postgresql.dialect())).endswith("FOR UPDATE SKIP LOCKED")
+
+    @pytest.mark.skipif(not _ON_POSTGRES, reason="row locks need PostgreSQL (TEST_DATABASE_URL)")
+    async def test_a_ticket_being_answered_is_skipped_not_overwritten(self, db_session, session_factory, user, support):
+        ticket = await _open(db_session, user)
+        await st.set_status(db_session, ticket=ticket, actor=support, status="waiting")
+        ticket.waiting_since = NOW - datetime.timedelta(days=8)
+        await db_session.commit()
+        async with session_factory() as replying, session_factory() as job:
+            # The person's reply holds the row (not committed yet) while the job runs.
+            mine = (
+                await replying.execute(select(SupportTicket).where(SupportTicket.id == ticket.id).with_for_update())
+            ).scalar_one()
+            assert await asyncio.wait_for(st.close_waiting_tickets(job, now=NOW), timeout=10) == []
+            await st.add_user_message(
+                replying,
+                ticket=mine,
+                user=await replying.get(User, user.id),
+                body="Still here",
+                images=[],
+                settings=st.TicketSettings(),
+            )
+            await replying.commit()
+            assert await asyncio.wait_for(st.close_waiting_tickets(job, now=NOW), timeout=10) == []
+        fresh = await db_session.get(SupportTicket, ticket.id, populate_existing=True)
+        assert (fresh.status, fresh.closed_at) == ("open", None)
 
     async def test_resolved_tickets_close_when_the_reopen_window_ends(self, db_session, user, support):
         old = await _open(db_session, user)
@@ -452,7 +487,7 @@ class TestJobs:
         old.resolved_at = NOW - datetime.timedelta(days=15)
         recent.resolved_at = NOW - datetime.timedelta(days=13)
         await db_session.commit()
-        assert await st.close_resolved_tickets(db_session, now=NOW) == 1
+        assert await st.close_resolved_tickets(db_session, now=NOW) == [old.id]
         assert (old.status, old.closed_reason) == ("closed", "resolved")
         assert recent.status == "resolved"
         detail = await st.ticket_detail(db_session, old, audience="user", viewer=user)

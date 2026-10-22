@@ -988,22 +988,42 @@ async def release_orphaned_assignments(db: AsyncSession) -> int:
 # --- scheduled jobs ---------------------------------------------------------------------------------------------
 
 
-async def _batch(db: AsyncSession, *conditions: Any) -> list[SupportTicket]:
-    return list(
-        (await db.execute(select(SupportTicket).where(*conditions).order_by(SupportTicket.id).limit(_JOB_BATCH)))
-        .scalars()
-        .all()
+def _locked_batch_query(after_id: int, *conditions: Any) -> Any:
+    return (
+        select(SupportTicket)
+        .where(SupportTicket.id > after_id, *conditions)
+        .order_by(SupportTicket.id)
+        .limit(_JOB_BATCH)
+        .with_for_update(skip_locked=True)
+        .execution_options(populate_existing=True)
     )
 
 
-async def close_waiting_tickets(db: AsyncSession, *, now: datetime.datetime | None = None) -> int:
-    """Close tickets that waited for the person longer than ``auto_close_days``; commits in batches."""
+async def _locked_batch(db: AsyncSession, after_id: int, *conditions: Any) -> list[SupportTicket]:
+    """The next tickets past ``after_id`` meeting the conditions, locked (``FOR UPDATE SKIP LOCKED`` on
+    PostgreSQL; nothing on SQLite) and read afresh, so a change committed meanwhile is what the job sees and
+    a ticket someone is changing right now waits for the next run."""
+    return list((await db.execute(_locked_batch_query(after_id, *conditions))).scalars().all())
+
+
+async def close_waiting_tickets(db: AsyncSession, *, now: datetime.datetime | None = None) -> list[int]:
+    """Close tickets that waited for the person longer than ``auto_close_days``; commits in batches.
+
+    Returns the ids closed, so the caller can tell each person after the commit.
+    """
     now = now or _now()
     days = (await load_settings(db)).auto_close_days
     cutoff = now - datetime.timedelta(days=days)
-    closed = 0
-    while batch := await _batch(db, SupportTicket.status == "waiting", SupportTicket.waiting_since < cutoff):
+    closed: list[int] = []
+    after_id = 0
+    while batch := await _locked_batch(
+        db, after_id, SupportTicket.status == "waiting", SupportTicket.waiting_since < cutoff
+    ):
+        after_id = int(batch[-1].id)
         for ticket in batch:
+            # Checked again on the locked row: a reply that got in first keeps the ticket open.
+            if ticket.status != "waiting" or ticket.waiting_since is None or ticket.waiting_since >= cutoff:
+                continue
             ticket.status = "closed"  # type: ignore[assignment]
             ticket.closed_at = now  # type: ignore[assignment]
             ticket.closed_reason = "auto"  # type: ignore[assignment]
@@ -1012,26 +1032,32 @@ async def close_waiting_tickets(db: AsyncSession, *, now: datetime.datetime | No
             ticket.user_unread = True  # type: ignore[assignment]
             ticket.updated_at = now  # type: ignore[assignment]
             db.add(_event(ticket, now, type="auto_closed", days=days))
+            closed.append(int(ticket.id))
         await db.commit()
-        closed += len(batch)
     return closed
 
 
-async def close_resolved_tickets(db: AsyncSession, *, now: datetime.datetime | None = None) -> int:
-    """Close resolved tickets once their reopen window has passed; commits in batches."""
+async def close_resolved_tickets(db: AsyncSession, *, now: datetime.datetime | None = None) -> list[int]:
+    """Close resolved tickets once their reopen window has passed; commits in batches. Returns the ids closed."""
     now = now or _now()
     days = (await load_settings(db)).reopen_days
     cutoff = now - datetime.timedelta(days=days)
-    closed = 0
-    while batch := await _batch(db, SupportTicket.status == "resolved", SupportTicket.resolved_at < cutoff):
+    closed: list[int] = []
+    after_id = 0
+    while batch := await _locked_batch(
+        db, after_id, SupportTicket.status == "resolved", SupportTicket.resolved_at < cutoff
+    ):
+        after_id = int(batch[-1].id)
         for ticket in batch:
+            if ticket.status != "resolved" or ticket.resolved_at is None or ticket.resolved_at >= cutoff:
+                continue
             ticket.status = "closed"  # type: ignore[assignment]
             ticket.closed_at = now  # type: ignore[assignment]
             ticket.closed_reason = "resolved"  # type: ignore[assignment]
             ticket.updated_at = now  # type: ignore[assignment]
             db.add(_event(ticket, now, type="closed_resolved", days=days))
+            closed.append(int(ticket.id))
         await db.commit()
-        closed += len(batch)
     return closed
 
 

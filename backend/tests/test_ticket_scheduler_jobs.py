@@ -125,6 +125,30 @@ class TestLifecycle:
         assert (await _fresh(jobs_on_test_engine, waiting.id)).status == "closed"
         assert (await _fresh(jobs_on_test_engine, resolved.id)).status == "closed"
 
+    async def test_the_person_is_emailed_when_their_ticket_closes_by_itself(
+        self, jobs_on_test_engine, db_session, monkeypatch
+    ):
+        from app.services import smtp_service
+        from app.services import support_ticket_mail as mail
+
+        sent: list[tuple[str, str]] = []
+
+        async def fake_send(db, *, to_address, subject, body_text, cc=None, attachments=()):
+            sent.append((to_address, subject))
+
+        monkeypatch.setattr(smtp_service, "send_email", fake_send)
+        monkeypatch.setattr(mail, "AsyncSessionLocal", jobs_on_test_engine)
+        sara = await _person(db_session, "sara")
+        await st.save_settings(db_session, st.TicketSettings(email_user=True))
+        waiting = await _ticket(db_session, sara, status="waiting", waiting_since=_ago(days=8), needs_staff=False)
+        await _ticket(db_session, sara, status="resolved", resolved_at=_ago(days=20), needs_staff=False)
+        await db_session.commit()
+
+        await scheduler.job_ticket_lifecycle()
+        await mail.drain()
+
+        assert sent == [("sara@corp.test", f"Your ticket #{waiting.number} is now Closed")]
+
     async def test_a_failing_step_is_logged_and_the_others_still_run(
         self, jobs_on_test_engine, db_session, user, monkeypatch, caplog
     ):

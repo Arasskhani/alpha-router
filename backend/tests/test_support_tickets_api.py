@@ -577,3 +577,31 @@ class TestCheapRefusalsComeFirst:
         limited = await client.post(f"{BASE}/tickets/{tid}/messages", data={"body": "x"}, files=shot, headers=headers)
         assert limited.status_code == 429 and limited.json()["detail"]["code"] == "reply_rate_limited"
         assert image_work == [1]
+
+
+async def test_a_ticket_closed_while_the_images_were_checked_is_reopened_cleanly(
+    client, db_session, session_factory, user, monkeypatch
+):
+    """The reply reads the ticket again (locked) after the image work, so it sees the scheduled close."""
+    headers = sign_in(client, user)
+    tid = (await open_ticket(client, headers)).json()["id"]
+    ticket = await fresh(db_session, tid)
+    ticket.status, ticket.waiting_since = "waiting", datetime.datetime.utcnow() - datetime.timedelta(days=8)
+    await db_session.commit()
+
+    async def close_meanwhile(uploads, settings, *, owner_user_id):
+        async with session_factory() as job:
+            assert await st.close_waiting_tickets(job) == [tid]
+        return []
+
+    monkeypatch.setattr("app.api.support_tickets.store_ticket_images", close_meanwhile)
+    resp = await client.post(
+        f"{BASE}/tickets/{tid}/messages",
+        data={"body": "Still broken"},
+        files=[("images", ("a.png", png(), "image/png"))],
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    ticket = await fresh(db_session, tid)
+    assert (ticket.status, ticket.closed_at, ticket.closed_reason, ticket.reopened_count) == ("open", None, None, 1)
+    assert resp.json()["messages"][-1]["body"].startswith("Reopened by")

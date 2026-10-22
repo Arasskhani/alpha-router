@@ -106,8 +106,10 @@ async def _audit(db: AsyncSession, request: Request, actor: User, action: str, r
     )
 
 
-async def _ticket(db: AsyncSession, ticket_id: int) -> SupportTicket:
-    ticket = await db.get(SupportTicket, ticket_id)
+async def _ticket(db: AsyncSession, ticket_id: int, *, lock: bool = False) -> SupportTicket:
+    """The ticket, or 404. ``lock`` reads it afresh and locks the row (PostgreSQL) for a change that depends on
+    its status, so the scheduled close and a person's reply cannot cross it."""
+    ticket = await db.get(SupportTicket, ticket_id, with_for_update=lock or None, populate_existing=lock)
     if ticket is None:
         raise _refuse("not_found", "Ticket not found.", 404)
     return ticket
@@ -563,7 +565,15 @@ async def bulk(
     elif body.action == "assign" and body.assignee_id is not None:
         assignee = await _assignee_user(db, body.assignee_id)
     tickets = (
-        (await db.execute(select(SupportTicket).where(SupportTicket.id.in_(set(body.ids))).order_by(SupportTicket.id)))
+        (
+            await db.execute(
+                select(SupportTicket)
+                .where(SupportTicket.id.in_(set(body.ids)))
+                .order_by(SupportTicket.id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        )
         .scalars()
         .all()
     )
@@ -912,7 +922,7 @@ async def patch_ticket(
     actor: User = Depends(require_ticket_worker),
 ):
     """Change the status, priority or category; each change is an event line and an Admin Logs entry."""
-    ticket = await _ticket(db, ticket_id)
+    ticket = await _ticket(db, ticket_id, lock=True)
     before = {"status": ticket.status, "priority": ticket.priority, "category": ticket.category}
     try:
         if body.status is not None:
@@ -958,11 +968,13 @@ async def add_message(
         text = st.precheck_staff_message(body=body, status=new_status)
     except st.TicketError as exc:
         raise _answer(exc) from exc
-    previous_status = str(ticket.status)
     settings = await st.load_settings(db)
     try:
         # The person's images live under their own prefix, whoever attached them.
         stored = await store_ticket_images(images or [], settings, owner_user_id=int(ticket.user_id))
+        # Read again and locked: the ticket may have changed while the images were checked.
+        await db.refresh(ticket, with_for_update=True)
+        previous_status = str(ticket.status)
         await st.add_staff_message(
             db, ticket=ticket, staff=actor, body=text, internal=is_note, images=stored, status=new_status
         )

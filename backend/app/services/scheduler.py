@@ -423,9 +423,10 @@ async def job_ticket_lifecycle():
     Waiting tickets with no reply in ``auto_close_days`` close (reason ``auto``);
     resolved tickets close once their reopen window has passed; active tickets
     whose assignee can no longer work tickets become unassigned. Each step runs
-    on its own, so one that fails does not hold back the others.
+    on its own, so one that fails does not hold back the others. A person whose
+    ticket closed automatically is emailed (when ``email_user`` is on).
     """
-    from app.services import support_tickets
+    from app.services import support_ticket_mail, support_tickets
 
     async with AsyncSessionLocal() as db:
         steps = (
@@ -435,10 +436,15 @@ async def job_ticket_lifecycle():
         )
         for label, step in steps:
             try:
-                count = await step(db)
+                result = await step(db)
                 await db.commit()  # the close jobs commit their batches; the release leaves it to the caller
+                count = len(result) if isinstance(result, list) else int(result)
                 if count:
                     logger.info("Ticket lifecycle: %s ticket(s) %s", count, label)
+                if step is support_tickets.close_waiting_tickets and isinstance(result, list):
+                    # After the commit: the person hears that the ticket closed (when ``email_user`` is on).
+                    for ticket_id in result:
+                        support_ticket_mail.notify_user(ticket_id, "status")
             except Exception:
                 await db.rollback()
                 logger.exception("Ticket lifecycle step failed (%s)", label)

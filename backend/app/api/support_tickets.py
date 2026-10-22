@@ -319,6 +319,8 @@ async def reply(
         _answer(error)
     stored = await _store(images, settings, user)
     try:
+        # Read again and locked: the scheduled close may have changed it while the images were checked.
+        await db.refresh(ticket, with_for_update=True)
         await st.add_user_message(db, ticket=ticket, user=user, body=body, images=stored, settings=settings)
         await db.commit()
     except st.TicketError as error:
@@ -344,6 +346,7 @@ async def resolve(
     ticket = await _own_ticket(db, ticket_id, user)
     _require_active(user)
     try:
+        await db.refresh(ticket, with_for_update=True)
         await st.user_resolve(db, ticket=ticket, user=user)
         await db.commit()
     except st.TicketError as error:

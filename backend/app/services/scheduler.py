@@ -417,6 +417,69 @@ async def job_guardrail_event_retention():
             logger.exception("Guardrails event retention failed")
 
 
+async def job_ticket_lifecycle():
+    """Support tickets that move on their own, every 15 minutes.
+
+    Waiting tickets with no reply in ``auto_close_days`` close (reason ``auto``);
+    resolved tickets close once their reopen window has passed; active tickets
+    whose assignee can no longer work tickets become unassigned. Each step runs
+    on its own, so one that fails does not hold back the others.
+    """
+    from app.services import support_tickets
+
+    async with AsyncSessionLocal() as db:
+        steps = (
+            ("auto-closed", support_tickets.close_waiting_tickets),
+            ("closed after the reopen window", support_tickets.close_resolved_tickets),
+            ("released from an assignee who can no longer work tickets", support_tickets.release_orphaned_assignments),
+        )
+        for label, step in steps:
+            try:
+                count = await step(db)
+                await db.commit()  # the close jobs commit their batches; the release leaves it to the caller
+                if count:
+                    logger.info("Ticket lifecycle: %s ticket(s) %s", count, label)
+            except Exception:
+                await db.rollback()
+                logger.exception("Ticket lifecycle step failed (%s)", label)
+
+
+async def job_ticket_retention():
+    """Delete closed tickets past ``retention_days`` (0 keeps them), with their images; recorded in the governance chain."""
+    async with AsyncSessionLocal() as db:
+        from app.services.support_tickets import purge_closed_tickets
+
+        try:
+            result = await purge_closed_tickets(db)
+            if result["deleted"]:
+                logger.info(
+                    "Ticket retention: %s closed tickets, %s messages and %s images deleted (>%sd)",
+                    result["deleted"],
+                    result["messages"],
+                    result["images"],
+                    result["retention_days"],
+                )
+                try:
+                    from app.services.agent_governance_service import append_governance_audit_event
+
+                    await append_governance_audit_event(
+                        db,
+                        event_type="governance.retention.support_tickets.purged",
+                        resource_type="support_tickets",
+                        resource_id=None,
+                        actor_user_id=None,
+                        outcome="success",
+                        payload=dict(result),
+                    )
+                    await db.commit()
+                except Exception:
+                    await db.rollback()
+                    logger.exception("Ticket retention ran but could not be recorded in the audit chain")
+        except Exception:
+            await db.rollback()
+            logger.exception("Ticket retention failed")
+
+
 async def job_auth_event_retention():
     """Delete sign-in history past the window set on the Retention Policy page.
 
@@ -695,6 +758,24 @@ def start_scheduler():
         minute=45,
         timezone=get_server_timezone(),
         id="guardrail_event_retention",
+    )
+    scheduler.add_job(
+        job_ticket_retention,
+        "cron",
+        hour=4,
+        minute=50,
+        timezone=get_server_timezone(),
+        id="ticket_retention",
+    )
+    # Auto-close is promised in days, so a quarter of an hour late is nothing;
+    # an assignment left on someone who lost the Support role is fixed as soon.
+    scheduler.add_job(
+        job_ticket_lifecycle,
+        "interval",
+        minutes=15,
+        id="ticket_lifecycle",
+        max_instances=1,
+        coalesce=True,
     )
     scheduler.add_job(
         job_extension_session_cleanup,

@@ -41,6 +41,15 @@ def _configured_limits() -> tuple[int, int, int]:
     return compressed, side, pixels
 
 
+def platform_image_limits() -> tuple[int, int, int]:
+    """``(max_file_bytes, max_side_px, max_pixels)`` this platform decodes, as configured within the hard caps.
+
+    Features that promise image limits of their own (ticket screenshots)
+    clamp them to these, so they never accept what ``normalize_image`` refuses.
+    """
+    return _configured_limits()
+
+
 def _validate_dimensions(width: int, height: int, *, max_side: int, max_pixels: int) -> None:
     if width <= 0 or height <= 0:
         raise ImagePolicyError("Image dimensions are invalid")

@@ -27,7 +27,7 @@ from PIL import Image
 
 from app.services import object_storage_service
 from app.services.bounded_io import BoundedIOError, read_upload_bounded
-from app.services.image_decode_policy import ImagePolicyError, normalize_image
+from app.services.image_decode_policy import ImagePolicyError, normalize_image, platform_image_limits
 from app.services.support_tickets import StoredImage, TicketError, TicketSettings
 from app.services.upload_file_policy import UploadPolicyError, check_content
 from app.services.upload_screening import UploadRejected, screen_upload
@@ -72,12 +72,23 @@ def _accepted(settings: TicketSettings) -> str:
     return ", ".join(_TYPE_LABELS.get(kind, kind.upper()) for kind in settings.image_types)
 
 
+class _TooManyPixels(Exception):
+    pass
+
+
 def _side(raw: bytes) -> tuple[int, int]:
-    with warnings.catch_warnings():
-        warnings.simplefilter("error", Image.DecompressionBombWarning)
-        with Image.open(io.BytesIO(raw)) as image:
-            width, height = image.size
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(io.BytesIO(raw)) as image:
+                width, height = image.size
+    except (Image.DecompressionBombError, Image.DecompressionBombWarning) as exc:
+        raise _TooManyPixels from exc
     return int(width), int(height)
+
+
+def _megapixels(pixels: int) -> str:
+    return f"{pixels / 1_000_000:.1f}".rstrip("0").rstrip(".")
 
 
 async def check_and_clean(upload: UploadFile, settings: TicketSettings) -> tuple[bytes, int, int, str]:
@@ -86,7 +97,7 @@ async def check_and_clean(upload: UploadFile, settings: TicketSettings) -> tuple
     allowed = set(settings.image_types)
     if _extension(name) not in allowed:
         raise _refuse(name, f"only images are accepted ({_accepted(settings)}).")
-    limit = int(settings.max_image_mb) * 1024 * 1024
+    limit = min(int(settings.max_image_mb) * 1024 * 1024, platform_image_limits()[0])
     try:
         raw = await read_upload_bounded(upload, max_bytes=limit)
     except BoundedIOError as exc:
@@ -102,12 +113,19 @@ async def check_and_clean(upload: UploadFile, settings: TicketSettings) -> tuple
         check_content(raw, ext=kind, kind="image")
     except UploadPolicyError as exc:
         raise _refuse(name, str(exc)) from exc
+    _max_bytes, platform_side, max_pixels = platform_image_limits()
+    too_many_pixels = f"too many pixels (more than {_megapixels(max_pixels)} million)."
     try:
         width, height = _side(raw)
+    except _TooManyPixels as exc:
+        raise _refuse(name, too_many_pixels) from exc
     except Exception as exc:  # noqa: BLE001 -- any decoder failure means "not an image we keep"
         raise _refuse(name, "it could not be read as an image.") from exc
-    if max(width, height) > int(settings.max_side_px):
-        raise _refuse(name, f"larger than {settings.max_side_px} px on its longest side.")
+    max_side = min(int(settings.max_side_px), platform_side)
+    if max(width, height) > max_side:
+        raise _refuse(name, f"larger than {max_side} px on its longest side.")
+    if width * height > max_pixels:
+        raise _refuse(name, too_many_pixels)
     try:
         await screen_upload(raw, name)
     except UploadRejected as exc:

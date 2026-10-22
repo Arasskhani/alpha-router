@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -131,6 +132,17 @@ LARGE_BODY_PATH_PREFIXES: tuple[str, ...] = (
     "/api/admin/security/tls/",  # certificate bundles
 )
 
+# Support ticket messages (multipart: a form and up to 10 screenshots) have a
+# ceiling of their own, independent of the Storage transfer limits: 10 images
+# of up to 10 MB are the hard ceilings of the ticket settings
+# (support_tickets.SETTING_BOUNDS), plus the multipart margin. Each file is
+# still held to the administrator's max_image_mb as it is read.
+TICKET_UPLOAD_BODY_MB = 10 * 10 + REQUEST_BODY_MARGIN_MB
+# Exact paths (nginx regex syntax, without the leading slash): creating a
+# ticket, the person's reply, a staff reply. Nothing else under them.
+TICKET_UPLOAD_PATH_PATTERN = r"api/support/tickets(/[0-9]+/messages)?|api/admin/tickets/[0-9]+/messages"
+_TICKET_UPLOAD_RE = re.compile(rf"^/(?:{TICKET_UPLOAD_PATH_PATTERN})$")
+
 _PUBLISHED_CACHE_TTL_SECONDS = 5.0
 _REDIS_TIMEOUT_SECONDS = 0.25
 # After a failed Redis read wait this long before trying again, so a Redis
@@ -194,8 +206,15 @@ def is_large_body_path(path: str) -> bool:
     return path.startswith(LARGE_BODY_PATH_PREFIXES)
 
 
+def is_ticket_upload_path(path: str) -> bool:
+    return bool(_TICKET_UPLOAD_RE.match(path))
+
+
 def request_body_limit_for(path: str) -> int:
-    """Per-request ceiling: upload ceiling for known large-body routes, else JSON ceiling."""
+    """Per-request ceiling: the ticket ceiling for ticket messages, the upload ceiling for known large-body
+    routes, else the JSON ceiling."""
+    if is_ticket_upload_path(path):
+        return TICKET_UPLOAD_BODY_MB * 1024 * 1024
     if is_large_body_path(path):
         return effective_request_body_limit_bytes()
     settings = get_settings()

@@ -223,6 +223,18 @@ def _lenient_int(data: dict[str, Any], key: str, default: int) -> int:
     return min(max(value, low), high)
 
 
+def _within_platform(values: dict[str, Any]) -> dict[str, Any]:
+    """The image limits brought within what the platform decodes (``image_decode_policy``): the settings
+    never promise a file size or a side the image pipeline would refuse after all."""
+    from app.services.image_decode_policy import platform_image_limits
+
+    max_bytes, max_side, _max_pixels = platform_image_limits()
+    side_low = SETTING_BOUNDS["max_side_px"][0]
+    values["max_side_px"] = max(side_low, min(int(values["max_side_px"]), max_side))
+    values["max_image_mb"] = max(1, min(int(values["max_image_mb"]), max_bytes // (1024 * 1024)))
+    return values
+
+
 def _settings_from_stored(data: dict[str, Any]) -> TicketSettings:
     """What was saved, with anything missing, garbled or out of bounds put back within the rules."""
     defaults = TicketSettings()
@@ -246,7 +258,7 @@ def _settings_from_stored(data: dict[str, Any]) -> TicketSettings:
     raw_types = data.get("image_types")
     types = _clean_image_types(raw_types) if isinstance(raw_types, list) else []
     values["image_types"] = types or defaults.image_types
-    return TicketSettings(**values)
+    return TicketSettings(**_within_platform(values))
 
 
 async def load_settings(db: AsyncSession) -> TicketSettings:
@@ -352,7 +364,8 @@ def validate_settings(data: dict[str, Any]) -> TicketSettings:
     values["auto_reply_text"] = text
     values["categories"] = _strict_categories(data.get("categories", list(defaults.categories)))
     values["image_types"] = _strict_image_types(data.get("image_types", list(defaults.image_types)))
-    return TicketSettings(**values)
+    # Clamped, not refused: the page sends every value back, and the platform's limit is not the admin's to change.
+    return TicketSettings(**_within_platform(values))
 
 
 async def save_settings(db: AsyncSession, settings: TicketSettings) -> None:

@@ -91,7 +91,11 @@ def render_nginx_config(
     large-body routes listed in request_body_limit_service inherit the upload
     ceiling through a regex location, mirroring the app middleware tiers.
     """
-    from app.services.request_body_limit_service import LARGE_BODY_PATH_PREFIXES
+    from app.services.request_body_limit_service import (
+        LARGE_BODY_PATH_PREFIXES,
+        TICKET_UPLOAD_BODY_MB,
+        TICKET_UPLOAD_PATH_PATTERN,
+    )
 
     if json_body_mb is None:
         json_body_mb = default_json_body_mb()
@@ -170,6 +174,11 @@ http {{
         # Ordinary JSON: small ceiling (mirrors MAX_JSON_BODY_BYTES).
         location / {{
             client_max_body_size {json_body_mb}m;
+{proxy_directives}
+        }}
+        # Support ticket messages with screenshots: a ceiling of their own (mirrors TICKET_UPLOAD_BODY_MB).
+        location ~ ^/({TICKET_UPLOAD_PATH_PATTERN})$ {{
+            client_max_body_size {TICKET_UPLOAD_BODY_MB}m;
 {proxy_directives}
         }}
         # Uploads and inline-image chat bodies: inherit the http-level ceiling.
@@ -270,9 +279,15 @@ def nginx_conf_matches(text: str, *, max_body_mb: int, json_body_mb: int | None 
     match = _NGINX_BODY_RE.search(text)
     if not match or int(match.group(1)) != int(max_body_mb):
         return False
+    from app.services.request_body_limit_service import TICKET_UPLOAD_BODY_MB, TICKET_UPLOAD_PATH_PATTERN
+
     json_mb = default_json_body_mb() if json_body_mb is None else int(json_body_mb)
     json_mb = max(1, min(json_mb, max(1, int(max_body_mb))))
-    return f"client_max_body_size {json_mb}m;" in text
+    # A conf rendered before the ticket location existed is re-rendered.
+    ticket_location = (
+        f"location ~ ^/({TICKET_UPLOAD_PATH_PATTERN})$ {{\n            client_max_body_size {TICKET_UPLOAD_BODY_MB}m;"
+    )
+    return f"client_max_body_size {json_mb}m;" in text and ticket_location in text
 
 
 def read_nginx_client_max_body_mb(conf_path: Path | None = None) -> int | None:

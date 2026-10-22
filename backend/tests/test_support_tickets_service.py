@@ -586,6 +586,17 @@ class TestJobs:
         assert await db_session.get(SupportTicket, gone_id) is None
         assert await db_session.get(SupportTicket, reopenable.id) is not None
 
+    async def test_image_limits_never_promise_more_than_the_platform_decodes(self, db_session, monkeypatch):
+        monkeypatch.setattr(
+            "app.services.image_decode_policy.platform_image_limits", lambda: (3 * 1024 * 1024 + 5, 2048, 2048 * 2048)
+        )
+        settings = st.validate_settings({"max_side_px": 8192, "max_image_mb": 10})
+        assert (settings.max_side_px, settings.max_image_mb) == (2048, 3)
+        db_session.add(SystemSetting(key=st.SETTINGS_KEY, value=json.dumps({"max_side_px": 8192, "max_image_mb": 10})))
+        await db_session.commit()
+        loaded = await st.load_settings(db_session)
+        assert (loaded.max_side_px, loaded.max_image_mb) == (2048, 3)
+
     def test_retention_shorter_than_the_reopen_window_is_refused(self):
         with pytest.raises(st.TicketError) as refused:
             st.validate_settings({"retention_days": 10, "reopen_days": 14})

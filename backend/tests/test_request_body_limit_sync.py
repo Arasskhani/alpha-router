@@ -159,3 +159,36 @@ async def test_redis_outage_falls_back_to_file_and_backs_off(monkeypatch, tmp_pa
     # Failure arms the back-off: the next call returns without touching Redis.
     _, _, retry_at = svc._redis_cache
     assert retry_at > svc.time.monotonic()
+
+
+def test_ticket_messages_get_a_ceiling_that_holds_the_most_the_ticket_settings_allow(monkeypatch):
+    from app.services import request_body_limit_service as limits
+    from app.services import support_tickets as st
+    from app.services.tls_edge_service import nginx_conf_matches
+
+    most = st.SETTING_BOUNDS["max_images"][1] * st.SETTING_BOUNDS["max_image_mb"][1]
+    assert most + REQUEST_BODY_MARGIN_MB == limits.TICKET_UPLOAD_BODY_MB
+    # Small Storage transfer limits and JSON ceiling: ticket messages are not held to them.
+    monkeypatch.setattr(limits, "effective_request_body_limit_bytes", lambda: 9 * 1024 * 1024)
+    for path in ("/api/support/tickets", "/api/support/tickets/12/messages", "/api/admin/tickets/12/messages"):
+        assert limits.request_body_limit_for(path) == limits.TICKET_UPLOAD_BODY_MB * 1024 * 1024, path
+    for path in (
+        "/api/support/tickets/12/resolve",
+        "/api/admin/tickets/settings",
+        "/api/admin/tickets/bulk",
+        "/api/support/tickets/x/messages",
+        "/api/admin/tickets/12/messages/extra",
+    ):
+        assert limits.request_body_limit_for(path) <= 9 * 1024 * 1024, path
+
+    conf = render_nginx_config(
+        https_port=443, http_mode="loopback_only", hsts_enabled=False, has_chain=False, max_body_mb=44
+    )
+    location = "location ~ ^/(api/support/tickets(/[0-9]+/messages)?|api/admin/tickets/[0-9]+/messages)$ {"
+    assert location in conf
+    assert conf.index(location) < conf.index("location ~ ^/(api/chat/")
+    assert f"client_max_body_size {limits.TICKET_UPLOAD_BODY_MB}m;" in conf.split(location, 1)[1].split("}", 1)[0]
+    assert nginx_conf_matches(conf, max_body_mb=44)
+    # An edge conf rendered before the ticket location is rewritten on the next reconcile.
+    old = conf.replace(conf.split(location, 1)[1].split("}", 1)[0], "").replace(location + "}", "")
+    assert location not in old and not nginx_conf_matches(old, max_body_mb=44)

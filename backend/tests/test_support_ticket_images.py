@@ -144,3 +144,32 @@ async def test_a_failed_put_takes_back_the_images_already_stored(stored, monkeyp
     with pytest.raises(OSError):
         await support_ticket_images.store_ticket_images(uploads, TicketSettings(), owner_user_id=1)
     assert removed == list(stored) and len(removed) == 1
+
+
+async def test_an_image_over_the_pixel_cap_says_so(stored, monkeypatch):
+    monkeypatch.setattr(support_ticket_images, "platform_image_limits", lambda: (25 * 1024 * 1024, 4096, 1000))
+    with pytest.raises(TicketError) as refused:
+        await support_ticket_images.store_ticket_images(
+            [_upload("a.png", _image("PNG", size=(40, 30)))], TicketSettings(), owner_user_id=1
+        )
+    assert "too many pixels" in refused.value.message and stored == {}
+
+
+async def test_a_decompression_bomb_is_too_many_pixels_not_unreadable(stored):
+    out = io.BytesIO()
+    Image.new("1", (8000, 4500)).save(out, format="PNG")  # 36 million pixels, a few KB of file
+    with pytest.raises(TicketError) as refused:
+        await support_ticket_images.store_ticket_images(
+            [_upload("bomb.png", out.getvalue())], TicketSettings(max_side_px=8192), owner_user_id=1
+        )
+    assert "too many pixels" in refused.value.message
+    assert "could not be read" not in refused.value.message
+
+
+async def test_the_side_limit_never_exceeds_what_the_platform_decodes(stored, monkeypatch):
+    monkeypatch.setattr(support_ticket_images, "platform_image_limits", lambda: (25 * 1024 * 1024, 2048, 2048 * 2048))
+    with pytest.raises(TicketError) as refused:
+        await support_ticket_images.store_ticket_images(
+            [_upload("wide.png", _image("PNG", size=(2100, 10)))], TicketSettings(max_side_px=8192), owner_user_id=1
+        )
+    assert "larger than 2048 px" in refused.value.message

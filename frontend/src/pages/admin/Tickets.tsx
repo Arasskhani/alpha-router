@@ -4,6 +4,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import AdminPage from "../../components/AdminPage";
 import Tabs, { TabPanel } from "../../components/Tabs";
 import TicketsOverviewTab from "../../components/tickets/TicketsOverviewTab";
+import TicketsQueueTab from "../../components/tickets/TicketsQueueTab";
 import TicketsSettingsTab from "../../components/tickets/TicketsSettingsTab";
 import { useReadOnly } from "../../context/ReadOnlyContext";
 import { TICKETS_BASE, ticketsRequest, type StaffMeta, type TicketSettings } from "../../lib/tickets";
@@ -81,9 +82,12 @@ export default function Tickets() {
       <TabPanel id={tab} idBase="tickets" className="tickets-panel-tab">
         {tab === "overview" ? <TicketsOverviewTab /> : null}
         {tab === "tickets" ? (
-          <p className="muted-text" data-can-write={canWrite}>
-            Loading…
-          </p>
+          <TicketsQueueTab
+            meta={meta}
+            settings={settings}
+            canWrite={canWrite}
+            isSuperAdmin={isSuperAdmin}
+          />
         ) : null}
         {tab === "settings" ? (
           <TicketsSettingsTab

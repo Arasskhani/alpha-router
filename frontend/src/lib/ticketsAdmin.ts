@@ -84,7 +84,7 @@ export type OverviewFilterKey = "assignee" | "department" | "priority" | "catego
 export type OverviewFilters = Record<OverviewFilterKey, string>;
 export const OVERVIEW_FILTER_KEYS: OverviewFilterKey[] = ["assignee", "department", "priority", "category", "status"];
 
-export const OVERVIEW_PERIODS = ["15m", "30m", "1h", "3h", "day", "2d", "week", "month", "year"] as const;
+const OVERVIEW_PERIODS = ["15m", "30m", "1h", "3h", "day", "2d", "week", "month", "year"] as const;
 export type OverviewPeriod = (typeof OVERVIEW_PERIODS)[number];
 
 /** The period in the address, or a week (the Overview's default). */
@@ -153,7 +153,7 @@ export type QueueFilters = {
   status: string;
 };
 
-export const QUEUE_VIEWS = ["needs_staff", "mine", "unassigned", "active", "closed", "all"] as const;
+const QUEUE_VIEWS = ["needs_staff", "mine", "unassigned", "active", "closed", "all"] as const;
 
 export function readQueueFilters(params: URLSearchParams): QueueFilters {
   const view = params.get("view") ?? "active";
@@ -286,7 +286,7 @@ const MIME_TO_TYPE: Record<string, string> = {
 };
 
 /** png / jpg / webp / gif from the file's type or, failing that, its name. */
-export function imageTypeOf(file: File): string | null {
+function imageTypeOf(file: File): string | null {
   const byMime = MIME_TO_TYPE[file.type.toLowerCase()];
   if (byMime) return byMime;
   const ext = file.name.split(".").pop()?.toLowerCase() ?? "";

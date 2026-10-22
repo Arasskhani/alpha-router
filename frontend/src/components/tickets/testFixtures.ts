@@ -13,7 +13,7 @@ import type {
   TicketsOverview,
 } from "../../lib/tickets";
 
-export const ASSIGNEES: Assignee[] = [
+const ASSIGNEES: Assignee[] = [
   { id: 1, name: "Majid Arasskhani", username: "m.arasskhani", role_label: "Super Admin", open_count: 9, is_me: true },
   { id: 2, name: "Ali Mohammadi", username: "a.mohammadi", role_label: "Support", open_count: 7, is_me: false },
   { id: 3, name: "Leila Farahani", username: "l.farahani", role_label: "Support", open_count: 3, is_me: false },
@@ -31,7 +31,7 @@ export function makeMeta(over: Partial<StaffMeta["me"]> = {}): StaffMeta {
   };
 }
 
-export const SETTINGS: TicketSettings = {
+const SETTINGS: TicketSettings = {
   enabled: true,
   per_hour: 5,
   max_open: 20,
@@ -52,7 +52,7 @@ export const SETTINGS: TicketSettings = {
   max_side_px: 4096,
 };
 
-export const COUNTS: StaffCounts = { needs_staff: 5, needs_staff_urgent: 1, mine: 9, unassigned: 5, active: 24, closed: 80 };
+const COUNTS: StaffCounts = { needs_staff: 5, needs_staff_urgent: 1, mine: 9, unassigned: 5, active: 24, closed: 80 };
 
 const days = ["Oct 16", "Oct 17", "Oct 18"];
 
@@ -168,7 +168,7 @@ export const LIST: StaffTicketList = {
   page_size: 50,
 };
 
-export const DETAIL: StaffTicketDetail = {
+const DETAIL: StaffTicketDetail = {
   id: 47,
   number: 1047,
   title: "Can't sign in with LDAP since update",

@@ -935,14 +935,11 @@ async def add_message(
     ticket = await _ticket(db, ticket_id)
     is_note = _truthy(internal)
     new_status = (status or "").strip() or None
-    text = (body or "").strip()
-    # Refuse what the service would refuse before any image is stored.
-    if not text:
-        raise _refuse("invalid_body", "The body cannot be empty.", 422)
-    if len(text) > st.BODY_MAX:
-        raise _refuse("invalid_body", f"The body can be up to {st.BODY_MAX} characters.", 422)
-    if new_status is not None and new_status not in st.STATUSES:
-        raise _refuse("invalid_status", f"Status must be one of {', '.join(st.STATUSES)}.", 422)
+    try:
+        # Refuse what the service would refuse before any image is decoded or stored.
+        text = st.precheck_staff_message(body=body, status=new_status)
+    except st.TicketError as exc:
+        raise _answer(exc) from exc
     previous_status = str(ticket.status)
     settings = await st.load_settings(db)
     try:

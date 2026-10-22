@@ -515,3 +515,65 @@ class TestInactiveAccount:
         assert storage == {}
         count = (await db_session.execute(select(func.count()).select_from(SupportTicketMessage))).scalar_one()
         assert count == 2
+
+
+class TestCheapRefusalsComeFirst:
+    """What needs no image is refused before any upload is decoded, scanned or stored."""
+
+    @pytest.fixture
+    def image_work(self, monkeypatch):
+        calls: list[int] = []
+
+        async def counting_store(uploads, settings, *, owner_user_id):
+            calls.append(len(uploads))
+            return []
+
+        monkeypatch.setattr("app.api.support_tickets.store_ticket_images", counting_store)
+        return calls
+
+    async def test_a_new_ticket(self, client, db_session, user, image_work):
+        await configure(db_session, per_hour=1, max_open=5)
+        headers = sign_in(client, user)
+        shot = [("a.png", png())]
+        resp = await open_ticket(client, headers, images=shot, category="Nope")
+        assert resp.status_code == 422 and resp.json()["detail"]["code"] == "invalid_category"
+        resp = await open_ticket(client, headers, images=shot, title=" ")
+        assert resp.status_code == 422 and resp.json()["detail"]["code"] == "invalid_title"
+        assert image_work == []
+        assert (await open_ticket(client, headers, images=shot)).status_code == 201
+        assert image_work == [1]
+        resp = await open_ticket(client, headers, images=shot)
+        assert resp.status_code == 429 and resp.json()["detail"]["code"] == "ticket_rate_limited"
+        await configure(db_session, per_hour=100, max_open=1)
+        resp = await open_ticket(client, headers, images=shot)
+        assert resp.status_code == 409 and resp.json()["detail"]["code"] == "too_many_open"
+        assert image_work == [1]
+
+    async def test_a_reply(self, client, db_session, user, image_work, monkeypatch):
+        headers = sign_in(client, user)
+        tid = (await open_ticket(client, headers)).json()["id"]
+        shot = [("images", ("a.png", png(), "image/png"))]
+        resp = await client.post(f"{BASE}/tickets/{tid}/messages", data={"body": " "}, files=shot, headers=headers)
+        assert resp.status_code == 422 and resp.json()["detail"]["code"] == "invalid_body"
+        other = await person(db_session, "other")
+        theirs = await client.post(
+            f"{BASE}/tickets/{tid}/messages", data={"body": "x"}, files=shot, headers=sign_in(client, other)
+        )
+        assert theirs.status_code == 404
+        headers = sign_in(client, user)
+        ticket = await fresh(db_session, tid)
+        ticket.status, ticket.closed_at = "closed", datetime.datetime.utcnow() - datetime.timedelta(days=30)
+        await db_session.commit()
+        late = await client.post(f"{BASE}/tickets/{tid}/messages", data={"body": "x"}, files=shot, headers=headers)
+        assert late.status_code == 409 and late.json()["detail"]["code"] == "reopen_window_passed"
+        assert image_work == []
+
+        ticket = await fresh(db_session, tid)
+        ticket.status, ticket.closed_at = "open", None
+        await db_session.commit()
+        monkeypatch.setattr(st, "REPLIES_PER_HOUR", 1)
+        ok = await client.post(f"{BASE}/tickets/{tid}/messages", data={"body": "x"}, files=shot, headers=headers)
+        assert ok.status_code == 200 and image_work == [1]
+        limited = await client.post(f"{BASE}/tickets/{tid}/messages", data={"body": "x"}, files=shot, headers=headers)
+        assert limited.status_code == 429 and limited.json()["detail"]["code"] == "reply_rate_limited"
+        assert image_work == [1]

@@ -535,6 +535,24 @@ class TestTicket:
         assert not_image.status_code == 422 and not_image.json()["detail"]["file"] == "a.pdf"
         assert storage == {}
 
+    async def test_text_and_status_are_refused_before_any_image_is_decoded(
+        self, client, support, reporter, db_session, monkeypatch
+    ):
+        ticket = await _ticket(db_session, reporter)
+        calls: list[int] = []
+
+        async def counting_store(uploads, settings, *, owner_user_id):
+            calls.append(len(uploads))
+            return []
+
+        monkeypatch.setattr(admin_tickets, "store_ticket_images", counting_store)
+        headers = sign_in(client, support)
+        shot = [("images", ("a.png", _png(), "image/png"))]
+        for data, code in (({"body": " "}, "invalid_body"), ({"body": "ok", "status": "gone"}, "invalid_status")):
+            resp = await client.post(f"{BASE}/{ticket.id}/messages", data=data, files=shot, headers=headers)
+            assert resp.status_code == 422 and resp.json()["detail"]["code"] == code
+        assert calls == []
+
     async def test_the_person_is_emailed_about_a_reply_when_that_is_on(
         self, client, support, reporter, db_session, outbox
     ):

@@ -3,7 +3,8 @@
 Every rule lives in ``app.services.support_tickets``; this module checks who
 is asking, turns the form into the service's arguments, and answers each
 refusal as ``{"detail": {"code", "message", ...}}`` so the page can say what
-went wrong. Images are checked and stored before any row is written (all or
+went wrong. The cheap refusals (text, limits, the reopen window) come first;
+then images are checked and stored before any row is written (all or
 nothing), and removed again when the change is refused after all. Emails go
 out after the commit and never hold up the answer.
 
@@ -260,6 +261,19 @@ async def create_ticket(
     """Open a ticket: the first message, its screenshots and, when it is on, the automatic reply."""
     _require_active(user)
     details = _context(context)
+    try:
+        # Every cheap refusal (text, category, the hourly and open-ticket limits) before any image is decoded.
+        await st.precheck_create(
+            db,
+            user=user,
+            title=title,
+            description=description,
+            category=category.strip(),
+            priority=priority.strip(),
+            settings=settings,
+        )
+    except st.TicketError as error:
+        _answer(error)
     stored = await _store(images, settings, user)
     try:
         ticket = await st.create_ticket(
@@ -298,6 +312,11 @@ async def reply(
     """The person answers; a resolved or closed ticket reopens while the reopen window lasts."""
     ticket = await _own_ticket(db, ticket_id, user)
     _require_active(user)
+    try:
+        # The text, the reopen window and the hourly limit are refused before any image is decoded.
+        await st.precheck_user_reply(db, ticket=ticket, user=user, body=body, settings=settings)
+    except st.TicketError as error:
+        _answer(error)
     stored = await _store(images, settings, user)
     try:
         await st.add_user_message(db, ticket=ticket, user=user, body=body, images=stored, settings=settings)

@@ -255,6 +255,40 @@ class TestReplies:
         detail = await st.ticket_detail(db_session, ticket, audience="user", viewer=user)
         assert detail["can_reply"] is False and detail["can_resolve"] is False
 
+    async def test_the_hourly_reply_limit_counts_replies_on_all_tickets(self, db_session, user, monkeypatch):
+        monkeypatch.setattr(st, "REPLIES_PER_HOUR", 3)
+        settings = st.TicketSettings(per_hour=100)
+        first = await _open(db_session, user, settings)
+        second = await _open(db_session, user, settings)
+        # The first message of each new ticket is not a reply.
+        for ticket in (first, second, first):
+            await st.add_user_message(db_session, ticket=ticket, user=user, body="More", images=[], settings=settings)
+        await db_session.commit()
+        with pytest.raises(st.TicketError) as refused:
+            await st.precheck_user_reply(db_session, ticket=second, user=user, body="More", settings=settings)
+        assert (refused.value.code, refused.value.status_code) == ("reply_rate_limited", 429)
+        with pytest.raises(st.TicketError):
+            await st.add_user_message(db_session, ticket=second, user=user, body="More", images=[], settings=settings)
+        await db_session.rollback()
+        old = (
+            (
+                await db_session.execute(
+                    select(SupportTicketMessage)
+                    .where(SupportTicketMessage.kind == "user")
+                    .order_by(SupportTicketMessage.id)
+                )
+            )
+            .scalars()
+            .all()[-1]
+        )
+        old.created_at = datetime.datetime.utcnow() - datetime.timedelta(hours=2)
+        await db_session.commit()
+        await db_session.refresh(second)
+        await db_session.refresh(user)
+        assert await st.precheck_user_reply(db_session, ticket=second, user=user, body=" More ", settings=settings) == (
+            "More"
+        )
+
     async def test_the_person_marks_it_resolved(self, db_session, user):
         ticket = await _open(db_session, user)
         await st.user_resolve(db_session, ticket=ticket, user=user)

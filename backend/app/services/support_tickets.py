@@ -96,6 +96,8 @@ SETTING_BOUNDS: dict[str, tuple[int, int]] = {
 #: The hard ceiling on images per message: the settings may allow fewer, never more.
 MAX_IMAGES_CEILING = SETTING_BOUNDS["max_images"][1]
 _BOOL_SETTINGS = ("enabled", "notify_on_user_reply", "email_assignee", "email_user", "auto_reply_enabled")
+#: Replies one person may send in an hour, over all their tickets.
+REPLIES_PER_HOUR = 60
 _JOB_BATCH = 200
 _IN_CHUNK = 500
 
@@ -530,7 +532,7 @@ async def _count(db: AsyncSession, *conditions: Any) -> int:
     return int((await db.execute(select(func.count()).select_from(SupportTicket).where(*conditions))).scalar_one())
 
 
-async def create_ticket(
+async def precheck_create(
     db: AsyncSession,
     *,
     user: User,
@@ -538,11 +540,13 @@ async def create_ticket(
     description: str,
     category: str,
     priority: str,
-    context: dict[str, Any] | None,
-    images: Sequence[StoredImage],
     settings: TicketSettings,
-) -> SupportTicket:
-    """Open a ticket with the person's first message and, when it is on, the automatic reply."""
+) -> tuple[str, str]:
+    """Every refusal of a new ticket that needs no image: run before the images are checked and stored.
+
+    ``create_ticket`` runs it again, so the rules live here once. Returns the
+    trimmed title and description.
+    """
     if not user.is_active:
         raise TicketError("account_inactive", "A disabled account cannot open tickets.", 403)
     title = _text(title, name="title", limit=TITLE_MAX)
@@ -551,11 +555,8 @@ async def create_ticket(
         raise TicketError("invalid_category", "Pick one of the categories offered.", 422)
     if priority not in PRIORITIES:
         raise TicketError("invalid_priority", "Pick one of the priorities offered.", 422)
-    _check_image_count(images, settings)
-    now = _now()
-    recent = await _count(
-        db, SupportTicket.user_id == user.id, SupportTicket.created_at >= now - datetime.timedelta(hours=1)
-    )
+    since = _now() - datetime.timedelta(hours=1)
+    recent = await _count(db, SupportTicket.user_id == user.id, SupportTicket.created_at >= since)
     if recent >= settings.per_hour:
         raise TicketError(
             "ticket_rate_limited",
@@ -569,6 +570,27 @@ async def create_ticket(
             f"You have {active} open tickets, the most allowed. Mark one resolved before you open another.",
             409,
         )
+    return title, description
+
+
+async def create_ticket(
+    db: AsyncSession,
+    *,
+    user: User,
+    title: str,
+    description: str,
+    category: str,
+    priority: str,
+    context: dict[str, Any] | None,
+    images: Sequence[StoredImage],
+    settings: TicketSettings,
+) -> SupportTicket:
+    """Open a ticket with the person's first message and, when it is on, the automatic reply."""
+    title, description = await precheck_create(
+        db, user=user, title=title, description=description, category=category, priority=priority, settings=settings
+    )
+    _check_image_count(images, settings)
+    now = _now()
     ticket = SupportTicket(
         # The number is 1000 + id, known only after the insert; until then a
         # random negative stand-in keeps the column unique and not null.
@@ -627,6 +649,55 @@ def _own(ticket: SupportTicket, user: User) -> None:
         raise TicketError("not_found", "Ticket not found.", 404)
 
 
+async def _recent_replies(db: AsyncSession, user: User, since: datetime.datetime) -> int:
+    """The person's replies since then, on all their tickets (the first message of a new ticket is not a reply)."""
+    messages = int(
+        (
+            await db.execute(
+                select(func.count())
+                .select_from(SupportTicketMessage)
+                .join(SupportTicket, SupportTicket.id == SupportTicketMessage.ticket_id)
+                .where(
+                    SupportTicket.user_id == user.id,
+                    SupportTicketMessage.kind == "user",
+                    SupportTicketMessage.created_at >= since,
+                )
+            )
+        ).scalar_one()
+    )
+    opened = await _count(db, SupportTicket.user_id == user.id, SupportTicket.created_at >= since)
+    return max(0, messages - opened)
+
+
+async def precheck_user_reply(
+    db: AsyncSession, *, ticket: SupportTicket, user: User, body: str, settings: TicketSettings
+) -> str:
+    """Every refusal of the person's reply that needs no image: run before the images are checked and stored.
+
+    ``add_user_message`` runs it again. Returns the trimmed body.
+    """
+    _own(ticket, user)
+    if not user.is_active:
+        raise TicketError("account_inactive", "A disabled account cannot reply.", 403)
+    body = _text(body, name="body", limit=BODY_MAX)
+    now = _now()
+    if ticket.status in DONE_STATUSES:
+        until = reopen_until(ticket, settings)
+        if until is None or now > until:
+            raise TicketError(
+                "reopen_window_passed",
+                f"This ticket ended more than {settings.reopen_days} days ago. Open a new ticket instead.",
+                409,
+            )
+    if await _recent_replies(db, user, now - datetime.timedelta(hours=1)) >= REPLIES_PER_HOUR:
+        raise TicketError(
+            "reply_rate_limited",
+            f"You can send up to {REPLIES_PER_HOUR} replies an hour. Try again later.",
+            429,
+        )
+    return body
+
+
 async def add_user_message(
     db: AsyncSession,
     *,
@@ -637,21 +708,10 @@ async def add_user_message(
     settings: TicketSettings,
 ) -> SupportTicketMessage:
     """The person writes on their ticket: the move goes back to staff, and a done ticket reopens in time."""
-    _own(ticket, user)
-    if not user.is_active:
-        raise TicketError("account_inactive", "A disabled account cannot reply.", 403)
-    body = _text(body, name="body", limit=BODY_MAX)
+    body = await precheck_user_reply(db, ticket=ticket, user=user, body=body, settings=settings)
     _check_image_count(images, settings)
     now = _now()
     reopening = ticket.status in DONE_STATUSES
-    if reopening:
-        until = reopen_until(ticket, settings)
-        if until is None or now > until:
-            raise TicketError(
-                "reopen_window_passed",
-                f"This ticket ended more than {settings.reopen_days} days ago. Open a new ticket instead.",
-                409,
-            )
     message = await _add_message(db, ticket, kind="user", body=body, author=user, now=now, images=images)
     if reopening:
         _clear_done(ticket)
@@ -703,6 +763,17 @@ async def _change_status(db: AsyncSession, ticket: SupportTicket, actor: User, s
     )
 
 
+def precheck_staff_message(*, body: str, status: str | None) -> str:
+    """Every refusal of a staff reply or note that needs no image: run before the images are stored.
+
+    ``add_staff_message`` runs it again. Returns the trimmed body.
+    """
+    body = _text(body, name="body", limit=BODY_MAX)
+    if status is not None:
+        _check_status(status)
+    return body
+
+
 async def add_staff_message(
     db: AsyncSession,
     *,
@@ -714,9 +785,7 @@ async def add_staff_message(
     status: str | None,
 ) -> SupportTicketMessage:
     """A reply (the person sees it) or an internal note (only staff do), with an optional status change."""
-    body = _text(body, name="body", limit=BODY_MAX)
-    if status is not None:
-        _check_status(status)
+    body = precheck_staff_message(body=body, status=status)
     if len(images) > MAX_IMAGES_CEILING:
         raise TicketError("too_many_images", f"Up to {MAX_IMAGES_CEILING} images can go with one message.", 422)
     now = _now()

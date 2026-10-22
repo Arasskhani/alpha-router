@@ -535,6 +535,25 @@ class TestTicket:
         assert not_image.status_code == 422 and not_image.json()["detail"]["file"] == "a.pdf"
         assert storage == {}
 
+    async def test_a_reply_that_fails_after_its_images_were_stored_leaves_none_behind(
+        self, client, support, reporter, db_session, storage, monkeypatch
+    ):
+        ticket = await _ticket(db_session, reporter)
+
+        async def broken(*_a, **_k):
+            raise RuntimeError("database went away")
+
+        monkeypatch.setattr(st, "add_staff_message", broken)
+        headers = sign_in(client, support)
+        with pytest.raises(RuntimeError):
+            await client.post(
+                f"{BASE}/{ticket.id}/messages",
+                data={"body": "Here"},
+                files=[("images", ("a.png", _png(), "image/png"))],
+                headers=headers,
+            )
+        assert storage == {}
+
     async def test_text_and_status_are_refused_before_any_image_is_decoded(
         self, client, support, reporter, db_session, monkeypatch
     ):

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import logging
 import os
 import uuid
 import warnings
@@ -30,6 +31,8 @@ from app.services.image_decode_policy import ImagePolicyError, normalize_image
 from app.services.support_tickets import StoredImage, TicketError, TicketSettings
 from app.services.upload_file_policy import UploadPolicyError, check_content
 from app.services.upload_screening import UploadRejected, screen_upload
+
+logger = logging.getLogger(__name__)
 
 #: What the bytes must begin with for each type an administrator can allow.
 _SIGNATURES: dict[str, tuple[bytes, ...]] = {
@@ -127,23 +130,37 @@ async def store_ticket_images(
         )
     cleaned = [await check_and_clean(upload, settings) for upload in files]
     stored: list[StoredImage] = []
-    for png, width, height, name in cleaned:
-        digest = sha256(png).hexdigest()
-        # Never shared: deleting one ticket's image must not take another's that happens to be the same picture.
-        key = f"tickets/{int(owner_user_id)}/{uuid.uuid4().hex}.png"
-        await asyncio.to_thread(object_storage_service.put_object, key, png, "image/png")
-        stored.append(
-            StoredImage(
-                storage_key=key,
-                mime="image/png",
-                bytes=len(png),
-                width=width,
-                height=height,
-                sha256=digest,
-                display_name=name,
+    try:
+        for png, width, height, name in cleaned:
+            digest = sha256(png).hexdigest()
+            # Never shared: deleting one ticket's image must not take another's that happens to be the same picture.
+            key = f"tickets/{int(owner_user_id)}/{uuid.uuid4().hex}.png"
+            await asyncio.to_thread(object_storage_service.put_object, key, png, "image/png")
+            stored.append(
+                StoredImage(
+                    storage_key=key,
+                    mime="image/png",
+                    bytes=len(png),
+                    width=width,
+                    height=height,
+                    sha256=digest,
+                    display_name=name,
+                )
             )
-        )
+    except BaseException:
+        # All or nothing: a put that fails half way takes back the ones already stored.
+        await forget_ticket_images(stored)
+        raise
     return stored
+
+
+async def forget_ticket_images(images: Sequence[StoredImage]) -> None:
+    """Remove stored images no message kept (refused or failed after all); a leftover is logged, never raised."""
+    for image in images:
+        try:
+            await asyncio.to_thread(object_storage_service.delete_object, image.storage_key)
+        except Exception:  # noqa: BLE001 -- the refusal is the answer; a stray object is only logged
+            logger.warning("A ticket image no message kept could not be removed: %s", image.storage_key, exc_info=True)
 
 
 async def read_ticket_image(storage_key: str) -> bytes:

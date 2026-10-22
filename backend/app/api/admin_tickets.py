@@ -45,7 +45,7 @@ from app.services import support_tickets as st
 from app.services.client_ip import resolve_client_ip
 from app.services.rbac import user_has_super_admin_access
 from app.services.security_audit import log_security_event
-from app.services.support_ticket_images import store_ticket_images
+from app.services.support_ticket_images import forget_ticket_images, store_ticket_images
 from app.services.user_role_service import get_user_role_slugs
 
 router = APIRouter(prefix="/api/admin/tickets", tags=["tickets"])
@@ -972,20 +972,29 @@ async def add_message(
     try:
         # The person's images live under their own prefix, whoever attached them.
         stored = await store_ticket_images(images or [], settings, owner_user_id=int(ticket.user_id))
+    except st.TicketError as exc:
+        raise _answer(exc) from exc
+    try:
         # Read again and locked: the ticket may have changed while the images were checked.
         await db.refresh(ticket, with_for_update=True)
         previous_status = str(ticket.status)
         await st.add_staff_message(
             db, ticket=ticket, staff=actor, body=text, internal=is_note, images=stored, status=new_status
         )
+        detail: dict[str, Any] = {"number": ticket.number, "images": len(stored)}
+        if ticket.status != previous_status:
+            detail["status"] = {"from": previous_status, "to": ticket.status}
+        await _audit(db, request, actor, "ticket_note_added" if is_note else "ticket_replied", ticket.id, detail)
+        await db.commit()
     except st.TicketError as exc:
         await db.rollback()
+        await forget_ticket_images(stored)
         raise _answer(exc) from exc
-    detail: dict[str, Any] = {"number": ticket.number, "images": len(stored)}
-    if ticket.status != previous_status:
-        detail["status"] = {"from": previous_status, "to": ticket.status}
-    await _audit(db, request, actor, "ticket_note_added" if is_note else "ticket_replied", ticket.id, detail)
-    await db.commit()
+    except Exception:
+        # Nothing kept the images: they leave storage again.
+        await db.rollback()
+        await forget_ticket_images(stored)
+        raise
     if not is_note:
         mail.notify_user(int(ticket.id), "reply")
     elif ticket.status != previous_status:

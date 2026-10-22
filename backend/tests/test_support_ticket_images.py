@@ -126,3 +126,21 @@ async def test_malware_is_refused(stored, monkeypatch):
             [_upload("a.png", _image("PNG"))], TicketSettings(), owner_user_id=1
         )
     assert refused.value.code == "image_rejected" and stored == {}
+
+
+async def test_a_failed_put_takes_back_the_images_already_stored(stored, monkeypatch):
+    removed: list[str] = []
+    calls = {"n": 0}
+
+    def flaky_put(key, body, ct):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise OSError("storage went away")
+        stored[key] = body
+
+    monkeypatch.setattr(support_ticket_images.object_storage_service, "put_object", flaky_put)
+    monkeypatch.setattr(support_ticket_images.object_storage_service, "delete_object", lambda key: removed.append(key))
+    uploads = [_upload("a.png", _image("PNG")), _upload("b.png", _image("PNG"))]
+    with pytest.raises(OSError):
+        await support_ticket_images.store_ticket_images(uploads, TicketSettings(), owner_user_id=1)
+    assert removed == list(stored) and len(removed) == 1

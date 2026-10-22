@@ -16,11 +16,9 @@ write.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import re
-from collections.abc import Sequence
 from typing import Any, Literal, NoReturn
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
@@ -32,10 +30,10 @@ from app.config import application_version
 from app.database import get_db
 from app.models.support_ticket import SupportTicket, SupportTicketAttachment, SupportTicketMessage
 from app.models.user import User
-from app.services import object_storage_service, support_ticket_mail
+from app.services import support_ticket_mail
 from app.services import support_tickets as st
 from app.services.rbac import user_can_access_menu, user_is_admin_panel
-from app.services.support_ticket_images import read_ticket_image, store_ticket_images
+from app.services.support_ticket_images import forget_ticket_images, read_ticket_image, store_ticket_images
 from app.services.user_role_service import get_user_role_slugs
 
 logger = logging.getLogger(__name__)
@@ -98,15 +96,6 @@ async def _own_ticket(db: AsyncSession, ticket_id: int, user: User) -> SupportTi
 
 async def _detail(db: AsyncSession, ticket: SupportTicket, user: User) -> dict[str, Any]:
     return await st.ticket_detail(db, ticket, audience="user", viewer=user)
-
-
-async def _forget_images(images: Sequence[st.StoredImage]) -> None:
-    """Remove stored images whose message was refused after all; a leftover is logged, never raised."""
-    for image in images:
-        try:
-            await asyncio.to_thread(object_storage_service.delete_object, image.storage_key)
-        except Exception:  # noqa: BLE001 -- the refusal is the answer; a stray object is only logged
-            logger.warning("A refused ticket image could not be removed: %s", image.storage_key, exc_info=True)
 
 
 async def _store(uploads: list[UploadFile] | None, settings: st.TicketSettings, user: User) -> list[st.StoredImage]:
@@ -290,11 +279,11 @@ async def create_ticket(
         await db.commit()
     except st.TicketError as error:
         await db.rollback()
-        await _forget_images(stored)
+        await forget_ticket_images(stored)
         _answer(error)
     except Exception:
         await db.rollback()
-        await _forget_images(stored)
+        await forget_ticket_images(stored)
         raise
     support_ticket_mail.notify_new_ticket(int(ticket.id))
     return await _detail(db, ticket, user)
@@ -325,11 +314,11 @@ async def reply(
         await db.commit()
     except st.TicketError as error:
         await db.rollback()
-        await _forget_images(stored)
+        await forget_ticket_images(stored)
         _answer(error)
     except Exception:
         await db.rollback()
-        await _forget_images(stored)
+        await forget_ticket_images(stored)
         raise
     support_ticket_mail.notify_user_reply(int(ticket.id))
     return await _detail(db, ticket, user)

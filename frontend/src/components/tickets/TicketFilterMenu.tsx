@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 
+import { useDismiss, useReturnFocus } from "./AssignMenu";
 import { PRIORITIES, PRIORITY_LABELS, STATUSES, statusLabel } from "../../lib/tickets";
 import { initials, type OverviewFilterKey, type OverviewFilters } from "../../lib/ticketsAdmin";
 
@@ -57,17 +58,13 @@ export default function TicketFilterMenu({ value, departments, assignees, catego
   const [categoryQuery, setCategoryQuery] = useState("");
   const [valueQuery, setValueQuery] = useState("");
   const ref = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const close = useCallback(() => setOpen(false), []);
+  // A click outside or Escape closes it; focus goes back to the button.
+  useDismiss(ref, open, close);
+  useReturnFocus(open, triggerRef);
 
   const activeCount = CATEGORIES.reduce((n, c) => n + (value[c.key] ? 1 : 0), 0);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, [open]);
 
   function toggle() {
     setOpen((v) => !v);
@@ -119,6 +116,7 @@ export default function TicketFilterMenu({ value, departments, assignees, catego
   return (
     <div className="activity-filter-menu" ref={ref}>
       <button
+        ref={triggerRef}
         type="button"
         className={`activity-icon-btn${open ? " activity-icon-btn--active" : ""}${activeCount ? " activity-icon-btn--badge" : ""}`}
         onClick={toggle}

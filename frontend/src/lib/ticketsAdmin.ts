@@ -242,6 +242,11 @@ export const SETTINGS_BOUNDS: Record<NumberField, [number, number]> = {
   max_side_px: [512, 8192],
 };
 
+/** A category name as the server keeps it: trimmed, inner runs of spaces made one. */
+export function normalizeCategory(name: string): string {
+  return name.trim().split(/\s+/).filter(Boolean).join(" ");
+}
+
 export type SettingsErrors = Partial<Record<keyof TicketSettings, string>>;
 
 /** What is wrong with the form, by field; empty when it can be saved. */
@@ -259,7 +264,7 @@ export function validateSettings(s: TicketSettings): SettingsErrors {
     if (bad) errors.notify_emails = `Not a valid address: ${bad}`;
   }
   if (!PRIORITIES.includes(s.notify_min_priority)) errors.notify_min_priority = "Choose a priority.";
-  const names = s.categories.map((c) => c.trim());
+  const names = s.categories.map(normalizeCategory);
   if (names.length === 0) errors.categories = "Keep at least one category.";
   else if (names.length > 20) errors.categories = "At most 20 categories.";
   else if (names.some((n) => !n)) errors.categories = "A category needs a name.";

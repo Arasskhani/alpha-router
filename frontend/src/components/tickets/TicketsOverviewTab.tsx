@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Line, LineChart, ResponsiveContainer, YAxis } from "recharts";
 
@@ -8,8 +8,17 @@ import { periodLabel } from "../activity/formatters";
 import OverviewExploreLink from "../activity/overview/OverviewExploreLink";
 import OverviewStackedCard from "../activity/overview/OverviewStackedCard";
 import OperationsMetricCard from "../operations/OperationsMetricCard";
+import { useDismiss, useReturnFocus } from "./AssignMenu";
 import TicketFilterMenu from "./TicketFilterMenu";
-import { PRIORITY_LABELS, TICKETS_BASE, ticketsRequest, type OverviewKpi, type TicketsOverview } from "../../lib/tickets";
+import {
+  PRIORITY_LABELS,
+  TICKETS_BASE,
+  TICKETS_CHANGED_EVENT,
+  ticketsRequest,
+  type OverviewKpi,
+  type StaffCounts,
+  type TicketsOverview,
+} from "../../lib/tickets";
 import {
   OVERVIEW_FILTER_KEYS,
   downloadCsv,
@@ -136,11 +145,13 @@ function TopList({
             </span>
             <span className="overview-top-list__meta">
               {item.onOpen ? (
-                <button type="button" className="overview-top-list__name tickets-ov-name" onClick={item.onOpen}>
+                <button type="button" className="overview-top-list__name tickets-ov-name" dir="auto" onClick={item.onOpen}>
                   {item.name}
                 </button>
               ) : (
-                <span className="overview-top-list__name">{item.name}</span>
+                <span className="overview-top-list__name" dir="auto">
+                  {item.name}
+                </span>
               )}
               {item.sub ? <span className="tickets-ov-sub">{item.sub}</span> : null}
             </span>
@@ -157,6 +168,38 @@ function plural(n: number, one: string, many: string) {
   return `${n} ${n === 1 ? one : many}`;
 }
 
+/** Quick views that only hold active tickets: a Resolved or Closed status in them would always be empty. */
+const ACTIVE_ONLY_VIEWS = new Set(["active", "needs_staff", "mine", "unassigned"]);
+
+/** The queue address for Explore: these filters (and any extra) in a view that can hold them. */
+function exploreHref(view: string, filters: OverviewFilters, extra: Partial<OverviewFilters> = {}): string {
+  const merged = { ...filters, ...extra };
+  const done = merged.status === "resolved" || merged.status === "closed";
+  const q = new URLSearchParams({ view: done && ACTIVE_ONLY_VIEWS.has(view) ? "all" : view });
+  for (const key of OVERVIEW_FILTER_KEYS) if (merged[key]) q.set(key, merged[key]);
+  return `/admin/tickets/list?${q.toString()}`;
+}
+
+/** "5 need staff — open the queue" above the numbers; nothing when none do. */
+function useNeedsStaff(): number {
+  const [count, setCount] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => {
+      ticketsRequest<StaffCounts>(`${TICKETS_BASE}/counts`)
+        .then((counts) => !cancelled && setCount(counts.needs_staff ?? 0))
+        .catch(() => undefined);
+    };
+    load();
+    window.addEventListener(TICKETS_CHANGED_EVENT, load);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(TICKETS_CHANGED_EVENT, load);
+    };
+  }, []);
+  return count;
+}
+
 /** Ticket flow and support workload for a period: aggregates only, never ticket text. */
 export default function TicketsOverviewTab() {
   const [params, setParams] = useSearchParams();
@@ -170,6 +213,11 @@ export default function TicketsOverviewTab() {
   const [error, setError] = useState("");
   const [exportOpen, setExportOpen] = useState(false);
   const exportRef = useRef<HTMLDivElement>(null);
+  const exportBtnRef = useRef<HTMLButtonElement>(null);
+  const closeExport = useCallback(() => setExportOpen(false), []);
+  useDismiss(exportRef, exportOpen, closeExport);
+  useReturnFocus(exportOpen, exportBtnRef);
+  const needsStaff = useNeedsStaff();
 
   useEffect(() => {
     let cancelled = false;
@@ -187,15 +235,6 @@ export default function TicketsOverviewTab() {
     };
   }, [query]);
 
-  useEffect(() => {
-    if (!exportOpen) return;
-    const onDoc = (e: MouseEvent) => {
-      if (exportRef.current && !exportRef.current.contains(e.target as Node)) setExportOpen(false);
-    };
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, [exportOpen]);
-
   function patch(next: Record<string, string>) {
     const out = new URLSearchParams(params);
     for (const [key, value] of Object.entries(next)) {
@@ -207,10 +246,7 @@ export default function TicketsOverviewTab() {
 
   /** The queue, with these filters (and any extra), in the view that fits. */
   function explore(view: string, extra: Partial<OverviewFilters> = {}) {
-    const q = new URLSearchParams({ view });
-    const merged = { ...filters, ...extra };
-    for (const key of OVERVIEW_FILTER_KEYS) if (merged[key]) q.set(key, merged[key]);
-    navigate(`/admin/tickets/list?${q.toString()}`);
+    navigate(exploreHref(view, filters, extra));
   }
 
   async function exportCsv() {
@@ -238,11 +274,18 @@ export default function TicketsOverviewTab() {
   return (
     <div className="tickets-overview" data-ready={loading ? undefined : "1"}>
       <div className="activity-page-header tickets-ov-head">
-        <p className="activity-subtitle">
-          Ticket flow and support workload · {label}
-          {summary ? ` · ${summary}` : ""}
-          {timezone === "utc" ? " · UTC" : " · Local time"}
-        </p>
+        <div className="tickets-ov-head__text">
+          <p className="activity-subtitle">
+            Ticket flow and support workload · {label}
+            {summary ? ` · ${summary}` : ""}
+            {timezone === "utc" ? " · UTC" : " · Local time"}
+          </p>
+          {needsStaff > 0 ? (
+            <Link to="/admin/tickets/list?view=needs_staff" className="tickets-ov-needs" data-testid="tickets-needs-staff">
+              {needsStaff} {needsStaff === 1 ? "needs" : "need"} staff — open the queue
+            </Link>
+          ) : null}
+        </div>
         <div className="activity-toolbar">
           <ActivityTimezoneChip value={timezone} onChange={(tz) => patch({ tz: tz === "utc" ? "utc" : "" })} />
           <TicketFilterMenu
@@ -256,6 +299,7 @@ export default function TicketsOverviewTab() {
           <ActivityPeriodMenu value={period} onChange={(p) => patch({ period: p })} />
           <div className="activity-menu-wrap" ref={exportRef}>
             <button
+              ref={exportBtnRef}
               type="button"
               className={`activity-icon-btn${exportOpen ? " activity-icon-btn--active" : ""}`}
               onClick={() => setExportOpen((v) => !v)}

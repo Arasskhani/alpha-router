@@ -12,6 +12,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../../api", () => ({ api: vi.fn() }));
 vi.mock("../../context/ReadOnlyContext", () => ({ useReadOnly: () => false }));
 vi.mock("../../context/ConfirmContext", () => ({ useConfirm: () => ({ confirm: vi.fn(), prompt: vi.fn() }) }));
+const session = vi.hoisted(() => ({ value: null as Record<string, unknown> | null }));
+vi.mock("../../hooks/useCachedSession", () => ({ useCachedSession: () => session.value }));
 
 import { api } from "../../api";
 import RetentionPolicy from "./RetentionPolicy";
@@ -26,7 +28,10 @@ const OVERVIEW = {
 let host: HTMLDivElement;
 let root: Root;
 
+const SUPER_ADMIN = { username: "root", role: "super_admin", is_active: true, auth_provider: "local", menus: null };
+
 beforeEach(() => {
+  session.value = SUPER_ADMIN;
   vi.mocked(api).mockReset();
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -60,6 +65,14 @@ describe("Retention Policy · Support tickets", () => {
     expect(line?.textContent).toContain("Admin › Tickets › Settings");
     expect(line?.querySelector("a")?.getAttribute("href")).toBe("/admin/tickets/settings");
     expect(line?.querySelector("input")).toBeNull();
+  });
+
+  it("names the place without a link for a session that cannot open the Tickets menu", async () => {
+    session.value = { ...SUPER_ADMIN, role: "storage_administrator", menus: ["storage"] };
+    await render({ tickets: { retention_days: 365 } });
+    const line = host.querySelector('[data-testid="ticket-retention"]');
+    expect(line?.textContent).toContain("(set in Admin › Tickets › Settings).");
+    expect(line?.querySelector("a")).toBeNull();
   });
 
   it("says they are kept when the window is 0", async () => {

@@ -14,13 +14,16 @@ import {
   type StaffMeta,
   type TicketSettings,
 } from "../../lib/tickets";
-import { SETTINGS_BOUNDS, isValidEmail, validateSettings } from "../../lib/ticketsAdmin";
+import { SETTINGS_BOUNDS, isValidEmail, normalizeCategory, validateSettings } from "../../lib/ticketsAdmin";
 
 type Props = {
   settings: TicketSettings | null;
   meta: StaffMeta | null;
   /** Super Admin: everyone else with the menu reads the same page. */
   canEdit: boolean;
+  /** Why the settings could not be read; with "Try again". */
+  loadError?: string;
+  onRetry?: () => void;
   onSaved: (settings: TicketSettings) => void;
 };
 
@@ -110,7 +113,7 @@ function NumberField({
  * Tickets › Settings: every Super Admin setting, read-only for everyone else
  * with the menu. The server checks the same bounds again on Save.
  */
-export default function TicketsSettingsTab({ settings, meta, canEdit, onSaved }: Props) {
+export default function TicketsSettingsTab({ settings, meta, canEdit, loadError, onRetry, onSaved }: Props) {
   const confirmer = useConfirm();
   const [form, setForm] = useState<TicketSettings | null>(settings);
   const [base, setBase] = useState<TicketSettings | null>(settings);
@@ -127,7 +130,20 @@ export default function TicketsSettingsTab({ settings, meta, canEdit, onSaved }:
   const errors = useMemo(() => (form ? validateSettings(form) : {}), [form]);
   const dirty = useMemo(() => JSON.stringify(form) !== JSON.stringify(base), [form, base]);
 
-  if (!form) return <p className="muted-text">Loading the settings…</p>;
+  if (!form) {
+    return loadError ? (
+      <div className="alert alert-error tickets-settings-error" role="alert">
+        <span>The settings could not be read: {loadError}</span>{" "}
+        {onRetry ? (
+          <button type="button" className="btn btn-ghost btn-sm btn-readonly-ok" onClick={onRetry}>
+            Try again
+          </button>
+        ) : null}
+      </div>
+    ) : (
+      <p className="muted-text">Loading the settings…</p>
+    );
+  }
   const locked = !canEdit;
   const set = (patch: Partial<TicketSettings>) => {
     setForm({ ...form, ...patch });
@@ -165,14 +181,14 @@ export default function TicketsSettingsTab({ settings, meta, canEdit, onSaved }:
 
   function addCategory() {
     if (!form || categoryDraft == null) return;
-    const name = categoryDraft.trim();
+    const name = normalizeCategory(categoryDraft);
     if (name) set({ categories: [...form.categories, name] });
     setCategoryDraft(null);
   }
 
   function renameCategory() {
     if (!form || !renaming) return;
-    const name = renaming.value.trim();
+    const name = normalizeCategory(renaming.value);
     if (name) set({ categories: form.categories.map((c, i) => (i === renaming.index ? name : c)) });
     setRenaming(null);
   }
@@ -197,7 +213,7 @@ export default function TicketsSettingsTab({ settings, meta, canEdit, onSaved }:
     try {
       const saved = await ticketsRequest<TicketSettings>(`${TICKETS_BASE}/settings`, {
         method: "PUT",
-        body: JSON.stringify({ ...form, categories: form.categories.map((c) => c.trim()) }),
+        body: JSON.stringify({ ...form, categories: form.categories.map(normalizeCategory) }),
       });
       setForm(saved);
       setBase(saved);

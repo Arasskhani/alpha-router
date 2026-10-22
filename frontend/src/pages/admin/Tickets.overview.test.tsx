@@ -147,6 +147,59 @@ describe("the Overview", () => {
     expect(where.path).toBe("/admin/tickets/list?view=active&department=IT");
   });
 
+  it("opens the queue in a view that can hold a Resolved or Closed status", async () => {
+    await render("/admin/tickets?status=resolved");
+    // Workload's Explore asks for the active view: Resolved tickets are never in it.
+    const explore = host.querySelectorAll<HTMLButtonElement>(".overview-explore-link")[1];
+    await act(async () => explore.click());
+    expect(where.path).toBe("/admin/tickets/list?view=all&status=resolved");
+  });
+
+  it("keeps the active view for an active status", async () => {
+    await render("/admin/tickets?status=waiting");
+    const explore = host.querySelectorAll<HTMLButtonElement>(".overview-explore-link")[1];
+    await act(async () => explore.click());
+    expect(where.path).toBe("/admin/tickets/list?view=active&status=waiting");
+  });
+
+  it("links to the tickets that need staff, and says nothing when none do", async () => {
+    await render("/admin/tickets");
+    const link = host.querySelector<HTMLAnchorElement>('[data-testid="tickets-needs-staff"]')!;
+    expect(link.textContent).toBe("5 need staff — open the queue");
+    expect(link.getAttribute("href")).toBe("/admin/tickets/list?view=needs_staff");
+
+    act(() => root.unmount());
+    root = createRoot(host);
+    vi.mocked(authFetch).mockImplementation(
+      fakeTicketsApi(calls, (url) =>
+        url.endsWith("/counts") ? { needs_staff: 0, needs_staff_urgent: 0, mine: 0, unassigned: 0, active: 3, closed: 9 } : undefined,
+      ) as typeof authFetch,
+    );
+    await render("/admin/tickets");
+    expect(host.querySelector('[data-testid="tickets-needs-staff"]')).toBeNull();
+  });
+
+  it("closes the filter and export menus with Escape and gives the focus back", async () => {
+    await render("/admin/tickets");
+    const filters = host.querySelector<HTMLButtonElement>('[aria-label="Filters"]')!;
+    await act(async () => filters.click());
+    expect(host.querySelector('[aria-label="Ticket filters"]')).not.toBeNull();
+    host.querySelector<HTMLInputElement>('[aria-label="Search filter categories"]')!.focus();
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(host.querySelector('[aria-label="Ticket filters"]')).toBeNull();
+    expect(document.activeElement).toBe(filters);
+
+    const exportBtn = host.querySelector<HTMLButtonElement>('[aria-label="Export"]')!;
+    await act(async () => exportBtn.click());
+    expect(host.querySelector(".activity-menu-panel")).not.toBeNull();
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(host.querySelector(".activity-menu-panel")).toBeNull();
+  });
+
   it("says so when the period has no tickets", async () => {
     const empty = {
       ...OVERVIEW,

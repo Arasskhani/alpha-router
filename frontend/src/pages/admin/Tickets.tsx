@@ -11,6 +11,10 @@ import { TICKETS_BASE, ticketsRequest, type StaffMeta, type TicketSettings } fro
 
 type TabId = "overview" | "tickets" | "settings";
 
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 const TABS: { id: TabId; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "tickets", label: "Tickets" },
@@ -42,18 +46,26 @@ export default function Tickets() {
   const [meta, setMeta] = useState<StaffMeta | null>(null);
   const [settings, setSettings] = useState<TicketSettings | null>(null);
   const [error, setError] = useState("");
+  // Kept apart: the queue works without the settings, the Settings tab says why it is empty.
+  const [settingsError, setSettingsError] = useState("");
 
   const loadMeta = useCallback(async () => {
+    let settingsFailure = "";
     try {
       const [nextMeta, nextSettings] = await Promise.all([
         ticketsRequest<StaffMeta>(`${TICKETS_BASE}/meta`),
-        ticketsRequest<TicketSettings>(`${TICKETS_BASE}/settings`).catch(() => null),
+        ticketsRequest<TicketSettings>(`${TICKETS_BASE}/settings`).catch((err: unknown) => {
+          settingsFailure = errorText(err);
+          return null;
+        }),
       ]);
       setMeta(nextMeta);
       if (nextSettings) setSettings(nextSettings);
+      setSettingsError(settingsFailure);
       setError("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorText(err));
+      setSettingsError(settingsFailure);
     }
   }, []);
 
@@ -95,6 +107,11 @@ export default function Tickets() {
             settings={settings}
             meta={meta}
             canEdit={isSuperAdmin}
+            loadError={settingsError}
+            onRetry={() => {
+              setSettingsError("");
+              void loadMeta();
+            }}
             onSaved={(next) => {
               setSettings(next);
               void loadMeta();

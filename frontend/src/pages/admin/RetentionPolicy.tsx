@@ -3,6 +3,8 @@ import { FormEvent, useEffect, useState } from "react";
 import AdminPage from "../../components/AdminPage";
 import { api } from "../../api";
 import { useConfirm } from "../../context/ConfirmContext";
+import { useCachedSession } from "../../hooks/useCachedSession";
+import { isAdminPathAllowedForSession, normalizeRole, type SessionRbac } from "../../lib/rbac";
 
 type MediaSettings = {
   retention_days: number;
@@ -96,6 +98,13 @@ function serverTimezoneHint(tz?: string): string {
 }
 
 export default function RetentionPolicy() {
+  const session = useCachedSession();
+  // Only a session that can open the Tickets menu gets a link there; anyone else reads where it is set.
+  const canOpenTickets = isAdminPathAllowedForSession(
+    "/admin/tickets/settings",
+    session as SessionRbac | null,
+    normalizeRole(session?.role),
+  );
   const { confirm } = useConfirm();
   const [stats, setStats] = useState<RetentionOverview | null>(null);
   const [savingMedia, setSavingMedia] = useState(false);
@@ -665,8 +674,12 @@ export default function RetentionPolicy() {
           <h3>Support tickets</h3>
           <p className="muted-text" data-testid="ticket-retention">
             {ticketRetentionText(stats.tickets.retention_days)} (set in{" "}
-            <Link to="/admin/tickets/settings">Admin › Tickets › Settings</Link>). Open tickets are never deleted by
-            time.
+            {canOpenTickets ? (
+              <Link to="/admin/tickets/settings">Admin › Tickets › Settings</Link>
+            ) : (
+              "Admin › Tickets › Settings"
+            )}
+            ). Open tickets are never deleted by time.
           </p>
         </div>
       ) : null}

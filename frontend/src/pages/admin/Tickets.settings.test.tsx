@@ -139,6 +139,44 @@ describe("Tickets settings", () => {
     expect(host.textContent).toContain("Settings saved.");
   });
 
+  it("treats inner spaces in a category name as the server does", async () => {
+    await render();
+    await act(async () => button("+ Add").click());
+    const category = host.querySelector<HTMLInputElement>('input[aria-label="New category"]')!;
+    await type(category, "  feature   REQUEST ");
+    await press(category, "Enter");
+    expect(host.textContent).toContain("Each category needs a different name.");
+    expect(button("Save settings").disabled).toBe(true);
+
+    const added = button("feature REQUEST");
+    expect(added).toBeDefined();
+    await act(async () => added.click());
+    const rename = host.querySelector<HTMLInputElement>('input[aria-label="Rename feature REQUEST"]')!;
+    await type(rename, " Access \t  rights ");
+    await press(rename, "Enter");
+    expect(host.textContent).not.toContain("Each category needs a different name.");
+    await act(async () => button("Save settings").click());
+    await settle();
+    const put = calls.find((c) => c.url.endsWith("/settings") && c.method === "PUT")!;
+    expect((put.body as { categories: string[] }).categories.at(-1)).toBe("Access rights");
+  });
+
+  it("says why the settings are missing and reads them again on Try again", async () => {
+    let fail = true;
+    useApi((url, method) =>
+      url.endsWith("/settings") && method === "GET" && fail
+        ? new Response(JSON.stringify({ detail: "Database is busy." }), { status: 503 })
+        : undefined,
+    );
+    await render();
+    expect(host.textContent).not.toContain("Loading the settings…");
+    expect(host.querySelector('[role="alert"]')!.textContent).toContain("The settings could not be read: Database is busy.");
+    fail = false;
+    await act(async () => button("Try again").click());
+    await settle();
+    expect(field("Close tickets waiting for the user after").value).toBe("7");
+  });
+
   it("keeps at least one image type and one category", async () => {
     await render();
     for (const label of ["PNG", "JPG / JPEG", "WEBP", "GIF"]) {

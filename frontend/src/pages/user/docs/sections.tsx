@@ -82,6 +82,12 @@ export const userManualSections: DocSection[] = [
               </td>
               <td>Personal library, activity, account preferences and security</td>
             </tr>
+            <tr>
+              <td>
+                <a href="#user-support">Support</a>
+              </td>
+              <td>Tickets to your administrators, with screenshots</td>
+            </tr>
           </tbody>
         </DocsTable>
       </>
@@ -327,6 +333,14 @@ export const userManualSections: DocSection[] = [
               </td>
               <td>
                 <code>/app/my-activity</code> — personal spend and usage
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <strong>Support</strong>
+              </td>
+              <td>
+                <code>/app/support</code> — tickets to your administrators (see <a href="#user-support">Support</a>)
               </td>
             </tr>
             <tr>
@@ -1691,6 +1705,124 @@ export const userManualSections: DocSection[] = [
           budget. Your Activity page still shows requests attributed to your user when the key owner is you. Traffic from
           your <strong>personal API key</strong> (Settings → API Key) appears in Activity and admin logs with your key
           name.
+        </Note>
+      </>
+    ),
+  },
+
+  // ── Support ───────────────────────────────────────────────────────────────
+  {
+    id: "user-support",
+    title: "Support",
+    group: "Support",
+    content: (
+      <>
+        <h2>Support</h2>
+        <p>
+          Path: <code>/app/support</code>. When something does not work as it should, open a ticket here and your
+          administrators answer it. You see only your own tickets.
+        </p>
+
+        <h3>Open a ticket</h3>
+        <p>
+          Click <strong>New ticket</strong>. The form says who it is sent as — your name, email and department, from
+          your account; you cannot change them.
+        </p>
+        <ul>
+          <li>
+            <strong>Title</strong> (required, up to 150 characters) and <strong>Description</strong> (required, up to
+            5,000): what happened, what you expected, and the steps to see it again. Any language is fine.
+          </li>
+          <li>
+            <strong>Category</strong> — chosen from the list your administrators keep.
+          </li>
+          <li>
+            <strong>Priority</strong> — Low, Normal (the default), High or Urgent. Keep Urgent for work that has
+            stopped.
+          </li>
+          <li>
+            <strong>Screenshots</strong> — drop images on the form, browse for them, or paste them into the
+            description. The form shows the types, size and number your administrators allow (by default PNG, JPG,
+            WEBP and GIF, up to 5 MB each and 5 per message). Only images are accepted. Each one is checked, scanned
+            for malware and saved again as a clean copy, without its location or camera data; a GIF keeps only its
+            first frame. If one image is refused, the form says which and why.
+          </li>
+          <li>
+            <strong>Include technical details</strong> (on by default) sends your browser, the page you were on before
+            Support, and the app version. Untick it to leave them out.
+          </li>
+        </ul>
+        <p>
+          You can open a few tickets an hour (5 by default) and have a limited number open at once (20 by default). If
+          you reach a limit, the form tells you; mark the tickets that are fixed as resolved, or wait.
+        </p>
+
+        <h3>Follow it</h3>
+        <p>
+          The list has <strong>Open</strong>, <strong>Resolved</strong> and <strong>All</strong>, and a search over your
+          titles, your messages and ticket numbers. A ticket with something new shows <strong>New reply</strong>, and{" "}
+          <strong>Support</strong> in the menu shows how many tickets have a reply or a status change you have not
+          opened yet. Opening the ticket clears it.
+        </p>
+        <DocsTable>
+          <thead>
+            <tr>
+              <th>Status</th>
+              <th>Means</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Open</td>
+              <td>Sent; waiting for support.</td>
+            </tr>
+            <tr>
+              <td>In progress</td>
+              <td>Support is working on it.</td>
+            </tr>
+            <tr>
+              <td>Waiting for you</td>
+              <td>Support asked you something. Reply to move it back to Open.</td>
+            </tr>
+            <tr>
+              <td>Resolved</td>
+              <td>Fixed, by support or by you.</td>
+            </tr>
+            <tr>
+              <td>Closed</td>
+              <td>Ended: closed by support, or automatically.</td>
+            </tr>
+          </tbody>
+        </DocsTable>
+        <ul>
+          <li>
+            <strong>Automatic reply.</strong> A new ticket may get an automatic reply at once, from &ldquo;Support
+            team&rdquo;. It says your ticket arrived; a person answers later.
+          </li>
+          <li>
+            <strong>Replying.</strong> Write in the box under the conversation and click <strong>Send reply</strong>.
+            You can add images here too.
+          </li>
+          <li>
+            <strong>It works — mark resolved</strong> ends a ticket you no longer need help with.
+          </li>
+          <li>
+            <strong>Closing by itself.</strong> A ticket waiting for you closes automatically if you do not reply within
+            the number of days your administrators set (7 by default). A notice under the conversation shows the date.
+          </li>
+          <li>
+            <strong>Reopening.</strong> If the problem comes back, reply to a Resolved or Closed ticket within the
+            reopen window (14 days by default); the list and the ticket show until when. After that, open a new ticket.
+          </li>
+        </ul>
+        <p>
+          You cannot delete a ticket; it stays as a record. Your administrators may also email you about replies and
+          status changes, if they have turned that on. An inactive account can read its tickets but not reply.
+        </p>
+        <Note>
+          Support staff see your whole conversation, your screenshots and the technical details you sent. They can also
+          write internal notes on your ticket, which you do not see. Support may be switched off by your
+          administrators: then it is not in the menu, and you cannot open or read tickets until it is back.
         </Note>
       </>
     ),

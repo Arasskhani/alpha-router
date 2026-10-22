@@ -351,3 +351,81 @@ describe("Guardrails in the guides", () => {
     expect(html).toContain("never sent to a model again");
   });
 });
+
+/** The number a Python module gives a constant, e.g. `REPLIES_PER_HOUR = 60`. */
+function pythonConstantIn(file: string, name: string): number {
+  const text = readFileSync(join(__dirname, "..", "..", file), "utf8");
+  const match = new RegExp(`^${name} = (\\d+)$`, "m").exec(text);
+  if (!match) throw new Error(`${name} not found in ${file}`);
+  return Number(match[1]);
+}
+
+describe("Tickets in the guides", () => {
+  it("the Admin Guide puts Tickets under Overview and says who may do what", () => {
+    const section = (docSections as Section[]).find((s) => s.id === "admin-tickets");
+    expect(section?.group).toBe("Overview");
+    const html = sectionHtml(docSections as Section[], "admin-tickets");
+    expect(html).toContain("/admin/tickets");
+    expect(html).toContain("Read Only Super Admin");
+    expect(html).toContain("Settings changes and every delete are Super Admin only");
+    expect(html).toContain("need staff — open the queue");
+    expect(html).toContain("Colour shows better or worse, not up or down.");
+    expect(html).toContain("Assign to me, or picking yourself: no email.");
+    expect(html).toContain("A bulk assign to someone else sends one email listing every ticket");
+    expect(html).toContain("Staff-only changes — notes, priority, category, assignment — do not move");
+    expect(html).toContain("DELETE &lt;n&gt; TICKETS");
+    expect(html).toContain("DELETE ALL TICKETS");
+    expect(html).toContain("must be at least the reopen window");
+    expect(html).toContain("MAX_IMAGE_SIDE_PX");
+    expect(html).toContain("emailed to the person only when");
+    expect(html).toContain("ticket_retention");
+    for (const report of ["Ticket summary", "Tickets by department", "Support performance"]) {
+      expect(html).toContain(report);
+    }
+    for (const action of [
+      "ticket_replied",
+      "ticket_note_added",
+      "ticket_updated",
+      "ticket_assigned",
+      "ticket_unassigned",
+      "tickets_bulk_close",
+      "ticket_assignment_email_failed",
+      "tickets_exported",
+      "tickets_settings_updated",
+      "ticket_deleted",
+      "tickets_deleted",
+      "tickets_deleted_all",
+    ]) {
+      expect(html).toContain(`<code>${action}</code>`);
+    }
+    expect(sectionHtml(docSections as Section[], "admin-menu")).toContain("Database, Tickets");
+    expect(sectionHtml(docSections as Section[], "rbac-model")).toContain("Support");
+    expect(sectionHtml(docSections as Section[], "schedulers")).toContain("ticket_lifecycle");
+  });
+
+  it("holds the reply limit and the upload ceiling to the code", () => {
+    const replies = pythonConstantIn("backend/app/services/support_tickets.py", "REPLIES_PER_HOUR");
+    expect(sectionHtml(docSections as Section[], "admin-tickets")).toContain(`${replies} an hour`);
+    const limits = readFileSync(join(__dirname, "..", "..", "backend/app/services/request_body_limit_service.py"), "utf8");
+    expect(limits).toContain("TICKET_UPLOAD_BODY_MB = 10 * 10 + REQUEST_BODY_MARGIN_MB");
+    const margin = pythonConstantIn("backend/app/services/request_body_limit_service.py", "REQUEST_BODY_MARGIN_MB");
+    const readme = readFileSync(join(__dirname, "..", "..", "README.md"), "utf8");
+    expect(readme).toContain(`${10 * 10 + margin} MiB`);
+    expect(readme).toContain("ticket_lifecycle");
+    expect(readme).toContain("d9f1b3c5e7a9");
+  });
+
+  it("the User Manual tells a person how a ticket goes", () => {
+    const section = (userManualSections as Section[]).find((s) => s.id === "user-support");
+    expect(section?.group).toBe("Support");
+    const html = sectionHtml(userManualSections as Section[], "user-support");
+    expect(html).toContain("/app/support");
+    expect(html).toContain("Waiting for you");
+    expect(html).toContain("It works — mark resolved");
+    expect(html).toContain("closes automatically if you do not reply");
+    expect(html).toContain("reopen window");
+    expect(html).toContain("internal notes on your ticket, which you do not see");
+    expect(html).toContain("Support may be switched off");
+    expect(sectionHtml(userManualSections as Section[], "app-tour")).toContain("/app/support");
+  });
+});

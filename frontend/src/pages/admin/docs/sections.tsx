@@ -808,6 +808,15 @@ export const docSections: DocSection[] = [
               </td>
               <td>Scoped access re-enabled for those menus</td>
             </tr>
+            <tr>
+              <td>
+                <strong>Support</strong>
+              </td>
+              <td>
+                Tickets menu: sees, answers, assigns and closes support tickets; no settings, no deletes (see{" "}
+                <a href="#admin-tickets">Tickets</a>)
+              </td>
+            </tr>
           </tbody>
         </DocsTable>
         <p>
@@ -1338,7 +1347,7 @@ export const docSections: DocSection[] = [
             </tr>
             <tr>
               <td>Overview</td>
-              <td>Dashboard, Operations, Database</td>
+              <td>Dashboard, Operations, Database, Tickets</td>
             </tr>
             <tr>
               <td>Agents &amp; Knowledge</td>
@@ -1684,6 +1693,639 @@ export const docSections: DocSection[] = [
           Path: <code>/admin/database</code>. Read-only monitor: connection status, engine, host CPU/RAM, DB size, ping,
           Alpharouter process RSS/CPU, and table row counts. Use <strong>Refresh</strong> to reload.
         </p>
+      </>
+    ),
+  },
+  {
+    id: "admin-tickets",
+    title: "Tickets",
+    group: "Overview",
+    content: (
+      <>
+        <h2>Tickets</h2>
+        <p>
+          Path: <code>/admin/tickets</code> (<strong>Overview → Tickets</strong>, the last item under Overview). People
+          send support tickets from <strong>Support</strong> in the user panel (<code>/app/support</code>, see the User
+          Manual); staff answer them here. The page has three tabs: <strong>Overview</strong> (opens first,{" "}
+          <code>/admin/tickets</code>), <strong>Tickets</strong>, the queue (<code>/admin/tickets/list</code>), and{" "}
+          <strong>Settings</strong> (<code>/admin/tickets/settings</code>).
+        </p>
+        <p>
+          The menu item shows how many tickets need staff (9+ above nine). The number turns red while one of them is
+          Urgent. It is checked every minute.
+        </p>
+
+        <h3>Who can do what</h3>
+        <p>
+          The <code>tickets</code> menu (Overview category) grants the page. The built-in <strong>Support</strong> role
+          holds that menu and nothing else; a person whose only admin role is Support sees the admin panel with Tickets
+          alone, plus the normal user panel.
+        </p>
+        <DocsTable>
+          <thead>
+            <tr>
+              <th>Action</th>
+              <th>Support</th>
+              <th>Super Admin</th>
+              <th>Read Only Super Admin</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>See the Overview, the queue, every ticket, its internal notes and images, and the settings</td>
+              <td>Yes</td>
+              <td>Yes</td>
+              <td>Yes</td>
+            </tr>
+            <tr>
+              <td>Reply, add internal notes, change status, priority and category, close</td>
+              <td>Yes</td>
+              <td>Yes</td>
+              <td>No</td>
+            </tr>
+            <tr>
+              <td>Assign to me, assign to someone else, unassign, bulk actions, be an assignee</td>
+              <td>Yes</td>
+              <td>Yes</td>
+              <td>No</td>
+            </tr>
+            <tr>
+              <td>Change the settings and the automatic reply</td>
+              <td>No</td>
+              <td>Yes</td>
+              <td>No</td>
+            </tr>
+            <tr>
+              <td>Delete one ticket, delete by filter or selection, delete all</td>
+              <td>No</td>
+              <td>Yes</td>
+              <td>No</td>
+            </tr>
+          </tbody>
+        </DocsTable>
+        <p>
+          Only active accounts work tickets. Settings changes and every delete are Super Admin only; the server checks
+          this on every request. The Support role has no Reports access unless it is given that role too.
+        </p>
+
+        <h3>Overview</h3>
+        <p>
+          Ticket flow and support workload for a period, in numbers only: no ticket text. The controls are those of
+          Activity:
+        </p>
+        <ul>
+          <li>
+            <strong>Period</strong> — from the past 15 minutes to the past year. The window ends now and is compared with
+            the period of the same length right before it. Charts are hourly up to two days, daily up to a month and
+            monthly for a year.
+          </li>
+          <li>
+            <strong>Time zone</strong> — Local time (the server&apos;s time zone, as on Activity) or UTC.
+          </li>
+          <li>
+            <strong>Filters</strong> — Assignee (or Unassigned), Department, Priority, Category and Status. Each applies
+            to every number on the page; the line under the heading repeats the period, the filters and the time zone.
+          </li>
+          <li>
+            <strong>Export</strong> — a CSV of the numbers on the page, and a link to the <em>Ticket summary</em> report
+            for Excel, PDF or a schedule.
+          </li>
+        </ul>
+        <p>
+          When tickets need staff, a line under the heading reads <strong>&ldquo;5 need staff — open the
+          queue&rdquo;</strong> and opens the Needs staff view.
+        </p>
+        <DocsTable>
+          <thead>
+            <tr>
+              <th>Number</th>
+              <th>Means</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Tickets opened</td>
+              <td>Tickets created in the period.</td>
+            </tr>
+            <tr>
+              <td>Resolved</td>
+              <td>Tickets marked resolved in the period, by staff or by the person. Auto-closed tickets are not resolved.</td>
+            </tr>
+            <tr>
+              <td>Open now</td>
+              <td>Open, In progress and Waiting tickets now, against the number at the start of the period. The note says how many wait for a first answer.</td>
+            </tr>
+            <tr>
+              <td>Median first reply</td>
+              <td>From opening to the first staff reply, for tickets opened in the period. The automatic reply and internal notes never count.</td>
+            </tr>
+            <tr>
+              <td>Median resolution</td>
+              <td>From opening to resolved, for tickets resolved in the period.</td>
+            </tr>
+            <tr>
+              <td>Auto-closed</td>
+              <td>Tickets closed because the person did not answer, with their share of all tickets closed in the period.</td>
+            </tr>
+          </tbody>
+        </DocsTable>
+        <p>
+          <strong>Colour shows better or worse, not up or down.</strong> More resolved tickets, fewer open, and shorter
+          first reply and resolution times are green; the opposite is red. Tickets opened and auto-closed are grey: more
+          of them is neither good nor bad.
+        </p>
+        <ul>
+          <li>
+            <strong>Top departments</strong> (tickets, still open, Urgent), <strong>Workload by assignee</strong> (open
+            now and resolved in the period, with Unassigned last and its oldest wait) and <strong>First reply by
+            priority</strong> (median).
+          </li>
+          <li>
+            <strong>Tickets opened by priority</strong>, stacked per bucket.
+          </li>
+          <li>
+            <strong>Flow and backlog</strong>: how tickets ended (resolved by support, resolved by the user,
+            auto-closed; footer: reopened after resolve), the backlog by status (footer: the oldest ticket without a
+            staff reply) and tickets by category (footer: the most common). These cards show no change badge.
+          </li>
+          <li>
+            <strong>Explore</strong> on a card, or a name in a list, opens the queue with the same filters, for example
+            one department.
+          </li>
+        </ul>
+
+        <h3>The queue</h3>
+        <p>
+          <strong>Quick views</strong>, each with its count: <strong>Needs staff</strong>, <strong>Mine</strong>,{" "}
+          <strong>Unassigned</strong>, <strong>All active</strong> and <strong>Closed</strong> (Resolved and Closed, no
+          count). A ticket needs staff when it is new, or when the person replied after staff last answered; a staff
+          reply, or a resolve or close, clears it. Needs staff is the number on the menu item. It lists Urgent tickets
+          first, then whoever has waited longest; the other views list the latest activity first, 50 to a page.
+        </p>
+        <ul>
+          <li>
+            <strong>Search</strong> looks in the title, the messages (internal notes too), the reporter&apos;s name and
+            username, and the number (<code>#1042</code> or <code>1042</code>).
+          </li>
+          <li>
+            <strong>Filters</strong>: Priority, Category and Department (the reporter&apos;s department when the ticket
+            was opened). Assignee and Status arrive as chips from the Overview; clear them with ✕.
+          </li>
+          <li>
+            <strong>Export CSV</strong> downloads what the list shows, up to 50,000 rows, without message text: number,
+            title, reporter, username, department, category, priority, status, assignee, created, updated, first reply,
+            resolved, closed and closed reason.
+          </li>
+        </ul>
+        <p>
+          Click a ticket to open it beside the list: the reporter (name, username, department, email), the technical
+          details the person chose to send (app version, browser, page), the Status, Priority, Category and Assignee
+          controls, and the thread. A change of priority or category writes a line in the thread that only staff see;
+          a status change is shown to the person too, and an assignment shows them only who is handling the ticket.
+        </p>
+        <p>
+          <strong>Reply to user</strong> or <strong>Internal note</strong>. A reply is shown to the person (and emailed
+          when that setting is on); with it you choose what happens next: <em>Status: automatic</em> (an Open ticket
+          becomes In progress) or <em>Then: Waiting for user / In progress / Resolved / Closed</em>. A note is shown
+          only to staff: never to the person, never emailed, and it changes nothing they see. Both can carry images,
+          within the image settings.
+        </p>
+        <p>
+          <strong>Last activity</strong> (the Updated column and the order of the list) is what the person can see:
+          messages, replies and status changes. Staff-only changes — notes, priority, category, assignment — do not move
+          it, so taking a ticket does not push it down the Needs staff view.
+        </p>
+
+        <h3>Assignment</h3>
+        <p>
+          A ticket can be assigned to an active person who can work tickets: the Support role or Super Admin. Read Only
+          Super Admins and ordinary users are never listed. The Assignee menu shows <strong>Assign to me</strong> first,
+          then the support team with each person&apos;s open count, then <strong>Unassign</strong>. An{" "}
+          <strong>Assign to me</strong> link sits above the menu, and on unassigned rows of the list.
+        </p>
+        <ul>
+          <li>Someone else assigns a ticket to a person: that person gets one email (when the setting is on).</li>
+          <li>Assign to me, or picking yourself: no email.</li>
+          <li>Reassigning: only the new assignee gets an email. Unassigning sends nothing.</li>
+          <li>A bulk assign to someone else sends one email listing every ticket, not one per ticket.</li>
+        </ul>
+        <p>
+          The assignment stands even when SMTP is off or fails. The thread says <em>email queued</em>,{" "}
+          <em>email sent</em> or <em>email not sent</em>; a failure is also written to Admin Logs. The person sees only
+          &ldquo;Majid Arasskhani is handling your ticket&rdquo;. When someone can no longer work tickets (Support role
+          removed, account disabled or purged), their active tickets become unassigned within 15 minutes, with a line in
+          the thread.
+        </p>
+
+        <h3>Bulk actions</h3>
+        <p>
+          Tick tickets on the page to get the bulk bar: <strong>Assign to me</strong>, <strong>Assign…</strong> (one
+          email to that person), <strong>Close</strong> (after a confirmation) and, for a Super Admin,{" "}
+          <strong>Delete…</strong>. Up to 200 tickets at a time.
+        </p>
+
+        <h3>Statuses and the lifecycle</h3>
+        <DocsTable>
+          <thead>
+            <tr>
+              <th>Status</th>
+              <th>The person sees</th>
+              <th>Gets there when</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Open</td>
+              <td>Open</td>
+              <td>The ticket is new, the person answers a ticket waiting for them, or they reopen it.</td>
+            </tr>
+            <tr>
+              <td>In progress</td>
+              <td>In progress</td>
+              <td>Staff reply to an Open ticket (or choose it).</td>
+            </tr>
+            <tr>
+              <td>Waiting for user</td>
+              <td>Waiting for you</td>
+              <td>Staff choose it, usually with a reply that asks something.</td>
+            </tr>
+            <tr>
+              <td>Resolved</td>
+              <td>Resolved</td>
+              <td>Staff choose it, or the person clicks <em>It works — mark resolved</em>.</td>
+            </tr>
+            <tr>
+              <td>Closed</td>
+              <td>Closed</td>
+              <td>Staff close it, or it closes by itself (below).</td>
+            </tr>
+          </tbody>
+        </DocsTable>
+        <ul>
+          <li>
+            <strong>Auto-close.</strong> A ticket Waiting for user closes after the number of days in Settings (default
+            7) without a reply, with the line &ldquo;Closed automatically: no reply in 7 days&rdquo;. Each staff reply
+            while it waits starts the days again. The person sees a countdown while it waits; when the user email is on,
+            they are emailed that it closed.
+          </li>
+          <li>
+            <strong>Reopen.</strong> The person reopens a Resolved or Closed ticket by replying within the reopen window
+            (default 14 days, counted from when it was resolved, or closed if it never was). The thread says who
+            reopened it. After the window they open a new ticket. Staff can also move an ended ticket back to an active
+            status.
+          </li>
+          <li>
+            <strong>Resolved closes.</strong> A Resolved ticket becomes Closed once its reopen window has passed (&ldquo;Closed:
+            resolved 14 days ago&rdquo;); it can no longer be reopened.
+          </li>
+        </ul>
+        <p>
+          These run every 15 minutes, so a ticket may close up to a quarter of an hour after its time. People cannot
+          delete their own tickets; they can mark them resolved.
+        </p>
+
+        <h3>Settings</h3>
+        <p>
+          Everyone with the menu can read the settings; only a Super Admin can save them. Each save is recorded in Admin
+          Logs with the values before and after.
+        </p>
+        <DocsTable>
+          <thead>
+            <tr>
+              <th>Setting</th>
+              <th>Default</th>
+              <th>Range</th>
+              <th>Meaning</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Tickets on</td>
+              <td>On</td>
+              <td>On / off</td>
+              <td>
+                Off hides Support from every account: people can neither send nor read tickets until it is on again.
+                Existing tickets stay, staff still see and work the queue, and the scheduled closes and retention keep
+                running.
+              </td>
+            </tr>
+            <tr>
+              <td>Tickets a person may open per hour</td>
+              <td>5</td>
+              <td>1–100</td>
+              <td>A person&apos;s replies have a fixed limit of their own: 60 an hour, over all their tickets.</td>
+            </tr>
+            <tr>
+              <td>Open tickets a person may have at once</td>
+              <td>20</td>
+              <td>1–200</td>
+              <td>Open, In progress and Waiting tickets.</td>
+            </tr>
+            <tr>
+              <td>Reopen a resolved ticket within (days)</td>
+              <td>14</td>
+              <td>1–90</td>
+              <td>The reopen window, for Resolved and Closed tickets.</td>
+            </tr>
+            <tr>
+              <td>Close tickets waiting for the user after (days)</td>
+              <td>7</td>
+              <td>1–60</td>
+              <td>Calendar days.</td>
+            </tr>
+            <tr>
+              <td>Delete closed tickets and their images after (days)</td>
+              <td>365</td>
+              <td>0–3650</td>
+              <td>
+                0 keeps them. Any other value must be at least the reopen window, so a ticket is never deleted while its
+                reporter may still reopen it.
+              </td>
+            </tr>
+            <tr>
+              <td>Send new tickets to</td>
+              <td>Nobody</td>
+              <td>Up to 20 addresses</td>
+              <td>Who is emailed about new tickets.</td>
+            </tr>
+            <tr>
+              <td>Also email them when a user replies</td>
+              <td>On</td>
+              <td>On / off</td>
+              <td>The same addresses hear about the person&apos;s replies.</td>
+            </tr>
+            <tr>
+              <td>Only for priority at least</td>
+              <td>Normal</td>
+              <td>Low–Urgent</td>
+              <td>Tickets below this priority are not emailed to those addresses.</td>
+            </tr>
+            <tr>
+              <td>Email a person when someone else assigns a ticket to them</td>
+              <td>On</td>
+              <td>On / off</td>
+              <td>Never for Assign to me.</td>
+            </tr>
+            <tr>
+              <td>Email the user when support replies or resolves their ticket</td>
+              <td>Off</td>
+              <td>On / off</td>
+              <td>Off: the person sees the count on Support in the app.</td>
+            </tr>
+            <tr>
+              <td>Accepted types</td>
+              <td>PNG, JPG / JPEG, WEBP, GIF</td>
+              <td>At least one of these</td>
+              <td>The list can be narrowed, never widened.</td>
+            </tr>
+            <tr>
+              <td>Largest image (MB)</td>
+              <td>5</td>
+              <td>1–10</td>
+              <td>Per image.</td>
+            </tr>
+            <tr>
+              <td>Images per message</td>
+              <td>5</td>
+              <td>1–10</td>
+              <td>For the person and for staff.</td>
+            </tr>
+            <tr>
+              <td>Largest side (px)</td>
+              <td>4096</td>
+              <td>512–8192</td>
+              <td>
+                Never more than the platform&apos;s image limit (<code>MAX_IMAGE_SIDE_PX</code>, 4096 by default): a
+                higher value is saved as that limit. Images over the platform&apos;s pixel limit (
+                <code>MAX_IMAGE_PIXELS</code>) are refused too.
+              </td>
+            </tr>
+            <tr>
+              <td>Automatic first reply</td>
+              <td>On</td>
+              <td>Up to 2000 characters</td>
+              <td>See below. It cannot be on with an empty text.</td>
+            </tr>
+            <tr>
+              <td>Categories</td>
+              <td>Bug, Problem, Question, Feature request</td>
+              <td>1–20 names, up to 40 characters each</td>
+              <td>
+                Names are unique (ignoring case). Click a name to rename it; renaming or removing one does not change
+                tickets that already have it, but they cannot be moved back to a category no longer offered.
+              </td>
+            </tr>
+          </tbody>
+        </DocsTable>
+        <h4>Automatic first reply</h4>
+        <p>
+          Added at once to every new ticket, as &ldquo;Support team · automatic reply&rdquo;. Placeholders:{" "}
+          <code>{"{name}"}</code>, <code>{"{number}"}</code> (as <code>#1042</code>), <code>{"{title}"}</code>,{" "}
+          <code>{"{priority}"}</code> and <code>{"{category}"}</code>. It does not change the status and is never the
+          first reply in the Overview or the reports. It is emailed to the person only when{" "}
+          <em>Email the user</em> is on; otherwise it shows in the app only.
+        </p>
+
+        <h3>Images</h3>
+        <p>
+          Tickets take screenshots, nothing else. A file is kept only if its name and its bytes are both an accepted
+          type, it is within the size, side and pixel limits, it decodes as an image, and the malware scan (ClamAV)
+          passes. SVG, HEIC, HTML, executables and every other type are always refused. What is stored is a clean PNG
+          drawn from the pixels: no EXIF, location or camera data, and only the first frame of a GIF. If one file of a
+          message is refused, none is kept.
+        </p>
+        <p>
+          Images are stored under <code>tickets/</code> in object storage, outside the person&apos;s Media and its
+          quota. They are served only to the ticket&apos;s owner (never an image of an internal note) and to those who
+          can open Tickets; anyone else gets &ldquo;not found&rdquo;.
+        </p>
+
+        <h3>Email notifications</h3>
+        <p>
+          All ticket emails go through the <a href="#admin-smtp">SMTP Server</a>, in the background after the change is
+          saved: a slow or broken mail server never holds up or undoes a ticket change. They are plain text and carry
+          the number, title, priority, category, who asked, a 500-character excerpt and a link. Never an image, never
+          an internal note. Links use <code>FRONTEND_URL</code>.
+        </p>
+        <DocsTable>
+          <thead>
+            <tr>
+              <th>Who</th>
+              <th>When</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>The addresses in Send new tickets to</td>
+              <td>
+                A new ticket, and (when on) the person&apos;s replies, at or above the minimum priority. The first
+                address is in To, the others in Cc.
+              </td>
+            </tr>
+            <tr>
+              <td>An assignee</td>
+              <td>Someone else assigned them a ticket (one email for a bulk assign).</td>
+            </tr>
+            <tr>
+              <td>The person (only with Email the user on)</td>
+              <td>
+                The automatic reply, a staff reply, their ticket resolved or its status changed by staff, a bulk close,
+                and an auto-close.
+              </td>
+            </tr>
+          </tbody>
+        </DocsTable>
+
+        <h3>Deleting</h3>
+        <p>
+          Super Admin only. A deleted ticket goes with its messages and images, for good; the person no longer sees it,
+          and reports for past periods count fewer tickets.
+        </p>
+        <ul>
+          <li>
+            <strong>One ticket</strong> — <strong>Delete…</strong> in the ticket panel, after a confirmation.
+          </li>
+          <li>
+            <strong>By filter</strong> — <strong>Delete by filter…</strong> on the queue (it starts from the
+            queue&apos;s filters) or in Settings. Filters: Status (Resolved and Closed when none is chosen), last
+            activity before a date, Priority, Category, Department and Assignee. <strong>Count the tickets</strong>{" "}
+            shows how many tickets, messages and images (with their size) would go, and offers{" "}
+            <em>Export these as CSV first</em>. Open, In progress and Waiting tickets are left out unless the filter
+            names them, and then a warning shows.
+          </li>
+          <li>
+            <strong>Selected</strong> — <strong>Delete…</strong> in the bulk bar, with the same count.
+          </li>
+          <li>
+            To confirm a filter or a selection, type <code>DELETE &lt;n&gt; TICKETS</code> (for example{" "}
+            <code>DELETE 37 TICKETS</code>). The server counts again: if the number changed, nothing is deleted and you
+            are asked again. The confirmation is valid for 10 minutes and only for the person and the scope counted. A
+            ticket that leaves the scope meanwhile (its reporter reopened it) stays.
+          </li>
+          <li>
+            <strong>Delete all tickets…</strong> in Settings — two confirmations, then the typed phrase{" "}
+            <code>DELETE ALL TICKETS</code>, checked again on the server. Every ticket, open or closed.
+          </li>
+        </ul>
+        <p>
+          Every delete is recorded in Admin Logs <em>before</em> anything goes, with the scope, the counts and the ticket
+          numbers, never a title or text. Tickets are deleted in batches of 200; their images leave object storage
+          right after each batch.
+        </p>
+
+        <h3>Retention and purged users</h3>
+        <ul>
+          <li>
+            The nightly <code>ticket_retention</code> job (04:50 server time) deletes Closed tickets older than the
+            retention setting, counted from the closing date, with their images. Open tickets are never deleted by time.
+            Each run that deletes something is recorded in the Governance trail of Admin Logs (
+            <code>governance.retention.support_tickets.purged</code>).
+          </li>
+          <li>
+            The <a href="#admin-retention">Retention Policy</a> page shows the ticket window read-only; it is set here.
+          </li>
+          <li>
+            When an account is permanently deleted from <a href="#admin-deleted-users">Deleted Users</a>, its tickets
+            and their images are deleted with it.
+          </li>
+        </ul>
+
+        <h3>Reports</h3>
+        <p>
+          <a href="#admin-reports">Reports</a> has a <strong>Support tickets</strong> category, with the same metric
+          rules as the Overview and aggregates only (no titles or text):
+        </p>
+        <ul>
+          <li>
+            <strong>Ticket summary</strong> — per category: opened, resolved, closed, still open, Urgent and High,
+            auto-closed, median first reply and median resolution.
+          </li>
+          <li>
+            <strong>Tickets by department</strong> — tickets per reporter department, with the share still open.
+          </li>
+          <li>
+            <strong>Support performance</strong> — per support person: tickets handled, median first reply, median
+            resolution and open backlog.
+          </li>
+        </ul>
+
+        <h3>Admin Logs</h3>
+        <p>
+          Every staff change is in <a href="#admin-activity-logs">Admin Logs</a> (resource type <code>tickets</code>),
+          with ticket numbers, counts and the fields that changed, never a title, a message or a note:
+        </p>
+        <DocsTable>
+          <thead>
+            <tr>
+              <th>Action</th>
+              <th>Recorded when</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>
+                <code>ticket_replied</code>, <code>ticket_note_added</code>
+              </td>
+              <td>A reply or an internal note (with the status change it made)</td>
+            </tr>
+            <tr>
+              <td>
+                <code>ticket_updated</code>
+              </td>
+              <td>Status, priority or category changed</td>
+            </tr>
+            <tr>
+              <td>
+                <code>ticket_assigned</code>, <code>ticket_unassigned</code>
+              </td>
+              <td>One ticket assigned or unassigned</td>
+            </tr>
+            <tr>
+              <td>
+                <code>tickets_bulk_assign_to_me</code>, <code>tickets_bulk_assign</code>,{" "}
+                <code>tickets_bulk_close</code>
+              </td>
+              <td>A bulk action</td>
+            </tr>
+            <tr>
+              <td>
+                <code>ticket_assignment_email_failed</code>
+              </td>
+              <td>An assignment email could not be sent</td>
+            </tr>
+            <tr>
+              <td>
+                <code>tickets_exported</code>
+              </td>
+              <td>A CSV export of the queue</td>
+            </tr>
+            <tr>
+              <td>
+                <code>tickets_settings_updated</code>
+              </td>
+              <td>Settings saved (before and after)</td>
+            </tr>
+            <tr>
+              <td>
+                <code>ticket_deleted</code>, <code>tickets_deleted</code>, <code>tickets_deleted_all</code>
+              </td>
+              <td>One ticket, a filter or selection, or every ticket deleted</td>
+            </tr>
+          </tbody>
+        </DocsTable>
+
+        <Warn>
+          <p>Limits to know:</p>
+          <ul>
+            <li>Only images can be attached. A message cannot be edited or deleted on its own.</li>
+            <li>The reporter&apos;s name, email and department are a snapshot taken when the ticket is opened.</li>
+            <li>What the person does (open, reply, resolve) is in the ticket&apos;s thread, not in Admin Logs.</li>
+            <li>
+              Not part of Tickets: SLA timers, canned replies, replying by email, satisfaction ratings, merging tickets,
+              teams, Slack or Teams webhooks, and a link in the browser extension.
+            </li>
+          </ul>
+        </Warn>
       </>
     ),
   },
@@ -3448,6 +4090,10 @@ export const docSections: DocSection[] = [
           historical Activity / media, or permanently delete (single or bulk) with confirmation. Permanent
           delete removes residual account data according to cleanup services — use carefully.
         </p>
+        <p>
+          A permanent delete also deletes the support tickets the person opened, with their images (see{" "}
+          <a href="#admin-tickets">Tickets</a>).
+        </p>
       </>
     ),
   },
@@ -3850,6 +4496,10 @@ export const docSections: DocSection[] = [
             passes. The floor is 90 days because sign-in records are what an incident review asks for first. Saving
             does not purge; the nightly job does, and the change is recorded in Admin Logs.
           </li>
+          <li>
+            <strong>Support tickets</strong> — a read-only line saying after how many days closed tickets and their
+            images are deleted. The window is set in <a href="#admin-tickets">Tickets › Settings</a>.
+          </li>
         </ul>
         <h3>Why the payload window is separate</h3>
         <p>
@@ -3917,6 +4567,13 @@ export const docSections: DocSection[] = [
           <strong>media usage</strong>) require a project from the catalog dropdown. Cost is attributed from the
           chat session&apos;s project — clients cannot spoof another project&apos;s <code>project_id</code> on the
           request.
+        </p>
+        <h3>Support tickets reports</h3>
+        <p>
+          <strong>Ticket summary</strong>, <strong>Tickets by department</strong> and <strong>Support
+          performance</strong>: aggregates over a date range, never a ticket&apos;s title or text. The automatic reply
+          and internal notes are never a first reply, and auto-closed tickets are not resolved. See{" "}
+          <a href="#admin-tickets">Tickets</a>.
         </p>
         <h3>Scheduled reports</h3>
         <p>
@@ -4341,7 +4998,7 @@ export const docSections: DocSection[] = [
       <>
         <h2>User panel</h2>
         <p>
-          Employees use <code>/app</code>: Chat, Projects, Media, Activity, and the User Manual. Admins with panel
+          Employees use <code>/app</code>: Chat, Projects, Media, Activity, Support, and the User Manual. Admins with panel
           access can open the same Chat/Media experiences from the admin sidebar shortcuts, plus the full admin menus.
         </p>
         <p>
@@ -4353,6 +5010,9 @@ export const docSections: DocSection[] = [
           <li>Projects: shared workspaces, rooms vs chats, membership, resources, and project media.</li>
           <li>Media library with quota and optional personal cleanup schedule.</li>
           <li>Personal Activity with CSV/PDF export.</li>
+          <li>
+            Support: tickets to the administrators, with screenshots, answered in <a href="#admin-tickets">Tickets</a>.
+          </li>
           <li>Settings: theme, font, voice language, chat import/export, password/2FA.</li>
         </ul>
       </>
@@ -4700,6 +5360,11 @@ export const docSections: DocSection[] = [
           <li>Code Interpreter compatibility probes for due models (interval, small claimed batches)</li>
           <li>Auth directory sync schedules (when configured)</li>
           <li>Scheduled reports (checked every minute; each schedule runs at its own time)</li>
+          <li>
+            Support ticket lifecycle, <code>ticket_lifecycle</code> (every 15 minutes: auto-close, closing resolved
+            tickets after the reopen window, unassigning people who can no longer work tickets)
+          </li>
+          <li>Support ticket retention, <code>ticket_retention</code> (daily 04:50 server time)</li>
         </ul>
       </>
     ),

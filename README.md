@@ -49,6 +49,9 @@ run the same Compose stack on Linux or any other Docker-capable environment.
   lists, a library of common identifiers and keys) that block, mask or route
   what chat, files, the extension, the Gateway and the web tools send to
   models, with monitor mode, events and alerts
+- **Support tickets** — people open tickets with screenshots from **Support**;
+  staff answer them in **Admin → Tickets** (queue, assignment, internal notes,
+  auto-close, an Overview, three reports), with a built-in Support role
 - **Knowledge** — document review, ClamAV malware scan, parser sandbox, Qdrant
   indexing, and citation-backed retrieval
 
@@ -358,6 +361,33 @@ The OpenRouter adapter negotiates the wire format per model: mp3 first, `pcm`
 for models that accept nothing else (Gemini TTS), learned from a format refusal
 for models it does not know. Raw pcm is stored as WAV, so the stored MIME type
 and the reported `format` always match the bytes.
+
+### Support tickets
+
+People open tickets at `/app/support`; staff work them in **Admin → Tickets**
+(Overview, queue and Settings). The built-in **Support** role answers, assigns
+and closes tickets; settings and deletes are Super Admin only. Screenshots are
+checked, scanned by ClamAV, re-encoded as clean PNGs and stored under
+`tickets/` in object storage, outside Media quotas. The Admin Guide's Tickets
+section has the details.
+
+Operations:
+
+- Migration `d9f1b3c5e7a9` creates the ticket tables; the `db-init` service
+  (`python -m app.migrate`) applies it on start, as for every revision.
+- Ticket messages with screenshots have a request ceiling of their own:
+  108 MiB (10 images of up to 10 MB, plus the multipart margin), in the app
+  and in a dedicated location of the bundled TLS edge's nginx
+  (`api/support/tickets`, `api/support/tickets/<id>/messages` and
+  `api/admin/tickets/<id>/messages`). An edge conf rendered before that
+  location existed is rendered again. A reverse proxy of your own in front of
+  `:8080` needs the same `client_max_body_size` for those paths.
+- Two scheduler jobs: `ticket_lifecycle` every 15 minutes (auto-close, closing
+  resolved tickets after the reopen window, unassigning people who can no
+  longer work tickets) and `ticket_retention` nightly at 04:50 server time
+  (closed tickets past the retention setting).
+- Ticket emails go through the SMTP Server settings; their links use
+  `FRONTEND_URL`.
 
 ## Browser extension
 

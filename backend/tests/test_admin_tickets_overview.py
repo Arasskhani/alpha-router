@@ -405,6 +405,18 @@ class TestCharts:
         keys = ov.category_keys(["Bug", "bug!", "Label", "باگ", "???"])
         assert keys == {"Bug": "bug", "bug!": "bug_2", "Label": "label_2", "باگ": "باگ", "???": "category"}
 
+    async def test_a_category_renamed_only_in_case_keeps_its_old_tickets_apart(self, db_session, user):
+        # "Bug" was renamed "BUG": the old tickets still say "Bug" and must neither vanish nor break the overview.
+        await st.save_settings(db_session, st.TicketSettings(categories=["BUG", "Question"]))
+        await _ticket(db_session, user, at(20, 9), category="Bug")
+        await _ticket(db_session, user, at(21, 9), category="BUG")
+        await db_session.commit()
+        data = await _overview(db_session, period="week")
+        segments = {s["label"]: (s["key"], s["value"]) for s in data["by_category"]["segments"]}
+        assert segments == {"BUG": ("bug", 1), "Question": ("question", 0), "Bug": ("bug_2", 1)}
+        assert sum(row["bug"] + row["bug_2"] for row in data["by_category"]["chart"]) == 2
+        assert data["options"]["categories"] == ["BUG", "Question", "Bug"]
+
 
 class TestBuckets:
     async def test_a_day_is_hourly(self, db_session, seeded):

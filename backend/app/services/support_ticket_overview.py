@@ -225,8 +225,9 @@ async def _options(db: AsyncSession, settings: st.TicketSettings, staff: list[st
         )
     ).scalars()
     found = (await db.execute(select(SupportTicket.category).distinct())).scalars()
-    known = {c.casefold() for c in settings.categories}
-    old = sorted({str(c) for c in found if c and str(c).casefold() not in known}, key=str.casefold)
+    # Exact names: after "Bug" is renamed "BUG", tickets still filed as "Bug" are an old category of their own.
+    known = set(settings.categories)
+    old = sorted({str(c) for c in found if c and str(c) not in known}, key=lambda c: (c.casefold(), c))
     return {
         "departments": sorted({str(d) for d in departments}, key=str.casefold),
         "assignees": [{"id": s.id, "name": s.name} for s in staff],
@@ -611,8 +612,9 @@ def _by_category(data: _Data) -> dict[str, Any]:
     for t in opened:
         counts[str(t.category)] += 1
     labels = list(data.settings.categories)
-    known = {c.casefold() for c in labels}
-    old = sorted((c for c in counts if c.casefold() not in known), key=lambda c: (-counts[c], c.casefold()))
+    # Exact names, as tickets store them: an old "Bug" next to a renamed "BUG" is its own segment.
+    known = set(labels)
+    old = sorted((c for c in counts if c not in known), key=lambda c: (-counts[c], c.casefold(), c))
     labels += old
     keys = category_keys(labels)
     segments: list[dict[str, Any]] = [

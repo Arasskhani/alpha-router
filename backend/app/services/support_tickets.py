@@ -542,6 +542,11 @@ async def _count(db: AsyncSession, *conditions: Any) -> int:
     return int((await db.execute(select(func.count()).select_from(SupportTicket).where(*conditions))).scalar_one())
 
 
+def auto_reply_wanted(settings: TicketSettings) -> bool:
+    """Whether a new ticket gets the automatic reply (and, with ``email_user``, the person an email of it)."""
+    return settings.auto_reply_enabled and bool(settings.auto_reply_text.strip())
+
+
 async def precheck_create(
     db: AsyncSession,
     *,
@@ -625,7 +630,7 @@ async def create_ticket(
     await db.flush()
     ticket.number = 1000 + int(ticket.id)  # type: ignore[assignment]
     await _add_message(db, ticket, kind="user", body=description, author=user, now=now, images=images)
-    if settings.auto_reply_enabled and settings.auto_reply_text.strip():
+    if auto_reply_wanted(settings):
         await _add_message(
             db,
             ticket,
@@ -812,6 +817,9 @@ async def add_staff_message(
     if status is not None:
         await _change_status(db, ticket, staff, status, now)
     if not internal:
+        if ticket.status == "waiting":
+            # Asked again: the person gets the full auto_close_days from this reply.
+            ticket.waiting_since = now  # type: ignore[assignment]
         ticket.updated_at = now  # type: ignore[assignment]
     await db.flush()
     return message

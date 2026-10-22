@@ -286,6 +286,9 @@ async def create_ticket(
         await forget_ticket_images(stored)
         raise
     support_ticket_mail.notify_new_ticket(int(ticket.id))
+    if st.auto_reply_wanted(settings):
+        # The automatic reply is a reply like any other: emailed when ``email_user`` is on.
+        support_ticket_mail.notify_user(int(ticket.id), "reply")
     return await _detail(db, ticket, user)
 
 

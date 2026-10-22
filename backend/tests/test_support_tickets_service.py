@@ -206,6 +206,27 @@ class TestReplies:
         assert ticket.status == "waiting" and ticket.waiting_since is not None
         assert [e["to"] for e in await _events(db_session, ticket)] == ["in_progress", "waiting"]
 
+    async def test_asking_a_waiting_person_again_restarts_the_auto_close_clock(self, db_session, user, support):
+        ticket = await _open(db_session, user)
+        await st.set_status(db_session, ticket=ticket, actor=support, status="waiting")
+        old = NOW - datetime.timedelta(days=6)
+        ticket.waiting_since = old
+        await st.add_staff_message(
+            db_session, ticket=ticket, staff=support, body="Noted", internal=True, images=[], status=None
+        )
+        assert ticket.waiting_since == old  # a note is not a question to the person
+        await st.add_staff_message(
+            db_session, ticket=ticket, staff=support, body="Any news?", internal=False, images=[], status=None
+        )
+        assert ticket.status == "waiting" and ticket.waiting_since > old
+        ticket.waiting_since = old
+        await st.add_staff_message(
+            db_session, ticket=ticket, staff=support, body="Still?", internal=False, images=[], status="waiting"
+        )
+        assert ticket.waiting_since > old
+        await db_session.commit()
+        assert await st.close_waiting_tickets(db_session, now=NOW + datetime.timedelta(days=2)) == []
+
     async def test_a_note_changes_nothing_the_person_sees(self, db_session, user, support):
         ticket = await _open(db_session, user)
         await st.add_staff_message(

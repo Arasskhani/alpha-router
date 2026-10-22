@@ -298,7 +298,10 @@ async def _send_to_user(ticket_id: int, kind: UserMailKind) -> None:
         heading = f"Your ticket #{ticket.number}: {ticket.title}"
         if kind == "reply":
             message = await _latest(db, ticket_id, ("staff", "auto"))
-            subject = f"Support replied on your ticket #{ticket.number}"
+            if message is not None and message.kind == "auto":
+                subject = f"We have your ticket #{ticket.number}"
+            else:
+                subject = f"Support replied on your ticket #{ticket.number}"
             lines = [heading, "", excerpt(message.body if message else ""), "", f"Read and reply: {link}"]
         elif kind == "resolved":
             subject = f"Your ticket #{ticket.number} is resolved"

@@ -251,6 +251,7 @@ class TestThePerson:
         mail.notify_user(ticket.id, "reply")
         await mail.drain()
         assert sent and f"we have your ticket #{ticket.number}" in sent[0]["body"]
+        assert sent[0]["subject"] == f"We have your ticket #{ticket.number}"
 
 
 def test_the_excerpt_keeps_500_characters():

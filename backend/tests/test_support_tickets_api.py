@@ -253,6 +253,28 @@ class TestCreate:
         await mail.drain()
         assert [m["subject"] for m in outbox] == [f"New ticket #{detail['number']} (High): Export fails"]
 
+    @pytest.mark.parametrize(
+        ("changes", "emailed"),
+        [
+            ({"email_user": True}, True),
+            ({"email_user": True, "auto_reply_enabled": False}, False),
+            ({"email_user": False}, False),
+        ],
+    )
+    async def test_the_automatic_reply_is_emailed_to_the_person_when_that_is_on(
+        self, client, db_session, outbox, changes, emailed
+    ):
+        sara = await person(db_session, "sara", email="sara@corp.test")
+        await configure(db_session, **changes)
+        detail = (await open_ticket(client, sign_in(client, sara))).json()
+        await mail.drain()
+        mine = [m for m in outbox if m["to"] == "sara@corp.test"]
+        if emailed:
+            assert [m["subject"] for m in mine] == [f"We have your ticket #{detail['number']}"]
+            assert "We answer within one working day" in mine[0]["body"]
+        else:
+            assert mine == []
+
     async def test_without_csrf_a_multipart_post_is_refused(self, client, db_session, user):
         sign_in(client, user)
         resp = await client.post(

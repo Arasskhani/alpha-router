@@ -627,3 +627,22 @@ async def test_a_ticket_closed_while_the_images_were_checked_is_reopened_cleanly
     ticket = await fresh(db_session, tid)
     assert (ticket.status, ticket.closed_at, ticket.closed_reason, ticket.reopened_count) == ("open", None, None, 1)
     assert resp.json()["messages"][-1]["body"].startswith("Reopened by")
+
+
+@pytest.mark.parametrize("big", [2_147_483_648, 99_999_999_999_999_999_999])
+async def test_ids_out_of_range_read_as_not_found(client, db_session, user, big):
+    headers = sign_in(client, user)
+    for method, path, kwargs in (
+        ("GET", f"/tickets/{big}", {}),
+        ("POST", f"/tickets/{big}/messages", {"data": {"body": "hi"}}),
+        ("POST", f"/tickets/{big}/resolve", {}),
+        ("GET", f"/attachments/{big}", {}),
+    ):
+        resp = await client.request(method, BASE + path, headers=headers, **kwargs)
+        assert resp.status_code == 404 and resp.json()["detail"]["code"] == "not_found", (method, path)
+
+
+def test_parse_id_takes_only_whole_numbers_in_range():
+    assert [st.parse_id(v) for v in ("1", " 42 ", 7, "2147483647", "١٢")] == [1, 42, 7, 2147483647, 12]
+    for bad in ("0", "-1", "2147483648", "²", "1.0", "", None, True, 0, 2**31, "99999999999"):
+        assert st.parse_id(bad) is None, bad

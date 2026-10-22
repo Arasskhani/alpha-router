@@ -1040,3 +1040,34 @@ async def test_admin_logs_never_hold_ticket_text(client, admin, support, other_s
         "ticket_deleted",
     }
     assert all(SECRET_TEXT not in str(r.detail_json) for r in rows)
+
+
+@pytest.mark.parametrize("big", [2_147_483_648, 99_999_999_999_999_999_999])
+async def test_ids_out_of_range_are_refused_before_any_query(client, admin, reporter, db_session, big):
+    ticket = await _ticket(db_session, reporter)
+    headers = sign_in(client, admin)
+    for method, path, kwargs in (
+        ("GET", f"/{big}", {}),
+        ("PATCH", f"/{big}", {"json": {"priority": "high"}}),
+        ("POST", f"/{big}/messages", {"data": {"body": "hi"}}),
+        ("POST", f"/{big}/assign-to-me", {}),
+        ("DELETE", f"/{big}", {}),
+    ):
+        resp = await client.request(method, BASE + path, headers=headers, **kwargs)
+        assert resp.status_code == 404, (method, path, resp.text)
+    for path, body in (
+        ("/bulk", {"ids": [big], "action": "close"}),
+        ("/bulk", {"ids": [ticket.id], "action": "assign", "assignee_id": big}),
+        (f"/{ticket.id}/assign", {"assignee_id": big}),
+        ("/delete-preview", {"ids": [big]}),
+        ("/delete-preview", {"filter": {"assignee": big}}),
+        ("/delete-preview", {"filter": {"assignee": str(big)}}),
+    ):
+        resp = await client.post(BASE + path, json=body, headers=headers)
+        assert resp.status_code == 422, (path, body, resp.text)
+    for query in (f"assignee={big}", "assignee=%C2%B2", "assignee=0", "assignee=-1", f"page={big}"):
+        assert (await client.get(f"{BASE}?{query}", headers=headers)).status_code == 422, query
+        if query.startswith("assignee"):
+            assert (await client.get(f"{BASE}/overview?{query}", headers=headers)).status_code == 422, query
+    assert (await client.get(f"{BASE}?assignee={admin.id}", headers=headers)).status_code == 200
+    assert (await client.get(f"{BASE}/overview?assignee={admin.id}", headers=headers)).status_code == 200

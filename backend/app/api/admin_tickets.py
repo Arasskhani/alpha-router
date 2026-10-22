@@ -27,7 +27,7 @@ import json
 import re
 import time
 from collections.abc import Sequence
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
@@ -52,6 +52,8 @@ router = APIRouter(prefix="/api/admin/tickets", tags=["tickets"])
 
 VIEWS = ("needs_staff", "mine", "unassigned", "active", "closed", "all")
 PAGE_SIZE_MAX = 100
+#: Far past any real queue; keeps the offset a number every database takes.
+PAGE_MAX = 100_000
 EXPORT_ROWS = 50_000
 BULK_MAX = 200
 #: Ticket ids one delete may name (the queue selects at most a page).
@@ -109,6 +111,8 @@ async def _audit(db: AsyncSession, request: Request, actor: User, action: str, r
 async def _ticket(db: AsyncSession, ticket_id: int, *, lock: bool = False) -> SupportTicket:
     """The ticket, or 404. ``lock`` reads it afresh and locks the row (PostgreSQL) for a change that depends on
     its status, so the scheduled close and a person's reply cannot cross it."""
+    if st.parse_id(ticket_id) is None:
+        raise _refuse("not_found", "Ticket not found.", 404)
     ticket = await db.get(SupportTicket, ticket_id, with_for_update=lock or None, populate_existing=lock)
     if ticket is None:
         raise _refuse("not_found", "Ticket not found.", 404)
@@ -150,9 +154,10 @@ def _assignee_condition(raw: str | int | None) -> Any | None:
         return None
     if value == "none":
         return SupportTicket.assignee_id.is_(None)
-    if not value.isdigit():
+    user_id = st.parse_id(value)
+    if user_id is None:
         raise _bad_filter("assignee must be a user id or none.")
-    return SupportTicket.assignee_id == int(value)
+    return SupportTicket.assignee_id == user_id
 
 
 def _before_condition(raw: str | None) -> Any | None:
@@ -336,7 +341,7 @@ async def list_tickets(
     department: str | None = None,
     assignee: str | None = None,
     status: str | None = None,
-    page: int = Query(1, ge=1),
+    page: int = Query(1, ge=1, le=PAGE_MAX),
     page_size: int = Query(50, ge=1, le=PAGE_SIZE_MAX),
     db: AsyncSession = Depends(get_db),
     viewer: User = Depends(require_tickets),
@@ -536,10 +541,14 @@ async def put_ticket_settings(
 # --- bulk and deleting (fixed paths, before the ticket routes) ---------------------------------------------------
 
 
+#: A row id in a request body: 1..2147483647, so a larger number is a 422, never a database error.
+RowId = Annotated[int, Field(ge=1, le=st.MAX_ID)]
+
+
 class BulkIn(BaseModel):
-    ids: list[int] = Field(min_length=1, max_length=BULK_MAX)
+    ids: list[RowId] = Field(min_length=1, max_length=BULK_MAX)
     action: Literal["assign_to_me", "assign", "close"]
-    assignee_id: int | None = None
+    assignee_id: RowId | None = None
 
 
 async def _assignee_user(db: AsyncSession, assignee_id: int) -> User:
@@ -625,7 +634,7 @@ class DeleteFilterIn(BaseModel):
 
 
 class DeleteScopeIn(BaseModel):
-    ids: list[int] | None = Field(None, max_length=DELETE_IDS_MAX)
+    ids: list[RowId] | None = Field(None, max_length=DELETE_IDS_MAX)
     filter: DeleteFilterIn | None = None
 
 
@@ -1003,7 +1012,7 @@ async def add_message(
 
 
 class AssignIn(BaseModel):
-    assignee_id: int | None = None
+    assignee_id: RowId | None = None
 
 
 async def _assign(

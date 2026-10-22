@@ -87,6 +87,8 @@ def _reporter(user: User) -> dict[str, Any]:
 
 
 async def _own_ticket(db: AsyncSession, ticket_id: int, user: User) -> SupportTicket:
+    if st.parse_id(ticket_id) is None:
+        raise _not_found()
     ticket = await db.get(SupportTicket, ticket_id)
     # Someone else's ticket is "not found", never "forbidden": its existence is not theirs to learn.
     if ticket is None or int(ticket.user_id) != int(user.id):
@@ -367,6 +369,8 @@ async def get_attachment(
     Anyone else gets 404, as if it did not exist. Staff still see images while
     Support is switched off: their queue keeps working.
     """
+    if st.parse_id(attachment_id) is None:
+        raise _refuse("not_found", "Image not found.", 404)
     row = (
         await db.execute(
             select(SupportTicketAttachment, SupportTicketMessage.kind, SupportTicket.user_id)

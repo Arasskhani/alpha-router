@@ -107,6 +107,29 @@ _JOB_BATCH = 200
 _IN_CHUNK = 500
 
 
+#: The largest id a row can have (PostgreSQL ``integer``); anything larger is refused before it reaches a query.
+MAX_ID = 2_147_483_647
+
+
+def parse_id(value: Any) -> int | None:
+    """A row id typed as text or a number, or None when it is not a whole number from 1 to ``MAX_ID``.
+
+    ``str.isdecimal`` and a length cap, never ``isdigit`` (which takes "²",
+    that ``int()`` refuses): an id out of range must be a clean refusal, not a
+    database error.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        number = value
+    else:
+        text = str(value if value is not None else "").strip()
+        if not text.isdecimal() or len(text) > len(str(MAX_ID)):
+            return None
+        number = int(text)
+    return number if 1 <= number <= MAX_ID else None
+
+
 class TicketError(Exception):
     """A request the rules refuse. The APIs answer ``HTTPException(status_code, {"code", "message", **extra})``."""
 

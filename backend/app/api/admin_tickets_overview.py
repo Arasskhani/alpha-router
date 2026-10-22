@@ -7,7 +7,7 @@ whose ``/{ticket_id}`` paths would otherwise see ``/overview``.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,14 +26,23 @@ _STATUS_PATTERN = f"^({'|'.join(st.STATUSES)})?$"
 
 
 def overview_filters(
-    assignee: str | None = Query(None, pattern=r"^(none|[1-9]\d{0,9})?$"),
+    assignee: str | None = Query(None, max_length=10),
     department: str | None = Query(None, max_length=255),
     priority: str | None = Query(None, pattern=_PRIORITY_PATTERN),
     category: str | None = Query(None, max_length=st.CATEGORY_MAX),
     status: str | None = Query(None, pattern=_STATUS_PATTERN),
 ) -> OverviewFilters:
+    wanted = (assignee or "").strip()
+    if wanted and wanted != "none":
+        user_id = st.parse_id(wanted)
+        if user_id is None:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "invalid_filter", "message": "assignee must be a user id or none."},
+            )
+        wanted = str(user_id)
     return OverviewFilters(
-        assignee=assignee or None,
+        assignee=wanted or None,
         department=(department or "").strip() or None,
         priority=priority or None,
         category=(category or "").strip() or None,

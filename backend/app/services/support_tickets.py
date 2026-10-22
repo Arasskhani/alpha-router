@@ -311,6 +311,11 @@ def validate_settings(data: dict[str, Any]) -> TicketSettings:
         values[key] = value
     for key in SETTING_BOUNDS:
         values[key] = _strict_int(data, key, getattr(defaults, key))
+    if values["retention_days"] and values["retention_days"] < values["reopen_days"]:
+        raise _invalid(
+            f"Keep closed tickets at least {values['reopen_days']} days (the reopen window), "
+            "or set retention to 0 to keep them forever."
+        )
     values["notify_emails"] = _strict_emails(data.get("notify_emails", []))
     priority = data.get("notify_min_priority", defaults.notify_min_priority)
     if priority not in PRIORITIES:
@@ -1063,13 +1068,18 @@ async def close_resolved_tickets(db: AsyncSession, *, now: datetime.datetime | N
 
 
 async def purge_closed_tickets(db: AsyncSession, *, now: datetime.datetime | None = None) -> dict[str, int]:
-    """Delete closed tickets older than ``retention_days`` (0 keeps them), with their images; commits in batches."""
+    """Delete closed tickets older than ``retention_days`` (0 keeps them), with their images; commits in batches.
+
+    Never one the person may still reopen: the cutoff is the longer of the
+    retention period and the reopen window.
+    """
     now = now or _now()
-    days = (await load_settings(db)).retention_days
+    settings = await load_settings(db)
+    days = settings.retention_days
     totals = {"deleted": 0, "messages": 0, "images": 0, "image_bytes": 0, "retention_days": days}
     if days <= 0:
         return totals
-    cutoff = now - datetime.timedelta(days=days)
+    cutoff = now - datetime.timedelta(days=max(days, settings.reopen_days))
     still_due = (SupportTicket.status == "closed", SupportTicket.closed_at < cutoff)
     while True:
         ids = (

@@ -550,6 +550,29 @@ class TestJobs:
         assert await db_session.get(SupportTicket, old_id) is None
         assert await db_session.get(SupportTicket, kept.id) is not None
 
+    async def test_a_ticket_the_person_may_still_reopen_is_never_purged(self, db_session, user, support):
+        # Saved before the rule existed: 5 days of retention with a 14-day reopen window.
+        db_session.add(SystemSetting(key=st.SETTINGS_KEY, value=json.dumps({"retention_days": 5, "reopen_days": 14})))
+        reopenable = await _open(db_session, user)
+        gone = await _open(db_session, user)
+        for ticket in (reopenable, gone):
+            await st.set_status(db_session, ticket=ticket, actor=support, status="closed")
+        reopenable.closed_at = NOW - datetime.timedelta(days=10)
+        gone.closed_at = NOW - datetime.timedelta(days=15)
+        gone_id = gone.id
+        await db_session.commit()
+        assert (await st.purge_closed_tickets(db_session, now=NOW))["deleted"] == 1
+        assert await db_session.get(SupportTicket, gone_id) is None
+        assert await db_session.get(SupportTicket, reopenable.id) is not None
+
+    def test_retention_shorter_than_the_reopen_window_is_refused(self):
+        with pytest.raises(st.TicketError) as refused:
+            st.validate_settings({"retention_days": 10, "reopen_days": 14})
+        assert refused.value.code == "invalid_settings" and refused.value.status_code == 422
+        assert "at least 14 days" in refused.value.message
+        assert st.validate_settings({"retention_days": 14, "reopen_days": 14}).retention_days == 14
+        assert st.validate_settings({"retention_days": 0, "reopen_days": 90}).retention_days == 0
+
     async def test_zero_retention_keeps_everything(self, db_session, user, support):
         db_session.add(SystemSetting(key=st.SETTINGS_KEY, value=json.dumps({"retention_days": 0})))
         ticket = await _open(db_session, user)

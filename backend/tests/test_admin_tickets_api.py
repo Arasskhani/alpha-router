@@ -764,6 +764,7 @@ class TestSettings:
             {"image_types": ["png", "svg"]},
             {"notify_emails": ["not an address"]},
             {"auto_reply_enabled": True, "auto_reply_text": "  "},
+            {"retention_days": 7},  # shorter than the 14-day reopen window
         ],
     )
     async def test_settings_outside_the_rules_are_refused(self, client, admin, db_session, change):

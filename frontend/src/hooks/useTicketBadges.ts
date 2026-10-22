@@ -31,6 +31,10 @@ const listeners = new Set<() => void>();
 const wanted: Record<TicketBadgeKey, number> = { support: 0, tickets: 0 };
 let timer: number | null = null;
 let inFlight = false;
+/** Something changed while a refresh was in flight: ask again once it is done. */
+let dirty = false;
+/** Bumped by stop(): a refresh started before it must not fill the store again. */
+let generation = 0;
 
 function emit(next: TicketBadges) {
   if (
@@ -44,31 +48,44 @@ function emit(next: TicketBadges) {
   for (const listener of listeners) listener();
 }
 
+async function readCounts(): Promise<TicketBadges> {
+  const next = { ...state };
+  if (wanted.support > 0) {
+    try {
+      next.support = (await ticketsRequest<{ count: number }>(`${SUPPORT_BASE}/unread`)).count ?? 0;
+    } catch {
+      next.support = 0;
+    }
+  }
+  if (wanted.tickets > 0) {
+    try {
+      const counts = await ticketsRequest<StaffCounts>(`${TICKETS_BASE}/counts`);
+      next.tickets = counts.needs_staff ?? 0;
+      next.ticketsUrgent = (counts.needs_staff_urgent ?? 0) > 0;
+    } catch {
+      next.tickets = 0;
+      next.ticketsUrgent = false;
+    }
+  }
+  return next;
+}
+
 async function refresh(): Promise<void> {
-  if (inFlight) return;
+  if (inFlight) {
+    dirty = true;
+    return;
+  }
   inFlight = true;
+  const mine = generation;
   try {
-    const next = { ...state };
-    if (wanted.support > 0) {
-      try {
-        next.support = (await ticketsRequest<{ count: number }>(`${SUPPORT_BASE}/unread`)).count ?? 0;
-      } catch {
-        next.support = 0;
-      }
-    }
-    if (wanted.tickets > 0) {
-      try {
-        const counts = await ticketsRequest<StaffCounts>(`${TICKETS_BASE}/counts`);
-        next.tickets = counts.needs_staff ?? 0;
-        next.ticketsUrgent = (counts.needs_staff_urgent ?? 0) > 0;
-      } catch {
-        next.tickets = 0;
-        next.ticketsUrgent = false;
-      }
-    }
-    emit(next);
+    do {
+      dirty = false;
+      const next = await readCounts();
+      if (mine !== generation) return;
+      emit(next);
+    } while (dirty);
   } finally {
-    inFlight = false;
+    if (mine === generation) inFlight = false;
   }
 }
 
@@ -76,11 +93,21 @@ function onWake() {
   void refresh();
 }
 
+/** The minute's poll: skipped while the tab is hidden, made up when it shows again. */
+function onTick() {
+  if (!document.hidden) void refresh();
+}
+
+function onVisibility() {
+  if (!document.hidden) void refresh();
+}
+
 function start() {
   if (timer !== null) return;
-  timer = window.setInterval(onWake, POLL_MS);
+  timer = window.setInterval(onTick, POLL_MS);
   window.addEventListener("focus", onWake);
   window.addEventListener(TICKETS_CHANGED_EVENT, onWake);
+  document.addEventListener("visibilitychange", onVisibility);
 }
 
 function stop() {
@@ -89,6 +116,11 @@ function stop() {
   timer = null;
   window.removeEventListener("focus", onWake);
   window.removeEventListener(TICKETS_CHANGED_EVENT, onWake);
+  document.removeEventListener("visibilitychange", onVisibility);
+  generation += 1;
+  inFlight = false;
+  dirty = false;
+  emit(EMPTY);
 }
 
 function subscribe(listener: () => void) {
@@ -115,10 +147,7 @@ export function useTicketBadges(keys: TicketBadgeKey[]): TicketBadges {
     return () => {
       if (support) wanted.support -= 1;
       if (tickets) wanted.tickets -= 1;
-      if (wanted.support <= 0 && wanted.tickets <= 0) {
-        stop();
-        state = EMPTY;
-      }
+      if (wanted.support <= 0 && wanted.tickets <= 0) stop();
     };
   }, [support, tickets]);
   return useSyncExternalStore(subscribe, snapshot, snapshot);

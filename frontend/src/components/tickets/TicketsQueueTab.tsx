@@ -441,7 +441,10 @@ export default function TicketsQueueTab({ meta, settings, canWrite, isSuperAdmin
             <button
               type="button"
               className="btn btn-ghost btn-sm tickets-danger-ghost"
-              onClick={() => setDeleteTarget({ kind: "ids", ids: [...selected] })}
+              onClick={() => {
+                const ids = items.filter((t) => selected.has(t.id));
+                setDeleteTarget({ kind: "ids", ids: ids.map((t) => t.id), numbers: ids.map((t) => t.number) });
+              }}
             >
               Delete…
             </button>

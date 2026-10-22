@@ -267,7 +267,8 @@ describe("the queue", () => {
     await act(async () => button("Delete…", host.querySelector(".tickets-bulkbar")!).click());
     await settle();
     expect(calls.find((c) => c.url.endsWith("/delete-preview"))!.body).toEqual({ ids: [47] });
-    expect(document.querySelector(".tickets-modal")!.textContent).toContain("Delete 1 selected tickets");
+    expect(document.querySelector(".tickets-modal")!.textContent).toContain("Delete the selected ticket");
+    expect(document.querySelector(".tickets-filter-summary")!.textContent).toBe("Selected#1047");
   });
 });
 

@@ -22,7 +22,10 @@ import { cleanDeleteFilter, deleteFilterExportQuery, downloadCsv } from "../../l
 
 type Confirmer = ReturnType<typeof useConfirm>;
 
-export type DeleteTarget = { kind: "filter"; filter: DeleteFilter } | { kind: "ids"; ids: number[] };
+export type DeleteTarget =
+  | { kind: "filter"; filter: DeleteFilter }
+  /** `numbers` are the ticket numbers people know (#1042), in the order of `ids`. */
+  | { kind: "ids"; ids: number[]; numbers: number[] };
 
 type Options = { categories: string[]; departments: string[]; assignees: { id: number; name: string }[] };
 
@@ -163,7 +166,11 @@ export default function DeleteTicketsDialog({ target, options, onClose, onDelete
   if (!target) return null;
   const isFilter = target.kind === "filter";
   const statuses = filter.statuses ?? [];
-  const title = isFilter ? "Delete tickets matching this filter" : `Delete ${target.ids.length} selected tickets`;
+  const title = isFilter
+    ? "Delete tickets matching this filter"
+    : target.ids.length === 1
+      ? "Delete the selected ticket"
+      : `Delete ${target.ids.length} selected tickets`;
 
   return (
     <Modal open title={title} onClose={onClose} panelClassName="tickets-modal">
@@ -300,7 +307,11 @@ export default function DeleteTicketsDialog({ target, options, onClose, onDelete
                 ) : (
                   <div>
                     <span className="muted-text">Selected</span>
-                    <b>{target.ids.length > 6 ? `${target.ids.length} tickets` : target.ids.map((n) => `#${n}`).join(", ")}</b>
+                    <b>
+                      {target.numbers.length > 6
+                        ? `${target.numbers.length} tickets`
+                        : target.numbers.map((n) => ticketNumber(n)).join(", ")}
+                    </b>
                   </div>
                 )}
               </div>

@@ -1368,17 +1368,44 @@ def _filter_lines(filters: dict | None) -> list[str]:
     return lines
 
 
+#: A text cell beginning with one of these is run as a formula by spreadsheet programs (CSV injection).
+_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _formula_safe(value: Any) -> Any:
+    """Text that a spreadsheet would run as a formula, written as text (a leading ``'``); numbers untouched."""
+    if isinstance(value, str) and value.startswith(_FORMULA_PREFIXES):
+        return "'" + value
+    return value
+
+
+def spreadsheet_safe(df: pd.DataFrame) -> pd.DataFrame:
+    """A copy of ``df`` whose text cells and headers cannot run as formulas in Excel, LibreOffice or Sheets.
+
+    Report rows carry text people typed (names, titles, departments,
+    categories); without this a value like ``=HYPERLINK(...)`` would run when
+    the CSV or XLSX is opened.
+    """
+    out = df.copy()
+    for column in out.columns:
+        series = out[column]
+        if series.dtype == object or isinstance(series.dtype, pd.StringDtype):
+            out[column] = series.map(_formula_safe)
+    out.columns = [_formula_safe(c) for c in out.columns]
+    return out
+
+
 def export_dataframe(df: pd.DataFrame, fmt: str, report_type: str = "report") -> tuple[bytes, str, str]:
     if df.empty:
         df = pd.DataFrame([{"message": "No data in selected range"}])
     safe_name = report_type.replace("/", "-")[:64]
     if fmt == "csv":
         buf = io.StringIO()
-        df.to_csv(buf, index=False)
+        spreadsheet_safe(df).to_csv(buf, index=False)
         return buf.getvalue().encode("utf-8"), "text/csv", f"{safe_name}.csv"
     if fmt == "xls" or fmt == "xlsx":
         buf = io.BytesIO()
-        df.to_excel(buf, index=False, engine="openpyxl")
+        spreadsheet_safe(df).to_excel(buf, index=False, engine="openpyxl")
         return buf.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", f"{safe_name}.xlsx"
     from reportlab.lib.pagesizes import letter
     from reportlab.platypus import SimpleDocTemplate, Table, TableStyle

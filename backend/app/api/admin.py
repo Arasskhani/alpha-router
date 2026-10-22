@@ -4051,6 +4051,11 @@ async def get_storage_overview(db: AsyncSession = Depends(get_db), _: User = Dep
     # Sign-in history: the fifth. One window, no redaction — see the service.
     stats["sign_in_activity"] = await get_auth_event_retention(db)
 
+    from app.services.support_tickets import load_settings as load_ticket_settings
+
+    # Closed support tickets: shown here, set in Admin › Tickets › Settings (0 keeps them).
+    stats["tickets"] = {"retention_days": (await load_ticket_settings(db)).retention_days}
+
     from app.services.upload_file_policy import load_policy
 
     # Which file types may enter the platform. Read past the per-process cache:

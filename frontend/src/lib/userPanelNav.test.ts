@@ -30,8 +30,15 @@ describe("topbar admin shortcut", () => {
       "Projects",
       "Media",
       "Activity",
+      "Support",
       "User Manual",
     ]);
+  });
+
+  it("leaves Support out when Tickets is switched off", () => {
+    const shortcuts = topbarShortcutsForSession(session({ features: { support: false } }));
+
+    expect(shortcuts.map((item) => item.label)).not.toContain("Support");
   });
 
   it("places Administration after User Manual as the final shortcut for a full admin", () => {
@@ -50,6 +57,7 @@ describe("topbar admin shortcut", () => {
       "Projects",
       "Media",
       "Activity",
+      "Support",
       "User Manual",
       "Administration",
     ]);

@@ -20223,3 +20223,37 @@ p.error,
   margin-top: 0.4rem;
   font-size: 0.8125rem;
 }
+
+/* Count badge at the end of a menu item (Support, Tickets): 9+ above nine, red when a waiting ticket is Urgent. */
+.nav-count-badge {
+  margin-left: auto;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  box-sizing: border-box;
+  border-radius: 999px;
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.nav-count-badge--urgent {
+  background: #ef4444;
+  color: #fff;
+}
+
+/* === Support (user) === */
+
+/*
+ * The person's Support pages (list, new ticket, conversation) above; the staff
+ * Tickets pages (Overview, the queue, Settings) below. Each group keeps to its
+ * own marker so the two can change without touching each other.
+ */
+
+/* === Tickets (admin) === */

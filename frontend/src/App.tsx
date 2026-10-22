@@ -64,6 +64,8 @@ const AgentActivity = lazy(() => import("./pages/admin/AgentActivity"));
 const AgentUsageActivity = lazy(() => import("./pages/admin/AgentUsageActivity"));
 const SecuritySettings = lazy(() => import("./pages/admin/SecuritySettings"));
 const Guardrails = lazy(() => import("./pages/admin/Guardrails"));
+const Tickets = lazy(() => import("./pages/admin/Tickets"));
+const Support = lazy(() => import("./pages/user/Support"));
 const ExtensionConnect = lazy(() => import("./pages/ExtensionConnect"));
 
 
@@ -154,6 +156,9 @@ export default function App() {
         <Route path="agent-activity" element={<AgentActivity />} />
         <Route path="security-settings" element={<SecuritySettings />} />
         <Route path="guardrails" element={<Guardrails />} />
+        <Route path="tickets" element={<Tickets />} />
+        <Route path="tickets/list" element={<Tickets />} />
+        <Route path="tickets/settings" element={<Tickets />} />
         <Route path="docs" element={<Docs />} />
       </Route>
       <Route
@@ -181,6 +186,8 @@ export default function App() {
         />
         <Route path="media" element={<MediaLibrary />} />
         <Route path="my-activity" element={<MyActivity />} />
+        <Route path="support" element={<Support />} />
+        <Route path="support/:ticketId" element={<Support />} />
         <Route path="manual" element={<UserManual />} />
       </Route>
           <Route path="*" element={<Navigate to="/login" replace />} />

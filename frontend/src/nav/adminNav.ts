@@ -11,6 +11,7 @@ export const adminNavSections: NavSection[] = [
       { to: "/app/projects", label: "Projects", icon: "projects" },
       { to: "/app/media", label: "Media", icon: "media" },
       { to: "/app/my-activity", label: MY_USAGE_AND_ACTIVITY_LABEL, icon: "activity" },
+      { to: "/app/support", label: "Support", icon: "folder", badge: "support", matchPrefix: true },
       { to: "/app/manual", label: "User Manual", icon: "manual" },
     ],
   },
@@ -21,6 +22,7 @@ export const adminNavSections: NavSection[] = [
       { to: "/admin", label: "Dashboard", menuKey: "dashboard" },
       { to: "/admin/operations", label: "Operations", menuKey: "operations" },
       { to: "/admin/database", label: "Database", menuKey: "database" },
+      { to: "/admin/tickets", label: "Tickets", menuKey: "tickets", badge: "tickets", matchPrefix: true },
     ],
   },
   {

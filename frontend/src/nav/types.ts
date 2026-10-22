@@ -61,7 +61,9 @@ export type MenuKey =
 
   | "security_settings"
 
-  | "guardrails";
+  | "guardrails"
+
+  | "tickets";
 
 export type NavIconKey = "chat" | "media" | "activity" | "manual" | "admin" | "folder" | "projects";
 
@@ -71,7 +73,14 @@ export type NavItem = {
   menuKey?: MenuKey;
   /** Optional leading outline icon (user panel / topbar). */
   icon?: NavIconKey;
+  /** A count drawn at the end of the item (see useTicketBadges). */
+  badge?: TicketBadgeKey;
+  /** Also active on the pages below this one (`/app/support/1042`). */
+  matchPrefix?: boolean;
 };
+
+/** Support: the person's tickets with an unread reply. Tickets: tickets waiting for staff. */
+export type TicketBadgeKey = "support" | "tickets";
 
 export type NavSection = {
 

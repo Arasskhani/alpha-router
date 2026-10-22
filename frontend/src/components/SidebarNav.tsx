@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { NavIcon } from "./icons/navIcons";
-import { isNavGrouped, type NavItem, type NavSection } from "../nav/types";
+import { isNavGrouped, type NavItem, type NavSection, type TicketBadgeKey } from "../nav/types";
 import { STORAGE_KEYS } from "../lib/brand";
+import { badgeText, useTicketBadges, type TicketBadges } from "../hooks/useTicketBadges";
 
 type Props = {
   nav: NavItem[] | NavSection[];
@@ -11,16 +12,42 @@ type Props = {
   onNavigate?: () => void;
 };
 
+/** What a screen reader hears after the item's name. */
+const BADGE_WORDS: Record<TicketBadgeKey, (count: number) => string> = {
+  support: (n) => `${n} ${n === 1 ? "ticket" : "tickets"} with a new reply`,
+  tickets: (n) => `${n} ${n === 1 ? "ticket waits" : "tickets wait"} for staff`,
+};
+
+export function NavBadge({ item, badges }: { item: NavItem; badges: TicketBadges }) {
+  if (!item.badge) return null;
+  const count = item.badge === "support" ? badges.support : badges.tickets;
+  if (count <= 0) return null;
+  const urgent = item.badge === "tickets" && badges.ticketsUrgent;
+  return (
+    <span className={`nav-count-badge${urgent ? " nav-count-badge--urgent" : ""}`}>
+      <span aria-hidden="true">{badgeText(count)}</span>
+      <span className="sr-only">, {BADGE_WORDS[item.badge](count)}</span>
+    </span>
+  );
+}
+
+/** The badge keys a menu draws, for useTicketBadges. */
+export function navBadgeKeys(items: NavItem[]): TicketBadgeKey[] {
+  return [...new Set(items.flatMap((item) => (item.badge ? [item.badge] : [])))];
+}
+
 function NavLink({
   item,
   active,
   className,
   onNavigate,
+  badges,
 }: {
   item: NavItem;
   active: boolean;
   className?: string;
   onNavigate?: () => void;
+  badges: TicketBadges;
 }) {
   return (
     <Link
@@ -30,6 +57,7 @@ function NavLink({
     >
       {item.icon ? <NavIcon name={item.icon} /> : null}
       <span className="sidebar-nav-label">{item.label}</span>
+      <NavBadge item={item} badges={badges} />
     </Link>
   );
 }
@@ -60,12 +88,15 @@ export default function SidebarNav({ nav, className = "", linkClassName, onNavig
   const [openSections, setOpenSections] = useState<Record<string, boolean>>(() => loadOpenSections());
   const userClosedRef = useRef<Set<string>>(new Set());
 
+  const grouped = isNavGrouped(nav);
+  const allItems: NavItem[] = grouped ? nav.flatMap((section) => section.items) : nav;
+  const prefixMatched = new Set(allItems.filter((item) => item.matchPrefix).map((item) => item.to));
+  const badges = useTicketBadges(navBadgeKeys(allItems));
+
   const isActive = (to: string) => {
     const target = to.replace(/\/$/, "") || "/";
-    return pathname === target;
+    return pathname === target || (prefixMatched.has(to) && pathname.startsWith(`${target}/`));
   };
-
-  const grouped = isNavGrouped(nav);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.adminSidebarOpenSections, JSON.stringify(openSections));
@@ -115,6 +146,7 @@ export default function SidebarNav({ nav, className = "", linkClassName, onNavig
             active={isActive(n.to)}
             className={linkClassName}
             onNavigate={onNavigate}
+            badges={badges}
           />
         ))}
       </nav>
@@ -159,6 +191,7 @@ export default function SidebarNav({ nav, className = "", linkClassName, onNavig
                     active={isActive(n.to)}
                     className={linkClassName}
                     onNavigate={onNavigate}
+                    badges={badges}
                   />
                 ))}
               </div>

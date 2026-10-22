@@ -32,6 +32,7 @@ export type SessionRbac = {
     project_create?: boolean;
     api_keys?: boolean;
     extension?: boolean;
+    support?: boolean;
   } | null;
 };
 
@@ -61,6 +62,8 @@ const LEGACY_READ_ONLY_ADMIN = "read_only_administrator";
 const USER = "user";
 const LEGACY_ADMIN = "admin";
 const READ_ONLY_SUPER_ADMIN = "read_only_super_admin";
+/** The Support role: works the Tickets menu and nothing else (backend ``SUPPORT_SLUG``). */
+const SUPPORT_ROLE = "support_agent";
 
 /**
  * Roles that answer for the whole platform rather than naming one menu.
@@ -146,6 +149,7 @@ const MENU_PATH_PREFIXES: Record<MenuKey, string[]> = {
   user_manual: ["/admin/manual"],
   security_settings: ["/admin/security-settings"],
   guardrails: ["/admin/guardrails"],
+  tickets: ["/admin/tickets"],
 };
 
 const MENU_TO_CATEGORY: Record<MenuKey, CategoryKey> = {
@@ -175,6 +179,7 @@ const MENU_TO_CATEGORY: Record<MenuKey, CategoryKey> = {
   user_manual: "developer",
   security_settings: "security",
   guardrails: "security",
+  tickets: "overview",
 };
 
 function pathMatchesMenu(path: string, menu: MenuKey): boolean {
@@ -212,6 +217,7 @@ function accessibleMenuKeys(role: string | undefined | null): MenuKey[] | null {
   const slug = normalizeRole(role);
   if (GLOBAL_ROLES.has(slug)) return null;
   if (AGENT_PLATFORM_ROLES.has(slug)) return ["agents"];
+  if (slug === SUPPORT_ROLE) return ["tickets"];
   const match = slug.match(
     /^([a-z_]+)_(full|read_only)_administrator$/,
   );

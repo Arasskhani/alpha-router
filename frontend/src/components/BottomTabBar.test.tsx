@@ -147,19 +147,21 @@ describe("the bottom tab bar", () => {
     expect(moreButton()?.getAttribute("aria-expanded")).toBe("true");
     expect(sheet()?.getAttribute("aria-modal")).toBe("true");
     const items = [...sheet()!.querySelectorAll("a")].map((a) => a.textContent);
-    expect(items).toEqual(["User Manual", "Administration"]);
+    expect(items).toEqual(["Support", "User Manual", "Administration"]);
     expect(document.activeElement).toBe(sheet()!.querySelector("a"));
 
     // Tab goes round the sheet, both ways, and does not leave it.
-    const [manual, admin] = [...sheet()!.querySelectorAll("a")];
+    const [support, manual, admin] = [...sheet()!.querySelectorAll("a")];
     const key = (init: KeyboardEventInit) =>
       act(async () => {
         document.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }));
       });
     await key({ key: "Tab" });
+    expect(document.activeElement).toBe(manual);
+    await key({ key: "Tab" });
     expect(document.activeElement).toBe(admin);
     await key({ key: "Tab" });
-    expect(document.activeElement).toBe(manual);
+    expect(document.activeElement).toBe(support);
     await key({ key: "Tab", shiftKey: true });
     expect(document.activeElement).toBe(admin);
 

@@ -29,10 +29,18 @@ const sources = import.meta.glob("../**/*.{ts,tsx}", {
   eager: true,
 }) as Record<string, string>;
 
+/** The /admin route tree's part of App.tsx: from its `<Route path="/admin">` to the `/app` one after it. */
+function adminRouteTree(): string {
+  const app = sources["../App.tsx"] ?? "";
+  const start = app.indexOf('path="/admin"');
+  const end = app.indexOf('path="/app"', start);
+  return start < 0 ? "" : app.slice(start, end < 0 ? undefined : end);
+}
+
 /** Concrete (non-parameterised) paths declared under the /admin route tree. */
 function declaredAdminRoutes(): string[] {
   const routes = new Set<string>();
-  for (const match of (sources["../App.tsx"] ?? "").matchAll(/<Route\s+path="([^"]+)"/g)) {
+  for (const match of adminRouteTree().matchAll(/<Route\s+path="([^"]+)"/g)) {
     const raw = match[1];
     if (raw.startsWith("/") || raw === "*") continue;
     routes.add(`/admin/${raw}`);

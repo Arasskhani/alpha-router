@@ -13,6 +13,7 @@ const USER_SIDEBAR_NAV: NavItem[] = [
   { to: "/app/projects", label: "Projects", icon: "projects" },
   { to: "/app/media", label: "Media", icon: "media" },
   { to: "/app/my-activity", label: MY_USAGE_AND_ACTIVITY_LABEL, icon: "activity" },
+  { to: "/app/support", label: "Support", icon: "folder", badge: "support", matchPrefix: true },
   { to: "/app/manual", label: "User Manual", icon: "manual" },
 ];
 
@@ -38,12 +39,21 @@ export function sectionEnabled(session: SectionSession, section: GovernedFeature
   return features?.[section] !== false;
 }
 
+const SUPPORT_PATH = "/app/support";
+
+/** Whether Tickets is on (`/api/auth/session.features.support`); missing means on, for an older server. */
+function supportEnabled(session: SectionSession): boolean {
+  const features = (session as { features?: Record<string, unknown> | null } | null | undefined)?.features;
+  return features?.support !== false;
+}
+
 /** The user sidebar without the sections Feature Access closed for this account. */
 export function userSidebarNavForSession(session: SectionSession): NavItem[] {
-  return USER_SIDEBAR_NAV.filter((item) =>
-    (Object.keys(SECTION_PATHS) as WebSection[]).every(
-      (section) => SECTION_PATHS[section] !== item.to || sectionEnabled(session, section),
-    ),
+  return USER_SIDEBAR_NAV.filter(
+    (item) =>
+      (Object.keys(SECTION_PATHS) as WebSection[]).every(
+        (section) => SECTION_PATHS[section] !== item.to || sectionEnabled(session, section),
+      ) && (item.to !== SUPPORT_PATH || supportEnabled(session)),
   );
 }
 
@@ -79,6 +89,7 @@ const USER_READ_ONLY_PATHS = [
   "/app/projects",
   "/app/media",
   "/app/my-activity",
+  "/app/support",
   "/app/manual",
 ] as const;
 

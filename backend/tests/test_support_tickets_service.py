@@ -506,6 +506,22 @@ class TestDeleting:
         for model in (SupportTicket, SupportTicketMessage, SupportTicketAttachment):
             assert (await db_session.execute(select(func.count()).select_from(model))).scalar_one() == 0
 
+    async def test_a_ticket_that_no_longer_meets_the_conditions_stays(self, db_session, user, monkeypatch):
+        removed: list[str] = []
+        monkeypatch.setattr("app.services.object_storage_service.delete_object", removed.append)
+        closed = await _open(db_session, user, images=[_image(1)])
+        reopened = await _open(db_session, user, images=[_image(2)])
+        closed.status = "closed"
+        await db_session.commit()
+        totals = await st.delete_tickets(
+            db_session, [closed.id, reopened.id], where=[SupportTicket.status.in_(st.DONE_STATUSES)]
+        )
+        assert totals == {"deleted": 1, "messages": 2, "images": 1, "image_bytes": 1000}
+        await db_session.commit()
+        await st.drain_storage_deletions()
+        assert removed == ["tickets/2026/10/img1.png"]
+        assert [t.id for t in (await db_session.execute(select(SupportTicket))).scalars()] == [reopened.id]
+
     async def test_a_rolled_back_delete_keeps_the_images(self, db_session, user, monkeypatch):
         removed: list[str] = []
         monkeypatch.setattr("app.services.object_storage_service.delete_object", removed.append)

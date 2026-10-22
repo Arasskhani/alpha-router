@@ -896,6 +896,54 @@ class TestDelete:
         assert resp.json()["detail"]["code"] == "count_changed" and resp.json()["detail"]["count"] == 2
         assert await _ticket_count(db_session) == 2 and await _audits(db_session, "tickets_deleted") == []
 
+    @pytest.mark.parametrize("by", ["filter", "ids"])
+    async def test_a_ticket_that_leaves_the_scope_after_the_recount_is_not_deleted(
+        self, client, admin, reporter, db_session, monkeypatch, by
+    ):
+        first = await _ticket(db_session, reporter, "Done", status="resolved")
+        second = await _ticket(db_session, reporter, "Done too", status="closed")
+        scope = {"filter": {}} if by == "filter" else {"ids": [_id(first), _id(second)]}
+        headers = sign_in(client, admin)
+        preview = (await client.post(f"{BASE}/delete-preview", json=scope, headers=headers)).json()
+        assert preview["count"] == 2 and preview["includes_active"] is False
+        audit = admin_tickets._audit
+
+        async def reopen_meanwhile(db, *args, **kwargs):
+            # The reporter replies between the recount and the delete.
+            await audit(db, *args, **kwargs)
+            ticket = await db.get(SupportTicket, _id(second))
+            ticket.status, ticket.closed_at, ticket.needs_staff = "open", None, True
+
+        monkeypatch.setattr(admin_tickets, "_audit", reopen_meanwhile)
+        resp = await client.post(
+            f"{BASE}/delete", json={**scope, "token": preview["token"], "phrase": preview["phrase"]}, headers=headers
+        )
+        assert resp.status_code == 200 and resp.json()["deleted"] == 1
+        remaining = (await db_session.execute(select(SupportTicket.id))).scalars().all()
+        assert remaining == [_id(second)]
+
+    async def test_a_selected_ticket_reopened_after_the_preview_changes_the_count(
+        self, client, admin, reporter, db_session
+    ):
+        done = await _ticket(db_session, reporter, "Done", status="closed")
+        headers = sign_in(client, admin)
+        preview = (await client.post(f"{BASE}/delete-preview", json={"ids": [_id(done)]}, headers=headers)).json()
+        assert preview["includes_active"] is False
+        row = await _fresh(db_session, done)
+        row.status, row.closed_at = "open", None
+        await db_session.commit()
+        resp = await client.post(
+            f"{BASE}/delete",
+            json={"ids": [_id(done)], "token": preview["token"], "phrase": preview["phrase"]},
+            headers=headers,
+        )
+        assert resp.status_code == 409 and resp.json()["detail"] == {
+            "code": "count_changed",
+            "message": "The number of tickets changed from 1 to 0. Check it again.",
+            "count": 0,
+        }
+        assert await _ticket_count(db_session) == 1
+
     async def test_active_tickets_only_when_named(self, client, admin, reporter, db_session):
         active = await _ticket(db_session, reporter, "Active")
         done = await _ticket(db_session, reporter, "Done", status="closed")

@@ -1043,22 +1043,17 @@ async def purge_closed_tickets(db: AsyncSession, *, now: datetime.datetime | Non
     if days <= 0:
         return totals
     cutoff = now - datetime.timedelta(days=days)
+    still_due = (SupportTicket.status == "closed", SupportTicket.closed_at < cutoff)
     while True:
         ids = (
-            (
-                await db.execute(
-                    select(SupportTicket.id)
-                    .where(SupportTicket.status == "closed", SupportTicket.closed_at < cutoff)
-                    .order_by(SupportTicket.id)
-                    .limit(_JOB_BATCH)
-                )
-            )
+            (await db.execute(select(SupportTicket.id).where(*still_due).order_by(SupportTicket.id).limit(_JOB_BATCH)))
             .scalars()
             .all()
         )
         if not ids:
             break
-        counts = await delete_tickets(db, [int(i) for i in ids])
+        # Re-checked on the locked rows: a ticket reopened since the select is not deleted.
+        counts = await delete_tickets(db, [int(i) for i in ids], where=still_due)
         await db.commit()
         for key in ("deleted", "messages", "images", "image_bytes"):
             totals[key] += counts[key]
@@ -1134,16 +1129,33 @@ async def drain_storage_deletions() -> None:
         await asyncio.gather(*list(_storage_tasks), return_exceptions=True)
 
 
-async def delete_tickets(db: AsyncSession, ticket_ids: Sequence[int]) -> dict[str, int]:
+async def delete_tickets(db: AsyncSession, ticket_ids: Sequence[int], *, where: Sequence[Any] = ()) -> dict[str, int]:
     """Delete tickets with their messages and images; the images leave storage after the commit.
 
-    Returns ``{"deleted", "messages", "images", "image_bytes"}`` (messages
-    without event lines, as everywhere else they are counted).
+    ``where`` are conditions each ticket must still meet when it is deleted
+    (the scope a Super Admin confirmed, the retention rule): the matching rows
+    are locked first (``FOR UPDATE`` on PostgreSQL), so a ticket that left the
+    scope meanwhile, say reopened by its reporter, stays.
+
+    Returns ``{"deleted", "messages", "images", "image_bytes"}`` for what was
+    really deleted (messages without event lines, as everywhere else they are
+    counted).
     """
     ids = sorted({int(i) for i in ticket_ids})
     totals = {"deleted": 0, "messages": 0, "images": 0, "image_bytes": 0}
     keys: list[str] = []
-    for chunk in _chunks(ids):
+    for requested in _chunks(ids):
+        chunk = requested
+        if where:
+            locked = await db.execute(
+                select(SupportTicket.id)
+                .where(SupportTicket.id.in_(requested), *where)
+                .order_by(SupportTicket.id)
+                .with_for_update()
+            )
+            chunk = [int(i) for i in locked.scalars().all()]
+            if not chunk:
+                continue
         image_rows = (
             await db.execute(
                 select(SupportTicketAttachment.storage_key, SupportTicketAttachment.bytes).where(
@@ -1165,7 +1177,7 @@ async def delete_tickets(db: AsyncSession, ticket_ids: Sequence[int]) -> dict[st
         )
         await db.execute(delete(SupportTicketAttachment).where(SupportTicketAttachment.ticket_id.in_(chunk)))
         await db.execute(delete(SupportTicketMessage).where(SupportTicketMessage.ticket_id.in_(chunk)))
-        result = await db.execute(delete(SupportTicket).where(SupportTicket.id.in_(chunk)))
+        result = await db.execute(delete(SupportTicket).where(SupportTicket.id.in_(chunk), *where))
         totals["deleted"] += int(getattr(result, "rowcount", 0) or 0)
     _remove_objects_after_commit(db, keys)
     return totals

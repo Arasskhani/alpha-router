@@ -730,16 +730,23 @@ def _epoch() -> int:
     return int(time.time())
 
 
-def sign_delete_token(actor_id: int, scope: dict[str, Any], count: int) -> str:
-    """A short-lived token binding who previewed, exactly what, and how many tickets it was."""
-    payload = {"a": int(actor_id), "s": _scope_digest(scope), "c": int(count), "e": _epoch() + TOKEN_TTL_SECONDS}
+def sign_delete_token(actor_id: int, scope: dict[str, Any], count: int, includes_active: bool = True) -> str:
+    """A short-lived token binding who previewed, exactly what, how many tickets it was, and whether any was active."""
+    payload = {
+        "a": int(actor_id),
+        "s": _scope_digest(scope),
+        "c": int(count),
+        "i": bool(includes_active),
+        "e": _epoch() + TOKEN_TTL_SECONDS,
+    }
     body = _b64(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
     signature = _b64(hmac.new(_token_key(), body.encode("ascii"), hashlib.sha256).digest())
     return f"{body}.{signature}"
 
 
-def read_delete_token(token: str, actor_id: int, scope: dict[str, Any]) -> int:
-    """The previewed count, when the token is this actor's, for this scope, and not expired."""
+def read_delete_token(token: str, actor_id: int, scope: dict[str, Any]) -> tuple[int, bool]:
+    """The previewed count and whether it included active tickets, when the token is this actor's, for this
+    scope, and not expired."""
     invalid = _refuse("token_invalid", "This confirmation has expired. Preview the delete again.", 400)
     try:
         body, signature = (token or "").strip().split(".", 1)
@@ -748,6 +755,7 @@ def read_delete_token(token: str, actor_id: int, scope: dict[str, Any]) -> int:
             raise ValueError("signature")
         payload = json.loads(_unb64(body))
         count = int(payload["c"])
+        includes_active = bool(payload.get("i", True))
         if (
             int(payload["a"]) != int(actor_id)
             or not hmac.compare_digest(str(payload["s"]), _scope_digest(scope))
@@ -756,14 +764,15 @@ def read_delete_token(token: str, actor_id: int, scope: dict[str, Any]) -> int:
             raise ValueError("mismatch")
     except (ValueError, KeyError, TypeError, UnicodeError):
         raise invalid from None
-    return count
+    return count, includes_active
 
 
-async def _delete_in_batches(db: AsyncSession, ids: Sequence[int]) -> dict[str, int]:
+async def _delete_in_batches(db: AsyncSession, ids: Sequence[int], where: Sequence[Any] = ()) -> dict[str, int]:
+    """Delete these tickets in committed batches; each batch deletes only those still meeting ``where``."""
     totals = {"deleted": 0, "messages": 0, "images": 0, "image_bytes": 0}
     ordered = sorted(int(i) for i in ids)
     for start in range(0, len(ordered), DELETE_BATCH):
-        counts = await st.delete_tickets(db, ordered[start : start + DELETE_BATCH])
+        counts = await st.delete_tickets(db, ordered[start : start + DELETE_BATCH], where=where)
         await db.commit()
         for key in totals:
             totals[key] += counts[key]
@@ -786,7 +795,7 @@ async def delete_preview(
     totals = await _scope_totals(db, _scope_conditions(scope))
     return {
         **totals,
-        "token": sign_delete_token(int(actor.id), scope, totals["count"]),
+        "token": sign_delete_token(int(actor.id), scope, totals["count"], totals["includes_active"]),
         "phrase": _phrase(totals["count"]),
     }
 
@@ -798,21 +807,30 @@ async def delete_scope(
     db: AsyncSession = Depends(get_db),
     actor: User = Depends(require_super_admin),
 ):
-    """Delete what was previewed: same actor, same scope, the typed phrase, and the same count now."""
+    """Delete what was previewed: same actor, same scope, the typed phrase, and the same count now.
+
+    The ids are taken once and counted against the confirmed number; each
+    batch then deletes only the tickets still in the scope, so one that left
+    it meanwhile (a reporter reopened it) stays, and the answer says how many
+    really went.
+    """
     scope = _normal_scope(body)
-    previewed = read_delete_token(body.token, int(actor.id), scope)
+    previewed, previewed_active = read_delete_token(body.token, int(actor.id), scope)
     if body.phrase.strip() != _phrase(previewed):
         raise _refuse("phrase_mismatch", f'Type "{_phrase(previewed)}" to confirm.', 400)
     conditions = _scope_conditions(scope)
-    totals = await _scope_totals(db, conditions)
-    if totals["count"] != previewed:
+    if "ids" in scope and not previewed_active:
+        # Selected tickets confirmed as all ended: one reopened since is no longer what was confirmed.
+        conditions.append(SupportTicket.status.in_(st.DONE_STATUSES))
+    rows = await _ids_and_numbers(db, conditions)
+    if len(rows) != previewed:
         raise _refuse(
             "count_changed",
-            f"The number of tickets changed from {previewed} to {totals['count']}. Check it again.",
+            f"The number of tickets changed from {previewed} to {len(rows)}. Check it again.",
             409,
-            count=totals["count"],
+            count=len(rows),
         )
-    rows = await _ids_and_numbers(db, conditions)
+    totals = await _scope_totals(db, conditions)
     # Written and committed before anything goes, so the trail outlives a delete that fails half way.
     await _audit(
         db,
@@ -823,7 +841,7 @@ async def delete_scope(
         {
             "scope": "ids" if "ids" in scope else "filter",
             **({"filter": scope["filter"]} if "filter" in scope else {}),
-            "count": totals["count"],
+            "count": len(rows),
             "messages": totals["messages"],
             "images": totals["images"],
             "image_bytes": totals["image_bytes"],
@@ -832,7 +850,7 @@ async def delete_scope(
         },
     )
     await db.commit()
-    done = await _delete_in_batches(db, [i for i, _ in rows])
+    done = await _delete_in_batches(db, [i for i, _ in rows], conditions)
     return {"deleted": done["deleted"], "messages": done["messages"], "images": done["images"]}
 
 

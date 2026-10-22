@@ -13,10 +13,11 @@ import pytest
 from PIL import Image
 from sqlalchemy import func, inspect, select
 
+from app.api import admin_tickets
 from app.config import get_settings
 from app.core.security import create_access_token
 from app.models.security import SecurityAuditEvent
-from app.models.support_ticket import SupportTicket, SupportTicketMessage
+from app.models.support_ticket import SupportTicket, SupportTicketAttachment, SupportTicketMessage
 from app.models.user import User
 from app.services import object_storage_service, smtp_service, support_ticket_images, upload_screening
 from app.services import support_ticket_mail as mail
@@ -218,7 +219,9 @@ class TestAccess:
             await client.patch(f"{BASE}/{ticket.id}", json={"priority": "high"}, headers=headers)
         ).status_code == 403
 
-    async def test_support_reads_and_works(self, client, support, reporter, db_session):
+    async def test_support_reads_and_works_but_cannot_change_settings_or_delete(
+        self, client, support, reporter, db_session
+    ):
         ticket = await _ticket(db_session, reporter)
         headers = sign_in(client, support)
         for path in (*READ_PATHS, f"/{ticket.id}"):
@@ -228,6 +231,13 @@ class TestAccess:
         resp = await client.patch(f"{BASE}/{ticket.id}", json={"priority": "high"}, headers=headers)
         assert resp.status_code == 200 and resp.json()["priority"] == "high"
         assert resp.json()["can_write"] is True and resp.json()["can_delete"] is False
+        assert (await client.put(f"{BASE}/settings", json={"per_hour": 9}, headers=headers)).status_code == 403
+        assert (await client.delete(f"{BASE}/{ticket.id}", headers=headers)).status_code == 403
+        preview = await client.post(f"{BASE}/delete-preview", json={"filter": {}}, headers=headers)
+        assert preview.status_code == 403
+        delete_all = await client.post(f"{BASE}/delete-all", json={"phrase": "DELETE ALL TICKETS"}, headers=headers)
+        assert delete_all.status_code == 403
+        assert await _ticket_count(db_session) == 1
 
     async def test_read_only_super_admin_reads_and_changes_nothing(self, client, read_only, reporter, db_session):
         ticket = await _ticket(db_session, reporter)
@@ -245,17 +255,23 @@ class TestAccess:
             await client.post(f"{BASE}/{ticket.id}/assign-to-me", headers=headers),
             await client.post(f"{BASE}/{ticket.id}/assign", json={"assignee_id": None}, headers=headers),
             await client.post(f"{BASE}/bulk", json={"ids": [ticket.id], "action": "close"}, headers=headers),
+            await client.put(f"{BASE}/settings", json={"per_hour": 9}, headers=headers),
+            await client.delete(f"{BASE}/{ticket.id}", headers=headers),
+            await client.post(f"{BASE}/delete-preview", json={"filter": {}}, headers=headers),
+            await client.post(f"{BASE}/delete-all", json={"phrase": "DELETE ALL TICKETS"}, headers=headers),
         ]
         assert [r.status_code for r in refused] == [403] * len(refused)
         assert (await _fresh(db_session, ticket)).priority == "normal"
 
-    async def test_super_admin_works_tickets(self, client, admin, reporter, db_session):
+    async def test_super_admin_does_everything(self, client, admin, reporter, db_session):
         ticket = await _ticket(db_session, reporter)
         headers = sign_in(client, admin)
         meta = (await client.get(f"{BASE}/meta", headers=headers)).json()
         assert meta["me"] == {"id": admin.id, "can_write": True, "is_super_admin": True}
+        assert (await client.put(f"{BASE}/settings", json={"per_hour": 9}, headers=headers)).status_code == 200
         detail = (await client.get(f"{BASE}/{ticket.id}", headers=headers)).json()
-        assert detail["can_write"] is True and detail["can_delete"] is True
+        assert detail["can_delete"] is True
+        assert (await client.delete(f"{BASE}/{ticket.id}", headers=headers)).json() == {"deleted": 1}
 
     async def test_fixed_paths_are_not_taken_for_a_ticket_id(self, client, support, reporter, db_session):
         await _ticket(db_session, reporter)
@@ -699,8 +715,217 @@ class TestExport:
         assert bad.status_code == 422
 
 
-async def test_admin_logs_never_hold_ticket_text(client, support, other_support, reporter, db_session):
+# --- settings -----------------------------------------------------------------------------------------------------
+
+
+class TestSettings:
+    async def test_a_partial_update_is_merged_checked_and_logged(self, client, admin, db_session):
+        headers = sign_in(client, admin)
+        assert (await client.get(f"{BASE}/settings", headers=headers)).json() == st.TicketSettings().as_dict()
+        resp = await client.put(
+            f"{BASE}/settings", json={"auto_close_days": 10, "categories": ["Bug", "Access"]}, headers=headers
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json() == {**st.TicketSettings().as_dict(), "auto_close_days": 10, "categories": ["Bug", "Access"]}
+        resp = await client.put(f"{BASE}/settings", json={"email_assignee": False}, headers=headers)
+        assert resp.json()["auto_close_days"] == 10 and resp.json()["email_assignee"] is False
+        first, second = await _audits(db_session, "tickets_settings_updated")
+        assert json.loads(first.detail_json) == {
+            "changed": ["auto_close_days", "categories"],
+            "before": {"auto_close_days": 7, "categories": list(st.DEFAULT_CATEGORIES)},
+            "after": {"auto_close_days": 10, "categories": ["Bug", "Access"]},
+        }
+        assert json.loads(second.detail_json)["changed"] == ["email_assignee"]
+
+    @pytest.mark.parametrize(
+        "change",
+        [
+            {"auto_close_days": 0},
+            {"per_hour": "5"},
+            {"categories": ["Bug", "bug"]},
+            {"image_types": ["png", "svg"]},
+            {"notify_emails": ["not an address"]},
+            {"auto_reply_enabled": True, "auto_reply_text": "  "},
+        ],
+    )
+    async def test_settings_outside_the_rules_are_refused(self, client, admin, db_session, change):
+        headers = sign_in(client, admin)
+        resp = await client.put(f"{BASE}/settings", json=change, headers=headers)
+        assert resp.status_code == 422 and resp.json()["detail"]["code"] == "invalid_settings"
+        assert await _audits(db_session, "tickets_settings_updated") == []
+
+
+# --- deleting -----------------------------------------------------------------------------------------------------
+
+
+async def _attach(db, ticket, n=1, size=1000) -> None:
+    message = (
+        await db.execute(select(SupportTicketMessage).where(SupportTicketMessage.ticket_id == ticket.id).limit(1))
+    ).scalar_one()
+    for i in range(n):
+        db.add(
+            SupportTicketAttachment(
+                ticket_id=ticket.id,
+                message_id=message.id,
+                storage_key=f"tickets/{ticket.user_id}/{ticket.id}-{i}.png",
+                mime="image/png",
+                bytes=size,
+                width=10,
+                height=10,
+                sha256="ab" * 32,
+                display_name="a.png",
+            )
+        )
+    await db.commit()
+
+
+class TestDelete:
+    async def test_delete_one_ticket_with_its_images(self, client, admin, reporter, db_session, storage):
+        ticket = await _ticket(db_session, reporter, SECRET_TEXT)
+        await _attach(db_session, ticket, 2)
+        storage.update({f"tickets/{reporter.id}/{ticket.id}-{i}.png": b"x" for i in range(2)})
+        headers = sign_in(client, admin)
+        assert (await client.delete(f"{BASE}/{ticket.id}", headers=headers)).json() == {"deleted": 1}
+        await st.drain_storage_deletions()
+        assert storage == {} and await _ticket_count(db_session) == 0
+        [row] = await _audits(db_session, "ticket_deleted")
+        assert json.loads(row.detail_json) == {
+            "number": ticket.number,
+            "status": "open",
+            "messages": 2,
+            "images": 2,
+            "image_bytes": 2000,
+        }
+        assert (await client.delete(f"{BASE}/{ticket.id}", headers=headers)).status_code == 404
+
+    async def test_preview_and_delete_by_filter(self, client, admin, reporter, db_session):
+        await _ticket(db_session, reporter, "Active")
+        old = await _ticket(db_session, reporter, "Old", status="closed", updated=T0)
+        await _attach(db_session, old, 1, 500)
+        done = await _ticket(db_session, reporter, "Done", status="resolved", updated=T0)
+        headers = sign_in(client, admin)
+        preview = (await client.post(f"{BASE}/delete-preview", json={"filter": {}}, headers=headers)).json()
+        assert {k: preview[k] for k in ("count", "messages", "images", "image_bytes", "includes_active", "phrase")} == {
+            "count": 2,
+            "messages": 4,
+            "images": 1,
+            "image_bytes": 500,
+            "includes_active": False,
+            "phrase": "DELETE 2 TICKETS",
+        }
+        wrong = await client.post(
+            f"{BASE}/delete",
+            json={"filter": {}, "token": preview["token"], "phrase": "DELETE 3 TICKETS"},
+            headers=headers,
+        )
+        assert wrong.status_code == 400 and wrong.json()["detail"]["code"] == "phrase_mismatch"
+        resp = await client.post(
+            f"{BASE}/delete",
+            json={
+                "filter": {"statuses": ["closed", "resolved"]},
+                "token": preview["token"],
+                "phrase": "DELETE 2 TICKETS",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json() == {"deleted": 2, "messages": 4, "images": 1}
+        assert await _ticket_count(db_session) == 1
+        [row] = await _audits(db_session, "tickets_deleted")
+        detail = json.loads(row.detail_json)
+        assert detail["count"] == 2 and detail["numbers"] == sorted([old.number, done.number])
+        assert detail["filter"] == {"statuses": ["resolved", "closed"]}
+
+    async def test_the_token_binds_the_actor_the_scope_and_time(self, client, admin, reporter, db_session, monkeypatch):
+        await _ticket(db_session, reporter, "Done", status="resolved")
+        other_admin = await _person(db_session, "boss", roles=["super_admin"], email="boss@corp.test")
+        headers = sign_in(client, admin)
+        preview = (await client.post(f"{BASE}/delete-preview", json={"filter": {}}, headers=headers)).json()
+
+        async def attempt(body, who=None):
+            hdrs = sign_in(client, who) if who else sign_in(client, admin)
+            return await client.post(f"{BASE}/delete", json=body, headers=hdrs)
+
+        base = {"filter": {}, "token": preview["token"], "phrase": "DELETE 1 TICKETS"}
+        cases = [
+            {**base, "token": preview["token"][:-2] + "xx"},
+            {**base, "token": "garbage"},
+            {**base, "filter": {"priority": "low"}},
+            {"ids": [1], "token": preview["token"], "phrase": "DELETE 1 TICKETS"},
+        ]
+        for body in cases:
+            resp = await attempt(body)
+            assert resp.status_code == 400 and resp.json()["detail"]["code"] == "token_invalid", body
+        resp = await attempt(base, other_admin)
+        assert resp.status_code == 400 and resp.json()["detail"]["code"] == "token_invalid"
+        later = admin_tickets._epoch() + admin_tickets.TOKEN_TTL_SECONDS + 1
+        monkeypatch.setattr(admin_tickets, "_epoch", lambda: later)
+        resp = await attempt(base)
+        assert resp.status_code == 400 and resp.json()["detail"]["code"] == "token_invalid"
+        assert await _ticket_count(db_session) == 1
+
+    async def test_a_changed_count_deletes_nothing(self, client, admin, reporter, db_session):
+        await _ticket(db_session, reporter, "Done", status="resolved")
+        headers = sign_in(client, admin)
+        preview = (await client.post(f"{BASE}/delete-preview", json={"filter": {}}, headers=headers)).json()
+        await _ticket(db_session, reporter, "Closed meanwhile", status="closed")
+        resp = await client.post(
+            f"{BASE}/delete",
+            json={"filter": {}, "token": preview["token"], "phrase": preview["phrase"]},
+            headers=headers,
+        )
+        assert resp.status_code == 409
+        assert resp.json()["detail"]["code"] == "count_changed" and resp.json()["detail"]["count"] == 2
+        assert await _ticket_count(db_session) == 2 and await _audits(db_session, "tickets_deleted") == []
+
+    async def test_active_tickets_only_when_named(self, client, admin, reporter, db_session):
+        active = await _ticket(db_session, reporter, "Active")
+        done = await _ticket(db_session, reporter, "Done", status="closed")
+        headers = sign_in(client, admin)
+        default = (await client.post(f"{BASE}/delete-preview", json={"filter": {}}, headers=headers)).json()
+        assert default["count"] == 1 and default["includes_active"] is False
+        named = (
+            await client.post(f"{BASE}/delete-preview", json={"filter": {"statuses": ["open"]}}, headers=headers)
+        ).json()
+        assert named["count"] == 1 and named["includes_active"] is True
+        by_id = (
+            await client.post(f"{BASE}/delete-preview", json={"ids": [active.id, done.id, 999999]}, headers=headers)
+        ).json()
+        assert by_id["count"] == 2 and by_id["includes_active"] is True and by_id["phrase"] == "DELETE 2 TICKETS"
+        resp = await client.post(
+            f"{BASE}/delete",
+            json={"ids": [done.id, active.id, 999999], "token": by_id["token"], "phrase": "DELETE 2 TICKETS"},
+            headers=headers,
+        )
+        assert resp.json()["deleted"] == 2 and await _ticket_count(db_session) == 0
+
+    async def test_scope_is_checked(self, client, admin, db_session):
+        headers = sign_in(client, admin)
+        for body in (
+            {},
+            {"ids": [1], "filter": {}},
+            {"ids": []},
+            {"filter": {"statuses": ["gone"]}},
+            {"filter": {"before": "10/05/2026"}},
+        ):
+            assert (await client.post(f"{BASE}/delete-preview", json=body, headers=headers)).status_code == 422, body
+
+    async def test_delete_all(self, client, admin, reporter, db_session):
+        tickets = [await _ticket(db_session, reporter, f"T{n}", status="closed" if n else None) for n in range(3)]
+        headers = sign_in(client, admin)
+        wrong = await client.post(f"{BASE}/delete-all", json={"phrase": "delete all tickets"}, headers=headers)
+        assert wrong.status_code == 400 and wrong.json()["detail"]["code"] == "phrase_mismatch"
+        assert await _ticket_count(db_session) == 3
+        resp = await client.post(f"{BASE}/delete-all", json={"phrase": "DELETE ALL TICKETS"}, headers=headers)
+        assert resp.json() == {"deleted": 3} and await _ticket_count(db_session) == 0
+        [row] = await _audits(db_session, "tickets_deleted_all")
+        detail = json.loads(row.detail_json)
+        assert detail["count"] == 3 and detail["numbers"] == sorted(t.number for t in tickets)
+
+
+async def test_admin_logs_never_hold_ticket_text(client, admin, support, other_support, reporter, db_session):
     ticket = await _ticket(db_session, reporter, SECRET_TEXT, description=SECRET_TEXT)
+    second = await _ticket(db_session, reporter, SECRET_TEXT, status="closed")
     headers = sign_in(client, support)
     await client.post(f"{BASE}/{ticket.id}/messages", data={"body": SECRET_TEXT, "internal": "true"}, headers=headers)
     await client.post(f"{BASE}/{ticket.id}/messages", data={"body": SECRET_TEXT}, headers=headers)
@@ -708,6 +933,14 @@ async def test_admin_logs_never_hold_ticket_text(client, support, other_support,
     await client.post(f"{BASE}/{ticket.id}/assign", json={"assignee_id": other_support.id}, headers=headers)
     await client.post(f"{BASE}/bulk", json={"ids": [ticket.id], "action": "close"}, headers=headers)
     await client.get(f"{BASE}/export.csv?view=all&q={SECRET_TEXT}", headers=headers)
+    headers = sign_in(client, admin)
+    preview = (await client.post(f"{BASE}/delete-preview", json={"ids": [second.id]}, headers=headers)).json()
+    await client.post(
+        f"{BASE}/delete",
+        json={"ids": [second.id], "token": preview["token"], "phrase": preview["phrase"]},
+        headers=headers,
+    )
+    await client.delete(f"{BASE}/{ticket.id}", headers=headers)
     await mail.drain()
     rows = await _audits(db_session)
     assert {r.action for r in rows} >= {
@@ -717,5 +950,7 @@ async def test_admin_logs_never_hold_ticket_text(client, support, other_support,
         "ticket_assigned",
         "tickets_bulk_close",
         "tickets_exported",
+        "tickets_deleted",
+        "ticket_deleted",
     }
     assert all(SECRET_TEXT not in str(r.detail_json) for r in rows)

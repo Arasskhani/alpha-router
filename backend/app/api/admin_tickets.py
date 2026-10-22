@@ -9,6 +9,7 @@ fail a change).
   Admin and Read Only Super Admin (``require_tickets``).
 - Working tickets (reply, note, status, priority, category, assign, bulk):
   someone who can work tickets - active, Support or Super Admin.
+- Changing the settings and every delete: Super Admin only.
 
 Admin Logs rows carry ticket numbers, counts and the fields that changed, never
 a title, a message or a note.
@@ -16,22 +17,28 @@ a title, a message or a note.
 
 from __future__ import annotations
 
+import base64
 import csv
 import datetime
+import hashlib
+import hmac
 import io
+import json
 import re
+import time
 from collections.abc import Sequence
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import Select, and_, case, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import require_tickets, require_tickets_write
+from app.api.deps import require_super_admin, require_tickets, require_tickets_write
+from app.config import get_settings
 from app.database import get_db
-from app.models.support_ticket import SupportTicket, SupportTicketMessage
+from app.models.support_ticket import SupportTicket, SupportTicketAttachment, SupportTicketMessage
 from app.models.user import User
 from app.services import support_ticket_mail as mail
 from app.services import support_tickets as st
@@ -47,8 +54,14 @@ VIEWS = ("needs_staff", "mine", "unassigned", "active", "closed", "all")
 PAGE_SIZE_MAX = 100
 EXPORT_ROWS = 50_000
 BULK_MAX = 200
+#: Ticket ids one delete may name (the queue selects at most a page).
+DELETE_IDS_MAX = 1000
 #: Ticket numbers written into an Admin Logs row; the count is always exact.
 AUDIT_NUMBERS_MAX = 1000
+DELETE_BATCH = 200
+DELETE_ALL_PHRASE = "DELETE ALL TICKETS"
+TOKEN_TTL_SECONDS = 600
+_TOKEN_CONTEXT = b"alpharouter.tickets.delete.v1"
 _SEARCH_MAX = 200
 _NUMBER = re.compile(r"^#?\s*(\d{1,9})$")
 _DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -75,8 +88,10 @@ async def require_ticket_worker(
 
 
 #: Guards written on the route itself, so the route table shows what protects each change
-#: (tests/test_read_only_super_admin_surface.py walks it).
+#: (tests/test_read_only_super_admin_surface.py walks it). Settings and deletes take Super Admin on top
+#: (never Read Only Super Admin, never Support).
 WORK = [Depends(require_tickets_write)]
+SUPER_ADMIN = [Depends(require_tickets_write), Depends(require_super_admin)]
 
 
 async def _audit(db: AsyncSession, request: Request, actor: User, action: str, resource_id: Any, detail: dict) -> None:
@@ -483,7 +498,40 @@ async def get_ticket_settings(db: AsyncSession = Depends(get_db), _: User = Depe
     return (await st.load_settings(db)).as_dict()
 
 
-# --- bulk (a fixed path, before the ticket routes) --------------------------------------------------------------
+@router.put("/settings", dependencies=SUPER_ADMIN)
+async def put_ticket_settings(
+    request: Request,
+    body: dict[str, Any] = Body(...),
+    db: AsyncSession = Depends(get_db),
+    actor: User = Depends(require_super_admin),
+):
+    """Save the settings: what is sent is laid over what is saved, then checked as a whole."""
+    current = (await st.load_settings(db)).as_dict()
+    try:
+        saved = st.validate_settings({**current, **body})
+    except st.TicketError as exc:
+        raise _answer(exc) from exc
+    after = saved.as_dict()
+    changed = [key for key in after if after[key] != current.get(key)]
+    await st.save_settings(db, saved)
+    if changed:
+        await _audit(
+            db,
+            request,
+            actor,
+            "tickets_settings_updated",
+            st.SETTINGS_KEY,
+            {
+                "changed": changed,
+                "before": {k: current.get(k) for k in changed},
+                "after": {k: after[k] for k in changed},
+            },
+        )
+    await db.commit()
+    return after
+
+
+# --- bulk and deleting (fixed paths, before the ticket routes) ---------------------------------------------------
 
 
 class BulkIn(BaseModel):
@@ -555,6 +603,268 @@ async def bulk(
         for ticket in changed:
             mail.notify_user(int(ticket.id), "status")
     return {"updated": len(changed)}
+
+
+class DeleteFilterIn(BaseModel):
+    statuses: list[str] | None = None
+    priority: str | None = None
+    category: str | None = None
+    department: str | None = None
+    assignee: str | int | None = None
+    before: str | None = None
+
+
+class DeleteScopeIn(BaseModel):
+    ids: list[int] | None = Field(None, max_length=DELETE_IDS_MAX)
+    filter: DeleteFilterIn | None = None
+
+
+class DeleteIn(DeleteScopeIn):
+    token: str = ""
+    phrase: str = ""
+
+
+class DeleteAllIn(BaseModel):
+    phrase: str = ""
+
+
+def _normal_scope(body: DeleteScopeIn) -> dict[str, Any]:
+    """The scope in one canonical form: what the token binds and what the recount uses."""
+    if (body.ids is None) == (body.filter is None):
+        raise _refuse("invalid_scope", "Send either the ticket ids or a filter.", 422)
+    if body.ids is not None:
+        ids = sorted({int(i) for i in body.ids})
+        if not ids:
+            raise _refuse("invalid_scope", "Name at least one ticket.", 422)
+        return {"ids": ids}
+    f = body.filter or DeleteFilterIn()
+    out: dict[str, Any] = {"statuses": _statuses(f.statuses) or list(st.DONE_STATUSES)}
+    if (p := _one_of(f.priority, st.PRIORITIES, "priority")) is not None:
+        out["priority"] = p
+    for key in ("category", "department"):
+        value = (getattr(f, key) or "").strip()
+        if value:
+            out[key] = value
+    assignee = str(f.assignee if f.assignee is not None else "").strip()
+    if assignee:
+        _assignee_condition(assignee)
+        out["assignee"] = assignee
+    if before := (f.before or "").strip():
+        _before_condition(before)
+        out["before"] = before
+    return {"filter": out}
+
+
+def _scope_conditions(scope: dict[str, Any]) -> list[Any]:
+    if "ids" in scope:
+        return [SupportTicket.id.in_(scope["ids"])]
+    f = scope["filter"]
+    conditions = [SupportTicket.status.in_(f["statuses"])]
+    if "priority" in f:
+        conditions.append(SupportTicket.priority == f["priority"])
+    if "category" in f:
+        conditions.append(SupportTicket.category == f["category"])
+    if "department" in f:
+        conditions.append(SupportTicket.reporter_department == f["department"])
+    if "assignee" in f:
+        conditions.append(_assignee_condition(f["assignee"]))
+    if "before" in f:
+        conditions.append(_before_condition(f["before"]))
+    return conditions
+
+
+async def _scope_count(db: AsyncSession, conditions: list[Any]) -> int:
+    return int((await db.execute(select(func.count()).select_from(SupportTicket).where(*conditions))).scalar_one())
+
+
+async def _scope_totals(db: AsyncSession, conditions: list[Any]) -> dict[str, Any]:
+    ids = select(SupportTicket.id).where(*conditions).scalar_subquery()
+    count = await _scope_count(db, conditions)
+    active = await _scope_count(db, [*conditions, SupportTicket.status.in_(st.ACTIVE_STATUSES)])
+    messages = (
+        await db.execute(
+            select(func.count())
+            .select_from(SupportTicketMessage)
+            .where(SupportTicketMessage.ticket_id.in_(ids), SupportTicketMessage.kind != "event")
+        )
+    ).scalar_one()
+    images, image_bytes = (
+        await db.execute(
+            select(func.count(), func.coalesce(func.sum(SupportTicketAttachment.bytes), 0)).where(
+                SupportTicketAttachment.ticket_id.in_(ids)
+            )
+        )
+    ).one()
+    return {
+        "count": count,
+        "messages": int(messages or 0),
+        "images": int(images or 0),
+        "image_bytes": int(image_bytes or 0),
+        "includes_active": active > 0,
+    }
+
+
+def _phrase(count: int) -> str:
+    return f"DELETE {count} TICKETS"
+
+
+def _token_key() -> bytes:
+    secret = (get_settings().secret_key or "").encode("utf-8")
+    return hmac.new(secret, _TOKEN_CONTEXT, hashlib.sha256).digest()
+
+
+def _scope_digest(scope: dict[str, Any]) -> str:
+    canonical = json.dumps(scope, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _b64(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
+
+
+def _unb64(text: str) -> bytes:
+    return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
+
+
+def _epoch() -> int:
+    return int(time.time())
+
+
+def sign_delete_token(actor_id: int, scope: dict[str, Any], count: int) -> str:
+    """A short-lived token binding who previewed, exactly what, and how many tickets it was."""
+    payload = {"a": int(actor_id), "s": _scope_digest(scope), "c": int(count), "e": _epoch() + TOKEN_TTL_SECONDS}
+    body = _b64(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
+    signature = _b64(hmac.new(_token_key(), body.encode("ascii"), hashlib.sha256).digest())
+    return f"{body}.{signature}"
+
+
+def read_delete_token(token: str, actor_id: int, scope: dict[str, Any]) -> int:
+    """The previewed count, when the token is this actor's, for this scope, and not expired."""
+    invalid = _refuse("token_invalid", "This confirmation has expired. Preview the delete again.", 400)
+    try:
+        body, signature = (token or "").strip().split(".", 1)
+        expected = _b64(hmac.new(_token_key(), body.encode("ascii"), hashlib.sha256).digest())
+        if not hmac.compare_digest(expected, signature):
+            raise ValueError("signature")
+        payload = json.loads(_unb64(body))
+        count = int(payload["c"])
+        if (
+            int(payload["a"]) != int(actor_id)
+            or not hmac.compare_digest(str(payload["s"]), _scope_digest(scope))
+            or int(payload["e"]) < _epoch()
+        ):
+            raise ValueError("mismatch")
+    except (ValueError, KeyError, TypeError, UnicodeError):
+        raise invalid from None
+    return count
+
+
+async def _delete_in_batches(db: AsyncSession, ids: Sequence[int]) -> dict[str, int]:
+    totals = {"deleted": 0, "messages": 0, "images": 0, "image_bytes": 0}
+    ordered = sorted(int(i) for i in ids)
+    for start in range(0, len(ordered), DELETE_BATCH):
+        counts = await st.delete_tickets(db, ordered[start : start + DELETE_BATCH])
+        await db.commit()
+        for key in totals:
+            totals[key] += counts[key]
+    return totals
+
+
+async def _ids_and_numbers(db: AsyncSession, conditions: list[Any]) -> list[tuple[int, int]]:
+    rows = await db.execute(select(SupportTicket.id, SupportTicket.number).where(*conditions))
+    return [(int(i), int(n)) for i, n in rows.all()]
+
+
+@router.post("/delete-preview", dependencies=SUPER_ADMIN)
+async def delete_preview(
+    body: DeleteScopeIn,
+    db: AsyncSession = Depends(get_db),
+    actor: User = Depends(require_super_admin),
+):
+    """What a delete would remove, with the phrase to type and a token for ``/delete``."""
+    scope = _normal_scope(body)
+    totals = await _scope_totals(db, _scope_conditions(scope))
+    return {
+        **totals,
+        "token": sign_delete_token(int(actor.id), scope, totals["count"]),
+        "phrase": _phrase(totals["count"]),
+    }
+
+
+@router.post("/delete", dependencies=SUPER_ADMIN)
+async def delete_scope(
+    body: DeleteIn,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    actor: User = Depends(require_super_admin),
+):
+    """Delete what was previewed: same actor, same scope, the typed phrase, and the same count now."""
+    scope = _normal_scope(body)
+    previewed = read_delete_token(body.token, int(actor.id), scope)
+    if body.phrase.strip() != _phrase(previewed):
+        raise _refuse("phrase_mismatch", f'Type "{_phrase(previewed)}" to confirm.', 400)
+    conditions = _scope_conditions(scope)
+    totals = await _scope_totals(db, conditions)
+    if totals["count"] != previewed:
+        raise _refuse(
+            "count_changed",
+            f"The number of tickets changed from {previewed} to {totals['count']}. Check it again.",
+            409,
+            count=totals["count"],
+        )
+    rows = await _ids_and_numbers(db, conditions)
+    # Written and committed before anything goes, so the trail outlives a delete that fails half way.
+    await _audit(
+        db,
+        request,
+        actor,
+        "tickets_deleted",
+        "selected" if "ids" in scope else "filter",
+        {
+            "scope": "ids" if "ids" in scope else "filter",
+            **({"filter": scope["filter"]} if "filter" in scope else {}),
+            "count": totals["count"],
+            "messages": totals["messages"],
+            "images": totals["images"],
+            "image_bytes": totals["image_bytes"],
+            "includes_active": totals["includes_active"],
+            **_numbers([n for _, n in rows]),
+        },
+    )
+    await db.commit()
+    done = await _delete_in_batches(db, [i for i, _ in rows])
+    return {"deleted": done["deleted"], "messages": done["messages"], "images": done["images"]}
+
+
+@router.post("/delete-all", dependencies=SUPER_ADMIN)
+async def delete_all(
+    body: DeleteAllIn,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    actor: User = Depends(require_super_admin),
+):
+    """Every ticket, after the typed phrase; recorded in Admin Logs before the delete."""
+    if body.phrase.strip() != DELETE_ALL_PHRASE:
+        raise _refuse("phrase_mismatch", f'Type "{DELETE_ALL_PHRASE}" to confirm.', 400)
+    totals = await _scope_totals(db, [])
+    rows = await _ids_and_numbers(db, [])
+    await _audit(
+        db,
+        request,
+        actor,
+        "tickets_deleted_all",
+        "all",
+        {
+            "count": totals["count"],
+            "messages": totals["messages"],
+            "images": totals["images"],
+            "image_bytes": totals["image_bytes"],
+            **_numbers([n for _, n in rows]),
+        },
+    )
+    await db.commit()
+    done = await _delete_in_batches(db, [i for i, _ in rows])
+    return {"deleted": done["deleted"]}
 
 
 # --- one ticket ---------------------------------------------------------------------------------------------------
@@ -705,3 +1015,32 @@ async def assign_to_me(
 ):
     """Take the ticket; never an email."""
     return await _assign(db, request, actor, await _ticket(db, ticket_id), actor)
+
+
+@router.delete("/{ticket_id:int}", dependencies=SUPER_ADMIN)
+async def delete_ticket(
+    ticket_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    actor: User = Depends(require_super_admin),
+):
+    """One ticket with its messages and images; the Admin Logs row is written first, in the same commit."""
+    ticket = await _ticket(db, ticket_id)
+    totals = await _scope_totals(db, [SupportTicket.id == ticket.id])
+    await _audit(
+        db,
+        request,
+        actor,
+        "ticket_deleted",
+        ticket.id,
+        {
+            "number": ticket.number,
+            "status": ticket.status,
+            "messages": totals["messages"],
+            "images": totals["images"],
+            "image_bytes": totals["image_bytes"],
+        },
+    )
+    await st.delete_tickets(db, [int(ticket.id)])
+    await db.commit()
+    return {"deleted": 1}

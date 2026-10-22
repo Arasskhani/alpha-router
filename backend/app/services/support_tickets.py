@@ -21,6 +21,11 @@ status change or an assignment does.
 Functions that change a ticket flush and never commit (the API commits with
 its audit row), except the scheduled jobs, which commit in batches. Times are
 naive UTC, as everywhere else in the code base.
+
+``updated_at`` is the activity the person can see (messages, replies, status
+changes): staff-only changes (notes, priority, category, assignment) leave it,
+so the person's list does not jump and the Needs-staff view keeps whoever
+has waited longest first.
 """
 
 from __future__ import annotations
@@ -801,7 +806,8 @@ async def add_staff_message(
             status = "in_progress"
     if status is not None:
         await _change_status(db, ticket, staff, status, now)
-    ticket.updated_at = now  # type: ignore[assignment]
+    if not internal:
+        ticket.updated_at = now  # type: ignore[assignment]
     await db.flush()
     return message
 
@@ -821,7 +827,6 @@ async def set_priority(db: AsyncSession, *, ticket: SupportTicket, actor: User, 
     now = _now()
     previous = str(ticket.priority)
     ticket.priority = priority  # type: ignore[assignment]
-    ticket.updated_at = now  # type: ignore[assignment]
     db.add(
         _event(
             ticket, now, type="priority", by=display_name(actor), by_id=int(actor.id), to=priority, **{"from": previous}
@@ -847,7 +852,6 @@ async def set_category(
     now = _now()
     previous = str(ticket.category)
     ticket.category = category  # type: ignore[assignment]
-    ticket.updated_at = now  # type: ignore[assignment]
     db.add(
         _event(
             ticket, now, type="category", by=display_name(actor), by_id=int(actor.id), to=category, **{"from": previous}
@@ -897,7 +901,6 @@ async def assign(
         ticket.assignee_id = None  # type: ignore[assignment]
         ticket.assigned_at = None  # type: ignore[assignment]
         ticket.assigned_by_id = None  # type: ignore[assignment]
-        ticket.updated_at = now  # type: ignore[assignment]
         row = _event(
             ticket,
             now,
@@ -923,7 +926,6 @@ async def assign(
     ticket.assignee_id = assignee.id
     ticket.assigned_at = now  # type: ignore[assignment]
     ticket.assigned_by_id = actor.id
-    ticket.updated_at = now  # type: ignore[assignment]
     row = _event(
         ticket,
         now,
@@ -978,7 +980,6 @@ async def release_orphaned_assignments(db: AsyncSession) -> int:
             ticket.assignee_id = None  # type: ignore[assignment]
             ticket.assigned_at = None  # type: ignore[assignment]
             ticket.assigned_by_id = None  # type: ignore[assignment]
-            ticket.updated_at = now  # type: ignore[assignment]
             db.add(_event(ticket, now, type="assignee_removed", **{"from": name, "from_id": int(assignee_id)}))
             released += 1
     await db.flush()

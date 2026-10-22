@@ -323,6 +323,45 @@ class TestReplies:
         assert ticket.category == "Bug"
 
 
+class TestLastActivity:
+    """``updated_at`` is what the person can see happen; staff-only changes leave it."""
+
+    async def test_staff_only_changes_leave_it_and_replies_and_status_move_it(
+        self, db_session, user, support, other_support
+    ):
+        ticket = await _open(db_session, user)
+        before = NOW - datetime.timedelta(days=3)
+        ticket.updated_at = before
+        await db_session.commit()
+        await st.add_staff_message(
+            db_session, ticket=ticket, staff=support, body="Note", internal=True, images=[], status=None
+        )
+        await st.set_priority(db_session, ticket=ticket, actor=support, priority="urgent")
+        await st.set_category(db_session, ticket=ticket, actor=support, category="Question")
+        await st.assign(db_session, ticket=ticket, actor=support, assignee=other_support)
+        await st.assign(db_session, ticket=ticket, actor=support, assignee=None)
+        await st.assign(db_session, ticket=ticket, actor=support, assignee=other_support)
+        await db_session.commit()
+        await set_user_roles(db_session, other_support, [])
+        assert await st.release_orphaned_assignments(db_session) == 1
+        await db_session.commit()
+        assert ticket.assignee_id is None
+        assert ticket.updated_at == before
+
+        await st.add_staff_message(
+            db_session, ticket=ticket, staff=support, body="Reply", internal=False, images=[], status=None
+        )
+        assert ticket.updated_at > before
+        ticket.updated_at = before
+        await st.set_status(db_session, ticket=ticket, actor=support, status="waiting")
+        assert ticket.updated_at > before
+        ticket.updated_at = before
+        await st.add_staff_message(
+            db_session, ticket=ticket, staff=support, body="Note", internal=True, images=[], status="resolved"
+        )
+        assert ticket.updated_at > before  # a status change, even with a note, is something the person sees
+
+
 class TestAssignment:
     async def test_taking_a_ticket_yourself_sends_no_email(self, db_session, user, support):
         ticket = await _open(db_session, user)

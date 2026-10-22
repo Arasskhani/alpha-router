@@ -21,6 +21,7 @@ import {
 import { PAGE_TITLE } from "../lib/brand";
 import { attachDragScroll } from "../lib/dragScroll";
 import { isProjectWorkspacePath } from "../lib/userPanelNav";
+import { rememberPage } from "./support/lastPage";
 import {
   applyThemeToDocument,
   followsSystemPreference,
@@ -133,6 +134,8 @@ export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
   useEffect(() => {
     setNavPeek(false);
     setDrawerOpen(false);
+    // A new ticket's technical details name the page the person came from.
+    rememberPage(path);
   }, [path]);
 
   // Leaving the drawer layout (a rotation, a resized window) puts the panel

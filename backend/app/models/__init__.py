@@ -111,6 +111,7 @@ from app.models.project import (
     ProjectUserPref,
 )
 from app.models.security import AdminIpAllowlistEntry, SecurityAuditEvent, TlsCertificate
+from app.models.support_ticket import SupportTicket, SupportTicketAttachment, SupportTicketMessage
 from app.models.system import (
     ReportSchedule,
     SmtpSettings,
@@ -212,6 +213,9 @@ __all__ = [
     "RequestLog",
     "SecurityAuditEvent",
     "SmtpSettings",
+    "SupportTicket",
+    "SupportTicketAttachment",
+    "SupportTicketMessage",
     "SystemMetricSnapshot",
     "SystemSetting",
     "TlsCertificate",

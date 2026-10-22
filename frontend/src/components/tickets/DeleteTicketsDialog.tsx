@@ -23,7 +23,8 @@ import { cleanDeleteFilter, deleteFilterExportQuery, downloadCsv } from "../../l
 type Confirmer = ReturnType<typeof useConfirm>;
 
 export type DeleteTarget =
-  | { kind: "filter"; filter: DeleteFilter }
+  /** `fromQueue`: opened from the queue, whose search and quick view do not carry over. */
+  | { kind: "filter"; filter: DeleteFilter; fromQueue?: boolean }
   /** `numbers` are the ticket numbers people know (#1042), in the order of `ids`. */
   | { kind: "ids"; ids: number[]; numbers: number[] };
 
@@ -188,6 +189,12 @@ export default function DeleteTicketsDialog({ target, options, onClose, onDelete
               void runPreview(filter);
             }}
           >
+            {target.fromQueue ? (
+              <p className="tickets-hint" data-testid="tickets-delete-scope">
+                The search and the quick view are not part of this filter: it counts every ticket with these
+                statuses and fields, not only the ones the queue shows.
+              </p>
+            ) : null}
             <fieldset className="tickets-delete-statuses">
               <legend>Status</legend>
               {STATUSES.map((s) => (

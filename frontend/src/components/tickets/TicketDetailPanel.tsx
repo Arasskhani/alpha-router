@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from "react";
 
-import AssignMenu, { useDismiss } from "./AssignMenu";
+import AssignMenu, { useDismiss, useReturnFocus } from "./AssignMenu";
 import { TicketAvatar } from "./TicketBadges";
 import { useConfirm } from "../../context/ConfirmContext";
 import {
@@ -57,7 +57,10 @@ let pendingId = 0;
 
 function errorText(err: unknown): string {
   if (err instanceof TicketsApiError) {
-    if (err.code === "image_rejected" && typeof err.data.file === "string") return `${err.data.file}: ${err.message}`;
+    if (err.code === "image_rejected" && typeof err.data.file === "string") {
+      // The server's sentence usually starts with the file name already.
+      return err.message.startsWith(err.data.file) ? err.message : `${err.data.file}: ${err.message}`;
+    }
     if (err.status === 413) return "An image is larger than the limit. Choose a smaller one.";
   }
   return err instanceof Error ? err.message : String(err);
@@ -161,10 +164,14 @@ export default function TicketDetailPanel({
   const [error, setError] = useState("");
   const [assignOpen, setAssignOpen] = useState(false);
   const assignRef = useRef<HTMLDivElement>(null);
+  const assignBtnRef = useRef<HTMLButtonElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const pendingRef = useRef<Pending[]>([]);
+  // The images kept plus those still being checked: two quick picks cannot pass the limit together.
+  const imageCountRef = useRef(0);
   const closeAssign = useCallback(() => setAssignOpen(false), []);
   useDismiss(assignRef, assignOpen, closeAssign);
+  useReturnFocus(assignOpen, assignBtnRef);
 
   useEffect(() => {
     pendingRef.current = pending;
@@ -210,10 +217,11 @@ export default function TicketDetailPanel({
   async function addFiles(e: ChangeEvent<HTMLInputElement>) {
     const files = [...(e.target.files ?? [])];
     e.target.value = "";
+    setError("");
     const problems: string[] = [];
     const accepted: Pending[] = [];
     for (const file of files) {
-      if (pending.length + accepted.length >= limits.max_images) {
+      if (imageCountRef.current >= limits.max_images) {
         problems.push(`${file.name}: at most ${limits.max_images} images per message`);
         continue;
       }
@@ -222,8 +230,10 @@ export default function TicketDetailPanel({
         problems.push(`${file.name}: ${problem}`);
         continue;
       }
+      imageCountRef.current += 1;
       const side = await imageLargestSide(file);
       if (side != null && side > limits.max_side_px) {
+        imageCountRef.current -= 1;
         problems.push(`${file.name}: larger than ${limits.max_side_px} px on its longest side`);
         continue;
       }
@@ -231,10 +241,12 @@ export default function TicketDetailPanel({
       accepted.push({ id: pendingId, file, url: URL.createObjectURL(file) });
     }
     if (accepted.length) setPending((list) => [...list, ...accepted]);
-    setError(problems.join(" · "));
+    // Added to, not replaced: a pick still being checked must not wipe this one's refusals.
+    if (problems.length) setError((prev) => [prev, ...problems].filter(Boolean).join(" · "));
   }
 
   function removePending(id: number) {
+    if (pending.some((p) => p.id === id)) imageCountRef.current = Math.max(0, imageCountRef.current - 1);
     setPending((list) => {
       const gone = list.find((p) => p.id === id);
       if (gone) URL.revokeObjectURL(gone.url);
@@ -258,6 +270,7 @@ export default function TicketDetailPanel({
     );
     if (!next) return;
     pending.forEach((p) => URL.revokeObjectURL(p.url));
+    imageCountRef.current = Math.max(0, imageCountRef.current - pending.length);
     setPending([]);
     setBody("");
     setStatus("");
@@ -297,8 +310,16 @@ export default function TicketDetailPanel({
       <div className="tickets-ctx">
         <TicketAvatar name={ticket.reporter.name} />
         <span>
-          <b>{ticket.reporter.name}</b> · {ticket.reporter.username}
-          {ticket.reporter.department ? ` · ${ticket.reporter.department}` : ""}
+          <b>
+            <bdi>{ticket.reporter.name}</bdi>
+          </b>{" "}
+          · <bdi>{ticket.reporter.username}</bdi>
+          {ticket.reporter.department ? (
+            <>
+              {" · "}
+              <bdi>{ticket.reporter.department}</bdi>
+            </>
+          ) : null}
           {ticket.reporter.email ? (
             <span className="tickets-ctx__email" dir="ltr">
               {" "}
@@ -365,18 +386,25 @@ export default function TicketDetailPanel({
             ) : null}
           </div>
           <button
+            ref={assignBtnRef}
             type="button"
             className={`input-block tickets-assignee__btn${assignOpen ? " is-open" : ""}`}
             aria-labelledby={`tickets-assignee-${ticket.id}`}
             aria-haspopup="dialog"
             aria-expanded={assignOpen}
-            disabled={!writable || busy}
-            onClick={() => setAssignOpen((v) => !v)}
+            // Not `disabled` while a change is saved: focus comes back here when the picker closes.
+            disabled={!writable}
+            aria-disabled={busy || undefined}
+            onClick={() => {
+              if (!busy) setAssignOpen((v) => !v);
+            }}
           >
             {ticket.assignee ? (
               <>
                 <TicketAvatar name={ticket.assignee.name} staff small />
-                <span className="tickets-assignee__name">{ticket.assignee.name}</span>
+                <span className="tickets-assignee__name" dir="auto">
+                  {ticket.assignee.name}
+                </span>
                 {assignedToMe ? <span className="muted-text">(you)</span> : null}
               </>
             ) : (

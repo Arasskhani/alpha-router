@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 
-import AssignMenu, { useDismiss } from "./AssignMenu";
+import AssignMenu, { useDismiss, useReturnFocus } from "./AssignMenu";
 import DeleteTicketsDialog, { type DeleteTarget } from "./DeleteTicketsDialog";
 import { PriorityBadge, StatusBadge } from "./TicketBadges";
 import TicketDetailPanel from "./TicketDetailPanel";
@@ -69,6 +69,8 @@ function plural(n: number, one: string, many: string) {
 export default function TicketsQueueTab({ meta, settings, canWrite, isSuperAdmin }: Props) {
   const confirmer = useConfirm();
   const [params, setParams] = useSearchParams();
+  const location = useLocation();
+  const navigate = useNavigate();
   const filters = readQueueFilters(params);
   const page = Math.max(1, Number(params.get("page")) || 1);
   const ticketId = Number(params.get("ticket")) || null;
@@ -76,20 +78,30 @@ export default function TicketsQueueTab({ meta, settings, canWrite, isSuperAdmin
 
   const [qDraft, setQDraft] = useState(filters.q);
   const debouncedQ = useDebounced(qDraft, 300);
+  // The address changed `q` from outside the box (a tab, Explore, Back): the box follows.
+  // Our own write comes back equal to the settled draft and is left alone.
+  const [seenQ, setSeenQ] = useState(filters.q);
+  if (seenQ !== filters.q) {
+    setSeenQ(filters.q);
+    if (filters.q !== debouncedQ.trim()) setQDraft(filters.q);
+  }
   const [version, setVersion] = useState(0);
+  const [detailVersion, setDetailVersion] = useState(0);
   const [list, setList] = useState<{ key: string; data: StaffTicketList } | null>(null);
   const [counts, setCounts] = useState<StaffCounts | null>(null);
   const [assignees, setAssignees] = useState<Assignee[]>(meta?.assignees ?? []);
   const [detail, setDetail] = useState<StaffTicketDetail | null>(null);
-  const [detailError, setDetailError] = useState("");
+  const [detailError, setDetailError] = useState<{ id: number; text: string } | null>(null);
   const [selection, setSelection] = useState<{ key: string; ids: Set<number> }>({ key: "", ids: new Set() });
   const [bulkAssignOpen, setBulkAssignOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const bulkRef = useRef<HTMLDivElement>(null);
+  const bulkBtnRef = useRef<HTMLButtonElement>(null);
   const closeBulk = useCallback(() => setBulkAssignOpen(false), [setBulkAssignOpen]);
   useDismiss(bulkRef, bulkAssignOpen, closeBulk);
+  useReturnFocus(bulkAssignOpen, bulkBtnRef);
 
   const listKey = queueQuery(filters, { page, page_size: PAGE_SIZE });
   const selected = selection.key === listKey ? selection.ids : new Set<number>();
@@ -112,10 +124,39 @@ export default function TicketsQueueTab({ meta, settings, canWrite, isSuperAdmin
     [setParams],
   );
 
-  // The search box writes to the address a moment after typing stops.
+  const openedFromList = Boolean((location.state as { ticketOpened?: boolean } | null)?.ticketOpened);
+
+  /**
+   * Open a ticket from the list: a new history entry, so Back (a phone's above
+   * all) returns to the list. Moving from one open ticket to another replaces
+   * it, so Back still lands on the list rather than on the previous ticket.
+   */
+  const openTicket = useCallback(
+    (id: number) => {
+      if (id === ticketId) return;
+      setParams(
+        (current) => {
+          const out = new URLSearchParams(current);
+          out.set("ticket", String(id));
+          return out;
+        },
+        ticketId ? { replace: true, state: { ticketOpened: openedFromList } } : { state: { ticketOpened: true } },
+      );
+    },
+    [setParams, ticketId, openedFromList],
+  );
+
+  /** Back to the list: one step back when the ticket was opened from it, else drop `ticket`. */
+  const closeTicket = useCallback(() => {
+    if (openedFromList) navigate(-1);
+    else patch({ ticket: "" }, true);
+  }, [openedFromList, navigate, patch]);
+
+  // The search box writes to the address a moment after typing stops; not while
+  // the draft is still moving, and not to undo a `q` the address dropped.
   useEffect(() => {
-    if (debouncedQ.trim() !== filters.q) patch({ q: debouncedQ.trim() });
-  }, [debouncedQ, filters.q, patch]);
+    if (debouncedQ === qDraft && debouncedQ.trim() !== filters.q) patch({ q: debouncedQ.trim() });
+  }, [debouncedQ, qDraft, filters.q, patch]);
 
   useEffect(() => {
     let cancelled = false;
@@ -132,6 +173,13 @@ export default function TicketsQueueTab({ meta, settings, canWrite, isSuperAdmin
       cancelled = true;
     };
   }, [listKey, version]);
+
+  // Past the last page (a bulk close or a delete emptied it): go to the last one.
+  useEffect(() => {
+    if (!list || list.key !== listKey || page <= 1 || list.data.items.length > 0) return;
+    const last = Math.max(1, Math.ceil(list.data.total / (list.data.page_size || PAGE_SIZE)));
+    if (last < page) patch({ page: last > 1 ? String(last) : "" }, true);
+  }, [list, listKey, page, patch]);
 
   useEffect(() => {
     let cancelled = false;
@@ -153,15 +201,15 @@ export default function TicketsQueueTab({ meta, settings, canWrite, isSuperAdmin
       .then((next) => {
         if (cancelled) return;
         setDetail(next);
-        setDetailError("");
+        setDetailError(null);
       })
       .catch((err: unknown) => {
-        if (!cancelled) setDetailError(errorText(err));
+        if (!cancelled) setDetailError({ id: ticketId, text: errorText(err) });
       });
     return () => {
       cancelled = true;
     };
-  }, [ticketId]);
+  }, [ticketId, detailVersion]);
 
   /** Something changed: the list, the counts, the badges and the people's open counts follow. */
   const changed = useCallback(() => {
@@ -220,6 +268,8 @@ export default function TicketsQueueTab({ meta, settings, canWrite, isSuperAdmin
             : `${plural(n, "ticket", "tickets")} assigned to ${person?.name}.${settings?.email_assignee === false ? "" : " They get one email listing them."}`,
       );
       setSelected(new Set());
+      // The open ticket was among them: show it as it is now.
+      if (ticketId && ids.includes(ticketId)) setDetailVersion((v) => v + 1);
       changed();
     } catch (err) {
       setError(errorText(err));
@@ -245,6 +295,7 @@ export default function TicketsQueueTab({ meta, settings, canWrite, isSuperAdmin
   const assigneeName = (id: string) =>
     id === "none" ? "Unassigned" : (assignees.find((a) => String(a.id) === id)?.name ?? `#${id}`);
   const shownDetail = detail && detail.id === ticketId ? detail : null;
+  const shownDetailError = detailError && detailError.id === ticketId ? detailError.text : "";
 
   const views = useMemo(() => (filters.view === "all" ? [...QUICK_VIEWS, "all" as StaffView] : QUICK_VIEWS), [filters.view]);
 
@@ -270,16 +321,16 @@ export default function TicketsQueueTab({ meta, settings, canWrite, isSuperAdmin
           patch({ ticket: "" }, true);
           changed();
         }}
-        onBack={isPhone ? () => patch({ ticket: "" }, true) : undefined}
+        onBack={isPhone ? closeTicket : undefined}
       />
     ) : (
       <section className="tickets-panel tickets-detail tickets-detail--empty">
         {isPhone ? (
-          <button type="button" className="btn btn-ghost tickets-back" onClick={() => patch({ ticket: "" }, true)}>
+          <button type="button" className="btn btn-ghost tickets-back" onClick={closeTicket}>
             ← All tickets
           </button>
         ) : null}
-        <p className={detailError ? "alert alert-error" : "muted-text"}>{detailError || "Loading the ticket…"}</p>
+        <p className={shownDetailError ? "alert alert-error" : "muted-text"}>{shownDetailError || "Loading the ticket…"}</p>
       </section>
     )
   ) : (
@@ -363,7 +414,7 @@ export default function TicketsQueueTab({ meta, settings, canWrite, isSuperAdmin
         </select>
         {filters.assignee ? (
           <span className="tickets-chip">
-            Assignee: {assigneeName(filters.assignee)}
+            Assignee: <bdi>{assigneeName(filters.assignee)}</bdi>
             <button type="button" className="tickets-chip__x" aria-label="Clear the assignee filter" onClick={() => patch({ assignee: "" })}>
               ✕
             </button>
@@ -385,7 +436,7 @@ export default function TicketsQueueTab({ meta, settings, canWrite, isSuperAdmin
             <button
               type="button"
               className="btn btn-ghost tickets-danger-ghost"
-              onClick={() => setDeleteTarget({ kind: "filter", filter: deleteFilterFromQueue(filters) })}
+              onClick={() => setDeleteTarget({ kind: "filter", filter: deleteFilterFromQueue(filters), fromQueue: true })}
             >
               Delete by filter…
             </button>
@@ -415,6 +466,7 @@ export default function TicketsQueueTab({ meta, settings, canWrite, isSuperAdmin
           </button>
           <div className="tickets-bulkbar__assign" ref={bulkRef}>
             <button
+              ref={bulkBtnRef}
               type="button"
               className="btn btn-ghost btn-sm"
               aria-haspopup="dialog"
@@ -482,8 +534,7 @@ export default function TicketsQueueTab({ meta, settings, canWrite, isSuperAdmin
                 <tr
                   key={row.id}
                   className={`${row.needs_staff ? "is-unread" : ""}${row.id === ticketId ? " is-selected" : ""}`.trim() || undefined}
-                  aria-selected={row.id === ticketId}
-                  onClick={() => patch({ ticket: String(row.id) }, true)}
+                  onClick={() => openTicket(row.id)}
                 >
                   {canWrite ? (
                     <td className="tickets-cb" onClick={(e) => e.stopPropagation()}>
@@ -501,19 +552,30 @@ export default function TicketsQueueTab({ meta, settings, canWrite, isSuperAdmin
                       type="button"
                       className="tickets-row-title"
                       dir="auto"
+                      aria-current={row.id === ticketId ? "true" : undefined}
                       onClick={(e) => {
                         e.stopPropagation();
-                        patch({ ticket: String(row.id) }, true);
+                        openTicket(row.id);
                       }}
                     >
                       {row.title}
-                      {row.needs_staff ? <span className="tickets-unread-dot" title="Needs staff" aria-label="Needs staff" /> : null}
+                      {row.needs_staff ? (
+                        <span className="tickets-unread-dot" role="img" title="Needs staff" aria-label="Needs staff" />
+                      ) : null}
                     </button>
                     <div className="tickets-row-sub">
-                      {row.reporter.name}
-                      {row.reporter.department ? ` · ${row.reporter.department}` : ""} · {row.category} ·{" "}
+                      <bdi>{row.reporter.name}</bdi>
+                      {row.reporter.department ? (
+                        <>
+                          {" · "}
+                          <bdi>{row.reporter.department}</bdi>
+                        </>
+                      ) : null}{" "}
+                      · <bdi>{row.category}</bdi> ·{" "}
                       {row.assignee ? (
-                        <span className="tickets-to">→ {shortName(row.assignee.name)}</span>
+                        <span className="tickets-to">
+                          → <bdi>{shortName(row.assignee.name)}</bdi>
+                        </span>
                       ) : (
                         <>
                           <span className="tickets-unassigned">unassigned</span>

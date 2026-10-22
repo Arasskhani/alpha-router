@@ -7,7 +7,7 @@
  */
 import { act, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation, useNavigate, type NavigateFunction } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../api", () => ({ authFetch: vi.fn(), api: vi.fn(), formatApiError: (e: unknown) => String(e) }));
@@ -27,12 +27,15 @@ let host: HTMLDivElement;
 let root: Root;
 let calls: Call[];
 const where = { path: "" };
+let go: NavigateFunction;
 
 function Probe() {
   const loc = useLocation();
+  const navigate = useNavigate();
   useEffect(() => {
+    go = navigate;
     where.path = `${loc.pathname}${loc.search}`;
-  }, [loc]);
+  }, [loc, navigate]);
   return null;
 }
 
@@ -63,10 +66,10 @@ async function settle() {
   await act(async () => undefined);
 }
 
-async function render(path = "/admin/tickets/list") {
+async function render(path = "/admin/tickets/list", before: string[] = []) {
   await act(async () => {
     root.render(
-      <MemoryRouter initialEntries={[path]}>
+      <MemoryRouter initialEntries={[...before, path]} initialIndex={before.length}>
         <Probe />
         <Routes>
           <Route path="/admin/tickets/list" element={<Tickets />} />
@@ -269,6 +272,159 @@ describe("the queue", () => {
     expect(calls.find((c) => c.url.endsWith("/delete-preview"))!.body).toEqual({ ids: [47] });
     expect(document.querySelector(".tickets-modal")!.textContent).toContain("Delete the selected ticket");
     expect(document.querySelector(".tickets-filter-summary")!.textContent).toBe("Selected#1047");
+  });
+});
+
+describe("the queue keeps up", () => {
+  it("leaves a page that a bulk close emptied for the last one that has tickets", async () => {
+    useApi((url) => {
+      if (!/\/api\/admin\/tickets\?/.test(url)) return undefined;
+      return url.includes("page=3")
+        ? { items: [], total: 60, page: 3, page_size: 50 }
+        : { ...LIST, total: 60, page: url.includes("page=2") ? 2 : 1 };
+    });
+    await render("/admin/tickets/list?page=3");
+    await settle();
+    expect(where.path).toContain("page=2");
+    expect(lastList()).toContain("page=2");
+    expect(host.textContent).not.toContain("No ticket matches.");
+  });
+
+  it("gives opening a ticket its own history entry; filters replace theirs", async () => {
+    await render("/admin/tickets/list", ["/admin/dashboard"]);
+    await choose(host.querySelector<HTMLSelectElement>('select[aria-label="Priority"]')!, "high");
+    await act(async () => row(1047).querySelector<HTMLButtonElement>(".tickets-row-title")!.click());
+    await settle();
+    expect(where.path).toContain("ticket=47");
+    // Another ticket from the open one: Back still goes to the list.
+    await act(async () => row(1042).querySelector<HTMLButtonElement>(".tickets-row-title")!.click());
+    await settle();
+    expect(where.path).toContain("ticket=42");
+    await act(async () => go(-1));
+    await settle();
+    expect(where.path).toBe("/admin/tickets/list?priority=high");
+    await act(async () => go(-1));
+    expect(where.path).toBe("/admin/dashboard");
+  });
+
+  it("goes back to the list on a phone with one step back, not a second list entry", async () => {
+    const original = window.matchMedia;
+    window.matchMedia = ((query: string) => ({
+      matches: query === "(max-width: 900px)",
+      media: query,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    })) as unknown as typeof window.matchMedia;
+    try {
+      await render("/admin/tickets/list?view=mine", ["/admin/dashboard"]);
+      await act(async () => row(1047).querySelector<HTMLButtonElement>(".tickets-row-title")!.click());
+      await settle();
+      expect(host.querySelector(".tickets-queue--phone-detail")).not.toBeNull();
+      await act(async () => button("← All tickets").click());
+      await settle();
+      expect(where.path).toBe("/admin/tickets/list?view=mine");
+      await act(async () => go(-1));
+      expect(where.path).toBe("/admin/dashboard");
+    } finally {
+      window.matchMedia = original;
+    }
+  });
+
+  it("reads the open ticket again after a bulk action that included it", async () => {
+    await render("/admin/tickets/list?ticket=47");
+    const reads = () => calls.filter((c) => c.url.endsWith("/tickets/47") && c.method === "GET").length;
+    expect(reads()).toBe(1);
+    await act(async () => row(1042).querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
+    await act(async () => button("Close", host.querySelector(".tickets-bulkbar")!).click());
+    await settle();
+    expect(reads()).toBe(1);
+    await act(async () => row(1047).querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
+    await act(async () => button("Close", host.querySelector(".tickets-bulkbar")!).click());
+    await settle();
+    expect(reads()).toBe(2);
+  });
+
+  it("empties the search box when the address drops the search", async () => {
+    await render();
+    const search = () => host.querySelector<HTMLInputElement>('input[aria-label="Search tickets"]')!;
+    await type(search(), "ldap");
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 350));
+    });
+    await settle();
+    expect(where.path).toContain("q=ldap");
+    await act(async () => go("/admin/tickets/list?view=needs_staff"));
+    await settle();
+    expect(search().value).toBe("");
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 350));
+    });
+    await settle();
+    expect(where.path).toBe("/admin/tickets/list?view=needs_staff");
+  });
+
+  it("does not show the last ticket's error while the next one loads", async () => {
+    const base = fakeTicketsApi(calls, (url) =>
+      url.endsWith("/tickets/99") ? new Response(JSON.stringify({ detail: "Ticket not found." }), { status: 404 }) : undefined,
+    );
+    vi.mocked(authFetch).mockImplementation(((url: string, init?: RequestInit) =>
+      url.endsWith("/tickets/47") ? new Promise(() => undefined) : base(url, init)) as typeof authFetch);
+    await render("/admin/tickets/list?ticket=99");
+    expect(panel().textContent).toContain("Ticket not found.");
+    await act(async () => row(1047).querySelector<HTMLButtonElement>(".tickets-row-title")!.click());
+    await settle();
+    expect(panel().textContent).toContain("Loading the ticket…");
+    expect(panel().textContent).not.toContain("Ticket not found.");
+  });
+
+  it("stops two quick image picks from passing the limit together", async () => {
+    await render("/admin/tickets/list?ticket=47");
+    const input = panel().querySelector<HTMLInputElement>('input[type="file"]')!;
+    const pick = (names: string[]) => {
+      Object.defineProperty(input, "files", {
+        value: names.map((n) => new File([new Uint8Array(10)], n, { type: "image/png" })),
+        configurable: true,
+      });
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    };
+    await act(async () => {
+      pick(["1.png", "2.png", "3.png"]);
+      pick(["4.png", "5.png", "6.png"]);
+    });
+    await settle();
+    expect(panel().querySelectorAll(".tickets-thumb")).toHaveLength(5);
+    expect(panel().textContent).toContain("6.png: at most 5 images per message");
+  });
+
+  it("says the delete filter leaves out the search and the quick view", async () => {
+    await render("/admin/tickets/list?view=needs_staff&q=ldap");
+    await act(async () => button("Delete by filter…").click());
+    await settle();
+    expect(document.querySelector('[data-testid="tickets-delete-scope"]')!.textContent).toContain(
+      "The search and the quick view are not part of this filter",
+    );
+  });
+
+  it("marks the open row without aria-selected and names the unread dot", async () => {
+    await render("/admin/tickets/list?ticket=47");
+    expect(host.querySelector("tr[aria-selected]")).toBeNull();
+    expect(row(1047).querySelector(".tickets-row-title")!.getAttribute("aria-current")).toBe("true");
+    expect(row(1042).querySelector(".tickets-row-title")!.hasAttribute("aria-current")).toBe(false);
+    expect(row(1047).querySelector(".tickets-unread-dot")!.getAttribute("role")).toBe("img");
+    expect(row(1047).querySelector(".tickets-row-sub bdi")!.textContent).toBe("Reza Ahmadi");
+  });
+
+  it("gives the focus back to the assignee button when the picker closes", async () => {
+    await render("/admin/tickets/list?ticket=47");
+    const trigger = panel().querySelector<HTMLButtonElement>(".tickets-assignee__btn")!;
+    await act(async () => trigger.click());
+    const pop = panel().querySelector<HTMLElement>(".tickets-assign-pop")!;
+    expect(pop.querySelector('[role="listbox"], [role="option"]')).toBeNull();
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(panel().querySelector(".tickets-assign-pop")).toBeNull();
+    expect(document.activeElement).toBe(trigger);
   });
 });
 

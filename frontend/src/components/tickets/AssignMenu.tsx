@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 
 import { TicketAvatar } from "./TicketBadges";
 import type { Assignee } from "../../lib/tickets";
@@ -22,6 +22,25 @@ export function useDismiss(ref: RefObject<HTMLElement | null>, open: boolean, cl
   }, [ref, open, close]);
 }
 
+/**
+ * Give focus back to the button that opened a popover once it closes, when the
+ * focus went down with it (a pick, Escape). A click on something else keeps
+ * the focus there.
+ */
+export function useReturnFocus(open: boolean, triggerRef: RefObject<HTMLElement | null>) {
+  const wasOpen = useRef(false);
+  useEffect(() => {
+    if (open) {
+      wasOpen.current = true;
+      return;
+    }
+    if (!wasOpen.current) return;
+    wasOpen.current = false;
+    const active = document.activeElement;
+    if (!active || active === document.body) triggerRef.current?.focus();
+  }, [open, triggerRef]);
+}
+
 type Props = {
   assignees: Assignee[];
   /** The ticket's assignee now; null when unassigned or for a bulk assign. */
@@ -38,6 +57,8 @@ type Props = {
 /**
  * Who a ticket can go to: "Assign to me" first (no email), then the support
  * team with their open counts (the person gets an email), then Unassign.
+ * Plain buttons in a group (Tab moves through them), not a listbox: the person
+ * assigned now is a disabled button that says so.
  */
 export default function AssignMenu({ assignees, currentId, emailsAssignee, canUnassign, bulk, onPick }: Props) {
   const [query, setQuery] = useState("");
@@ -61,12 +82,10 @@ export default function AssignMenu({ assignees, currentId, emailsAssignee, canUn
         // eslint-disable-next-line jsx-a11y/no-autofocus -- a picker the person just opened
         autoFocus
       />
-      <div role="listbox" aria-label="People who can work tickets" className="tickets-assign-list">
+      <div role="group" aria-label="People who can work tickets" className="tickets-assign-list">
         {showMe ? (
           <button
             type="button"
-            role="option"
-            aria-selected={currentId === me.id}
             className="tickets-assign-opt tickets-assign-opt--me"
             disabled={currentId === me.id}
             onClick={() => onPick(me)}
@@ -75,7 +94,8 @@ export default function AssignMenu({ assignees, currentId, emailsAssignee, canUn
             <span>
               <b>Assign to me</b>
               <small>
-                {me.name} · {me.open_count} open
+                <bdi>{me.name}</bdi> · {me.open_count} open
+                {currentId === me.id ? " · assigned now" : ""}
               </small>
             </span>
             <span className="tickets-assign-tag">no email</span>
@@ -86,15 +106,13 @@ export default function AssignMenu({ assignees, currentId, emailsAssignee, canUn
           <button
             key={a.id}
             type="button"
-            role="option"
-            aria-selected={currentId === a.id}
             className={`tickets-assign-opt${currentId === a.id ? " is-current" : ""}`}
             disabled={currentId === a.id}
             onClick={() => onPick(a)}
           >
             <TicketAvatar name={a.name} staff={a.role_label === "Super Admin"} small />
             <span>
-              <b>{a.name}</b>
+              <b dir="auto">{a.name}</b>
               <small>
                 {a.role_label} · {a.open_count} open
                 {currentId === a.id ? " · assigned now" : ""}

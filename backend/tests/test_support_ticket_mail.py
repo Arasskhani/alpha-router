@@ -216,6 +216,13 @@ class TestThePerson:
         await mail.drain()
         assert sent == []
 
+    async def test_nothing_while_support_is_off(self, db_session, user, support, sent):
+        ticket = await _open(db_session, user, await _settings(db_session, email_user=True))
+        await _settings(db_session, email_user=True, enabled=False)
+        mail.notify_user(ticket.id, "status")
+        await mail.drain()
+        assert sent == []
+
     async def test_replies_resolves_and_status_changes_when_on(self, db_session, user, support, sent):
         settings = await _settings(db_session, email_user=True)
         ticket = await _open(db_session, user, settings)

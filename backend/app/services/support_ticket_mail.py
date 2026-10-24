@@ -285,7 +285,8 @@ UserMailKind = Literal["reply", "resolved", "status"]
 async def _send_to_user(ticket_id: int, kind: UserMailKind) -> None:
     async with _session() as db:
         settings = await load_settings(db)
-        if not settings.email_user:
+        # Support off: the person cannot open the ticket the email would point to, so nothing is sent.
+        if not settings.email_user or not settings.enabled:
             return
         ticket = await db.get(SupportTicket, ticket_id)
         if ticket is None:

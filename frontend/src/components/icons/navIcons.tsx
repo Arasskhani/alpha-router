@@ -88,6 +88,18 @@ export function IconFolder({ className = "" }: IconProps) {
   );
 }
 
+/** Support: a headset, someone to ask. */
+function IconHeadset({ className = "" }: IconProps) {
+  return (
+    <svg {...svgProps} className={className}>
+      <path d="M4 15v-3a8 8 0 0 1 16 0v3" />
+      <path d="M20 16a2 2 0 0 1-2 2h-1v-6h1a2 2 0 0 1 2 2z" />
+      <path d="M4 16a2 2 0 0 0 2 2h1v-6H6a2 2 0 0 0-2 2z" />
+      <path d="M18 18v.5a2.5 2.5 0 0 1-2.5 2.5H13" />
+    </svg>
+  );
+}
+
 function IconProjects({ className = "" }: IconProps) {
   return (
     <svg {...svgProps} className={className}>
@@ -115,7 +127,7 @@ const NAV_ICONS = {
   activity: IconActivity,
   manual: IconManual,
   admin: IconAdmin,
-  folder: IconFolder,
+  headset: IconHeadset,
   projects: IconProjects,
 } as const;
 

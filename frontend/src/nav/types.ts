@@ -65,7 +65,7 @@ export type MenuKey =
 
   | "tickets";
 
-export type NavIconKey = "chat" | "media" | "activity" | "manual" | "admin" | "folder" | "projects";
+export type NavIconKey = "chat" | "media" | "activity" | "manual" | "admin" | "headset" | "projects";
 
 export type NavItem = {
   to: string;

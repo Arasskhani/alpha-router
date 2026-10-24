@@ -21021,6 +21021,13 @@ p.error,
 
 /* === Tickets (admin) === */
 
+/* The "Support is off" warning above the tabs: its link reads as part of the warning, in both themes. */
+.tickets-off-banner a {
+  color: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+}
+
 /* Tickets › Overview: Activity's header, KPI cards and lists, Operations' cards. */
 .tickets-panel-tab {
   margin-top: 1rem;

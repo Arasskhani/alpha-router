@@ -521,19 +521,16 @@ async def put_ticket_settings(
     after = saved.as_dict()
     changed = [key for key in after if after[key] != current.get(key)]
     await st.save_settings(db, saved)
+    detail: dict[str, Any] = {
+        "changed": changed,
+        "before": {k: current.get(k) for k in changed},
+        "after": {k: after[k] for k in changed},
+    }
+    if saved.enabled and not current.get("enabled", True):
+        # Back on: the auto-close was paused, and the people waited on could not answer meanwhile.
+        detail["waiting_restarted"] = await st.restart_waiting_clocks(db)
     if changed:
-        await _audit(
-            db,
-            request,
-            actor,
-            "tickets_settings_updated",
-            st.SETTINGS_KEY,
-            {
-                "changed": changed,
-                "before": {k: current.get(k) for k in changed},
-                "after": {k: after[k] for k in changed},
-            },
-        )
+        await _audit(db, request, actor, "tickets_settings_updated", st.SETTINGS_KEY, detail)
     await db.commit()
     return after
 

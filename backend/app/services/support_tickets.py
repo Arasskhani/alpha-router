@@ -40,7 +40,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from sqlalchemy import case, delete, func, select
+from sqlalchemy import case, delete, func, select, update
 from sqlalchemy import event as sa_event
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1059,10 +1059,14 @@ async def _locked_batch(db: AsyncSession, after_id: int, *conditions: Any) -> li
 async def close_waiting_tickets(db: AsyncSession, *, now: datetime.datetime | None = None) -> list[int]:
     """Close tickets that waited for the person longer than ``auto_close_days``; commits in batches.
 
-    Returns the ids closed, so the caller can tell each person after the commit.
+    Returns the ids closed, so the caller can tell each person after the commit. Nothing closes while
+    Support is off: the people it would close on cannot see their tickets, let alone answer them.
     """
     now = now or _now()
-    days = (await load_settings(db)).auto_close_days
+    settings = await load_settings(db)
+    if not settings.enabled:
+        return []
+    days = settings.auto_close_days
     cutoff = now - datetime.timedelta(days=days)
     closed: list[int] = []
     after_id = 0
@@ -1088,9 +1092,15 @@ async def close_waiting_tickets(db: AsyncSession, *, now: datetime.datetime | No
 
 
 async def close_resolved_tickets(db: AsyncSession, *, now: datetime.datetime | None = None) -> list[int]:
-    """Close resolved tickets once their reopen window has passed; commits in batches. Returns the ids closed."""
+    """Close resolved tickets once their reopen window has passed; commits in batches. Returns the ids closed.
+
+    Paused while Support is off, like the auto-close: nobody can reopen a ticket they cannot see.
+    """
     now = now or _now()
-    days = (await load_settings(db)).reopen_days
+    settings = await load_settings(db)
+    if not settings.enabled:
+        return []
+    days = settings.reopen_days
     cutoff = now - datetime.timedelta(days=days)
     closed: list[int] = []
     after_id = 0
@@ -1109,6 +1119,17 @@ async def close_resolved_tickets(db: AsyncSession, *, now: datetime.datetime | N
             closed.append(int(ticket.id))
         await db.commit()
     return closed
+
+
+async def restart_waiting_clocks(db: AsyncSession, *, now: datetime.datetime | None = None) -> int:
+    """Give every ticket waiting for its person the full auto-close days again, from now; flushes, no commit.
+
+    Called when Support is turned back on. While it was off the person could neither see the question nor
+    answer it, so the days that passed meanwhile do not count against them.
+    """
+    now = now or _now()
+    result = await db.execute(update(SupportTicket).where(SupportTicket.status == "waiting").values(waiting_since=now))
+    return int(getattr(result, "rowcount", 0) or 0)
 
 
 async def purge_closed_tickets(db: AsyncSession, *, now: datetime.datetime | None = None) -> dict[str, int]:

@@ -774,6 +774,21 @@ class TestSettings:
         }
         assert json.loads(second.detail_json)["changed"] == ["email_assignee"]
 
+    async def test_turning_support_back_on_gives_waiting_tickets_their_full_days(
+        self, client, admin, reporter, db_session
+    ):
+        waiting = await _ticket(db_session, reporter, "Waits", status="waiting")
+        waiting.waiting_since = T0
+        await db_session.commit()
+        headers = sign_in(client, admin)
+        assert (await client.put(f"{BASE}/settings", json={"enabled": False}, headers=headers)).status_code == 200
+        assert (await _fresh(db_session, waiting)).waiting_since == T0
+        assert (await client.put(f"{BASE}/settings", json={"enabled": True}, headers=headers)).status_code == 200
+        assert (await _fresh(db_session, waiting)).waiting_since > T0
+        off, on = await _audits(db_session, "tickets_settings_updated")
+        assert "waiting_restarted" not in json.loads(off.detail_json)
+        assert json.loads(on.detail_json)["waiting_restarted"] == 1
+
     @pytest.mark.parametrize(
         "change",
         [

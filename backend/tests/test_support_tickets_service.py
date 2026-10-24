@@ -508,6 +508,29 @@ class TestJobs:
         assert fresh.status == "waiting"
         assert (await _events(db_session, stale))[-1] == {"type": "auto_closed", "days": 7}
 
+    async def test_nothing_closes_while_support_is_off_and_turning_it_on_restarts_the_wait(
+        self, db_session, user, support
+    ):
+        waiting = await _open(db_session, user)
+        resolved = await _open(db_session, user)
+        await st.set_status(db_session, ticket=waiting, actor=support, status="waiting")
+        await st.set_status(db_session, ticket=resolved, actor=support, status="resolved")
+        waiting.waiting_since = NOW - datetime.timedelta(days=30)
+        resolved.resolved_at = NOW - datetime.timedelta(days=30)
+        await st.save_settings(db_session, st.TicketSettings(enabled=False))
+        await db_session.commit()
+        assert await st.close_waiting_tickets(db_session, now=NOW) == []
+        assert await st.close_resolved_tickets(db_session, now=NOW) == []
+        assert (waiting.status, resolved.status) == ("waiting", "resolved")
+
+        await st.save_settings(db_session, st.TicketSettings(enabled=True))
+        assert await st.restart_waiting_clocks(db_session, now=NOW) == 1
+        await db_session.commit()
+        await db_session.refresh(waiting)
+        assert waiting.waiting_since == NOW
+        assert await st.close_waiting_tickets(db_session, now=NOW + datetime.timedelta(days=6)) == []
+        assert await st.close_waiting_tickets(db_session, now=NOW + datetime.timedelta(days=8)) == [waiting.id]
+
     def test_the_close_jobs_lock_what_they_close_and_skip_what_is_being_changed(self):
         from sqlalchemy.dialects import postgresql
 

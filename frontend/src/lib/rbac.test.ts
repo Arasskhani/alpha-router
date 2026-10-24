@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { adminNavSections } from "../nav/adminNav";
 import {
   canAccessMenu,
+  filterAdminNavFromSession,
   isAdminPanelRole,
   menuCategory,
   pathToMenu,
@@ -122,5 +123,33 @@ describe("Read Only Super Admin", () => {
       expect(canAccessMenu(legacy, "users"), legacy).toBe(true);
       expect(userCanWriteAdminPath("/admin/users", s), legacy).toBe(false);
     }
+  });
+});
+
+describe("Support in the admin sidebar", () => {
+  const superAdmin = {
+    username: "a",
+    role: "super_admin",
+    roles: ["super_admin"],
+    is_active: true,
+    is_admin_panel: true,
+    menus: null,
+  };
+  const paths = (features?: { support?: boolean }) =>
+    filterAdminNavFromSession(adminNavSections, { ...superAdmin, features }, "super_admin").flatMap((section) =>
+      section.items.map((item) => item.to),
+    );
+
+  it("lists Support in the User panel, with the headset icon, while Tickets is on", () => {
+    expect(paths({ support: true })).toContain("/app/support");
+    expect(paths()).toContain("/app/support");
+    const item = adminNavSections.flatMap((section) => section.items).find((i) => i.to === "/app/support");
+    expect(item?.icon).toBe("headset");
+  });
+
+  it("leaves Support out when Tickets is switched off, and keeps the staff Tickets menu", () => {
+    const shown = paths({ support: false });
+    expect(shown).not.toContain("/app/support");
+    expect(shown).toContain("/admin/tickets");
   });
 });

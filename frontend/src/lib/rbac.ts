@@ -55,6 +55,21 @@ function disabledPreviewMenus(session: SessionRbac | null): Set<MenuKey> {
   return off;
 }
 
+/**
+ * User-panel pages a server switch can turn off for everyone, and that switch. The admin sidebar's "User
+ * panel" section leaves them out like the user sidebar does (`userSidebarNavForSession`).
+ */
+const SWITCHED_USER_PATHS: Record<string, string> = { support: "/app/support" };
+
+function switchedOffUserPaths(session: SessionRbac | null): Set<string> {
+  const features = (session?.features ?? {}) as Record<string, boolean | undefined>;
+  return new Set(
+    Object.entries(SWITCHED_USER_PATHS)
+      .filter(([feature]) => features[feature] === false)
+      .map(([, path]) => path),
+  );
+}
+
 const FULL_ADMIN = "full_administrator";
 const READ_ONLY_FULL_ADMIN = "read_only_full_administrator";
 const SUPER_ADMIN = "super_admin";
@@ -298,7 +313,9 @@ export function filterAdminNavFromSession(
       : accessibleMenuKeysFromRoles(session?.roles?.length ? session.roles : [session?.role ?? fallbackRole]);
 
   const hidden = disabledPreviewMenus(session);
-  const visible = (item: NavItem) => item.menuKey == null || !hidden.has(item.menuKey);
+  const offPaths = switchedOffUserPaths(session);
+  const visible = (item: NavItem) =>
+    !offPaths.has(item.to) && (item.menuKey == null || !hidden.has(item.menuKey));
   if (allowed === null) {
     return sections
       .map((section) => ({ ...section, items: section.items.filter(visible) }))

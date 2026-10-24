@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 
 import AdminPage from "../../components/AdminPage";
 import Tabs, { TabPanel } from "../../components/Tabs";
 import TicketsOverviewTab from "../../components/tickets/TicketsOverviewTab";
 import TicketsQueueTab from "../../components/tickets/TicketsQueueTab";
 import TicketsSettingsTab from "../../components/tickets/TicketsSettingsTab";
+import { bootstrapSession } from "../../api";
 import { useReadOnly } from "../../context/ReadOnlyContext";
 import { TICKETS_BASE, ticketsRequest, type StaffMeta, type TicketSettings } from "../../lib/tickets";
 
@@ -76,6 +77,9 @@ export default function Tickets() {
 
   const canWrite = !readOnly && Boolean(meta?.me.can_write);
   const isSuperAdmin = !readOnly && Boolean(meta?.me.is_super_admin);
+  // The saved settings when read, else what /meta said; unknown counts as on (no warning on a guess).
+  const supportOff = (settings?.enabled ?? meta?.settings.enabled) === false;
+  const autoCloseDays = settings?.auto_close_days ?? meta?.settings.auto_close_days ?? 7;
 
   return (
     <AdminPage title="Tickets">
@@ -83,6 +87,19 @@ export default function Tickets() {
         <p className="alert alert-error" role="alert">
           {error}
         </p>
+      ) : null}
+      {supportOff ? (
+        <div className="alert alert-warning tickets-off-banner" role="status">
+          <strong>Support is off.</strong> People cannot see their tickets or answer replies, and no ticket email
+          reaches them. Tickets waiting for an answer do not close on their own; when Support is turned on again,
+          each of them gets its full {autoCloseDays} days.
+          {tab !== "settings" ? (
+            <>
+              {" "}
+              <Link to={TAB_PATHS.settings}>{isSuperAdmin ? "Turn it on in Settings" : "See Settings"}</Link>
+            </>
+          ) : null}
+        </div>
       ) : null}
       <Tabs
         items={TABS}
@@ -115,6 +132,8 @@ export default function Tickets() {
             onSaved={(next) => {
               setSettings(next);
               void loadMeta();
+              // Support on or off changes this account's own menus too (features.support).
+              void bootstrapSession(true).catch(() => undefined);
             }}
           />
         ) : null}

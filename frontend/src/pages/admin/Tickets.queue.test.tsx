@@ -10,7 +10,12 @@ import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter, Route, Routes, useLocation, useNavigate, type NavigateFunction } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../../api", () => ({ authFetch: vi.fn(), api: vi.fn(), formatApiError: (e: unknown) => String(e) }));
+vi.mock("../../api", () => ({
+  authFetch: vi.fn(),
+  api: vi.fn(),
+  bootstrapSession: vi.fn(async () => ({})),
+  formatApiError: (e: unknown) => String(e),
+}));
 const dialogs = vi.hoisted(() => ({
   confirm: vi.fn(async () => true as boolean | "secondary"),
   prompt: vi.fn(async () => null as string | null),

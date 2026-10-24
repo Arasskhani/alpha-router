@@ -11,7 +11,12 @@ import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../../api", () => ({ authFetch: vi.fn(), api: vi.fn(), formatApiError: (e: unknown) => String(e) }));
+vi.mock("../../api", () => ({
+  authFetch: vi.fn(),
+  api: vi.fn(),
+  bootstrapSession: vi.fn(async () => ({})),
+  formatApiError: (e: unknown) => String(e),
+}));
 const dialogs = vi.hoisted(() => ({
   confirm: vi.fn(async () => true as boolean | "secondary"),
   prompt: vi.fn(async () => null as string | null),
@@ -20,8 +25,8 @@ vi.mock("../../context/ConfirmContext", () => ({ useConfirm: () => dialogs }));
 const readOnly = vi.hoisted(() => ({ value: false }));
 vi.mock("../../context/ReadOnlyContext", () => ({ useReadOnly: () => readOnly.value }));
 
-import { authFetch } from "../../api";
-import { fakeTicketsApi, makeMeta, type Call } from "../../components/tickets/testFixtures";
+import { authFetch, bootstrapSession } from "../../api";
+import { SETTINGS, fakeTicketsApi, makeMeta, type Call } from "../../components/tickets/testFixtures";
 import Tickets from "./Tickets";
 
 let host: HTMLDivElement;
@@ -184,6 +189,23 @@ describe("Tickets settings", () => {
     }
     expect(host.textContent).toContain("Allow at least one image type.");
     expect(button("Save settings").disabled).toBe(true);
+  });
+
+  it("warns on every tab while Support is off, and saving reads the session again", async () => {
+    useApi((url, method) => (url.endsWith("/settings") && method === "GET" ? { ...SETTINGS, enabled: false } : undefined));
+    await render();
+    const banner = host.querySelector(".tickets-off-banner");
+    expect(banner?.textContent).toContain("Support is off.");
+    expect(banner?.textContent).toContain("each of them gets its full 7 days");
+    expect(banner?.querySelector("a")).toBeNull(); // already on Settings
+    await act(async () => button("Save settings").click());
+    await settle();
+    expect(vi.mocked(bootstrapSession)).toHaveBeenCalledWith(true);
+  });
+
+  it("shows no warning while Support is on", async () => {
+    await render();
+    expect(host.querySelector(".tickets-off-banner")).toBeNull();
   });
 
   it("is read-only for anyone but a Super Admin", async () => {

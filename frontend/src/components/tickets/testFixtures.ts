@@ -31,7 +31,7 @@ export function makeMeta(over: Partial<StaffMeta["me"]> = {}): StaffMeta {
   };
 }
 
-const SETTINGS: TicketSettings = {
+export const SETTINGS: TicketSettings = {
   enabled: true,
   per_hour: 5,
   max_open: 20,

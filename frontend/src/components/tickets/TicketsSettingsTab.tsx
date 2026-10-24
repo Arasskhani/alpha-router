@@ -255,7 +255,9 @@ export default function TicketsSettingsTab({ settings, meta, canEdit, loadError,
             <Switch on={form.enabled} label="Tickets on" disabled={locked} onChange={(on) => set({ enabled: on })} />
           </h3>
           <p className="muted-text">
-            When off, Support disappears from every account and nothing new can be sent. Existing tickets stay.
+            When off, Support disappears from every account: people cannot see their tickets, open new ones or
+            answer, and get no ticket email. Tickets stay and staff keep working them; the auto-close waits until
+            Support is on again.
           </p>
           <NumberField
             label="Tickets a person may open per hour"

@@ -1822,7 +1822,8 @@ export const userManualSections: DocSection[] = [
         <Note>
           Support staff see your whole conversation, your screenshots and the technical details you sent. They can also
           write internal notes on your ticket, which you do not see. Support may be switched off by your
-          administrators: then it is not in the menu, and you cannot open or read tickets until it is back.
+          administrators: then it is not in the menu, you cannot open or read tickets until it is back, and a ticket
+          waiting for your answer does not close meanwhile.
         </Note>
       </>
     ),

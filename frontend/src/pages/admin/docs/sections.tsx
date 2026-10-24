@@ -1965,8 +1965,8 @@ export const docSections: DocSection[] = [
           <li>
             <strong>Auto-close.</strong> A ticket Waiting for user closes after the number of days in Settings (default
             7) without a reply, with the line &ldquo;Closed automatically: no reply in 7 days&rdquo;. Each staff reply
-            while it waits starts the days again. The person sees a countdown while it waits; when the user email is on,
-            they are emailed that it closed.
+            while it waits starts the days again, and nothing closes while Support is switched off. The person sees a
+            countdown while it waits; when the user email is on, they are emailed that it closed.
           </li>
           <li>
             <strong>Reopen.</strong> The person reopens a Resolved or Closed ticket by replying within the reopen window
@@ -2004,9 +2004,11 @@ export const docSections: DocSection[] = [
               <td>On</td>
               <td>On / off</td>
               <td>
-                Off hides Support from every account: people can neither send nor read tickets until it is on again.
-                Existing tickets stay, staff still see and work the queue, and the scheduled closes and retention keep
-                running.
+                Off hides Support from every account: people can neither send nor read tickets until it is on again,
+                and no ticket email reaches them. Existing tickets stay and staff still see and work the queue, under a
+                &ldquo;Support is off&rdquo; warning on every Tickets tab. The auto-close and the close after the reopen
+                window wait; when Support is turned on again, every ticket waiting for its person gets its full
+                auto-close days from that moment (Admin Logs records how many). Retention keeps running.
               </td>
             </tr>
             <tr>
@@ -2170,7 +2172,7 @@ export const docSections: DocSection[] = [
               <td>The person (only with Email the user on)</td>
               <td>
                 The automatic reply, a staff reply, their ticket resolved or its status changed by staff, a bulk close,
-                and an auto-close.
+                and an auto-close. Never while Support is switched off.
               </td>
             </tr>
           </tbody>

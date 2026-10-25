@@ -533,6 +533,41 @@ class TestConnection:
         resp = await client.patch(f"{BASE}/connection", json={"notify_enabled": False}, headers=headers)
         assert resp.status_code == 200 and resp.json()["notify_enabled"] is False
 
+    async def test_notifications_turned_back_on_start_at_most_a_day_back(self, client, db_session, exchange, person):
+        headers = sign_in(client, person)
+        await _connected(client, db_session, headers)
+        now = datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
+        (connection,) = await _fresh(db_session, MailConnection)
+        connection.notify_enabled = False
+        connection.poll_watermark = now - datetime.timedelta(days=30)
+        await db_session.commit()
+        resp = await client.patch(f"{BASE}/connection", json={"notify_enabled": True}, headers=headers)
+        assert resp.status_code == 200
+        (connection,) = await _fresh(db_session, MailConnection)
+        assert now - datetime.timedelta(hours=24, minutes=1) < connection.poll_watermark
+        assert connection.poll_watermark <= now - datetime.timedelta(hours=23)
+        # A watermark more recent than that stays where it is.
+        recent = now - datetime.timedelta(hours=1)
+        connection.notify_enabled = False
+        connection.poll_watermark = recent
+        await db_session.commit()
+        await client.patch(f"{BASE}/connection", json={"notify_enabled": True}, headers=headers)
+        (connection,) = await _fresh(db_session, MailConnection)
+        assert connection.poll_watermark == recent
+
+    async def test_a_mailbox_s_notify_turned_on_does_not_reach_weeks_back(self, client, db_session, exchange, person):
+        headers = sign_in(client, person)
+        body = await _connected(client, db_session, headers)
+        finance = next(m for m in body["mailboxes"] if m["smtp"] == "finance@corp.example")
+        now = datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
+        (connection,) = await _fresh(db_session, MailConnection)
+        connection.poll_watermark = now - datetime.timedelta(days=30)
+        await db_session.commit()
+        resp = await client.patch(f"{BASE}/mailboxes/{finance['id']}", json={"notify": True}, headers=headers)
+        assert resp.status_code == 200
+        (connection,) = await _fresh(db_session, MailConnection)
+        assert connection.poll_watermark > now - datetime.timedelta(hours=24, minutes=1)
+
     async def test_patch_without_a_connection(self, client, db_session, exchange, person):
         await _turn_on(db_session)
         resp = await client.patch(f"{BASE}/connection", json={"notify_enabled": False}, headers=sign_in(client, person))

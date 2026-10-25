@@ -322,6 +322,30 @@ class TestSettings:
         (row,) = (await db_session.execute(select(MailConnection))).scalars().all()
         assert row.status == "connected"
 
+    async def test_notifications_turned_back_on_start_at_most_a_day_back(self, client, db_session, admin):
+        await _turn_on(db_session, notify_enabled=False)
+        now = datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
+        old = await _connection(db_session, await _person(db_session, "s.karimi"))
+        recent = await _connection(db_session, await _person(db_session, "a.rad"))
+        never = await _connection(db_session, await _person(db_session, "n.new"))
+        old.poll_watermark = now - datetime.timedelta(days=40)
+        recent.poll_watermark = now - datetime.timedelta(hours=2)
+        await db_session.commit()
+        headers = sign_in(client, admin)
+        current = (await client.get(f"{BASE}/settings", headers=headers)).json()["settings"]
+        resp = await client.put(f"{BASE}/settings", json={**current, "notify_enabled": True}, headers=headers)
+        assert resp.status_code == 200, resp.text
+        rows = {
+            row.id: row
+            for row in (await db_session.execute(select(MailConnection).execution_options(populate_existing=True)))
+            .scalars()
+            .all()
+        }
+        floor = now - datetime.timedelta(hours=24, minutes=1)
+        assert rows[old.id].poll_watermark > floor and rows[never.id].poll_watermark > floor
+        assert rows[recent.id].poll_watermark == now - datetime.timedelta(hours=2)
+        assert all(row.status == "connected" for row in rows.values())
+
     async def test_turning_off_deletes_nothing(self, client, db_session, admin):
         await _turn_on(db_session)
         someone = await _person(db_session, "s.karimi")

@@ -87,6 +87,10 @@ async def _settings_answer(db: AsyncSession, viewer: User, settings: em.Exchange
     }
 
 
+def _turned_on(before: em.ExchangeSettings, after: em.ExchangeSettings, key: str) -> bool:
+    return not getattr(before, key) and bool(getattr(after, key))
+
+
 # --- settings -----------------------------------------------------------------------------------------------------
 
 
@@ -133,6 +137,9 @@ async def put_settings(
         if set(changed) & {*em.DESTINATION_KEYS, *em.LOGIN_KEYS}:
             detail.update(em.destination_change(current, saved))
             detail["connections_reset"] = await em.require_new_passwords(db)
+        if _turned_on(current, saved, "enabled") or _turned_on(current, saved, "notify_enabled"):
+            # The checks stopped meanwhile: they start again at most a day back, not with weeks-old mail.
+            await svc.catch_up_all_watermarks(db)
         await _audit(db, request, actor, "exchange_ews_settings_updated", "exchange_ews", em.SETTINGS_KEY, detail)
     await db.commit()
     return await _settings_answer(db, actor, saved)

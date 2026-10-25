@@ -502,8 +502,6 @@ async def _store_connection(
             for row in await em.list_mailboxes(db, int(connection.id)):
                 await db.delete(row)
             await db.flush()
-        watermark = connection.poll_watermark
-        floor = now - FIRST_WATERMARK
         connection.login = login  # type: ignore[assignment]
         connection.secret_encrypted = secret  # type: ignore[assignment]
         connection.primary_smtp = own  # type: ignore[assignment]
@@ -513,13 +511,43 @@ async def _store_connection(
         connection.consecutive_failures = 0  # type: ignore[assignment]
         connection.last_ok_at = now  # type: ignore[assignment]
         # A connection that waited days for its password does not toast about the whole week it missed.
-        connection.poll_watermark = max(watermark, floor) if watermark is not None else floor  # type: ignore[assignment]
+        catch_up_watermark(connection, now)
     await _ensure_own_mailbox(db, connection, found, now)
     if settings.allow_full_access:
         await sync_discovered(db, connection, delegates, settings, now=now)
     count = await _full_access_count(db, int(connection.id))
     await db.flush()
     return ConnectOutcome(connection=connection, created=created, full_access_count=count)
+
+
+def catch_up_watermark(connection: MailConnection, now: datetime.datetime | None = None) -> None:
+    """The needs-action check (re)starts at most a day back: ``poll_watermark = max(poll_watermark, now - 24h)``.
+
+    For a connection whose checks stopped (a password awaited, notifications
+    turned off): what arrived meanwhile is not toasted weeks later.
+    """
+    floor = (now or _now()) - FIRST_WATERMARK
+    watermark = connection.poll_watermark
+    connection.poll_watermark = max(watermark, floor) if watermark is not None else floor  # type: ignore[assignment]
+
+
+async def catch_up_all_watermarks(db: AsyncSession) -> None:
+    """``catch_up_watermark`` for every connection, in one UPDATE (the administrator turned notifications on)."""
+    floor = _now() - FIRST_WATERMARK
+    behind = or_(MailConnection.poll_watermark.is_(None), MailConnection.poll_watermark < floor)
+    await db.execute(
+        update(MailConnection)
+        .values(poll_watermark=case((behind, floor), else_=MailConnection.poll_watermark))
+        .execution_options(synchronize_session=False)
+    )
+
+
+async def set_notify(db: AsyncSession, connection: MailConnection, enabled: bool) -> None:
+    """The person's toasts on or off; turned back on, the check starts at most a day back."""
+    if enabled and not connection.notify_enabled:
+        catch_up_watermark(connection)
+    connection.notify_enabled = enabled  # type: ignore[assignment]
+    await db.flush()
 
 
 async def _ensure_own_mailbox(
@@ -729,6 +757,9 @@ async def update_mailbox(
         row.enabled = True  # type: ignore[assignment]
     elif enabled is False:
         row.enabled = False  # type: ignore[assignment]
+    if notify is True and not row.notify:
+        # Its Inbox is read from the connection's watermark: never from weeks back.
+        catch_up_watermark(connection)
     if notify is not None:
         row.notify = notify  # type: ignore[assignment]
     await db.flush()

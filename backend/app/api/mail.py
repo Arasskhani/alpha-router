@@ -160,7 +160,7 @@ async def update_connection(
         connection = await svc.require_connection(db, user, settings)
     except em.MailError as error:
         await _answer(db, error)
-    connection.notify_enabled = body.notify_enabled  # type: ignore[assignment]
+    await svc.set_notify(db, connection, body.notify_enabled)
     await db.commit()
     return await svc.connection_out(db, connection)
 

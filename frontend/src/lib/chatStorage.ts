@@ -25,6 +25,7 @@ import { readContextFit, type ContextFit } from "./contextFit";
 import { readRecalledChats, type RecalledChat } from "./recalledChats";
 import { readGuardrailBlocked, readGuardrailNotices, type GuardrailNotice } from "./guardrailNotices";
 import { readWebSources, type WebSource } from "./webSources";
+import { readMailDraftCards, type MailDraftCard } from "./exchangeMail";
 import {
   anyChatToolEnabled,
   copyFreshChatTools,
@@ -139,6 +140,8 @@ export type ChatMessage = {
   recalledChats?: RecalledChat[];
   /** Server-owned: the pages the web tools searched up or read for this answer. */
   webSources?: WebSource[];
+  /** Server-owned: the drafts the model saved in the person's mailbox for this answer (draft cards). */
+  mailDrafts?: MailDraftCard[];
   /** Server-owned: what the administrator's Guardrails did to this turn (masked, routed), said plainly. */
   guardrailNotices?: GuardrailNotice[];
   /** Server-owned: a Guardrails rule refused this turn; shown in place of an answer, never sent to a model. */
@@ -806,6 +809,7 @@ function mapApiMessage(raw: Record<string, unknown>): ChatMessage {
     contextFit: readContextFit(raw.contextFit),
     recalledChats: readRecalledChats(raw.recalledChats),
     webSources: readWebSources(raw.webSources),
+    mailDrafts: readMailDraftCards(raw.mailDrafts),
     guardrailNotices: readGuardrailNotices(raw.guardrailNotices),
     guardrailBlocked: readGuardrailBlocked(raw.guardrailBlocked),
     guardrailHeldBack: raw.guardrailHeldBack === true ? true : undefined,

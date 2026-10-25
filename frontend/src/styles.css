@@ -7194,6 +7194,150 @@ table.data-table--api-logs {
   flex-shrink: 0;
 }
 
+/* Drafts the model saved in the person's mailbox, under its answer
+   (components/MailDraftCard.tsx). Theme colours only: the card sits in every
+   theme's chat. */
+.mail-draft-cards {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+}
+.mail-draft-card {
+  display: grid;
+  gap: 0.3rem;
+  max-width: min(34rem, 100%);
+  min-width: 0;
+  padding: 0.6rem 0.75rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 3%, var(--surface));
+  font-size: 0.82rem;
+}
+.mail-draft-card:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  outline-offset: 2px;
+}
+.mail-draft-card__head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.mail-draft-card__icon {
+  display: inline-flex;
+  color: var(--text);
+  opacity: 0.92;
+}
+.mail-draft-card__status {
+  margin-inline-start: auto;
+  padding: 0.05rem 0.5rem;
+  border-radius: 999px;
+  font-weight: 600;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--text) 6%, var(--surface));
+}
+.mail-draft-card__status--sent {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+}
+.mail-draft-card__status--failed {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, var(--surface));
+}
+.mail-draft-card__subject {
+  margin: 0;
+  font-weight: 600;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.mail-draft-card__to {
+  margin: 0;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mail-draft-card__label {
+  font-weight: 600;
+}
+.mail-draft-card__preview {
+  margin: 0;
+  color: var(--text);
+  opacity: 0.85;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+.mail-draft-card__error {
+  margin: 0;
+  color: var(--danger);
+}
+.mail-draft-card--sent .mail-draft-card__preview,
+.mail-draft-card--discarded .mail-draft-card__preview {
+  opacity: 0.6;
+}
+.mail-draft-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.2rem;
+}
+
+/* Review & send (components/MailReviewDialog.tsx). */
+.modal-panel:where(.mail-review) {
+  width: min(640px, calc(100vw - 2rem));
+}
+.mail-review__fields {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0.35rem 0.85rem;
+  margin: 0 0 0.75rem;
+  font-size: 0.86rem;
+}
+.mail-review__fields dt {
+  color: var(--muted);
+  font-weight: 600;
+}
+.mail-review__fields dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.mail-review__text {
+  max-height: min(22rem, 45vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.86rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.mail-review__text:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  outline-offset: 1px;
+}
+.mail-review__note {
+  margin: 0.6rem 0 0;
+}
+.mail-review__problem p:last-child {
+  margin-bottom: 0;
+}
+.mail-review__discard:not(:disabled) {
+  color: var(--danger);
+}
+
 /* Each earlier chat an answer read from: a link back to it. */
 .alpha-router-msg-recall-link {
   background: none;

@@ -327,6 +327,9 @@ import { readRecalledChats, recalledChatsLabel, type RecalledChat } from "../lib
 import { readWebSources, webActivityLabel, type WebSource } from "../lib/webSources";
 import WebSourceList from "./chat/WebSourceList";
 import MailIndicator from "./MailIndicator";
+import { MailDraftCardList } from "./MailDraftCard";
+import type { MailDraftCard } from "../lib/exchangeMail";
+import { readStreamMailDrafts } from "../lib/mailDraftCards";
 import {
   mailIndicatorShown,
   mailOnForChat,
@@ -3885,6 +3888,7 @@ export default function ChatPanel({
     contextFit?: ContextFit;
     recalledChats?: RecalledChat[];
     webSources?: WebSource[];
+    mailDrafts?: MailDraftCard[];
     guardrailNotices?: GuardrailNotice[];
   }> {
     const res = await authFetch("/api/chat/completions", {
@@ -3923,6 +3927,7 @@ export default function ChatPanel({
     let contextFit: ContextFit | undefined;
     let recalledChats: RecalledChat[] | undefined;
     let webSources: WebSource[] | undefined;
+    let mailDrafts: MailDraftCard[] | undefined;
     let guardrailNotices: GuardrailNotice[] | undefined;
 
     // readSseEvents also delivers a trailing `data:` line without a newline
@@ -3949,6 +3954,7 @@ export default function ChatPanel({
         contextFit = readContextFit(json?.alpha_router?.context_fit) ?? contextFit;
         recalledChats = readRecalledChats(json?.alpha_router?.recalled_chats) ?? recalledChats;
         webSources = readWebSources(json?.alpha_router?.web_sources) ?? webSources;
+        mailDrafts = readStreamMailDrafts(mailDrafts, json?.alpha_router);
         guardrailNotices = readGuardrailNotices(json?.alpha_router?.guardrail?.notices) ?? guardrailNotices;
         const streamRefusal = json?.alpha_router?.guardrail?.blocked
           ? refusalFromStream(json.alpha_router.guardrail.blocked)
@@ -3982,6 +3988,7 @@ export default function ChatPanel({
       ...(contextFit ? { contextFit } : {}),
       ...(recalledChats ? { recalledChats } : {}),
       ...(webSources ? { webSources } : {}),
+      ...(mailDrafts ? { mailDrafts } : {}),
       ...(guardrailNotices ? { guardrailNotices } : {}),
     };
   }
@@ -4511,6 +4518,7 @@ export default function ChatPanel({
       recalledChats?: RecalledChat[],
       webSources?: WebSource[],
       guardrailNotices?: GuardrailNotice[],
+      mailDrafts?: MailDraftCard[],
     ) => {
       const current = getSessionMessages(sid);
       const idx = current.findIndex((m) => m.clientMessageId === assistantClientMessageId);
@@ -4527,6 +4535,7 @@ export default function ChatPanel({
         ...(recalledChats ? { recalledChats } : {}),
         ...(webSources ? { webSources } : {}),
         ...(guardrailNotices ? { guardrailNotices } : {}),
+        ...(mailDrafts ? { mailDrafts } : {}),
       };
       if (idx >= 0) {
         const next = [...current];
@@ -4571,6 +4580,7 @@ export default function ChatPanel({
       streamed.recalledChats,
       streamed.webSources,
       streamed.guardrailNotices,
+      streamed.mailDrafts,
     );
     applyMessages(sid, finalMsgs);
     applyAgentMetadataToSession(sid, streamed.agentMetadata);
@@ -7175,6 +7185,7 @@ export default function ChatPanel({
                 })()}
               </div>
               {m.role === "assistant" && m.webSources ? <WebSourceList sources={m.webSources} /> : null}
+              {m.role === "assistant" && m.mailDrafts ? <MailDraftCardList cards={m.mailDrafts} /> : null}
               {m.role === "assistant" ? (
                 <AgentCitationList
                   runId={m.agentRunId}

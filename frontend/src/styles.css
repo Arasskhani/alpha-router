@@ -14278,7 +14278,7 @@ button.app-toast:hover {
   min-height: 2rem;
   padding: 0.25rem 0.7rem;
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm, 8px);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text);
   font: inherit;

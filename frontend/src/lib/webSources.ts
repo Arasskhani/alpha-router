@@ -1,6 +1,7 @@
 /**
  * What the web tools did for an answer: the pages it searched up or read
- * (shown under the answer), and what is happening while they run.
+ * (shown under the answer), and what is happening while they (or the mailbox
+ * tools, which share the same tool rounds) run.
  *
  * The server sends both on the turn's stream (`alpha_router.web_sources`,
  * `alpha_router.web_activity`) and keeps the sources with the saved answer
@@ -46,17 +47,33 @@ export function sourceHost(url: string): string {
   }
 }
 
-/** What the chat says while a web tool runs, or undefined for a frame that is not one. */
+/**
+ * The mailbox tools' sentences (`alpha_router.web_activity` names the tool).
+ * A tool with a query shows it; the query is the model's own short text, never
+ * an email's content.
+ */
+const MAIL_ACTIVITY = new Map<string, { plain: string; withQuery?: string }>([
+  ["mail_list_mailboxes", { plain: "Checking your mailboxes" }],
+  ["mail_search", { plain: "Searching mail", withQuery: "Searching mail: " }],
+  ["mail_read", { plain: "Reading email" }],
+  ["mail_create_draft", { plain: "Saving a draft" }],
+  ["people_find", { plain: "Looking up people", withQuery: "Looking up " }],
+  ["calendar_find_free_time", { plain: "Checking calendars" }],
+]);
+
+/** What the chat says while a web or mailbox tool runs, or undefined for a frame that is not one. */
 export function webActivityLabel(value: unknown): string | undefined {
   if (!value || typeof value !== "object") return undefined;
   const raw = value as Record<string, unknown>;
+  const query = typeof raw.query === "string" ? raw.query.trim() : "";
   if (raw.tool === "web_search") {
-    const query = typeof raw.query === "string" ? raw.query.trim() : "";
     return query ? `Searching the web: ${query}` : "Searching the web";
   }
   if (raw.tool === "web_fetch") {
     const host = typeof raw.host === "string" && raw.host ? raw.host.replace(/^www\./, "") : "";
     return host ? `Reading ${host}` : "Reading a page";
   }
+  const mail = typeof raw.tool === "string" ? MAIL_ACTIVITY.get(raw.tool) : undefined;
+  if (mail) return mail.withQuery && query ? `${mail.withQuery}${query}` : mail.plain;
   return undefined;
 }

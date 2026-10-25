@@ -39,4 +39,18 @@ describe("what the chat says while a web tool runs", () => {
     expect(webActivityLabel({ tool: "shell" })).toBeUndefined();
     expect(webActivityLabel(undefined)).toBeUndefined();
   });
+
+  it("says what each mailbox tool does, with its query when it has one", () => {
+    expect(webActivityLabel({ tool: "mail_list_mailboxes" })).toBe("Checking your mailboxes");
+    expect(webActivityLabel({ tool: "mail_search", query: " budget from Ali " })).toBe("Searching mail: budget from Ali");
+    expect(webActivityLabel({ tool: "mail_search" })).toBe("Searching mail");
+    expect(webActivityLabel({ tool: "mail_read", query: "2 emails" })).toBe("Reading email");
+    expect(webActivityLabel({ tool: "mail_create_draft" })).toBe("Saving a draft");
+    expect(webActivityLabel({ tool: "people_find", query: "Sara Karimi" })).toBe("Looking up Sara Karimi");
+    expect(webActivityLabel({ tool: "people_find" })).toBe("Looking up people");
+    expect(webActivityLabel({ tool: "calendar_find_free_time", query: "3 people" })).toBe("Checking calendars");
+    // Only the names the server sends: an inherited property is not a tool.
+    expect(webActivityLabel({ tool: "toString" })).toBeUndefined();
+    expect(webActivityLabel({ tool: "mail_send" })).toBeUndefined();
+  });
 });

@@ -244,7 +244,7 @@ describe("Test connection", () => {
     await render();
     expect(host.textContent).toContain("Nothing is stored");
     expect(input("ews-test-password").type).toBe("password");
-    expect(input("ews-test-password").getAttribute("autocomplete")).toBe("off");
+    expect(input("ews-test-password").getAttribute("autocomplete")).toBe("new-password");
     expect(button("Run test")!.disabled).toBe(true);
 
     await fill("CORP\\s.karimi", "Secret-1", "s.karimi@corp.example");
@@ -319,6 +319,18 @@ describe("Test connection", () => {
     await click(button("Run test")!);
     expect(host.querySelector(".ews-admin-test__error")?.textContent).toBe("Too many tests. Try again in 15 minutes.");
     expect(input("ews-test-password").value).toBe("");
+  });
+
+  it("keeps the browser from filling in the administrator's own saved sign-in", async () => {
+    await render();
+    const login = input("ews-test-login");
+    const password = input("ews-test-password");
+    expect(login.getAttribute("autocomplete")).toBe("off");
+    expect(login.name).toBeTruthy();
+    expect(login.name).not.toMatch(/user|login|email/i);
+    expect(password.type).toBe("password");
+    expect(password.getAttribute("autocomplete")).toBe("new-password");
+    expect(password.name).not.toMatch(/^password$/i);
   });
 
   it("asks to save first while the form has unsaved changes", async () => {

@@ -81,8 +81,11 @@ export default function ExchangeTestPanel({ saved, dirty, canRun, onPassed }: Pr
           label="Login"
           hint="An AD account in the login format above. Your own account is the simplest test."
         >
+          {/* Not a sign-in form: a name and autocomplete that keep the browser from filling in the administrator's
+              own saved user name and password. */}
           <input
             id="ews-test-login"
+            name="ews-test-account"
             className="input-block"
             dir="ltr"
             value={login}
@@ -97,11 +100,12 @@ export default function ExchangeTestPanel({ saved, dirty, canRun, onPassed }: Pr
         <Field id="ews-test-password" label="Password">
           <input
             id="ews-test-password"
+            name="ews-test-secret"
             className="input-block"
             type="password"
             dir="ltr"
             value={password}
-            autoComplete="off"
+            autoComplete="new-password"
             disabled={!canRun}
             onChange={(e) => setPassword(e.target.value)}
           />

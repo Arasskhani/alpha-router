@@ -89,11 +89,13 @@ export default function MailActionList({
             const owa = safeOwaUrl(item.owa_url);
             const other = item.mailbox && item.mailbox.toLowerCase() !== ownMailbox.toLowerCase();
             const when = item.received_at || item.created_at;
+            // The same buttons repeat on every row: a screen reader hears which email each one is for.
+            const subject = subjectLabel(item.subject);
             return (
               <li key={item.id} className="mail-action">
                 <div className="mail-action__main">
                   <span className="mail-action__subject" dir="auto">
-                    {subjectLabel(item.subject)}
+                    {subject}
                     {item.importance === "High" ? <span className="mail-important">Important</span> : null}
                   </span>
                   <span className="mail-action__meta">
@@ -115,6 +117,7 @@ export default function MailActionList({
                   <button
                     type="button"
                     className="btn btn-sm"
+                    aria-label={`Ask Alpharouter: ${subject}`}
                     disabled={readOnly || busy !== null}
                     onClick={() =>
                       void act(`ask:${item.id}`, () => askAlpharouter(item.id, navigate, location.pathname))
@@ -123,13 +126,20 @@ export default function MailActionList({
                     {busy === `ask:${item.id}` ? "Opening…" : "Ask Alpharouter"}
                   </button>
                   {owa ? (
-                    <a className="btn btn-ghost btn-sm btn-readonly-ok" href={owa} target="_blank" rel="noopener noreferrer">
+                    <a
+                      className="btn btn-ghost btn-sm btn-readonly-ok"
+                      href={owa}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      aria-label={`Open in Outlook: ${subject}`}
+                    >
                       Open in Outlook
                     </a>
                   ) : null}
                   <button
                     type="button"
                     className="btn btn-ghost btn-sm"
+                    aria-label={`Done: ${subject}`}
                     disabled={readOnly || busy !== null}
                     onClick={() => void act(`done:${item.id}`, () => mailApi.doneAction(item.id), item.id)}
                   >
@@ -138,6 +148,7 @@ export default function MailActionList({
                   <button
                     type="button"
                     className="btn btn-ghost btn-sm"
+                    aria-label={`Dismiss: ${subject}`}
                     disabled={readOnly || busy !== null}
                     onClick={() => void act(`dismiss:${item.id}`, () => mailApi.dismissAction(item.id), item.id)}
                   >

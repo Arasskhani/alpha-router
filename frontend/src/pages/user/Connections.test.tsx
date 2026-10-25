@@ -734,6 +734,22 @@ describe("waiting for your action", () => {
     expect(document.querySelector(".mail-count")?.textContent).toBe("2");
   });
 
+  it("names the email in each repeated button, for a screen reader", async () => {
+    await render();
+    const [first, second] = list();
+    const labels = (row: HTMLElement) =>
+      [...row.querySelectorAll<HTMLElement>(".mail-action__buttons button, .mail-action__buttons a")].map((b) =>
+        b.getAttribute("aria-label"),
+      );
+    expect(labels(first)).toEqual([
+      "Ask Alpharouter: Budget approval for Q4",
+      "Open in Outlook: Budget approval for Q4",
+      "Done: Budget approval for Q4",
+      "Dismiss: Budget approval for Q4",
+    ]);
+    expect(labels(second)).toEqual(["Ask Alpharouter: (no subject)", "Done: (no subject)", "Dismiss: (no subject)"]);
+  });
+
   it("links to Outlook only with a web address, in a new tab without the opener", async () => {
     await render();
     const [first, second] = list();

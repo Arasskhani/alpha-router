@@ -486,6 +486,24 @@ async def job_ticket_retention():
             logger.exception("Ticket retention failed")
 
 
+async def job_mail_needs_action():
+    """Exchange mail: emails that need the person's action, checked every minute (``exchange_mail_jobs``).
+
+    The job itself decides which connections are due (each every ``poll_minutes``) and does nothing while
+    Exchange EWS or its notifications are off.
+    """
+    from app.services import exchange_mail_jobs
+
+    await exchange_mail_jobs.job_mail_needs_action()
+
+
+async def job_mail_retention():
+    """Exchange mail, nightly: old refs, action items and draft rows, and connections of accounts that may not connect."""
+    from app.services import exchange_mail_jobs
+
+    await exchange_mail_jobs.job_mail_retention()
+
+
 async def job_auth_event_retention():
     """Delete sign-in history past the window set on the Retention Policy page.
 
@@ -772,6 +790,23 @@ def start_scheduler():
         minute=50,
         timezone=get_server_timezone(),
         id="ticket_retention",
+    )
+    scheduler.add_job(
+        job_mail_retention,
+        "cron",
+        hour=4,
+        minute=55,
+        timezone=get_server_timezone(),
+        id="mail_retention",
+    )
+    # Every minute; the job checks each connection only when its poll interval has passed.
+    scheduler.add_job(
+        job_mail_needs_action,
+        "interval",
+        minutes=1,
+        id="mail_needs_action",
+        max_instances=1,
+        coalesce=True,
     )
     # Auto-close is promised in days, so a quarter of an hour late is nothing;
     # an assignment left on someone who lost the Support role is fixed as soon.

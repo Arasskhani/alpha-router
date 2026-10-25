@@ -5,6 +5,7 @@ import AlphaRouterLogo from "./AlphaRouterLogo";
 import BottomTabBar from "./BottomTabBar";
 import InstallBanner from "./InstallBanner";
 import UpdateNotice from "./UpdateNotice";
+import MailActionToasts from "./MailActionToasts";
 import AlphaBlackSplash from "./AlphaBlackSplash";
 import { ALPHA_BLACK, useAlphaBlackSplash } from "../lib/alphaBlackSplash";
 import { useSoftKeyboardOpen } from "../hooks/useSoftKeyboardOpen";
@@ -347,6 +348,7 @@ export default function Shell({ nav }: { nav: NavItem[] | NavSection[] }) {
           </div>
           {theme === ALPHA_BLACK ? <AlphaBlackSplash run={splash.run} /> : null}
           <UpdateNotice />
+          <MailActionToasts />
           <InstallBanner />
           {hasTabBar ? <BottomTabBar /> : null}
         </div>

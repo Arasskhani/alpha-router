@@ -98,6 +98,7 @@ from xml.sax.saxutils import escape as xml_escape
 import certifi
 import defusedxml
 import defusedxml.ElementTree
+import exchangelib
 
 # exchangelib is built on requests (sessions, adapters, auth); it has no stubs here.
 import requests  # type: ignore[import-untyped]
@@ -207,6 +208,9 @@ from app.services.exchange_ews_types import (
 )
 
 logger = logging.getLogger(__name__)
+#: What Exchange sees as the client, on EWS and Autodiscover alike: an EWS application allow list
+#: (``Set-OrganizationConfig -EwsAllowList``) admits Alpharouter with the entry ``Alpharouter-EWS/*``.
+USER_AGENT = f"Alpharouter-EWS/1.0 (exchangelib/{exchangelib.__version__})"
 
 #: Search results per call, at most (the chat asks for fewer).
 SEARCH_MAX = 100
@@ -448,6 +452,7 @@ class _Protocol(Protocol, metaclass=_UncachedProtocolMeta):
     def create_session(self) -> Any:
         session = super().create_session()
         session.mount(self.service_endpoint, _adapter(self._verify))
+        session.headers["User-Agent"] = USER_AGENT
         return session
 
 
@@ -1243,6 +1248,7 @@ class EwsClient:
         ntlm = self.config.auth != "basic"
         session = requests.Session()
         session.mount("https://", _adapter(self._verify))
+        session.headers["User-Agent"] = USER_AGENT
         if ntlm:
             session.auth = HttpNtlmAuth(self.config.login, self.config.password)
         else:

@@ -163,6 +163,15 @@ def test_whoami_is_the_mailbox_the_login_opens(client: EwsClient, server: FakeEw
     assert len(server.requests) == count
 
 
+def test_every_request_names_alpharouter_for_an_ews_allow_list(client: EwsClient, server: FakeEwsServer) -> None:
+    from app.services.exchange_ews_client import USER_AGENT
+
+    client.whoami()
+    client.discover_full_access()
+    assert USER_AGENT.startswith("Alpharouter-EWS/1.0 (exchangelib/")
+    assert server.user_agents and set(server.user_agents) == {USER_AGENT}
+
+
 def test_whoami_checks_candidates_until_the_root_folder_matches(
     exchange: FakeExchange, server: FakeEwsServer, tls: TlsMaterial
 ) -> None:

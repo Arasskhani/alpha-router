@@ -212,6 +212,8 @@ class FakeEwsServer:
         self.exchange = exchange
         self.tls_context = tls_context
         self.requests: list[Recorded] = []
+        #: The User-Agent of every request, in order.
+        self.user_agents: list[str] = []
         self.tls_failures = 0
         self._httpd: http.server.ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
@@ -766,6 +768,7 @@ def _handler(server: FakeEwsServer) -> type[http.server.BaseHTTPRequestHandler]:
 
         def do_POST(self) -> None:
             body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            server.user_agents.append(self.headers.get("User-Agent", ""))
             login = server.login_of(self.headers.get("Authorization", ""))
             path = self.path.split("?", 1)[0].lower()
             if login is None:

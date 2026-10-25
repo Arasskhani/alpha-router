@@ -42,6 +42,7 @@ from app.api import (
     groups,
     images,
     logs,
+    mail,
     operations,
     plans,
     projects,
@@ -797,6 +798,7 @@ app.include_router(admin_guardrails.router)
 app.include_router(admin_tickets_overview.router)
 app.include_router(admin_tickets.router)
 app.include_router(support_tickets.router)
+app.include_router(mail.router)
 app.include_router(sign_in_activity.router)
 app.include_router(admin_memory.router)
 if settings.agents_platform_enabled:

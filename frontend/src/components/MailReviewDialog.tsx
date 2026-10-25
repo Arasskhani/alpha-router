@@ -52,7 +52,8 @@ function problemFor(err: unknown): Problem {
       };
     }
     if (err.code === "connection_error") {
-      // Stopped after repeated failures: typing the password again in Connections restarts it. No retry here.
+      // Stopped because the saved password opened another mailbox: typing the own password in Connections
+      // restarts it. No retry here.
       return {
         message: "The connection to your mailbox stopped. Enter your password again in Connections to reconnect, then try again.",
         connections: true,

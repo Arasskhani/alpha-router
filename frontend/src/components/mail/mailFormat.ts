@@ -52,7 +52,7 @@ export function mailErrorText(err: unknown, context: MailErrorContext = "action"
     case "needs_password":
       return "Your password is needed again. Enter it under Update password.";
     case "connection_error":
-      return "The connection to your mailbox stopped after repeated failures. Enter your password under Update password to reconnect.";
+      return "The connection to your mailbox stopped: the saved password opened a mailbox other than yours. Enter your own password under Update password to reconnect.";
     case "exchange_blocked":
       return EXCHANGE_BLOCKED_TEXT;
     case "connect_in_progress":

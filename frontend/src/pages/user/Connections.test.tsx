@@ -611,7 +611,7 @@ describe("mailboxes", () => {
     ["exchange_not_found", 404, "No mailbox was found at this address."],
     ["manual_mailboxes_off", 403, "Adding mailboxes yourself is turned off by your administrator."],
     ["exchange_auth", 400, "Exchange no longer accepts your saved password."],
-    ["connection_error", 409, "The connection to your mailbox stopped after repeated failures."],
+    ["connection_error", 409, "the saved password opened a mailbox other than yours"],
     ["exchange_blocked", 403, "Exchange refused EWS for your login"],
   ];
 

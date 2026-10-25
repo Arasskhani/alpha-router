@@ -8,10 +8,23 @@ import {
 type GroupRow = { id: number; name: string; source?: string };
 type RoleRow = { slug: string; name: string };
 
-type Props = {
+export type AccessBody = { access_type: "public" | "private"; grants: AccessGrantInput[] };
+
+/**
+ * Where the access is read and saved: two paths the editor calls itself, or
+ * two functions a page already has for them (a feature's own API helper).
+ */
+type Source =
+  | { loadPath: string; savePath: string; load?: undefined; save?: undefined }
+  | {
+      load: () => Promise<ResourceAccessRecord>;
+      save: (body: AccessBody) => Promise<ResourceAccessRecord>;
+      loadPath?: undefined;
+      savePath?: undefined;
+    };
+
+type Props = Source & {
   title?: string;
-  loadPath: string;
-  savePath: string;
   disabled?: boolean;
   onSaved?: (access: ResourceAccessRecord) => void;
   onError?: (message: string) => void;
@@ -21,6 +34,8 @@ export default function ResourceAccessEditor({
   title = "Access control",
   loadPath,
   savePath,
+  load,
+  save,
   disabled,
   onSaved,
   onError,
@@ -39,7 +54,7 @@ export default function ResourceAccessEditor({
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    api<ResourceAccessRecord>(loadPath)
+    (load ? load() : api<ResourceAccessRecord>(loadPath as string))
       .then((row) => {
         if (cancelled) return;
         setAccessType(row.access_type);
@@ -61,7 +76,7 @@ export default function ResourceAccessEditor({
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- reload only when resource path changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reload only when resource path changes (a page with `load` remounts the editor instead)
   }, [loadPath]);
 
   useEffect(() => {
@@ -121,13 +136,10 @@ export default function ResourceAccessEditor({
   async function saveAccess() {
     setSaving(true);
     try {
-      const saved = await api<ResourceAccessRecord>(savePath, {
-        method: "PUT",
-        body: JSON.stringify({
-          access_type: accessType,
-          grants,
-        }),
-      });
+      const body: AccessBody = { access_type: accessType, grants };
+      const saved = save
+        ? await save(body)
+        : await api<ResourceAccessRecord>(savePath as string, { method: "PUT", body: JSON.stringify(body) });
       setAccessType(saved.access_type);
       setAclVersion(saved.acl_version);
       setGrants(

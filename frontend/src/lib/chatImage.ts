@@ -224,12 +224,32 @@ function mergeRequestLogIds(preferred: ChatMessage[], other: ChatMessage[]): Cha
       byClient.set(msg.clientMessageId, msg.requestLogId);
     }
   }
-  if (!byClient.size) return preferred;
-  return preferred.map((msg) => {
-    if (typeof msg.requestLogId === "number" || !msg.clientMessageId) return msg;
-    const requestLogId = byClient.get(msg.clientMessageId);
-    return requestLogId != null ? { ...msg, requestLogId } : msg;
-  });
+  if (!byClient.size) return keepMailMarks(preferred, other);
+  return keepMailMarks(
+    preferred.map((msg) => {
+      if (typeof msg.requestLogId === "number" || !msg.clientMessageId) return msg;
+      const requestLogId = byClient.get(msg.clientMessageId);
+      return requestLogId != null ? { ...msg, requestLogId } : msg;
+    }),
+    other,
+  );
+}
+
+/**
+ * The server's mark that email was read for an answer (`mailContext`) is kept
+ * whichever copy wins: a local copy kept over the server's may have missed the
+ * stream's frame, and losing the mark would have the chat load the answer's images.
+ */
+function keepMailMarks(preferred: ChatMessage[], other: ChatMessage[]): ChatMessage[] {
+  const marked = new Set(
+    other.filter((msg) => msg.mailContext && msg.clientMessageId).map((msg) => msg.clientMessageId as string),
+  );
+  if (!marked.size) return preferred;
+  return preferred.map((msg) =>
+    !msg.mailContext && msg.clientMessageId && marked.has(msg.clientMessageId)
+      ? { ...msg, mailContext: { read: true } }
+      : msg,
+  );
 }
 
 export function mergeChatMessagesPreferLocal(

@@ -87,6 +87,18 @@ describe("what the model is sent for an answer in a chat with a shared page", ()
     expect(fetchMedia).not.toHaveBeenCalled();
   });
 
+  it("is the answer's text too when the answer was built from email", async () => {
+    const fetchMedia = vi.spyOn(mediaUrl, "fetchAuthenticatedMediaBlob");
+    await expect(
+      apiMessageContentAsync({ role: "assistant", content: exfiltration, mailContext: { read: true } }, VISION),
+    ).resolves.toBe(exfiltration);
+    const ownMedia = imageMessage("/api/chat/media/42/file");
+    await expect(
+      apiMessageContentAsync({ role: "assistant", content: ownMedia, mailContext: { read: true } }, VISION),
+    ).resolves.toBe(ownMedia);
+    expect(fetchMedia).not.toHaveBeenCalled();
+  });
+
   it("holds for a later answer the server has not marked yet", async () => {
     const history = withSharedPageMarks<{ role: string; content: string; pageContext?: SharedPages }>([
       { role: "user", content: "Summarize the page" },

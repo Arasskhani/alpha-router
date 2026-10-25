@@ -70,6 +70,21 @@ describe("image retry request identity", () => {
     ).toBe(false);
   });
 
+  it("keeps the server's mail mark on an answer when the local copy wins", () => {
+    const local = [
+      { role: "user" as const, content: "Summarise my mail", clientMessageId: "u1", sequence: 1, receivedAt: 1 },
+      { role: "assistant" as const, content: "Three emails, longer local text", clientMessageId: "a1", sequence: 2 },
+    ];
+    const remote = [
+      { role: "user" as const, content: "Summarise my mail", clientMessageId: "u1", sequence: 1, receivedAt: 1 },
+      { role: "assistant" as const, content: "Three", clientMessageId: "a1", sequence: 2, mailContext: { read: true as const } },
+    ];
+    const merged = mergeChatMessagesPreferLocal(local, remote);
+    expect(merged[1]?.content).toBe("Three emails, longer local text");
+    expect(merged[1]?.mailContext).toEqual({ read: true });
+    expect(merged[0]?.mailContext).toBeUndefined();
+  });
+
   it("does not replace a full local thread with a shorter remote tail", () => {
     const local = [
       { role: "user" as const, content: "hi", sequence: 1, receivedAt: 1 },

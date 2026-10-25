@@ -14,12 +14,14 @@ function extractStandaloneMarkdownImage(content: string): string | null {
 
 /**
  * Images and videos in conversation order (attachments, generated media, standalone markdown).
- * An answer built from a shared page adds none: its images are never loaded.
+ * An answer built from a shared page or from email adds none: its images are never loaded.
  */
-export function collectChatSlideshowItems(messages: Array<{ content: string; pageContext?: unknown }>): MediaViewerItem[] {
+export function collectChatSlideshowItems(
+  messages: Array<{ content: string; pageContext?: unknown; mailContext?: unknown }>,
+): MediaViewerItem[] {
   const items: MediaViewerItem[] = [];
   messages.forEach((message, messageIndex) => {
-    if (message.pageContext) return;
+    if (message.pageContext || message.mailContext) return;
     const content = message.content || "";
     const attach = readAttachmentMessage(content);
     if (attach) {

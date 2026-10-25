@@ -20,7 +20,7 @@ import { getSessionUser } from "./session";
 import { normalizeVoiceLang, type VoiceLang } from "./voiceInput";
 import { isCachedTheme, loadCachedTheme, saveCachedTheme, type CachedTheme } from "./themeCache";
 import type { AgentCitation } from "./agentChat";
-import { readSharedPages, type SharedPages } from "./sharedPages";
+import { readMailContext, readSharedPages, type MailContext, type SharedPages } from "./sharedPages";
 import { readContextFit, type ContextFit } from "./contextFit";
 import { readRecalledChats, type RecalledChat } from "./recalledChats";
 import { readGuardrailBlocked, readGuardrailNotices, type GuardrailNotice } from "./guardrailNotices";
@@ -142,6 +142,8 @@ export type ChatMessage = {
   webSources?: WebSource[];
   /** Server-owned: the drafts the model saved in the person's mailbox for this answer (draft cards). */
   mailDrafts?: MailDraftCard[];
+  /** Server-owned: a mail tool read email for this answer; its images are shown as links, like `pageContext`. */
+  mailContext?: MailContext;
   /** Server-owned: what the administrator's Guardrails did to this turn (masked, routed), said plainly. */
   guardrailNotices?: GuardrailNotice[];
   /** Server-owned: a Guardrails rule refused this turn; shown in place of an answer, never sent to a model. */
@@ -810,6 +812,7 @@ function mapApiMessage(raw: Record<string, unknown>): ChatMessage {
     recalledChats: readRecalledChats(raw.recalledChats),
     webSources: readWebSources(raw.webSources),
     mailDrafts: readMailDraftCards(raw.mailDrafts),
+    mailContext: readMailContext(raw.mailContext),
     guardrailNotices: readGuardrailNotices(raw.guardrailNotices),
     guardrailBlocked: readGuardrailBlocked(raw.guardrailBlocked),
     guardrailHeldBack: raw.guardrailHeldBack === true ? true : undefined,

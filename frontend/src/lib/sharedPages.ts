@@ -1,5 +1,6 @@
 /**
- * Answers built from pages a user shared from the browser extension.
+ * Answers built from pages a user shared from the browser extension, or from
+ * the person's email.
  *
  * The server marks such an answer (`pageContext` on the message). Page text
  * is untrusted - whoever can put words on a page can ask the model to put an
@@ -10,6 +11,14 @@
  * A later answer in the same chat is marked too (`inherited`): the page is
  * still in the conversation the model reads, so it can still steer the model.
  * The chat does not wait for the server to say so: see `withSharedPageMarks`.
+ *
+ * Email is the same kind of text: anyone can send the person an email that
+ * tells the model to write such an image, with the other emails it read in its
+ * address. An answer for which a mail tool read email is marked `mailContext`
+ * (`alpha_router.mail_context` while it streams, `mailContext` once stored)
+ * and shown the same way, without a label: the chat already says which tools
+ * ran. The email itself is not in the conversation later answers read (only
+ * the answers are), so the mark is not carried on to them.
  */
 
 export type SharedPages = {
@@ -18,6 +27,9 @@ export type SharedPages = {
   /** This answer shared no page itself; an earlier answer in the chat did. */
   inherited: boolean;
 };
+
+/** The server's mark on an answer for which a mail tool read email. */
+export type MailContext = { read: true };
 
 const MAX_SITES = 20;
 const MAX_HOST_CHARS = 253;
@@ -34,6 +46,25 @@ export function readSharedPages(value: unknown): SharedPages | undefined {
     ? mark.sites.filter((site): site is string => typeof site === "string" && site.length > 0 && site.length <= MAX_HOST_CHARS)
     : [];
   return { sites: sites.slice(0, MAX_SITES), inherited: mark.inherited === true };
+}
+
+/**
+ * The server's `mailContext` (or the stream's `mail_context`), checked. As with
+ * `pageContext`, anything there at all counts as a mark.
+ */
+export function readMailContext(value: unknown): MailContext | undefined {
+  return value === undefined || value === null ? undefined : { read: true };
+}
+
+/** The mark the chat puts on an answer that may be reading email while it streams. */
+export const MAIL_READ: MailContext = { read: true };
+
+/** `message` with the mail mark set, or without it (the key gone) when there is none. */
+export function withMailContext<T extends { mailContext?: MailContext }>(message: T, mark: MailContext | undefined): T {
+  if (mark) return message.mailContext ? message : { ...message, mailContext: MAIL_READ };
+  if (!("mailContext" in message)) return message;
+  const { mailContext: _dropped, ...rest } = message;
+  return rest as T;
 }
 
 /**
@@ -84,17 +115,25 @@ export function sharedPagesNote(pages: SharedPages): string {
   return `${why} Its images are shown as links, and it is not used as memory.`;
 }
 
-/** How an answer's images are shown: an answer built from shared pages never loads one. */
-export function answerImages(message: { pageContext?: SharedPages }): "load" | "link" {
-  return message.pageContext ? "link" : "load";
+/** The marks that make an answer's text untrusted: a shared page, or email a mail tool read. */
+type UntrustedMarks = { pageContext?: SharedPages; mailContext?: MailContext };
+
+/** Whether an answer was built from text someone else wrote (a shared page, an email). */
+export function isUntrustedAnswer(message: UntrustedMarks): boolean {
+  return Boolean(message.pageContext || message.mailContext);
+}
+
+/** How an answer's images are shown: an answer built from shared pages or email never loads one. */
+export function answerImages(message: UntrustedMarks): "load" | "link" {
+  return isUntrustedAnswer(message) ? "link" : "load";
 }
 
 /**
  * What the chat may read as one of its own media messages - a generated image
- * or video, an attachment, a recording. An answer built from shared pages has
- * none, whatever it says: the page may have told the model to write one, and
- * the chat would load its address.
+ * or video, an attachment, a recording. An answer built from shared pages or
+ * email has none, whatever it says: the page or the email may have told the
+ * model to write one, and the chat would load its address.
  */
-export function mediaContent(message: { content: string; pageContext?: SharedPages }): string {
+export function mediaContent(message: { content: string } & UntrustedMarks): string {
   return answerImages(message) === "load" ? message.content : "";
 }

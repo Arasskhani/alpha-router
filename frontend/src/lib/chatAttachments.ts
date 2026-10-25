@@ -5,7 +5,7 @@ import {
   ATTACHMENT_MESSAGE_PREFIX,
   AUDIO_MESSAGE_PREFIX,
 } from "./chatMarkers";
-import type { SharedPages } from "./sharedPages";
+import { isUntrustedAnswer, type MailContext, type SharedPages } from "./sharedPages";
 import {
   AUDIO_EXTENSIONS,
   IMAGE_EXTENSIONS,
@@ -499,16 +499,17 @@ async function buildApiMessageContentAsync(
 /**
  * What the model is sent for one message of a chat marked as the chat shows
  * it (`withSharedPageMarks`). An answer built from shared pages, or one that
- * follows such an answer, goes as the text it is and is never read as a
- * marker: the page may have had the model write an attachment marker, which
- * read as one would have the provider fetch an address of the page's
- * choosing, or this browser fetch the user's own media and send it along.
+ * follows such an answer, or one built from email (`mailContext`), goes as
+ * the text it is and is never read as a marker: the page or the email may have
+ * had the model write an attachment marker, which read as one would have the
+ * provider fetch an address of its choosing, or this browser fetch the user's
+ * own media and send it along.
  */
 export async function apiMessageContentAsync(
-  message: { role: string; content: string; pageContext?: SharedPages },
+  message: { role: string; content: string; pageContext?: SharedPages; mailContext?: MailContext },
   visionModel?: VisionModel,
 ): Promise<string | ApiContentPart[]> {
-  if (message.role === "assistant" && message.pageContext) return message.content;
+  if (message.role === "assistant" && isUntrustedAnswer(message)) return message.content;
   return buildApiMessageContentAsync(message.content, visionModel);
 }
 

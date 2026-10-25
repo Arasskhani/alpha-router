@@ -15,6 +15,14 @@ describe("collectChatSlideshowItems", () => {
     expect(items.map((item) => item.url)).toEqual(["https://cdn.example.test/out.png"]);
   });
 
+  it("leaves out the images of an answer built from email, which are never loaded", () => {
+    const items = collectChatSlideshowItems([
+      { content: "![c](https://tracker.example/p.png?d=other-emails)", mailContext: { read: true } },
+      { content: "Here you go\n\n![out](https://cdn.example.test/out.png)" },
+    ]);
+    expect(items.map((item) => item.url)).toEqual(["https://cdn.example.test/out.png"]);
+  });
+
   it("walks the thread in order and mixes attachments, images, and videos", () => {
     const items = collectChatSlideshowItems([
       {

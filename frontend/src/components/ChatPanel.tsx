@@ -316,11 +316,15 @@ import { useBackOnline } from "../hooks/useBackOnline";
 import { CONNECTION_LOST_MESSAGE, isConnectionLostError } from "../lib/chatConnection";
 import { RECOVERY_RETRY_MS, createReplyRecovery } from "../lib/replyRecovery";
 import {
+  MAIL_READ,
   answerImages,
   mediaContent,
+  readMailContext,
   sharedPagesLabel,
   sharedPagesNote,
+  withMailContext,
   withSharedPageMarks,
+  type MailContext,
 } from "../lib/sharedPages";
 import { contextFitLabel, contextFitNote, readContextFit, type ContextFit } from "../lib/contextFit";
 import { readRecalledChats, recalledChatsLabel, type RecalledChat } from "../lib/recalledChats";
@@ -3871,7 +3875,7 @@ export default function ChatPanel({
     history: ChatMessage[],
     forModel: Model | undefined,
     signal: AbortSignal,
-    onPartial: (text: string) => void,
+    onPartial: (text: string, mailContext?: MailContext) => void,
     tools: ChatToolsState = chatTools,
     persist?: {
       sessionId: string;
@@ -3889,16 +3893,19 @@ export default function ChatPanel({
     recalledChats?: RecalledChat[];
     webSources?: WebSource[];
     mailDrafts?: MailDraftCard[];
+    mailContext?: MailContext;
     guardrailNotices?: GuardrailNotice[];
   }> {
+    const body = await chatCompletionBody(modelId, history, forModel, tools, persist, privateMode);
+    // A turn that may read email shows its images as links while it streams, until the server's mark
+    // (`mail_context`) says it did; the mark alone decides once the answer is complete.
+    const mailAsked = (body.tools as Record<string, unknown>).exchange_mail === true;
     const res = await authFetch("/api/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(
-        await chatCompletionBody(modelId, history, forModel, tools, persist, privateMode),
-      ),
+      body: JSON.stringify(body),
       signal,
     });
     if (!res.ok) {
@@ -3928,6 +3935,7 @@ export default function ChatPanel({
     let recalledChats: RecalledChat[] | undefined;
     let webSources: WebSource[] | undefined;
     let mailDrafts: MailDraftCard[] | undefined;
+    let mailContext: MailContext | undefined;
     let guardrailNotices: GuardrailNotice[] | undefined;
 
     // readSseEvents also delivers a trailing `data:` line without a newline
@@ -3955,6 +3963,7 @@ export default function ChatPanel({
         recalledChats = readRecalledChats(json?.alpha_router?.recalled_chats) ?? recalledChats;
         webSources = readWebSources(json?.alpha_router?.web_sources) ?? webSources;
         mailDrafts = readStreamMailDrafts(mailDrafts, json?.alpha_router);
+        mailContext = readMailContext(json?.alpha_router?.mail_context) ?? mailContext;
         guardrailNotices = readGuardrailNotices(json?.alpha_router?.guardrail?.notices) ?? guardrailNotices;
         const streamRefusal = json?.alpha_router?.guardrail?.blocked
           ? refusalFromStream(json.alpha_router.guardrail.blocked)
@@ -3974,7 +3983,7 @@ export default function ChatPanel({
         const delta = json.choices?.[0]?.delta?.content;
         if (delta) {
           assistant += delta;
-          onPartial(assistant);
+          onPartial(assistant, mailContext ?? (mailAsked ? MAIL_READ : undefined));
         }
       } catch (err) {
         if (err instanceof SyntaxError) continue;
@@ -3989,6 +3998,7 @@ export default function ChatPanel({
       ...(recalledChats ? { recalledChats } : {}),
       ...(webSources ? { webSources } : {}),
       ...(mailDrafts ? { mailDrafts } : {}),
+      ...(mailContext ? { mailContext } : {}),
       ...(guardrailNotices ? { guardrailNotices } : {}),
     };
   }
@@ -4509,6 +4519,8 @@ export default function ChatPanel({
       userMsg,
     );
 
+    // Email read for this answer (its images are links): the stream's mark, set before each patch.
+    let answerMailContext: MailContext | undefined;
     const patchAssistantInSession = (
       content: string,
       receivedAt?: number,
@@ -4539,10 +4551,10 @@ export default function ChatPanel({
       };
       if (idx >= 0) {
         const next = [...current];
-        next[idx] = { ...current[idx], ...assistantMsg };
+        next[idx] = withMailContext({ ...current[idx], ...assistantMsg }, answerMailContext);
         return next;
       }
-      return [...apiHistory, assistantMsg];
+      return [...apiHistory, withMailContext(assistantMsg, answerMailContext)];
     };
 
     const useServerPersist = !sessionPrivateMode(sid);
@@ -4551,10 +4563,11 @@ export default function ChatPanel({
       apiHistory,
       primaryModel,
       controller.signal,
-      (content) => {
+      (content, mailContext) => {
         if (turnPhasesRef.current[sid] !== "writing" || turnActivityRef.current[sid]) {
           setTurnPhase(sid, "writing");
         }
+        answerMailContext = mailContext;
         applyMessagesStreaming(sid, patchAssistantInSession(content));
       },
       turnTools,
@@ -4571,6 +4584,7 @@ export default function ChatPanel({
     );
     const receivedAt = Date.now();
     const finalContent = streamed.content.trim() ? streamed.content : emptyReply;
+    answerMailContext = streamed.mailContext;
     const finalMsgs = patchAssistantInSession(
       finalContent,
       receivedAt,

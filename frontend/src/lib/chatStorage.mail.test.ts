@@ -1,6 +1,7 @@
 /**
  * The Exchange mailbox in stored chats: a chat's mail switch comes back with
- * the chat, per chat, and an answer's draft cards with its message.
+ * the chat, per chat, and an answer's draft cards and its mail mark with its
+ * message.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -10,6 +11,7 @@ import { api } from "../api";
 import { fetchChatSessionById, fetchSessionMessagesFromServer } from "./chatStorage";
 import { copyFreshChatTools } from "./chatTools";
 import { mailOnForChat } from "./mailChatSwitch";
+import { answerImages } from "./sharedPages";
 
 const mockedApi = vi.mocked(api);
 
@@ -56,5 +58,24 @@ describe("an answer's draft cards", () => {
     expect(messages[1].mailDrafts).toEqual([draft]);
     expect(messages[0].mailDrafts).toBeUndefined();
     expect(messages[2].mailDrafts).toBeUndefined();
+  });
+});
+
+describe("an answer's mail mark", () => {
+  it("is read back with the answer's message, so its images stay links after a reload", async () => {
+    mockedApi.mockImplementation(async () => ({
+      messages: [
+        { role: "user", content: "Summarise my unread mail", sequence: 1, clientMessageId: "m1" },
+        { role: "assistant", content: "Three emails…", sequence: 2, clientMessageId: "m2", mailContext: { read: true } },
+        { role: "assistant", content: "Plain answer", sequence: 3, clientMessageId: "m3" },
+      ],
+      has_more: false,
+      revision: 1,
+    }));
+    const { messages } = await fetchSessionMessagesFromServer("s-mail-read", { limit: 50 });
+    expect(messages[1].mailContext).toEqual({ read: true });
+    expect(answerImages(messages[1])).toBe("link");
+    expect(messages[2].mailContext).toBeUndefined();
+    expect(answerImages(messages[2])).toBe("load");
   });
 });

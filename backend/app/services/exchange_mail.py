@@ -79,8 +79,6 @@ REF_LENGTH = 10
 _REF_ALPHABET = re.compile(r"^m[A-Za-z0-9]{9}$")
 #: EWS calls in flight at once, for the whole process (each holds a thread and an Exchange session).
 EWS_CONCURRENCY = 8
-#: Failures of any other kind than a refused password in a row before a connection shows as ``error``.
-ERROR_AFTER_FAILURES = 5
 CA_BUNDLE_MAX = 64 * 1024
 URL_MAX = 500
 DOMAIN_MAX = 255
@@ -607,7 +605,7 @@ async def usable_access(db: AsyncSession, user: User, settings: ExchangeSettings
     notify = tuple(
         str(row.smtp)
         for row in rows
-        if row.enabled and (row.notify or row.kind == "own") and (row.kind == "own" or settings.allow_full_access)
+        if row.enabled and row.notify and (row.kind == "own" or settings.allow_full_access)
     )
     return MailAccess(
         user_id=int(user.id),
@@ -637,9 +635,10 @@ async def record_success(db: AsyncSession, connection: MailConnection) -> None:
 async def record_failure(db: AsyncSession, connection: MailConnection, error: EwsError) -> None:
     """Note a failed call. A refused password stops the connection at once; a wrong mailbox stops it too.
 
-    Anything else (Exchange down, a timeout, throttling) is counted, and shows
-    as ``error`` after ``ERROR_AFTER_FAILURES`` in a row - but does not stop
-    the connection, since it will likely pass by itself.
+    Anything else (Exchange down, a timeout, throttling) is counted and kept
+    as ``last_error``, but leaves the status alone: it will likely pass by
+    itself, and a stopped connection would make the person type their
+    password again after an outage they had nothing to do with.
     """
     connection.last_error = friendly_error(error)  # type: ignore[assignment]
     connection.consecutive_failures = int(connection.consecutive_failures or 0) + 1  # type: ignore[assignment]
@@ -648,11 +647,7 @@ async def record_failure(db: AsyncSession, connection: MailConnection, error: Ew
         connection.last_error = (  # type: ignore[assignment]
             "Exchange did not accept your password. If you changed it, type the new one on Connections."
         )
-    elif (
-        error.kind == "mailbox_mismatch"
-        or int(connection.consecutive_failures) >= ERROR_AFTER_FAILURES
-        and connection.status == "connected"
-    ):
+    elif error.kind == "mailbox_mismatch":
         connection.status = "error"  # type: ignore[assignment]
     await db.flush()
 

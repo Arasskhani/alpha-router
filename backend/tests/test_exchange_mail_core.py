@@ -352,6 +352,18 @@ class TestAccess:
         assert caught.value.code == "mailbox_not_allowed"
         assert "Secret-1" not in repr(access.config)
 
+    async def test_the_notify_switch_of_each_mailbox_decides_what_is_checked(self, db_session):
+        person = await _ad_person(db_session)
+        await _turn_on(db_session)
+        connection = await _connect(db_session, person, boxes=(("finance@corp.example", True),))
+        rows = await em.list_mailboxes(db_session, connection.id)
+        rows[0].notify = False  # the own mailbox
+        rows[1].notify = True
+        await db_session.commit()
+        access = await em.usable_access(db_session, person)
+        assert access is not None
+        assert access.notify_mailboxes == ("finance@corp.example",)
+
     async def test_full_access_mailboxes_go_when_the_admin_turns_them_off(self, db_session):
         person = await _ad_person(db_session)
         await _turn_on(db_session, allow_full_access=False)
@@ -420,14 +432,13 @@ class TestFailures:
         assert "password" in connection.last_error
         assert connection.consecutive_failures == 1
 
-    async def test_other_failures_are_counted_and_show_as_error_after_a_few(self, db_session):
+    async def test_other_failures_are_counted_but_never_stop_the_connection(self, db_session):
         person = await _ad_person(db_session)
         connection = await _connect(db_session, person)
-        for _ in range(em.ERROR_AFTER_FAILURES - 1):
+        for _ in range(20):
             await em.record_failure(db_session, connection, EwsError("unreachable", "Exchange did not answer."))
         assert connection.status == "connected"
-        await em.record_failure(db_session, connection, EwsError("unreachable", "Exchange did not answer."))
-        assert connection.status == "error"
+        assert connection.consecutive_failures == 20
         assert connection.last_error == "Exchange did not answer."
         await em.record_success(db_session, connection)
         assert connection.status == "connected"

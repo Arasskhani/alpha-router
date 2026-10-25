@@ -80,6 +80,19 @@ async def replace_chat_tool_access(
     actor: User = Depends(require_chat_tools_write),
 ) -> dict[str, Any]:
     """Replace one tool's policy, and record who changed it from what."""
+    saved = await save_tool_access(db, request, actor, tool_key, body)
+    await db.commit()
+    return saved
+
+
+async def save_tool_access(
+    db: AsyncSession, request: Request, actor: User, tool_key: str, body: ChatToolAccessBody
+) -> dict[str, Any]:
+    """Replace one tool's policy with its Admin Logs row; the caller commits.
+
+    Shared with the pages that edit a single tool's access (Exchange EWS), so
+    the validation and the trail are the same wherever the policy is changed.
+    """
     before = await get_chat_tool_access(db, tool_key)
     try:
         saved = await set_chat_tool_access(
@@ -104,5 +117,4 @@ async def replace_chat_tool_access(
         resource_id=tool_key,
         detail={"before": _audit_view(before), "after": _audit_view(saved)},
     )
-    await db.commit()
     return saved

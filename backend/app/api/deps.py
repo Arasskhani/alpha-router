@@ -206,7 +206,15 @@ def _menu_requires(menu: MenuKey) -> tuple[Callable, Callable]:
 #: Menus whose pages contain an access-control editor. Each of them has to be
 #: able to *read* the group and role directories to draw one, which is not the
 #: same as being allowed to manage groups or roles.
-ACL_EDITING_MENUS: tuple[MenuKey, ...] = ("users", "roles", "groups", "agents", "models", "chat_tools")
+ACL_EDITING_MENUS: tuple[MenuKey, ...] = (
+    "users",
+    "roles",
+    "groups",
+    "agents",
+    "models",
+    "chat_tools",
+    "exchange_ews",
+)
 
 
 async def require_acl_directory(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> User:

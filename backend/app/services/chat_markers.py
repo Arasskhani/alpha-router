@@ -42,6 +42,9 @@ RECALLED_CHATS_META_KEY = "recalledChats"
 #: Assistant message meta, ``[{"title": ..., "url": ...}]``: the pages the model
 #: searched up or read with the web tools while answering.
 WEB_SOURCES_META_KEY = "webSources"
+#: Assistant message meta, ``[{"id", "mailbox", "kind", "subject", "to", "cc", "preview"}]``: the drafts the
+#: model saved in the person's Exchange mailbox while answering (``mail_drafts.id``), shown as draft cards.
+MAIL_DRAFTS_META_KEY = "mailDrafts"
 #: Assistant message meta, ``[str]``: what Guardrails told the person about their request (values masked
 #: before sending, the request sent to another model), as the administrator worded it.
 GUARDRAIL_META_KEY = "guardrailNotices"

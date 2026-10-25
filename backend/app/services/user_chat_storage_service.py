@@ -39,6 +39,7 @@ from app.services.chat_markers import (
     GUARDRAIL_BLOCKED_META_KEY,
     GUARDRAIL_HELD_BACK_META_KEY,
     GUARDRAIL_META_KEY,
+    MAIL_DRAFTS_META_KEY,
     is_answer_in_progress,
     is_whole_reply,
 )
@@ -367,6 +368,7 @@ _SERVER_OWNED_META_KEYS = frozenset(
         CONTEXT_FIT_META_KEY,
         RECALLED_CHATS_META_KEY,
         WEB_SOURCES_META_KEY,
+        MAIL_DRAFTS_META_KEY,
         GUARDRAIL_META_KEY,
         GUARDRAIL_BLOCKED_META_KEY,
     }
@@ -410,6 +412,7 @@ def _message_to_client(row: ChatMessage) -> dict[str, Any]:
         CONTEXT_FIT_META_KEY,
         RECALLED_CHATS_META_KEY,
         WEB_SOURCES_META_KEY,
+        MAIL_DRAFTS_META_KEY,
         GUARDRAIL_META_KEY,
         GUARDRAIL_BLOCKED_META_KEY,
         GUARDRAIL_HELD_BACK_META_KEY,

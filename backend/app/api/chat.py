@@ -270,6 +270,9 @@ class ChatToolsIn(BaseModel):
     video_generation: bool = False
     speech_generation: bool = False
     code_interpreter: bool = False
+    #: The person's connected Exchange mailbox for this turn (the composer's mail sign); the turn offers it only
+    #: where the rules allow (chat_turn_context), and otherwise goes without it.
+    exchange_mail: bool = False
 
 
 class ExtensionPageSiteIn(BaseModel):

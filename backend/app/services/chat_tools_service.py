@@ -22,6 +22,9 @@ class ChatToolsConfig:
     web_search_depth: str = "medium"
     web_fetch: bool = False
     code_interpreter: bool = False
+    #: The person's Exchange mailbox as tools the model calls (exchange_mail_tools). Only the web chat asks for
+    #: it (``tools.exchange_mail``); the turn offers it only where the rules allow and turns this off otherwise.
+    exchange_mail: bool = False
 
 
 def parse_tools_config(body: dict) -> ChatToolsConfig:
@@ -34,7 +37,14 @@ def parse_tools_config(body: dict) -> ChatToolsConfig:
         web_search_depth=depth,
         web_fetch=bool(tools.get("web_fetch") or body.get("web_fetch")),
         code_interpreter=bool(tools.get("code_interpreter") or body.get("code_interpreter")),
+        exchange_mail=_asks_for_mail(body),
     )
+
+
+def _asks_for_mail(body: dict) -> bool:
+    """Only ``tools.exchange_mail: true`` asks for mail: never a stray top-level key of an old client or the Gateway."""
+    tools = body.get("tools")
+    return isinstance(tools, dict) and tools.get("exchange_mail") is True
 
 
 def search_result_limit(depth: str) -> int:
@@ -243,13 +253,15 @@ async def augment_messages_with_tools(
     username: str | None = None,
     reserve_budget: bool = True,
     model_driven: bool = False,
+    mail_instructions: str = "",
 ) -> list[dict]:
     """The turn's messages with what the tools add, rules first; a new list.
 
     When the model calls the web tools itself (``model_driven``, chat_web_tools) only
     their instructions are added - the results come later, as tool messages.
     Otherwise the person's own words are searched once and the links they
-    typed are read, before the model is asked.
+    typed are read, before the model is asked. ``mail_instructions`` (the
+    mail tools offered this turn, exchange_mail_tools) go beside them.
 
     The order is the runtime policy, then the chat's own system message (its
     instructions stay near the top, the same from turn to turn), then what
@@ -264,7 +276,10 @@ async def augment_messages_with_tools(
     if model_driven:
         from app.services.chat_web_tools import web_tools_instructions
 
-        static_blocks.append(web_tools_instructions(search=tools.web_search, fetch=tools.web_fetch))
+        if tools.web_search or tools.web_fetch:
+            static_blocks.append(web_tools_instructions(search=tools.web_search, fetch=tools.web_fetch))
+        if mail_instructions:
+            static_blocks.append(mail_instructions)
     else:
         from app.services.chat_web_tools import pre_search_query
 

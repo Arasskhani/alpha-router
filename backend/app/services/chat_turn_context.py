@@ -18,7 +18,7 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -80,6 +80,9 @@ from app.services.resource_access_service import resolve_resource_access_subject
 from app.services.turn_settlement import agent_identity_metadata
 from app.services.user_memory_service import augment_messages_with_memory, extract_query_text
 from app.services.user_profile_context_service import augment_messages_with_profile
+
+if TYPE_CHECKING:
+    from app.services.exchange_mail_tools import MailToolLoop
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -410,6 +413,50 @@ async def resolve_session_project_id(db: AsyncSession, chat_session_id: str | No
     return str(session.project_id) if session.project_id else None
 
 
+async def _mail_tools_for_turn(
+    db: AsyncSession,
+    body: dict,
+    *,
+    user_id: int | None,
+    source: str,
+    alpha_router_api_key_id: int | None,
+    ai_model: AIModel,
+) -> MailToolLoop | None:
+    """The person's mailbox as tools for this turn, or ``None`` - never a refusal: the turn goes without mail.
+
+    Offered only in the person's own web chat (an agent turn, the browser
+    extension and a model that calls no functions are ruled out by the
+    caller): not through the Gateway or an API key; not in a project chat or a
+    chat shared with others, where another member would read the person's
+    mail; not in a turn that carries pages shared from the extension or in a
+    chat that already holds an answer about one, whose words could steer the
+    tools; and only while the person may use a connected mailbox
+    (``exchange_mail.usable_access``).
+    """
+    from app.models.chat import ChatSession, is_member_channel
+    from app.services.exchange_mail_tools import mail_tool_loop
+    from app.services.guardrail_turn import VIA_EXTENSION_BODY_KEY
+
+    if source != "alpha_router_chat" or not user_id or alpha_router_api_key_id is not None:
+        return None
+    if body.get(VIA_EXTENSION_BODY_KEY) or _page_context_sites(body):
+        return None
+    if str(body.get("project_id") or body.get("projectId") or "").strip():
+        return None
+    chat_session_id = str(body.get("chat_session_id") or "").strip() or None
+    if await resolve_session_project_id(db, chat_session_id) is not None:
+        return None
+    if chat_session_id:
+        session = await db.get(ChatSession, chat_session_id)
+        # A chat that exists is the person's own and an AI chat (a member channel is shared by its members).
+        if session is not None and (int(session.user_id) != int(user_id) or is_member_channel(session)):
+            return None
+        marked, _sites = await earlier_page_answers(db, chat_session_id)
+        if marked:
+            return None
+    return await mail_tool_loop(db, user_id=int(user_id), ai_model=ai_model, body=body)
+
+
 async def build_turn_context(  # noqa: C901 -- straight-line preparation moved out of stream_chat; Phase 4 shrinks it further
     db: AsyncSession,
     body: dict,
@@ -577,13 +624,29 @@ async def build_turn_context(  # noqa: C901 -- straight-line preparation moved o
                 completion_kwargs.update(reasoning_hint(model, provider or None, effort))
 
         # Web Search and Web Fetch: tools the model calls itself, when it can call functions; else the older way.
+        # The person's mailbox rides in the same loop, where the rules allow it (``_mail_tools_for_turn``).
         web_tools: WebToolLoop | None = None
-        if (
+        calls_functions = (
             agent_turn is None
             and not browser_tools
-            and (tools.web_search or tools.web_fetch)
+            and (tools.web_search or tools.web_fetch or tools.exchange_mail)
             and model_calls_functions(model, provider or None)
-        ):
+        )
+        mail_tools = (
+            await _mail_tools_for_turn(
+                db,
+                body,
+                user_id=user_id,
+                source=source,
+                alpha_router_api_key_id=alpha_router_api_key_id,
+                ai_model=ai_model,
+            )
+            if calls_functions and tools.exchange_mail
+            else None
+        )
+        # From here on the flag says what the turn offers, not what was asked for.
+        tools.exchange_mail = mail_tools is not None
+        if calls_functions and (tools.web_search or tools.web_fetch or mail_tools is not None):
             web_tools = WebToolLoop(
                 search=tools.web_search,
                 fetch=tools.web_fetch,
@@ -592,10 +655,11 @@ async def build_turn_context(  # noqa: C901 -- straight-line preparation moved o
                 username=username,
                 reserve_budget=not skip_budget,
                 search_limit=search_result_limit(tools.web_search_depth),
+                mail=mail_tools,
             )
             web_tools.allow_links_in(messages)
             completion_kwargs["tools"] = web_tools.definitions()
-            # A cached answer would be yesterday's search.
+            # A cached answer would be yesterday's search (or another day's mailbox).
             completion_kwargs["caching"] = False
 
         if agent_turn is None:
@@ -609,6 +673,7 @@ async def build_turn_context(  # noqa: C901 -- straight-line preparation moved o
                     username=username,
                     reserve_budget=not skip_budget,
                     model_driven=web_tools is not None,
+                    mail_instructions=mail_tools.instructions() if mail_tools is not None else "",
                 )
             except BaseException:
                 await lease.abandon("tool setup error")
@@ -737,6 +802,9 @@ async def build_turn_context(  # noqa: C901 -- straight-line preparation moved o
             }
             return NonGeneratingReply(frames=[f"data: {json.dumps(frame)}\n\n".encode(), b"data: [DONE]\n\n"])
         guardrail_values, guardrail_notices = await guardrail_reply_state(db, body)
+        if mail_tools is not None:
+            # A placeholder the model writes into a draft or an address is the person's value again in Exchange.
+            mail_tools.reply_values = dict(guardrail_values)
         if masked_this_turn(body):
             # The model reads placeholders: told what they are, so its reply makes sense with the values given back.
             messages = list(messages)

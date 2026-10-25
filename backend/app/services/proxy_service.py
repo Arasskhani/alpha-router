@@ -62,11 +62,11 @@ from app.services.budget_reservation_service import (
 )
 from app.services.chat_tool_access_service import assert_tools_permitted
 from app.services.chat_tool_registry import requested_tool_keys
-from app.services.chat_markers import WEB_SOURCES_META_KEY
+from app.services.chat_markers import MAIL_DRAFTS_META_KEY, WEB_SOURCES_META_KEY
 from app.services.chat_tools_service import (
     parse_tools_config,
 )
-from app.services.chat_web_tools import ToolCall, flatten_tool_rounds
+from app.services.chat_web_tools import ToolCall, WebToolLoop, flatten_tool_rounds
 from app.services.guardrail_policy import ReplyRestorer, restore_text
 from app.services.chat_turn_context import (
     NonGeneratingReply,
@@ -1327,6 +1327,7 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
                     # What is searched and read, and the sources, are for the chat: a Gateway client gets the
                     # OpenAI-shaped stream alone.
                     show_web_frames = source == "alpha_router_chat"
+                    drafts_before = len(web_tools.mail_drafts)
                     for call in calls:
                         if show_web_frames:
                             yield _sse_alpha_router_frame({"web_activity": web_tools.activity(call)})
@@ -1363,6 +1364,19 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
                             persister.set_message_metadata({WEB_SOURCES_META_KEY: list(web_tools.sources)})
                         if show_web_frames:
                             yield _sse_alpha_router_frame({"web_sources": list(web_tools.sources)})
+                    if len(web_tools.mail_drafts) > drafts_before:
+                        # The drafts the model saved this round: cards the person reviews and sends from.
+                        if persister:
+                            persister.set_message_metadata({MAIL_DRAFTS_META_KEY: web_tools.mail_drafts})
+                        if show_web_frames:
+                            yield _sse_alpha_router_frame({"mail_drafts": web_tools.mail_drafts})
+                    found_values = web_tools.guardrail_values()
+                    if found_values:
+                        # Values Guardrails masked in the person's mail are theirs again in the reply.
+                        if guardrail_restorer is None:
+                            guardrail_restorer = ReplyRestorer(found_values)
+                        else:
+                            guardrail_restorer.values.update(found_values)
                     if iteration_content.strip():
                         # Words before the calls ("Let me look that up") are kept apart from the answer after them.
                         collected_content += "\n\n"
@@ -1712,7 +1726,7 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
                         injected_project_memory_ids=injected_project_memory_ids,
                         context_fit=ctx.context_fit,
                         recalled_chats=ctx.recalled_chats,
-                        memory_context=ctx.memory_context,
+                        memory_context=_with_tool_calls(ctx.memory_context, web_tools),
                     ),
                     TurnOutcome(
                         success=success,
@@ -1750,6 +1764,14 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
 
 #: How often a running web tool call checks for Stop, and keeps the connection alive.
 WEB_TOOL_POLL_S = 2.0
+
+
+def _with_tool_calls(memory_context: dict | None, web_tools: WebToolLoop | None) -> dict | None:
+    """The turn's request-log context with the mail calls it made (tools and arguments, never a body)."""
+    calls = web_tools.tool_log() if web_tools is not None else []
+    if not calls:
+        return memory_context
+    return {**(memory_context or {}), "mail_tools": calls}
 
 
 def _without_web_tools(completion_kwargs: dict[str, Any]) -> dict[str, Any]:

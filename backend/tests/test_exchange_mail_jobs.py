@@ -446,6 +446,25 @@ class TestRetention:
         assert kept == [person.id]
         assert boxes == 2  # the kept connection's own and Finance
 
+    async def test_a_send_claim_left_behind_is_a_draft_again(self, db_session, mail, session_factory):
+        for n, minutes in enumerate((11, 2)):
+            db_session.add(
+                MailDraft(
+                    user_id=mail.person.id,
+                    mailbox_smtp=OWN,
+                    item_id=f"d{n}",
+                    kind="new",
+                    status="sending",
+                    created_at=NOW,
+                    updated_at=NOW - datetime.timedelta(minutes=minutes),
+                )
+            )
+        await db_session.commit()
+        await jobs.job_mail_retention()
+        async with session_factory() as db:
+            rows = (await db.execute(select(MailDraft).order_by(MailDraft.item_id))).scalars().all()
+        assert [(row.item_id, row.status) for row in rows] == [("d0", "draft"), ("d1", "sending")]
+
     async def test_action_items_follow_the_administrator_s_retention(self, db_session, mail, session_factory):
         await turn_on(db_session, action_retention_days=7)
         db_session.add(

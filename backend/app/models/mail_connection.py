@@ -113,7 +113,7 @@ class MailDraft(Base):
     __tablename__ = "mail_drafts"
     __table_args__ = (
         CheckConstraint("kind IN ('new', 'reply', 'reply_all', 'forward')", name="chk_mail_drafts_kind"),
-        CheckConstraint("status IN ('draft', 'sent', 'discarded', 'failed')", name="chk_mail_drafts_status"),
+        CheckConstraint("status IN ('draft', 'sending', 'sent', 'discarded', 'failed')", name="chk_mail_drafts_status"),
     )
 
     id = Column(Integer, primary_key=True)
@@ -132,6 +132,7 @@ class MailDraft(Base):
     source_ref = Column(String(16), nullable=True)
     #: The chat it was written in (``chat_sessions.id``), when it was.
     chat_session_id = Column(String(64), nullable=True)
+    #: ``sending`` while one request sends it (it claimed the row); a row left so for 10 minutes is a draft again.
     status = Column(String(16), nullable=False, default="draft")
     error = Column(String(500), nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.datetime.utcnow, index=True)

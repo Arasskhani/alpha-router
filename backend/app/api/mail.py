@@ -363,9 +363,19 @@ async def send_draft(
     settings: em.ExchangeSettings = Depends(_settings),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    """Send the draft as the person read it; only the person ever sends, never the model."""
+    """Send the draft as the person read it; only the person ever sends, never the model.
+
+    The draft is claimed first, and the claim committed before Exchange is
+    asked: a second tab sending the same draft meanwhile is refused with
+    ``send_in_progress`` instead of sending it twice.
+    """
     try:
-        outcome = await svc.send_draft(db, user, settings, draft_id, body.change_key)
+        claim = await svc.claim_send(db, user, settings, draft_id)
+    except em.MailError as error:
+        await _answer(db, error)
+    await db.commit()
+    try:
+        outcome = await svc.send_claimed(db, claim, body.change_key)
     except em.MailError as error:
         await _answer(db, error)
     if outcome.error is not None:

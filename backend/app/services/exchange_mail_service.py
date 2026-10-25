@@ -16,7 +16,8 @@ stay thin and every rule about a refused password is kept in one place:
   hand after a test read of their Inbox. ``max_mailboxes`` bounds the Full
   Access mailboxes of one person; the own mailbox is not counted.
 - **Drafts.** Read live from Exchange before the person sends (the change key
-  they saw is the one sent), sent or discarded only by the person.
+  they saw is the one sent), sent or discarded only by the person. A send
+  first claims the row (``sending``), so two tabs never send one draft twice.
 - **Action items.** Their state changes (notified, dismissed, done) and the
   composer text "Ask Alpharouter" opens a chat with.
 - **Admin.** The Test connection steps, the People list and the overview.
@@ -68,6 +69,8 @@ NOTIFIED_IDS_MAX = 200
 #: Where the needs-action check starts on a new connection: the last day, not the whole Inbox.
 FIRST_WATERMARK = datetime.timedelta(hours=24)
 DRAFT_GONE = "The draft is no longer in Drafts: it was sent or deleted in Outlook."
+#: A draft claimed for sending this long ago was left behind by a request that died: it counts as a draft again.
+SENDING_STALE = datetime.timedelta(minutes=10)
 CONNECTION_STATUSES = ("connected", "needs_password", "error")
 OPEN_ACTION_STATUSES = ("new", "notified")
 
@@ -900,15 +903,35 @@ def _refresh_from(draft: MailDraft, live: DraftResult) -> None:
     draft.change_key = live.change_key or None  # type: ignore[assignment]
 
 
+def sending_cutoff(now: datetime.datetime | None = None) -> datetime.datetime:
+    """A row claimed for sending before this was left behind by a request that died: it is a draft again."""
+    return (now or _now()) - SENDING_STALE
+
+
+def settle_stale_sending(draft: MailDraft) -> None:
+    """A draft whose send claim is older than ``SENDING_STALE`` counts as a draft again."""
+    if draft.status == "sending" and draft.updated_at is not None and draft.updated_at < sending_cutoff():
+        draft.status = "draft"  # type: ignore[assignment]
+
+
+def _send_in_progress() -> em.MailError:
+    return em.MailError(
+        "send_in_progress", "This draft is being sent from another window. Wait a moment and look again.", 409
+    )
+
+
 async def read_draft(db: AsyncSession, user: User, settings: em.ExchangeSettings, draft_id: int) -> dict[str, Any]:
     """The draft as it is now in Exchange (``DraftLiveOut``), or the row (``DraftOut``) once it is not a draft.
 
     A draft gone from Drafts (sent or deleted in Outlook) is marked
-    ``discarded`` and answered as a row.
+    ``discarded`` and answered as a row; one being sent (``sending``) is
+    answered as a row too, unless its claim is stale (a draft again).
     """
     await require_eligible(db, user, settings)
     draft = await own_draft(db, int(user.id), draft_id)
+    settle_stale_sending(draft)
     if draft.status != "draft":
+        await db.flush()
         return draft_out(draft)
     usable = await require_usable(db, user, settings)
     mailbox = _draft_mailbox(usable, draft)
@@ -942,23 +965,36 @@ class SendOutcome:
     error: em.MailError | None = None
 
 
-async def send_draft(
-    db: AsyncSession, user: User, settings: em.ExchangeSettings, draft_id: int, change_key: str
-) -> SendOutcome:
-    """Send the draft exactly as the person read it (``change_key``).
+@dataclass(frozen=True)
+class SendClaim:
+    """A draft this request claimed for sending (``status = 'sending'``): only it may send the draft now."""
 
-    ``conflict`` (it changed in Outlook since) is answered without touching
-    the row: the dialog reads it again. A draft gone becomes ``discarded``.
-    A failure that will likely pass by itself (password, network,
-    throttling) leaves it a ``draft`` with the error, so it can be sent once
-    that is fixed; any other failure marks it ``failed``.
+    draft: MailDraft
+    usable: Usable
+    mailbox: str
+
+
+def _not_a_draft() -> em.MailError:
+    return em.MailError("not_a_draft", "This draft was already sent or discarded.", 409)
+
+
+async def claim_send(db: AsyncSession, user: User, settings: em.ExchangeSettings, draft_id: int) -> SendClaim:
+    """Check that the person may send the draft now, then claim it, so that two tabs never both send it.
+
+    The claim is one conditional UPDATE (``draft`` -> ``sending``, or a stale
+    ``sending``): only the request whose UPDATE took the row sends; any other
+    is refused with ``send_in_progress`` (409). The caller commits the claim
+    before ``send_claimed`` asks Exchange, so every other request sees it.
     """
     await require_eligible(db, user, settings)
     draft = await own_draft(db, int(user.id), draft_id)
     if not settings.allow_send:
         raise em.MailError("send_off", "Sending from Alpharouter is turned off. Open the draft in Outlook.", 403)
+    settle_stale_sending(draft)
+    if draft.status == "sending":
+        raise _send_in_progress()
     if draft.status != "draft":
-        raise em.MailError("not_a_draft", "This draft was already sent or discarded.", 409)
+        raise _not_a_draft()
     usable = await require_usable(db, user, settings)
     mailbox = _draft_mailbox(usable, draft)
     await _hit(
@@ -967,6 +1003,37 @@ async def send_draft(
         window_s=3600,
         message=f"You can send up to {SENDS_PER_HOUR} emails an hour from Alpharouter. Try again later.",
     )
+    await db.flush()
+    now = _now()
+    claimed = await db.execute(
+        update(MailDraft)
+        .where(
+            MailDraft.id == draft.id,
+            or_(
+                MailDraft.status == "draft",
+                and_(MailDraft.status == "sending", MailDraft.updated_at < sending_cutoff(now)),
+            ),
+        )
+        .values(status="sending", updated_at=now)
+        .execution_options(synchronize_session=False)
+    )
+    await db.refresh(draft)
+    if not getattr(claimed, "rowcount", 0):
+        raise _send_in_progress() if draft.status == "sending" else _not_a_draft()
+    return SendClaim(draft=draft, usable=usable, mailbox=mailbox)
+
+
+async def send_claimed(db: AsyncSession, claim: SendClaim, change_key: str) -> SendOutcome:
+    """Send the claimed draft exactly as the person read it (``change_key``), and settle its status.
+
+    ``conflict`` (it changed in Outlook since) puts it back to ``draft`` and
+    is raised: the dialog reads it again. A draft gone becomes
+    ``discarded``. A failure that will likely pass by itself (password,
+    network, throttling, EWS refused for the login) leaves it a ``draft``
+    with the error, so it can be sent once that is fixed; any other failure
+    marks it ``failed``.
+    """
+    draft, usable, mailbox = claim.draft, claim.usable, claim.mailbox
     item_id = str(draft.item_id)
     try:
         # A send refused for this mailbox (no Send As) says nothing about reading it: the mailbox stays.
@@ -980,13 +1047,14 @@ async def send_draft(
     except EwsError as error:
         refusal = _refusal_after(error)
         if error.kind == "conflict":
+            draft.status = "draft"  # type: ignore[assignment]
+            await db.flush()
             raise refusal from error
         if error.kind == "not_found":
             _mark_gone(draft)
         else:
             draft.error = refusal.message  # type: ignore[assignment]
-            if error.kind not in _PASSING_KINDS:
-                draft.status = "failed"  # type: ignore[assignment]
+            draft.status = "draft" if error.kind in _PASSING_KINDS else "failed"  # type: ignore[assignment]
         await db.flush()
         return SendOutcome(draft=draft, error=refusal)
     draft.status = "sent"  # type: ignore[assignment]
@@ -1012,8 +1080,11 @@ async def discard_draft(db: AsyncSession, user: User, settings: em.ExchangeSetti
     """Move the draft to Deleted Items and mark it ``discarded`` (a draft already gone is no error)."""
     await require_eligible(db, user, settings)
     draft = await own_draft(db, int(user.id), draft_id)
+    settle_stale_sending(draft)
     if draft.status == "discarded":
         return draft
+    if draft.status == "sending":
+        raise _send_in_progress()
     if draft.status != "draft":
         raise em.MailError("not_a_draft", "This draft was already sent.", 409)
     usable = await require_usable(db, user, settings)

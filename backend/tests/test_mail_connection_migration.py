@@ -128,6 +128,23 @@ def test_upgrade_adds_empty_tables_whose_constraints_hold(database, monkeypatch)
                 f"'', 'draft', {_NOW}, {_NOW})"
             )
         )
+    # A draft one request is sending is claimed with 'sending'; other states are refused.
+    with database.begin() as conn:
+        conn.execute(
+            sa.text(
+                "INSERT INTO mail_drafts (user_id, mailbox_smtp, item_id, kind, subject, to_json, cc_json, "
+                f"body_preview, status, created_at, updated_at) VALUES (1, 'x', 'y2', 'new', '', '[]', '[]', "
+                f"'', 'sending', {_NOW}, {_NOW})"
+            )
+        )
+    with database.begin() as conn, pytest.raises(sa.exc.IntegrityError):
+        conn.execute(
+            sa.text(
+                "INSERT INTO mail_drafts (user_id, mailbox_smtp, item_id, kind, subject, to_json, cc_json, "
+                f"body_preview, status, created_at, updated_at) VALUES (1, 'x', 'y3', 'new', '', '[]', '[]', "
+                f"'', 'queued', {_NOW}, {_NOW})"
+            )
+        )
     # Deleting the person deletes everything of theirs.
     with database.begin() as conn:
         conn.execute(sa.text("DELETE FROM users WHERE id = 1"))

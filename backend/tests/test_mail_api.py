@@ -1079,6 +1079,72 @@ class TestDrafts:
         boxes = await _fresh(db_session, MailConnectionMailbox, MailConnectionMailbox.smtp == "finance@corp.example")
         assert boxes[0].enabled is True
 
+    async def test_two_tabs_sending_one_draft_send_it_once(self, client, db_session, exchange, person, monkeypatch):
+        import asyncio
+        import time
+
+        from tests.fake_mail_client import FakeMailClient
+
+        headers = sign_in(client, person)
+        await _connected(client, db_session, headers)
+        draft = await _draft(db_session, exchange, person)
+        real = FakeMailClient.send_draft
+
+        def slow_send(self, mailbox, item_id, change_key):
+            time.sleep(0.2)
+            return real(self, mailbox, item_id, change_key)
+
+        monkeypatch.setattr(FakeMailClient, "send_draft", slow_send)
+        url = f"{BASE}/drafts/{draft.id}/send"
+        first, second = await asyncio.gather(
+            client.post(url, json={"change_key": "ck1"}, headers=headers),
+            client.post(url, json={"change_key": "ck1"}, headers=headers),
+        )
+        statuses = sorted([first.status_code, second.status_code])
+        assert statuses == [200, 409], (first.text, second.text)
+        refused = first if first.status_code == 409 else second
+        assert _code(refused) == "send_in_progress"
+        assert len(exchange.sent) == 1 and _calls(exchange, "send_draft") == 1
+        (row,) = await _fresh(db_session, MailDraft)
+        assert row.status == "sent"
+        assert len(await _events(db_session, "mail_draft_sent")) == 1
+
+    async def test_a_draft_being_sent_is_not_read_sent_or_discarded_meanwhile(
+        self, client, db_session, exchange, person
+    ):
+        headers = sign_in(client, person)
+        await _connected(client, db_session, headers)
+        draft = await _draft(db_session, exchange, person, status="sending")
+        body = (await client.get(f"{BASE}/drafts/{draft.id}", headers=headers)).json()
+        assert body["status"] == "sending" and "change_key" not in body
+        resp = await client.post(f"{BASE}/drafts/{draft.id}/send", json={"change_key": "ck1"}, headers=headers)
+        assert resp.status_code == 409 and _code(resp) == "send_in_progress"
+        resp = await client.post(f"{BASE}/drafts/{draft.id}/discard", headers=headers)
+        assert resp.status_code == 409 and _code(resp) == "send_in_progress"
+        assert exchange.calls == [] and exchange.sent == []
+
+    async def test_a_send_claim_left_for_ten_minutes_is_a_draft_again(self, client, db_session, exchange, person):
+        headers = sign_in(client, person)
+        await _connected(client, db_session, headers)
+        draft = await _draft(db_session, exchange, person, status="sending")
+        draft.updated_at = datetime.datetime.now(datetime.UTC).replace(tzinfo=None) - datetime.timedelta(minutes=11)
+        await db_session.commit()
+        body = (await client.get(f"{BASE}/drafts/{draft.id}", headers=headers)).json()
+        assert body["status"] == "draft" and body["change_key"] == "ck1"
+        (row,) = await _fresh(db_session, MailDraft)
+        assert row.status == "draft"
+        row.status = "sending"
+        await db_session.commit()
+        await db_session.execute(
+            MailDraft.__table__.update()
+            .where(MailDraft.id == draft.id)
+            .values(updated_at=datetime.datetime.now(datetime.UTC).replace(tzinfo=None) - datetime.timedelta(hours=1))
+        )
+        await db_session.commit()
+        resp = await client.post(f"{BASE}/drafts/{draft.id}/send", json={"change_key": "ck1"}, headers=headers)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["status"] == "sent" and len(exchange.sent) == 1
+
     async def test_send_off(self, client, db_session, exchange, person):
         headers = sign_in(client, person)
         await _connected(client, db_session, headers, allow_send=False)

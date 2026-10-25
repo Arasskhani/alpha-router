@@ -30,8 +30,9 @@ login can no longer open drops out. Nothing here logs a subject, a body or an
 address but a mailbox's.
 
 ``job_mail_retention`` runs nightly: forgotten refs, old action items
-(``action_retention_days``), old draft rows, and the connections of accounts
-that were deleted, purged, deactivated or no longer sign in with AD.
+(``action_retention_days``), old draft rows, send claims left behind (a
+draft again), and the connections of accounts that were deleted, purged,
+deactivated or no longer sign in with AD.
 """
 
 from __future__ import annotations
@@ -47,7 +48,7 @@ import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.core.prompt_fences import wrap_untrusted
@@ -56,6 +57,7 @@ from app.models.mail_connection import MailActionItem, MailConnection, MailDraft
 from app.models.user import User
 from app.services import exchange_mail
 from app.services.exchange_ews_types import EwsError, MessageSummary
+from app.services.exchange_mail_service import SENDING_STALE
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -544,6 +546,13 @@ async def job_mail_retention() -> None:
             )
             drafts = await db.execute(
                 delete(MailDraft).where(MailDraft.created_at < now - datetime.timedelta(days=DRAFT_RETENTION_DAYS))
+            )
+            # A send claim left behind by a request that died: the draft can be sent (or discarded) again.
+            await db.execute(
+                update(MailDraft)
+                .where(MailDraft.status == "sending", MailDraft.updated_at < now - SENDING_STALE)
+                .values(status="draft")
+                .execution_options(synchronize_session=False)
             )
             stale = (
                 (

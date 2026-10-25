@@ -110,7 +110,9 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(), nullable=False),
         sa.Column("sent_at", sa.DateTime(), nullable=True),
         sa.CheckConstraint("kind IN ('new', 'reply', 'reply_all', 'forward')", name="chk_mail_drafts_kind"),
-        sa.CheckConstraint("status IN ('draft', 'sent', 'discarded', 'failed')", name="chk_mail_drafts_status"),
+        sa.CheckConstraint(
+            "status IN ('draft', 'sending', 'sent', 'discarded', 'failed')", name="chk_mail_drafts_status"
+        ),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )

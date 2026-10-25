@@ -12,6 +12,11 @@ Per turn: at most ``MAX_SEARCHES`` searches and ``MAX_FETCHES`` fetches, and
 ``MAX_ROUNDS`` rounds of calls; the round after the last one is asked with no
 tools, so the turn always ends in an answer.
 
+The same loop carries the person's mailbox when mail is on for the turn
+(``exchange_mail_tools.MailToolLoop``, with or without the web tools): the
+proxy keeps one loop and one round logic, the mail calls go to the mail loop,
+and a turn with mail may take ``exchange_mail_tools.MAX_ROUNDS`` rounds.
+
 A model that does not call functions gets the older way instead: one search
 of the person's own words (``pre_search_query``) put before their message.
 """
@@ -22,10 +27,13 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urldefrag, urlparse
 
 from app.core.prompt_fences import untrusted_preamble, wrap_untrusted
+
+if TYPE_CHECKING:
+    from app.services.exchange_mail_tools import MailToolLoop
 
 logger = logging.getLogger(__name__)
 
@@ -209,6 +217,8 @@ class WebToolLoop:
     #: The pages web_fetch may read: those the person linked in the chat and those this turn's searches found.
     #: Never one the model makes up - an address written from a page could carry the chat's contents away.
     readable: set[str] = field(default_factory=set)
+    #: The person's mailbox as tools, when mail is on for this turn.
+    mail: MailToolLoop | None = None
 
     def allow_links_in(self, messages: list[dict[str, Any]]) -> None:
         """Let web_fetch read the links the person typed in the chat's messages (not those in files attached)."""
@@ -221,10 +231,28 @@ class WebToolLoop:
     @property
     def last_round(self) -> bool:
         """The rounds are used up: the next request is asked without tools, for the answer."""
+        if self.mail is not None:
+            from app.services import exchange_mail_tools
+
+            return self.rounds >= exchange_mail_tools.MAX_ROUNDS
         return self.rounds >= MAX_ROUNDS
 
     def definitions(self) -> list[dict[str, Any]]:
-        return web_tool_definitions(search=self.search, fetch=self.fetch)
+        tools = web_tool_definitions(search=self.search, fetch=self.fetch)
+        return tools + self.mail.definitions() if self.mail is not None else tools
+
+    @property
+    def mail_drafts(self) -> list[dict[str, Any]]:
+        """The draft cards the mail tools saved this turn (``MailDraftCard``)."""
+        return list(self.mail.drafts) if self.mail is not None else []
+
+    def guardrail_values(self) -> dict[str, str]:
+        """Values Guardrails masked in what the mail tools returned, to give back in the reply."""
+        return dict(self.mail.found_values) if self.mail is not None else {}
+
+    def tool_log(self) -> list[dict[str, Any]]:
+        """The mail calls as the turn's request log keeps them (no bodies, no subjects, no addresses)."""
+        return list(self.mail.calls_log) if self.mail is not None else []
 
     def _add_source(self, title: str, url: str) -> None:
         if url and len(self.sources) < MAX_SOURCES and all(s["url"] != url for s in self.sources):
@@ -233,6 +261,10 @@ class WebToolLoop:
     @staticmethod
     def activity(call: ToolCall) -> dict[str, str]:
         """What the chat shows while a call runs."""
+        from app.services.exchange_mail_tools import TOOL_NAMES, mail_activity
+
+        if call.name in TOOL_NAMES:
+            return mail_activity(call)
         args = call.args()
         if call.name == "web_search":
             return {"tool": "web_search", "query": str(args.get("query") or "")[:200]}
@@ -241,8 +273,13 @@ class WebToolLoop:
 
     async def run(self, call: ToolCall) -> str:
         """One call, carried out within its time: the tool message's content, never an exception."""
+        from app.services.exchange_mail_tools import TOOL_NAMES
+
+        if call.name in TOOL_NAMES:
+            return await self.mail.run(call) if self.mail is not None else "Mail is not on for this conversation."
         if call.name not in CALL_TIMEOUT_S:
-            return f"There is no tool named {call.name!r}. The tools are web_search and web_fetch."
+            named = " and ".join(tool["function"]["name"] for tool in self.definitions()) or "none"
+            return f"There is no tool named {call.name!r}. The tools are {named}."
         timeout = CALL_TIMEOUT_S[call.name]
         try:
             return await asyncio.wait_for(

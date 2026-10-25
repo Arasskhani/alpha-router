@@ -316,12 +316,19 @@ async def guard_texts(
     user_id: int | None,
     alpha_router_api_key_id: int | None = None,
     source: str | None,
+    masker: Masker | None = None,
 ) -> GuardedTexts:
     """Guardrails on texts sent to a model outside a chat turn (a title, a summary, embeddings, a prompt).
 
     Nothing is routed here - the model was chosen for a job - so a rule that
     would route blocks instead, as does a text that cannot be checked when the
     administrator chose to stop those.
+
+    ``masker`` is for texts that join a chat turn already under way (the mail
+    tools' results): one that goes on numbering where the turn stopped, so a
+    placeholder never names two values. Its values - all of them, the ones it
+    came with included - are the result's ``values``. Without it each call
+    numbers from 1.
     """
     if not texts or not await _rules_watch(db):
         return GuardedTexts(list(texts))
@@ -339,7 +346,7 @@ async def guard_texts(
         return GuardedTexts(list(texts), refusal=notices[0] if notices else "This was not sent.")
     if not verdict.to_mask:
         return GuardedTexts(list(texts))
-    masker = Masker()
+    masker = masker if masker is not None else Masker()
     as_messages = mask_messages([{"content": text} for text in texts], verdict.to_mask, masker)
     return GuardedTexts([str(m["content"]) for m in as_messages], values=dict(masker.values))
 

@@ -41,6 +41,7 @@ from app.services.memory_extraction_service import (
     fit_extraction_window,
     looks_like_injection,
     restates_a_shared_page,
+    restates_mail,
     smaller_part,
 )
 from app.services.memory_settings_service import (
@@ -177,7 +178,7 @@ async def build_project_extraction_window(
     covered_to = int(rows[-1].sequence) if len(rows) >= PRE_WINDOW_MESSAGES + MAX_WINDOW_TURNS else end
     turns: list[ProjectWindowTurn] = []
     for row in rows:
-        if restates_a_shared_page(row):
+        if restates_a_shared_page(row) or restates_mail(row):
             continue
         text = extract_message_text(row.content)[:MAX_MESSAGE_CHARS]
         if not text.strip():

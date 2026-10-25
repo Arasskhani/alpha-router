@@ -62,7 +62,7 @@ from app.services.budget_reservation_service import (
 )
 from app.services.chat_tool_access_service import assert_tools_permitted
 from app.services.chat_tool_registry import requested_tool_keys
-from app.services.chat_markers import MAIL_DRAFTS_META_KEY, WEB_SOURCES_META_KEY
+from app.services.chat_markers import MAIL_CONTEXT_META_KEY, MAIL_DRAFTS_META_KEY, WEB_SOURCES_META_KEY
 from app.services.chat_tools_service import (
     parse_tools_config,
 )
@@ -976,6 +976,8 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
         budget_hold_usd = ctx.budget_hold_usd
         #: Web Search / Web Fetch called by the model itself: their calls are run here and never reach the client.
         web_tools = ctx.web_tools
+        #: The answer was marked as built from email content (``mailContext``), once.
+        mail_context_marked = False
         #: Guardrails: the values masked before sending, given back in the reply as it streams.
         guardrail_restorer = ReplyRestorer(ctx.guardrail_values) if ctx.guardrail_values else None
         if ctx.guardrail_notices and source == "alpha_router_chat":
@@ -1370,6 +1372,14 @@ async def stream_chat(  # noqa: C901 -- Phase 4 split; complexity must not grow
                             persister.set_message_metadata({MAIL_DRAFTS_META_KEY: web_tools.mail_drafts})
                         if show_web_frames:
                             yield _sse_alpha_router_frame({"mail_drafts": web_tools.mail_drafts})
+                    if web_tools.mail_read and not mail_context_marked:
+                        # Email content reached the model: the answer is never learned from, and the chat
+                        # loads none of its images (an email could ask for one that carries other mail away).
+                        mail_context_marked = True
+                        if persister:
+                            persister.set_message_metadata({MAIL_CONTEXT_META_KEY: {"read": True}})
+                        if show_web_frames:
+                            yield _sse_alpha_router_frame({"mail_context": {"read": True}})
                     found_values = web_tools.guardrail_values()
                     if found_values:
                         # Values Guardrails masked in the person's mail are theirs again in the reply.

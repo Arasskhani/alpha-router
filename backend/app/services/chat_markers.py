@@ -45,6 +45,11 @@ WEB_SOURCES_META_KEY = "webSources"
 #: Assistant message meta, ``[{"id", "mailbox", "kind", "subject", "to", "cc", "preview"}]``: the drafts the
 #: model saved in the person's Exchange mailbox while answering (``mail_drafts.id``), shown as draft cards.
 MAIL_DRAFTS_META_KEY = "mailDrafts"
+#: Assistant message meta, ``{"read": true}``: an answer for which the mail tools returned email content
+#: (``mail_search``, ``mail_read``, ``mail_create_draft``). Email is untrusted - anyone can write to the person -
+#: so, as with PAGE_CONTEXT_META_KEY, no memory is learned from such an answer and the web app never loads its
+#: images (an email could ask for an image whose address carries other emails away).
+MAIL_CONTEXT_META_KEY = "mailContext"
 #: Assistant message meta, ``[str]``: what Guardrails told the person about their request (values masked
 #: before sending, the request sent to another model), as the administrator worded it.
 GUARDRAIL_META_KEY = "guardrailNotices"

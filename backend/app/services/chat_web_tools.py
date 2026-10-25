@@ -254,6 +254,11 @@ class WebToolLoop:
         """The draft cards the mail tools saved this turn (``MailDraftCard``)."""
         return list(self.mail.drafts) if self.mail is not None else []
 
+    @property
+    def mail_read(self) -> bool:
+        """The mail tools returned email content this turn (the answer is marked ``mailContext``)."""
+        return self.mail is not None and self.mail.read_mail
+
     def guardrail_values(self) -> dict[str, str]:
         """Values Guardrails masked in what the mail tools returned, to give back in the reply."""
         return dict(self.mail.found_values) if self.mail is not None else {}

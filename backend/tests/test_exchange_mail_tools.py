@@ -321,6 +321,33 @@ class TestSearch:
             assert "Narrow it instead" in text
         assert len(asked) == 2 and loop.searches == 2
 
+    async def test_only_email_content_marks_the_answer(self, mailbox):
+        """The answer's images are never loaded, and no memory learned from it, once email content came back."""
+        mailbox.exchange.people = [Person("ali@corp.example", "Ali")]
+        loop = await mailbox.loop()
+        for quiet in (
+            call("mail_list_mailboxes", "c1"),
+            call("mail_search", "c2", query="nothing-matches"),
+            call("people_find", "c3", query="Ali"),
+            call("mail_read", "c4", refs=["mAAAAAAAAA"]),
+        ):
+            await loop.run(quiet)
+        assert loop.read_mail is False
+        mailbox.exchange.add_message(OWN, "Budget", body="Approve it")
+        await loop.run(call("mail_search", "c5", query="budget"))
+        assert loop.read_mail is True
+
+    @pytest.mark.parametrize("tool", ["mail_read", "mail_create_draft"])
+    async def test_reading_or_answering_an_email_marks_the_answer(self, mailbox, session_factory, tool):
+        message = mailbox.exchange.add_message(OWN, "Budget", body="Approve it")
+        async with session_factory() as db:
+            ref = await em.ref_for(db, mailbox.person.id, OWN, message.item_id)
+            await db.commit()
+        loop = await mailbox.loop()
+        arguments = {"refs": [ref]} if tool == "mail_read" else {"kind": "reply", "ref": ref, "body": "Approved."}
+        await loop.run(call(tool, **arguments))
+        assert loop.read_mail is True
+
     async def test_nothing_found_says_so(self, mailbox):
         assert "No emails in inbox matched" in await (await mailbox.loop()).run(call("mail_search", query="zzz"))
 

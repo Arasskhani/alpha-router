@@ -468,6 +468,10 @@ class _Answer(Exception):
 type _Part = tuple[str, str | None, str | None]
 
 
+#: The fences of what an email (or a draft, which may quote one) says: a result with one carries email content.
+_EMAIL_LABELS = frozenset({"EMAIL", "EMAIL_DRAFT"})
+
+
 def _plain(text: str) -> _Part:
     return (text, None, None)
 
@@ -526,6 +530,9 @@ class MailToolLoop:
     stopped: str = ""
     #: Full Access mailboxes that dropped out during the turn.
     dropped: set[str] = field(default_factory=set)
+    #: A tool returned email content this turn (search results, an email read, a draft saved): the answer is
+    #: marked (``MAIL_CONTEXT_META_KEY``) so its images are never loaded and no memory is learned from it.
+    read_mail: bool = False
     _masker: Masker | None = field(default=None, repr=False)
     _restore: bool | None = field(default=None, repr=False)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
@@ -583,6 +590,8 @@ class MailToolLoop:
                     raise _Answer(self.stopped, "stopped")
                 parts = await handlers[call.name](db, args)
                 outcome = "ok"
+                if any(label in _EMAIL_LABELS for _text, label, _source in parts):
+                    self.read_mail = True
             except _Answer as answer:
                 parts, outcome = [_plain(answer.text)], answer.outcome
             except Exception as exc:  # noqa: BLE001 -- a fault of ours: the model is told, the turn goes on

@@ -17,7 +17,7 @@ from sqlalchemy.orm.attributes import set_committed_value
 
 from app.services.chat_markers import refused_by_guardrails
 from app.models.chat import ChatMessage, ChatSession, UserMemory, is_member_channel
-from app.services.chat_markers import PAGE_CONTEXT_META_KEY
+from app.services.chat_markers import MAIL_CONTEXT_META_KEY, PAGE_CONTEXT_META_KEY
 from app.services.memory_settings_service import MEMORY_CATEGORIES, get_memory_settings
 from app.services.user_memory_service import (
     NEAR_DUPE_THRESHOLD,
@@ -194,6 +194,18 @@ def restates_a_shared_page(row: ChatMessage) -> bool:
     return str(row.role) == "assistant" and bool(meta.get(PAGE_CONTEXT_META_KEY))
 
 
+def restates_mail(row: ChatMessage) -> bool:
+    """An answer for which the person's mail tools returned email content (``mailContext``).
+
+    Email is untrusted - anyone can write to the person, and an email can
+    ask to be remembered - so no memory is ever learned from such an
+    answer. The user's own question stays in the window: that part the user
+    typed.
+    """
+    meta: dict[str, Any] = row.meta if isinstance(row.meta, dict) else {}
+    return str(row.role) == "assistant" and bool(meta.get(MAIL_CONTEXT_META_KEY))
+
+
 class _TurnLike(Protocol):
     sequence: int
     text: str
@@ -269,7 +281,7 @@ async def build_extraction_window(
     covered_to = int(rows[-1].sequence) if len(rows) >= PRE_WINDOW_MESSAGES + MAX_WINDOW_TURNS else end
     turns: list[WindowTurn] = []
     for row in rows:
-        if restates_a_shared_page(row) or refused_by_guardrails(row.meta):
+        if restates_a_shared_page(row) or restates_mail(row) or refused_by_guardrails(row.meta):
             continue
         text = extract_message_text(row.content)[:MAX_MESSAGE_CHARS]
         if not text.strip():

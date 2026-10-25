@@ -63,7 +63,9 @@ export type MenuKey =
 
   | "guardrails"
 
-  | "tickets";
+  | "tickets"
+
+  | "exchange_ews";
 
 export type NavIconKey = "chat" | "media" | "activity" | "manual" | "admin" | "headset" | "projects";
 

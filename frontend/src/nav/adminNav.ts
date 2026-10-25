@@ -83,6 +83,7 @@ export const adminNavSections: NavSection[] = [
     categoryKey: "integrations",
     items: [
       { to: "/admin/smtp", label: "SMTP Server", menuKey: "smtp" },
+      { to: "/admin/exchange-ews", label: "Exchange EWS", menuKey: "exchange_ews" },
     ],
   },
   {

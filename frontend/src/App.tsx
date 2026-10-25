@@ -37,6 +37,8 @@ const DatabaseMonitor = lazy(() => import("./pages/admin/DatabaseMonitor"));
 const ChatPanel = lazy(() => import("./components/ChatPanel"));
 const Authentication = lazy(() => import("./pages/admin/Authentication"));
 const SmtpServer = lazy(() => import("./pages/admin/SmtpServer"));
+const ExchangeEws = lazy(() => import("./pages/admin/ExchangeEws"));
+const MailConnections = lazy(() => import("./pages/user/Connections"));
 const Groups = lazy(() => import("./pages/admin/Groups"));
 const GroupActivity = lazy(() => import("./pages/admin/GroupActivity"));
 const Docs = lazy(() => import("./pages/admin/Docs"));
@@ -115,6 +117,8 @@ export default function App() {
         <Route path="manual" element={<UserManual />} />
         <Route path="authentication" element={<Authentication />} />
         <Route path="smtp" element={<SmtpServer />} />
+        <Route path="exchange-ews" element={<ExchangeEws />} />
+        <Route path="my-connections" element={<MailConnections />} />
         <Route path="connections" element={<Connections />} />
         <Route path="connections/:connId/activity" element={<ConnectionActivity />} />
         <Route path="groups" element={<Groups />} />
@@ -188,6 +192,7 @@ export default function App() {
         <Route path="my-activity" element={<MyActivity />} />
         <Route path="support" element={<Support />} />
         <Route path="support/:ticketId" element={<Support />} />
+        <Route path="connections" element={<MailConnections />} />
         <Route path="manual" element={<UserManual />} />
       </Route>
           <Route path="*" element={<Navigate to="/login" replace />} />

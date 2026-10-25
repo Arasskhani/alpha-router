@@ -90,6 +90,7 @@ const USER_READ_ONLY_PATHS = [
   "/app/media",
   "/app/my-activity",
   "/app/support",
+  "/app/connections",
   "/app/manual",
 ] as const;
 

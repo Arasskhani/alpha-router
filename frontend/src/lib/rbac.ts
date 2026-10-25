@@ -33,6 +33,10 @@ export type SessionRbac = {
     api_keys?: boolean;
     extension?: boolean;
     support?: boolean;
+    /** Exchange EWS: the account may connect a mailbox (Connections in the profile menu). */
+    connections?: boolean;
+    /** Exchange EWS: the mailbox is connected and working (the sign by the chat box). */
+    exchange_mail?: boolean;
   } | null;
 };
 
@@ -130,7 +134,8 @@ export function userHasSuperAdminAccess(
 
 const MENU_PATH_PREFIXES: Record<MenuKey, string[]> = {
   dashboard: ["/admin", "/admin/my-activity"],
-  chat: ["/admin/chat"],
+  // The person's own Connections page (their Exchange mailbox) belongs with the chat.
+  chat: ["/admin/chat", "/admin/my-connections"],
   media: ["/admin/media"],
   connections: ["/admin/connections"],
   models: ["/admin/models"],
@@ -165,6 +170,7 @@ const MENU_PATH_PREFIXES: Record<MenuKey, string[]> = {
   security_settings: ["/admin/security-settings"],
   guardrails: ["/admin/guardrails"],
   tickets: ["/admin/tickets"],
+  exchange_ews: ["/admin/exchange-ews"],
 };
 
 const MENU_TO_CATEGORY: Record<MenuKey, CategoryKey> = {
@@ -195,6 +201,7 @@ const MENU_TO_CATEGORY: Record<MenuKey, CategoryKey> = {
   security_settings: "security",
   guardrails: "security",
   tickets: "overview",
+  exchange_ews: "integrations",
 };
 
 function pathMatchesMenu(path: string, menu: MenuKey): boolean {
@@ -297,6 +304,11 @@ function isAdminPathAllowed(pathname: string, role: string | undefined | null): 
 
 export function getMyActivityPath(role: string): string {
   return isAdminPanelRole(role) ? "/admin/my-activity" : "/app/my-activity";
+}
+
+/** The person's own Connections page (their Exchange mailbox), in the panel they are in. */
+export function getMyConnectionsPath(role: string): string {
+  return isAdminPanelRole(role) ? "/admin/my-connections" : "/app/connections";
 }
 
 export function roleLabel(catalog: RoleRecord[], slug: string): string {

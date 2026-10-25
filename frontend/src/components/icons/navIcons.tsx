@@ -111,6 +111,51 @@ function IconProjects({ className = "" }: IconProps) {
   );
 }
 
+/** An Exchange mailbox (the chat's mail tools, the Exchange EWS admin page). */
+export function IconMail({ className = "" }: IconProps) {
+  return (
+    <svg {...svgProps} className={className}>
+      <rect x="2" y="4" width="20" height="16" rx="2" />
+      <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+    </svg>
+  );
+}
+
+/** The mailbox is connected: an envelope with a tick, by the chat box. */
+export function IconMailConnected({ className = "" }: IconProps) {
+  return (
+    <svg {...svgProps} className={className}>
+      <path d="M22 13V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8" />
+      <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+      <path d="m16 19 2 2 4-4" />
+    </svg>
+  );
+}
+
+/** The mailbox needs attention (the password, say): an envelope with an exclamation mark. */
+export function IconMailWarning({ className = "" }: IconProps) {
+  return (
+    <svg {...svgProps} className={className}>
+      <path d="M22 12V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h11" />
+      <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+      <path d="M20 15v3" />
+      <path d="M20 21h.01" />
+    </svg>
+  );
+}
+
+/** Connections (the profile menu): a plug. */
+export function IconPlug({ className = "" }: IconProps) {
+  return (
+    <svg {...svgProps} className={className}>
+      <path d="M12 22v-5" />
+      <path d="M9 8V2" />
+      <path d="M15 8V2" />
+      <path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8z" />
+    </svg>
+  );
+}
+
 export function IconLogout({ className = "" }: IconProps) {
   return (
     <svg {...svgProps} className={className}>

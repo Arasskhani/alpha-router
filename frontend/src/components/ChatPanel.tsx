@@ -3514,10 +3514,13 @@ export default function ChatPanel({
 
   // "Ask Alpharouter" on an email (Connections, the mail toasts): a new chat with the prompt in its composer, not sent.
   useChatPrefill(chatsHydrated && userPrefsReady && models.length > 0 && !isProjectChat && !readOnly, (text) => {
+    // An empty chat already open (a fresh "New chat") takes the text; otherwise a new chat does.
+    const open = sessionsRef.current.find((s) => s.id === activeIdRef.current);
+    const blank = !!open && !open.messages.length && !(open.messageCount ?? 0) && !getComposerDraft(open.id);
     const before = activeIdRef.current;
-    startNewChat();
+    if (!blank) startNewChat();
     const sid = activeIdRef.current;
-    if (!sid || sid === before) return;
+    if (!sid || (!blank && sid === before)) return;
     const direction = inputDirectionForText(text);
     // The composer takes the new chat's draft when it follows the chat; if it already has, fill it here.
     syncComposerDraft(sid, text, direction);

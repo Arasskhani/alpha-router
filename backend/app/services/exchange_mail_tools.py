@@ -27,10 +27,13 @@ Rules the loop keeps:
   connection to ``needs_password`` (``record_failure``); the model is told,
   and no other mail call of the turn reaches Exchange. A Full Access mailbox
   that can no longer be opened drops out (``record_mailbox_failure``).
-- **Allowance.** Per turn at most ``MAX_SEARCHES`` searches, ``MAX_READS``
-  emails read, ``MAX_DRAFTS`` drafts, ``MAX_FREE_TIME`` free-time searches and
-  ``MAX_PEOPLE`` address-book lookups; each call within ``timeout_s + 15`` s.
-  Calls of one turn run one at a time (one Exchange session per call).
+- **Allowance.** Per turn at most ``MAX_SEARCHES`` searches (paging no
+  further than ``SEARCH_WINDOW`` results, ``SEARCH_ALL_WINDOW`` across all
+  folders), ``MAX_READS`` emails read, ``MAX_DRAFTS`` drafts,
+  ``MAX_FREE_TIME`` free-time searches (each counted before its names are
+  looked up) and ``MAX_PEOPLE`` address-book lookups (the names a free-time
+  search looks up included); each call within ``timeout_s + 15`` s. Calls of
+  one turn run one at a time (one Exchange session per call).
 - **Logs.** Each call is noted for the turn's request log (``calls_log``) and
   the application log: the tool, its arguments without the body, the subject
   or any address (counts instead), and how it went.
@@ -82,6 +85,9 @@ MAX_READS = 20
 MAX_DRAFTS = 5
 MAX_FREE_TIME = 3
 MAX_PEOPLE = 5
+#: How far a search may page (offset + limit), and across all folders (each is read that far, then merged).
+SEARCH_WINDOW = 200
+SEARCH_ALL_WINDOW = 100
 #: Each call's time limit is the administrator's EWS timeout plus this much.
 CALL_TIMEOUT_EXTRA_S = 15
 MAX_RECIPIENTS = 50
@@ -768,10 +774,19 @@ class MailToolLoop:
             until = _moment(args.get("until"), end_of_day=True)
         except ValueError:
             raise _Answer("since and until must be ISO dates or datetimes, such as 2026-10-01.", "invalid") from None
+        limit = _int(args.get("limit"), 10, 1, self.settings.search_limit)
+        offset = _int(args.get("offset"), 0, 0, SEARCH_WINDOW)
+        # Exchange reads offset + limit results of each folder to page: the pages stop at the window's end.
+        window = SEARCH_ALL_WINDOW if folder == "all" else SEARCH_WINDOW
+        if offset >= window:
+            raise _Answer(
+                f"Only the first {window} results of a search{' of all folders' if folder == 'all' else ''} can be "
+                "read. Narrow it instead: other words, a sender, dates or one folder.",
+                "invalid",
+            )
+        limit = min(limit, window - offset)
         if self.searches >= MAX_SEARCHES:
             raise _Answer(f"The {MAX_SEARCHES} mail searches of this turn are used up: answer from what you found.")
-        limit = _int(args.get("limit"), 10, 1, self.settings.search_limit)
-        offset = _int(args.get("offset"), 0, 0, 1000)
         self.searches += 1
         try:
             rows: list[MessageSummary] = await self._ews(
@@ -1042,11 +1057,18 @@ class MailToolLoop:
         return f"{number}. {name}" + (f" - {about}" if about else "")
 
     async def _attendee(self, db: AsyncSession, given: str) -> tuple[str, str]:
-        """The address an attendee names: ``(address, "")``, or ``("", what to tell the model)``."""
+        """The address an attendee names: ``(address, "")``, or ``("", what to tell the model)``.
+
+        A name is looked up in the address book, and each lookup counts
+        toward the turn's ``MAX_PEOPLE`` as ``people_find`` does.
+        """
         text = self._unmask(given)
         address = exchange_mail.normalize_smtp(text)
         if address:
             return address, ""
+        if self.people_lookups >= MAX_PEOPLE:
+            return "", f"{given}: the {MAX_PEOPLE} address book lookups of this turn are used up; give the address."
+        self.people_lookups += 1
         found: list[Person] = await self._ews(db, "find_people", text, limit=5, scope="login")
         exact = [p for p in found if p.name.strip().lower() == text.strip().lower()]
         if len(exact) == 1 or len(found) == 1:
@@ -1075,8 +1097,20 @@ class MailToolLoop:
             first_day, last_day = _day(args.get("start")), _day(args.get("end"))
         except ValueError:
             raise _Answer("start and end must be ISO dates, such as 2026-10-27.", "invalid") from None
+        now = _now()
+        provisional = zone(asked_zone) or UTC
+        today = now.astimezone(provisional).date()
+        start_day = first_day or today + datetime.timedelta(days=1)
+        end_day = last_day or _working_days_on(start_day, 5)
+        if end_day < start_day:
+            raise _Answer("end must not be before start.", "invalid")
+        if (end_day - start_day).days + 1 > MAX_FREE_TIME_DAYS:
+            raise _Answer(f"Look at most {MAX_FREE_TIME_DAYS} days at once.", "invalid")
         if self.free_time_searches >= MAX_FREE_TIME:
             raise _Answer(f"The {MAX_FREE_TIME} free-time searches of this turn are used up.")
+        # Counted before the names are looked up: a call that only comes back with names to settle is one of
+        # the turn's searches too, so it cannot be asked again and again.
+        self.free_time_searches += 1
 
         attendees: list[tuple[str, str]] = []  # (as given, address)
         problems: list[str] = []
@@ -1096,20 +1130,10 @@ class MailToolLoop:
             ]
 
         own = self.access.own_smtp
-        now = _now()
-        provisional = zone(asked_zone) or UTC
-        today = now.astimezone(provisional).date()
-        start_day = first_day or today + datetime.timedelta(days=1)
-        end_day = last_day or _working_days_on(start_day, 5)
-        if end_day < start_day:
-            raise _Answer("end must not be before start.", "invalid")
-        if (end_day - start_day).days + 1 > MAX_FREE_TIME_DAYS:
-            raise _Answer(f"Look at most {MAX_FREE_TIME_DAYS} days at once.", "invalid")
         # Asked a day wider on each side than the days shown, so the window still holds once the zone is known.
         query_start = datetime.datetime.combine(start_day, datetime.time(), tzinfo=UTC) - datetime.timedelta(days=1)
         query_end = datetime.datetime.combine(end_day, datetime.time(), tzinfo=UTC) + datetime.timedelta(days=2)
         emails = [own] + [address for _entry, address in attendees if address != own]
-        self.free_time_searches += 1
         try:
             found: list[Availability] = await self._ews(
                 db, "availability", emails, start=query_start, end=query_end, scope="login"

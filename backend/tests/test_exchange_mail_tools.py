@@ -301,6 +301,26 @@ class TestSearch:
         assert "used up" in await loop.run(call("mail_search", query="one more"))
         assert len(mailbox.exchange.calls) == MAX_SEARCHES
 
+    async def test_paging_stops_at_the_search_window(self, mailbox, monkeypatch):
+        from tests.fake_mail_client import FakeMailClient
+
+        asked: list[tuple[str, int, int]] = []
+        real = FakeMailClient.search
+
+        def noted(self, mailbox_smtp, **kwargs):
+            asked.append((kwargs.get("folder", "inbox"), kwargs["offset"], kwargs["limit"]))
+            return real(self, mailbox_smtp, **kwargs)
+
+        monkeypatch.setattr(FakeMailClient, "search", noted)
+        loop = await mailbox.loop()
+        await loop.run(call("mail_search", "c1", offset=195, limit=10))
+        await loop.run(call("mail_search", "c2", folder="all", offset=95, limit=10))
+        assert asked == [("inbox", 195, 5), ("all", 95, 5)]
+        for folder, offset in (("inbox", 200), ("inbox", 5000), ("all", 100)):
+            text = await loop.run(call("mail_search", f"x{offset}", folder=folder, offset=offset))
+            assert "Narrow it instead" in text
+        assert len(asked) == 2 and loop.searches == 2
+
     async def test_nothing_found_says_so(self, mailbox):
         assert "No emails in inbox matched" in await (await mailbox.loop()).run(call("mail_search", query="zzz"))
 
@@ -597,7 +617,33 @@ class TestFreeTime:
         text = await loop.run(call("calendar_find_free_time", attendees=["Ali"], duration_minutes=30))
         assert "more than one person matches" in text and "Ali Karimi <ali.k@corp.example>" in text
         assert ("availability", "") not in mailbox.exchange.calls
-        assert loop.free_time_searches == 0
+        # It counts: a model that keeps asking about the same name runs out of free-time searches.
+        assert loop.free_time_searches == 1 and loop.people_lookups == 1
+        for n in range(tools.MAX_FREE_TIME - 1):
+            await loop.run(call("calendar_find_free_time", f"c{n}", attendees=["Ali"], duration_minutes=30))
+        text = await loop.run(call("calendar_find_free_time", "last", attendees=["Ali"], duration_minutes=30))
+        assert "free-time searches of this turn are used up" in text
+        assert [name for name, _ in mailbox.exchange.calls].count("find_people") == tools.MAX_FREE_TIME
+
+    async def test_names_looked_up_count_toward_the_turn_s_address_book_lookups(self, mailbox):
+        mailbox.exchange.people = [Person(f"p{n}@corp.example", f"Person {n}") for n in range(8)]
+        for n in range(8):
+            mailbox.exchange.add_mailbox(f"p{n}@corp.example", f"Person {n}")
+        loop = await mailbox.loop()
+        for n in range(tools.MAX_PEOPLE - 2):
+            await loop.run(call("people_find", f"c{n}", query=f"Person {n}"))
+        text = await loop.run(
+            call(
+                "calendar_find_free_time",
+                attendees=["Person 5", "Person 6", "Person 7"],
+                duration_minutes=30,
+                timezone="UTC",
+            )
+        )
+        assert loop.people_lookups == tools.MAX_PEOPLE
+        assert "Person 7: the 5 address book lookups of this turn are used up" in text
+        assert [name for name, _ in mailbox.exchange.calls].count("find_people") == tools.MAX_PEOPLE
+        assert "used up" in await loop.run(call("people_find", "after", query="Person 1"))
 
     async def test_a_calendar_that_cannot_be_read_is_left_out_and_said_so(self, mailbox):
         text = await (await mailbox.loop()).run(

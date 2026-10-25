@@ -630,6 +630,19 @@ class TestMailboxes:
         # Finance is no longer listed and goes; Legal is new; HR was added by hand and stays.
         assert boxes == {OWN: "own", "hr@corp.example": "manual", "legal@corp.example": "autodiscover"}
 
+    async def test_an_empty_autodiscover_answer_removes_nothing(self, client, db_session, exchange, person):
+        """[] is also what a failed Autodiscover gives: it must not wipe the person's mailboxes and switches."""
+        headers = sign_in(client, person)
+        await _connected(client, db_session, headers)
+        before = {
+            m["smtp"] for m in (await client.get(f"{BASE}/status", headers=headers)).json()["connection"]["mailboxes"]
+        }
+        assert "finance@corp.example" in before
+        exchange.accounts[LOGIN.lower()].automapped = ()
+        resp = await client.post(f"{BASE}/mailboxes/rediscover", headers=headers)
+        assert resp.status_code == 200
+        assert {m["smtp"] for m in resp.json()["mailboxes"]} == before
+
     async def test_rediscover_needs_full_access(self, client, db_session, exchange, person):
         headers = sign_in(client, person)
         await _connected(client, db_session, headers)

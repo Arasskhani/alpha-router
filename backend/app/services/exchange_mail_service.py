@@ -564,6 +564,12 @@ async def sync_discovered(
     New ones are added (enabled, not notifying) up to ``max_mailboxes``;
     ``source=autodiscover`` rows no longer listed go; those added by hand and
     the own mailbox stay, as do the person's switches on rows still listed.
+
+    An empty list removes nothing: the client answers ``[]`` both when the
+    login has no Full Access mailboxes and when Autodiscover failed, and one
+    failed lookup must not throw away the person's mailboxes and switches. A
+    mailbox whose access was really taken away drops out at its next failed
+    read instead (``exchange_mail.record_mailbox_failure``).
     """
     now = now or _now()
     own = em.normalize_smtp(connection.primary_smtp)
@@ -576,7 +582,7 @@ async def sync_discovered(
     removed = 0
     kept: dict[str, MailConnectionMailbox] = {}
     for row in rows:
-        if row.source == "autodiscover" and row.smtp not in wanted:
+        if wanted and row.source == "autodiscover" and row.smtp not in wanted:
             await db.delete(row)
             removed += 1
         else:

@@ -3546,26 +3546,6 @@ export default function ChatPanel({
     setSelectedChatIds(new Set());
   }
 
-  // "Ask Alpharouter" on an email (Connections, the mail toasts): a new chat with the prompt in its composer, not sent.
-  useChatPrefill(chatsHydrated && userPrefsReady && models.length > 0 && !isProjectChat && !readOnly, (text) => {
-    // An empty chat already open (a fresh "New chat") takes the text; otherwise a new chat does.
-    const open = sessionsRef.current.find((s) => s.id === activeIdRef.current);
-    const blank = !!open && !open.messages.length && !(open.messageCount ?? 0) && !getComposerDraft(open.id);
-    const before = activeIdRef.current;
-    if (!blank) startNewChat();
-    const sid = activeIdRef.current;
-    if (!sid || (!blank && sid === before)) return;
-    // The prompt asks about an email: an empty chat with mail turned off gets it back on (a new chat has it on).
-    if (blank && !mailOnForChat(chatToolsRef.current)) updateChatTools(withMailOn(chatToolsRef.current));
-    const direction = inputDirectionForText(text);
-    // The composer takes the new chat's draft when it follows the chat; if it already has, fill it here.
-    syncComposerDraft(sid, text, direction);
-    if (prevComposerSessionRef.current === sid) {
-      setInput(text);
-      setInputDirection(direction);
-    }
-  });
-
   function selectAllVisibleChats() {
     setSelectedChatIds(new Set(filteredSessions.map((s) => s.id)));
   }
@@ -4827,6 +4807,26 @@ export default function ChatPanel({
       });
     }
   }
+
+  // "Ask Alpharouter" on an email (Connections, the mail toasts): a new chat with the prompt in its composer, not sent.
+  useChatPrefill(chatsHydrated && userPrefsReady && models.length > 0 && !isProjectChat && !readOnly, (text) => {
+    // An empty chat already open (a fresh "New chat") takes the text; otherwise a new chat does.
+    const open = sessionsRef.current.find((s) => s.id === activeIdRef.current);
+    const blank = !!open && !open.messages.length && !(open.messageCount ?? 0) && !getComposerDraft(open.id);
+    const before = activeIdRef.current;
+    if (!blank) startNewChat();
+    const sid = activeIdRef.current;
+    if (!sid || (!blank && sid === before)) return;
+    // The prompt asks about an email: an empty chat with mail turned off gets it back on (a new chat has it on).
+    if (blank && !mailOnForChat(chatToolsRef.current)) updateChatTools(withMailOn(chatToolsRef.current));
+    const direction = inputDirectionForText(text);
+    // The composer takes the new chat's draft when it follows the chat; if it already has, fill it here.
+    syncComposerDraft(sid, text, direction);
+    if (prevComposerSessionRef.current === sid) {
+      setInput(text);
+      setInputDirection(direction);
+    }
+  });
 
   function sessionMessagesForQueue(sessionId: string): ChatMessage[] {
     const session = sessionsRef.current.find((s) => s.id === sessionId);

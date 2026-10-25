@@ -429,3 +429,81 @@ describe("Tickets in the guides", () => {
     expect(sectionHtml(userManualSections as Section[], "app-tour")).toContain("/app/support");
   });
 });
+
+describe("Exchange EWS in the guides", () => {
+  const SERVICE = "backend/app/services/exchange_mail_service.py";
+  const TOOLS = "backend/app/services/exchange_mail_tools.py";
+  const JOBS = "backend/app/services/exchange_mail_jobs.py";
+  const CORE = "backend/app/services/exchange_mail.py";
+
+  it("the Admin Guide puts Exchange EWS under Integrations and says what the Exchange administrator does", () => {
+    const section = (docSections as Section[]).find((s) => s.id === "admin-exchange-ews");
+    expect(section?.group).toBe("Integrations");
+    const html = sectionHtml(docSections as Section[], "admin-exchange-ews");
+    expect(html).toContain("/admin/exchange-ews");
+    expect(html).toContain("/app/connections");
+    expect(html).toContain("There is no send tool.");
+    expect(html).toContain("No AD lockout through Alpharouter.");
+    expect(html).toContain("<code>403 super_admin_only</code>");
+    expect(html).toContain("every connection to Password needed");
+    expect(html).toContain("Alpharouter-EWS/*");
+    expect(html).toContain("SSL offloading");
+    expect(html).toContain("Add-MailboxPermission");
+    expect(html).toContain("Send As");
+    expect(html).toContain("not offered");
+    expect(html).toContain("shows its images as links");
+    for (const action of [
+      "mail_connected",
+      "mail_password_updated",
+      "mail_disconnected",
+      "mail_mailbox_added",
+      "mail_mailbox_removed",
+      "mail_draft_sent",
+      "exchange_ews_settings_updated",
+      "exchange_ews_tested",
+      "chat_tool_access_changed",
+    ]) {
+      expect(html).toContain(`<code>${action}</code>`);
+    }
+    expect(sectionHtml(docSections as Section[], "admin-menu")).toContain("SMTP Server, Exchange EWS");
+    expect(sectionHtml(docSections as Section[], "schedulers")).toContain("mail_needs_action");
+    expect(sectionHtml(docSections as Section[], "admin-chat-tools")).toContain("exchange_mail");
+  });
+
+  it("holds the numbers to the code", () => {
+    const html = sectionHtml(docSections as Section[], "admin-exchange-ews");
+    expect(html).toContain(`limited to ${pythonConstantIn(SERVICE, "CONNECT_ATTEMPTS")} per person per 15 minutes`);
+    expect(html).toContain(`${pythonConstantIn(SERVICE, "SENDS_PER_HOUR")} sends per person per hour`);
+    expect(html).toContain(`Limited to ${pythonConstantIn(SERVICE, "TESTS_PER_WINDOW")} tests per administrator`);
+    expect(html).toContain(
+      `at most ${pythonConstantIn(TOOLS, "MAX_SEARCHES")} searches, ${pythonConstantIn(TOOLS, "MAX_READS")} emails read, ` +
+        `${pythonConstantIn(TOOLS, "MAX_DRAFTS")} drafts, ${pythonConstantIn(TOOLS, "MAX_FREE_TIME")} free-time searches, ` +
+        `${pythonConstantIn(TOOLS, "MAX_PEOPLE")} people lookups, and ${pythonConstantIn(TOOLS, "MAX_ROUNDS")} rounds`,
+    );
+    expect(html).toContain(`older than ${pythonConstantIn(CORE, "REF_TTL_DAYS")} days`);
+    expect(html).toContain(`draft records older than ${pythonConstantIn(JOBS, "DRAFT_RETENTION_DAYS")} days`);
+    expect(html).toContain(`at most ${pythonConstantIn(CORE, "EWS_CONCURRENCY")} EWS calls at once`);
+    expect(pythonConstantIn(JOBS, "POLL_CONCURRENCY")).toBe(4);
+    expect(html).toContain("four at once");
+    const readme = readFileSync(join(__dirname, "..", "..", "README.md"), "utf8");
+    expect(readme).toContain("e1a3c5f7b9d2");
+    expect(readme).toContain("mail_needs_action");
+    expect(readme).toContain("Alpharouter-EWS/1.0");
+    expect(readFileSync(join(__dirname, "..", "..", "backend/app/services/exchange_ews_client.py"), "utf8")).toContain(
+      'USER_AGENT = f"Alpharouter-EWS/1.0',
+    );
+  });
+
+  it("the User Manual tells a person what connecting does and that nothing is sent without them", () => {
+    const section = (userManualSections as Section[]).find((s) => s.id === "user-connections");
+    expect(section?.group).toBe("Chat");
+    const html = sectionHtml(userManualSections as Section[], "user-connections");
+    expect(html).toContain("/app/connections");
+    expect(html).toContain("Nothing is ever sent without you");
+    expect(html).toContain("Review &amp; send");
+    expect(html).toContain("Password needed");
+    expect(html).toContain("Waiting for your action");
+    expect(html).toContain("Mail is not available in project rooms or shared chats");
+    expect(sectionHtml(userManualSections as Section[], "app-tour")).toContain("Connections");
+  });
+});

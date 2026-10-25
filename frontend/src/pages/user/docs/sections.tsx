@@ -371,6 +371,10 @@ export const userManualSections: DocSection[] = [
             Monthly <strong>Budget</strong> (used vs limit) when a plan is assigned
           </li>
           <li>
+            <strong>Connections</strong> — your Exchange mailbox, when your organisation offers it (see{" "}
+            <a href="#user-connections">Your Exchange mailbox</a>)
+          </li>
+          <li>
             <strong>Settings</strong> — general preferences, data control, security
           </li>
           <li>
@@ -864,6 +868,92 @@ export const userManualSections: DocSection[] = [
       </>
     ),
   },
+  {
+    id: "user-connections",
+    title: "Your Exchange mailbox",
+    group: "Chat",
+    content: (
+      <>
+        <h2>Your Exchange mailbox</h2>
+        <p>
+          Path: <code>/app/connections</code> — <strong>Connections</strong> in your profile menu. If your
+          organisation turned it on and you sign in with your Active Directory account, you can connect your work
+          mailbox. The chat can then read and search your email, summarise it, draft new emails, replies and forwards,
+          and find a free time to meet with one or more colleagues. Nothing is ever sent without you: you review each
+          draft and press Send yourself.
+        </p>
+
+        <h3>Connect</h3>
+        <ul>
+          <li>
+            Open <strong>Connections</strong>, type your password (the same one you sign in with) and press{" "}
+            <strong>Connect</strong>. Your user name is filled in from your account and cannot be changed: only your
+            own mailbox can be connected.
+          </li>
+          <li>
+            Your password is stored encrypted and used only to reach your mailbox. When you change your password in
+            Active Directory, the connection shows <em>Password needed</em>: type the new one with{" "}
+            <strong>Update password</strong>. Alpharouter never tries an old password again, so it cannot lock your
+            account.
+          </li>
+          <li>
+            <strong>Disconnect</strong> deletes the stored password and everything the chat kept about your mail. The
+            drafts already saved in your mailbox stay there.
+          </li>
+        </ul>
+
+        <h3>Mailboxes you have Full Access to</h3>
+        <p>
+          If your Exchange administrator gave you Full Access to other mailboxes (a team or shared mailbox), they are
+          listed under <strong>Mailboxes</strong> and the chat can use them too. <strong>Find again</strong> asks
+          Exchange for the list again; <strong>Add a mailbox</strong> adds one by its address when it is not listed.
+          <strong> Use in chat</strong> turns one off for the chat, and <strong>Notify</strong> decides which mailboxes
+          you are told about. Sending from a shared mailbox works only if Exchange lets you send as it.
+        </p>
+
+        <h3>In the chat</h3>
+        <ul>
+          <li>
+            A mailbox icon by the chat box shows that your mailbox is connected and mail is on for this chat. Click it
+            to turn mail off for this chat (and again to turn it back on).
+          </li>
+          <li>
+            Ask in your own words: &ldquo;Summarise the unread emails from this week&rdquo;, &ldquo;What did Sara send
+            about the budget?&rdquo;, &ldquo;Draft a reply saying I agree&rdquo;, &ldquo;Find 30 minutes with Ali and
+            Neda next week&rdquo;. While it works, the chat says what it is doing (searching mail, reading an email,
+            checking calendars).
+          </li>
+          <li>
+            A draft appears as a card under the answer. <strong>Review &amp; send</strong> shows the email as it is in
+            your Drafts folder — if you edited it in Outlook, you see your version — and sends exactly that when you
+            press <strong>Send</strong>. You can also <strong>Discard</strong> it, or open it in Outlook on the web.
+          </li>
+          <li>
+            Finding a meeting time looks at everyone&apos;s free/busy and working hours; it does not send an invitation.
+          </li>
+          <li>
+            Mail is not available in project rooms or shared chats, so other members never see your email. Images in
+            an answer built from your email are shown as links, and such answers are not used as memory.
+          </li>
+        </ul>
+
+        <h3>Emails waiting for your action</h3>
+        <p>
+          With <strong>Tell me about emails that need my action</strong> on, Alpharouter checks your Inbox every few
+          minutes and shows a toast for an email that seems to need you — a meeting request, a question, an approval,
+          something marked important. <strong>Ask Alpharouter</strong> opens a chat about that email;{" "}
+          <strong>Dismiss</strong> takes it off the list. The same emails are listed under{" "}
+          <strong>Waiting for your action</strong> on Connections, where you can mark them <strong>Done</strong>. On a
+          phone, one toast counts them instead.
+        </p>
+        <Note>
+          If Connections is not in your profile menu, your organisation has not turned this on for your account, or you
+          do not sign in with Active Directory. Ask your administrator.
+        </Note>
+      </>
+    ),
+  },
+
   {
     id: "private-mode",
     title: "Private mode",

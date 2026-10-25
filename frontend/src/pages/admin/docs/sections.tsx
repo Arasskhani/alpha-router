@@ -1371,7 +1371,7 @@ export const docSections: DocSection[] = [
             </tr>
             <tr>
               <td>Integrations</td>
-              <td>SMTP Server</td>
+              <td>SMTP Server, Exchange EWS</td>
             </tr>
             <tr>
               <td>Data &amp; reports</td>
@@ -3078,6 +3078,11 @@ export const docSections: DocSection[] = [
           video and speech generation and voice messages. A turn that asks for a tool it has not been given is
           refused with <code>403</code> and a message naming the tool.
         </p>
+        <p>
+          <strong>Exchange Mail</strong> (<code>exchange_mail</code>) is the exception: it decides who may connect their
+          Exchange mailbox, it is edited from the Access tab of <a href="#admin-exchange-ews">Exchange EWS</a> as well,
+          and a chat that asks for mail without it simply goes without mail — it is never refused for it.
+        </p>
         <Note>
           Agents are out of scope: an Agent&apos;s tools come from its own configuration, not from the composer, and
           are governed in <a href="#agents-knowledge-overview">Agents &amp; Knowledge</a>.
@@ -4378,6 +4383,321 @@ export const docSections: DocSection[] = [
     ),
   },
 
+  {
+    id: "admin-exchange-ews",
+    title: "Exchange EWS",
+    group: "Integrations",
+    content: (
+      <>
+        <h2>Exchange EWS</h2>
+        <p>
+          Path: <code>/admin/exchange-ews</code> (tabs Overview, Settings, Access, People). People connect their own
+          mailbox on an on-premises <strong>Exchange Server 2019</strong> or <strong>Exchange Server SE</strong> with
+          their Active Directory user name and password, over Exchange Web Services (EWS). The chat can then read and
+          search their email, summarise it, draft new emails, replies and forwards, and find a free time to meet with
+          one or more colleagues. It never sends: the person reviews a draft and presses Send themselves. A background
+          check tells them, with a toast, about emails that need their action.
+        </p>
+        <Note>
+          Exchange EWS is <strong>off</strong> until you turn it on and give the EWS address. Nobody sees Connections
+          before. Mail is a built-in chat tool, not an MCP server: the same access control, Guardrails, Admin Logs and
+          request logs apply to it as to Web Search.
+        </Note>
+
+        <h3>Who can connect</h3>
+        <ul>
+          <li>
+            Only accounts that <strong>sign in with Active Directory</strong> (LDAP), with an email address, and with
+            the Exchange server in the same AD domain. Local, SAML and OIDC accounts cannot connect.
+          </li>
+          <li>
+            The <strong>Access</strong> tab decides which of those may connect (users, groups, departments, roles; a
+            denial wins). It edits the <code>exchange_mail</code> entry that also appears on{" "}
+            <a href="#admin-chat-tools">Chat Tools</a>, and is open by default. The account must also be allowed the
+            Chat by <a href="#admin-feature-access">Feature Access</a>.
+          </li>
+          <li>
+            The person connects under <strong>Connections</strong> in their profile menu (<code>/app/connections</code>,
+            or <code>/admin/my-connections</code> in the admin panel). They type only their password; the login is made
+            from their account and cannot be edited.
+          </li>
+        </ul>
+
+        <h3>Login, password and the own mailbox</h3>
+        <ul>
+          <li>
+            <strong>Login format</strong>: <code>DOMAIN\username</code> (the NetBIOS domain from the LDAP settings,
+            unless you give one), <code>username@suffix</code> (the UPN suffix, by default the LDAP domain), or the
+            account&apos;s email address as the UPN. The Settings tab shows the result for your own account.
+          </li>
+          <li>
+            The password is stored encrypted with <code>DATA_ENCRYPTION_KEY</code> and is never shown or returned by
+            any API. It is used only to reach the person&apos;s mailbox, with NTLM over HTTPS.
+          </li>
+          <li>
+            <strong>No AD lockout through Alpharouter.</strong> The first time Exchange refuses the password, the
+            connection turns to <em>Password needed</em> and is not used again — not by the chat, not by the
+            background check — until the person types the password anew. A refused password is never retried. Connect
+            attempts are limited to 5 per person per 15 minutes, counted before Exchange is asked.
+          </li>
+          <li>
+            <strong>Only the person&apos;s own mailbox.</strong> With &ldquo;The password must open the person&apos;s
+            own mailbox&rdquo; on (the default), the mailbox the login opens must be the one of the account&apos;s email
+            address: Alpharouter compares the root folder of the mailbox EWS opens for the login with the root folder of
+            the account&apos;s address. Someone else&apos;s password cannot be used.
+          </li>
+          <li>
+            When Exchange is down or slow, the connection keeps its status and shows the last error; nothing stops.
+          </li>
+        </ul>
+
+        <h3>Full Access mailboxes</h3>
+        <ul>
+          <li>
+            A mailbox the Exchange administrator gave the person <strong>Full Access</strong> to is usable too, because
+            that access was given to them. Alpharouter lists them from Autodiscover (<code>AlternativeMailbox</code>,
+            the same list Outlook maps automatically) when the person connects, and on <em>Find again</em>.
+          </li>
+          <li>
+            With &ldquo;Let people add a Full Access mailbox by hand&rdquo; on, a person can also add one by address
+            (for mailboxes given with <code>-AutoMapping $false</code>). It is added only after a test read of its
+            Inbox succeeds.
+          </li>
+          <li>
+            The chat may name only the mailboxes on this verified list. A mailbox whose access was taken away drops out
+            at its next failed read, with the reason. An Autodiscover that fails or answers with nothing removes no
+            mailbox.
+          </li>
+          <li>
+            &ldquo;Full Access mailboxes per person&rdquo; limits how many each person may have; the own mailbox does not
+            count.
+          </li>
+          <li>
+            Sending from a Full Access mailbox needs <strong>Send As</strong> or <strong>Send on Behalf</strong> in
+            Exchange; without it Exchange refuses the send and the person is told so.
+          </li>
+        </ul>
+
+        <h3>Settings</h3>
+        <DocsTable>
+          <thead>
+            <tr>
+              <th>Setting</th>
+              <th>What it does</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Exchange EWS on</td>
+              <td>Off by default. Off: nobody sees Connections, the chat has no mail, the check stops. Nothing is deleted.</td>
+            </tr>
+            <tr>
+              <td>EWS address</td>
+              <td>
+                <code>https://mail.corp.example/EWS/Exchange.asmx</code>. A bare <code>https://host</code> is completed.
+                Only https.
+              </td>
+            </tr>
+            <tr>
+              <td>Autodiscover address</td>
+              <td>Optional. Blank: <code>https://&lt;EWS host&gt;/autodiscover/autodiscover.xml</code>.</td>
+            </tr>
+            <tr>
+              <td>Login format, NetBIOS domain, UPN suffix</td>
+              <td>How the login is made from the account (above). Blank domain or suffix: from the LDAP settings.</td>
+            </tr>
+            <tr>
+              <td>Verify the Exchange server&apos;s certificate</td>
+              <td>On by default. Turning it off accepts any certificate, so stored passwords could be captured by anyone
+                able to intercept the connection. Paste an internal CA instead.</td>
+            </tr>
+            <tr>
+              <td>CA certificates</td>
+              <td>PEM text of an internal root (and intermediate) CA to trust besides the system store.</td>
+            </tr>
+            <tr>
+              <td>What the chat may do</td>
+              <td>Full Access mailboxes, adding them by hand, saving drafts, sending after review, finding meeting
+                times. Each can be turned off.</td>
+            </tr>
+            <tr>
+              <td>Notifications</td>
+              <td>The needs-action check and its toasts; how often each connection is checked (2–60 minutes, default 5);
+                rules or a model (below).</td>
+            </tr>
+            <tr>
+              <td>Limits</td>
+              <td>Results per search (default 25), characters of email text per read (default 8000), time limit per
+                Exchange call (default 30 s), Full Access mailboxes per person (default 10), keep action items (default
+                30 days).</td>
+            </tr>
+          </tbody>
+        </DocsTable>
+        <Warn>
+          Where Exchange passwords are sent is a <strong>Super Admin</strong> decision: only a Super Admin can change
+          the EWS address, the Autodiscover address, certificate verification or the CA certificates (others get{" "}
+          <code>403 super_admin_only</code>). Changing any of these, or the login format, NetBIOS domain or UPN suffix,
+          turns <strong>every connection to Password needed</strong> — the page asks first — so no stored password is
+          ever sent to a server it was not typed for.
+        </Warn>
+
+        <h3>Test connection</h3>
+        <p>
+          On the Settings tab, with the <em>saved</em> settings, a login and password you type (nothing is stored):
+          EWS address, Sign in, Mailbox (which mailbox the login opens), Match (when you give an email address: is it
+          the login&apos;s own mailbox) and Autodiscover (how many Full Access mailboxes it lists; a failure here is only
+          a warning, mail works without it). Limited to 10 tests per administrator per 15 minutes. Start with your own
+          account.
+        </p>
+
+        <h3>In the chat</h3>
+        <ul>
+          <li>
+            Once connected, a mailbox icon by the chat box shows that mail is on; clicking it turns mail off (or back
+            on) for that chat. The model gets the tools <code>mail_list_mailboxes</code>, <code>mail_search</code>{" "}
+            (Exchange&apos;s search syntax, folders, sender, dates, unread), <code>mail_read</code>,{" "}
+            <code>mail_create_draft</code> (new, reply, reply all, forward), <code>people_find</code> and{" "}
+            <code>calendar_find_free_time</code> (free/busy and working hours of everyone asked).
+          </li>
+          <li>
+            <strong>There is no send tool.</strong> A draft is saved in the mailbox&apos;s Drafts folder and shown as a
+            card under the answer. <em>Review &amp; send</em> reads the draft again from Exchange (it may have been
+            edited in Outlook) and sends exactly that version when the person presses Send; a draft changed since is
+            read again first. 30 sends per person per hour.
+          </li>
+          <li>
+            Per turn: at most 6 searches, 20 emails read, 5 drafts, 3 free-time searches, 5 people lookups, and 8 rounds
+            of tool calls.
+          </li>
+          <li>
+            Mail is <strong>not offered</strong> in project rooms or shared chats (another member would see the
+            person&apos;s mail), in Agent turns, in the browser extension, through the Gateway or API keys, or to a
+            model that cannot call functions.
+          </li>
+          <li>
+            <strong>Email content is untrusted.</strong> It reaches the model fenced as data, so text in an email cannot
+            instruct it, and passes through <a href="#security-guardrails">Guardrails</a> on the <em>context</em> channel.
+            An answer built from email shows its images as links (an email could ask for an image whose address carries
+            data away), and is never learned as memory.
+          </li>
+          <li>
+            Each mail tool call is in the request&apos;s details in API Logs — tool, arguments and a short result,
+            without email bodies, subjects or recipients&apos; addresses.
+          </li>
+        </ul>
+
+        <h3>Emails that need action</h3>
+        <ul>
+          <li>
+            The <code>mail_needs_action</code> job runs every minute on the leader and checks each connection whose last
+            check is older than &ldquo;Check every&rdquo;, four at once, reading what arrived in the Inboxes the person
+            gets notified about. The first check, and the first after notifications come back on, looks back one day.
+          </li>
+          <li>
+            <strong>Rules</strong> (default): unread, not automated (no auto-submitted, list or bulk headers, not from a
+            no-reply address), addressed to the person, and a meeting request, marked important, flagged, or asking
+            something of them (a question, please, approve, review, sign, deadline, urgent — also in Persian).
+          </li>
+          <li>
+            <strong>Model</strong>: the same candidates — sender, subject and the opening, fenced and through Guardrails
+            — go to the model you choose, which picks those that need action. Its cost is recorded like memory
+            extraction. Any failure falls back to the rules.
+          </li>
+          <li>
+            Each email is shown once as a toast (Ask Alpharouter / Dismiss) and listed under &ldquo;Waiting for your
+            action&rdquo; on Connections. Ask Alpharouter opens a chat with a prompt naming the email by its reference;
+            the model reads the email itself.
+          </li>
+          <li>
+            The nightly <code>mail_retention</code> job (04:55 server time) forgets references older than 7 days,
+            action items older than &ldquo;Keep action items&rdquo;, draft records older than 30 days (the drafts in
+            Exchange stay), and the connections of accounts deleted, deactivated or no longer signing in with AD.
+          </li>
+        </ul>
+
+        <h3>Overview and People</h3>
+        <p>
+          Overview counts connections by status, eligible AD accounts, and action items, drafts and sends in the last 7
+          days, with a setup checklist. People lists every connection (login, mailbox, status, mailboxes, last check,
+          last error) and lets you <strong>Disconnect</strong> one: its stored password and everything the chat kept
+          for it are deleted. A person can disconnect themselves at any time on Connections, even when they are no
+          longer allowed to connect. A purged account&apos;s connection is deleted with it.
+        </p>
+
+        <h3>What is recorded in Admin Logs</h3>
+        <p>
+          <code>mail_connected</code>, <code>mail_password_updated</code>, <code>mail_disconnected</code>,{" "}
+          <code>mail_mailbox_added</code>, <code>mail_mailbox_removed</code>, <code>mail_draft_sent</code> (mailbox,
+          kind and recipient counts), <code>exchange_ews_settings_updated</code> (the settings changed; for the
+          connection settings also the old and new hosts and how many connections were reset),{" "}
+          <code>exchange_ews_tested</code> and, for the Access tab, <code>chat_tool_access_changed</code>. Never a
+          password, a subject, a body or a recipient&apos;s address.
+        </p>
+
+        <h3>What the Exchange administrator does</h3>
+        <p>
+          No service account and no impersonation are needed: each person reaches only what their own AD account may
+          reach. Run these in the Exchange Management Shell.
+        </p>
+        <ol>
+          <li>
+            <strong>EWS on</strong> for the organisation and the mailboxes (it is on by default):
+            <Code>{`Get-OrganizationConfig | Format-List EwsEnabled,EwsApplicationAccessPolicy,EwsAllowList,EwsBlockList
+Set-OrganizationConfig -EwsEnabled $true
+Get-CASMailbox s.karimi | Format-List EwsEnabled
+Set-CASMailbox s.karimi -EwsEnabled $true`}</Code>
+            If <code>EwsApplicationAccessPolicy</code> is <code>EnforceAllowList</code>, admit Alpharouter, which
+            names itself <code>Alpharouter-EWS/1.0</code> on every request:
+            <Code>{`Set-OrganizationConfig -EwsAllowList @{Add="Alpharouter-EWS/*"}`}</Code>
+          </li>
+          <li>
+            <strong>Windows authentication</strong> (NTLM) on the EWS and Autodiscover virtual directories. Basic
+            authentication is not needed. Kerberos-only (NTLM disabled) does not work.
+            <Code>{`Get-WebServicesVirtualDirectory -Server EX01 | Format-List InternalUrl,ExternalUrl,WindowsAuthentication,ExtendedProtectionTokenChecking
+Get-AutodiscoverVirtualDirectory -Server EX01 | Format-List WindowsAuthentication
+Get-ClientAccessService EX01 | Format-List AutoDiscoverServiceInternalUri`}</Code>
+          </li>
+          <li>
+            <strong>Extended Protection</strong> is on by default from Exchange 2019 CU14 and in Exchange SE, and
+            Alpharouter supports it — as long as TLS reaches Exchange: point the EWS address at Exchange directly, or at
+            a load balancer that passes TLS through (layer 4) or re-encrypts with the same certificate. SSL offloading
+            breaks NTLM with Extended Protection (sign-in fails as a wrong password would). Try it with your own
+            account in Test connection.
+          </li>
+          <li>
+            <strong>Network and certificate</strong>: the Alpharouter server must reach{" "}
+            <code>https://&lt;mail host&gt;/EWS/Exchange.asmx</code> and{" "}
+            <code>/autodiscover/autodiscover.xml</code> on port 443. If the server uses an outbound proxy (
+            <code>HTTPS_PROXY</code>), add the mail host to <code>NO_PROXY</code>. A certificate from an internal CA
+            goes into &ldquo;CA certificates&rdquo;.
+          </li>
+          <li>
+            <strong>Full Access</strong> (and, to send from the mailbox, Send As or Send on Behalf):
+            <Code>{`Add-MailboxPermission -Identity finance@corp.example -User s.karimi -AccessRights FullAccess -InheritanceType All
+# Without Outlook automapping (then the person adds it by hand on Connections):
+Add-MailboxPermission -Identity finance@corp.example -User s.karimi -AccessRights FullAccess -AutoMapping $false
+Add-ADPermission -Identity "Finance" -User CORP\\s.karimi -ExtendedRights "Send As"
+Set-Mailbox finance@corp.example -GrantSendOnBehalfTo @{Add="s.karimi"}`}</Code>
+          </li>
+          <li>
+            <strong>Free/busy</strong>: finding a meeting time reads colleagues&apos; free/busy, which Exchange shares
+            inside the organisation by default (<code>Default</code> permission <code>AvailabilityOnly</code> on
+            calendars). Someone whose free/busy is not shared is reported as not visible.
+          </li>
+          <li>
+            <strong>Throttling</strong>: each person uses their own EWS budget, one call at a time per chat; Alpharouter
+            runs at most 8 EWS calls at once in total. The default throttling policy is enough.
+          </li>
+        </ol>
+        <Note>
+          Version 1 limits: on-premises Exchange only (no Exchange Online or OAuth), NTLM only, no calendar writes (a
+          free time is found, the invitation is not sent), attachment names only (not their contents), and toasts only
+          while Alpharouter is open in a browser.
+        </Note>
+      </>
+    ),
+  },
+
   // ── Data & reports ────────────────────────────────────────────────────────
   {
     id: "admin-storage-management",
@@ -5367,6 +5687,10 @@ export const docSections: DocSection[] = [
             tickets after the reopen window, unassigning people who can no longer work tickets)
           </li>
           <li>Support ticket retention, <code>ticket_retention</code> (daily 04:50 server time)</li>
+          <li>
+            Exchange mail, <code>mail_needs_action</code> (every minute; each connection checked every few minutes for
+            emails that need action) and <code>mail_retention</code> (daily 04:55 server time)
+          </li>
         </ul>
       </>
     ),

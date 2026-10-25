@@ -52,6 +52,11 @@ run the same Compose stack on Linux or any other Docker-capable environment.
 - **Support tickets** — people open tickets with screenshots from **Support**;
   staff answer them in **Admin → Tickets** (queue, assignment, internal notes,
   auto-close, an Overview, three reports), with a built-in Support role
+- **Exchange mailboxes** — people who sign in with Active Directory connect
+  their own on-premises Exchange 2019 / SE mailbox (and the mailboxes they
+  have Full Access to) under **Connections**; the chat reads, searches,
+  summarises, drafts and finds meeting times, never sends on its own, and
+  toasts tell people about emails that need their action
 - **Knowledge** — document review, ClamAV malware scan, parser sandbox, Qdrant
   indexing, and citation-backed retrieval
 
@@ -388,6 +393,35 @@ Operations:
   (closed tickets past the retention setting).
 - Ticket emails go through the SMTP Server settings; their links use
   `FRONTEND_URL`.
+
+### Exchange mailboxes (EWS)
+
+People who sign in with Active Directory connect their own mailbox on an
+on-premises Exchange Server 2019 or SE under **Connections** (profile menu),
+with their AD password over EWS (NTLM, HTTPS). The chat then gets mail tools —
+search, read, draft (new, reply, reply all, forward), find people, find a
+free meeting time — but no send tool: drafts are saved in the mailbox and the
+person sends them from **Review & send**. Administrators configure it in
+**Admin → Integrations → Exchange EWS** (off by default); only a Super Admin
+can change where passwords are sent. The Admin Guide's Exchange EWS section
+has the details, including what the Exchange administrator must set up.
+
+Operations:
+
+- New Python dependency `exchangelib` (in `backend/requirements.txt` and the
+  hashed lock); the image build installs it.
+- Migration `e1a3c5f7b9d2` creates the mail tables (connections, their
+  mailboxes, item references, drafts, action items); `db-init` applies it.
+- Passwords are encrypted with `DATA_ENCRYPTION_KEY`; rotating that key means
+  everyone types their password again.
+- Two scheduler jobs: `mail_needs_action` every minute (each connection
+  checked every few minutes for emails needing action) and `mail_retention`
+  nightly at 04:55 server time.
+- The app server must reach `https://<mail host>/EWS/Exchange.asmx` and
+  `/autodiscover/autodiscover.xml` directly over TLS (no SSL offloading in
+  between: Exchange's Extended Protection refuses it). With an outbound proxy,
+  put the mail host in `NO_PROXY`. Requests carry the User-Agent
+  `Alpharouter-EWS/1.0`, for an EWS application allow list.
 
 ## Browser extension
 

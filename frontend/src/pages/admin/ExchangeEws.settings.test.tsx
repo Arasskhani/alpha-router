@@ -205,6 +205,12 @@ describe("Exchange EWS settings", () => {
     );
   });
 
+  it("says the mailbox limit counts Full Access mailboxes, not a person's own", async () => {
+    await render();
+    expect(fieldOf("ews-max-mailboxes").textContent).toContain("Full Access mailboxes per person");
+    expect(fieldOf("ews-max-mailboxes").textContent).toContain("Besides their own mailbox, which is not counted.");
+  });
+
   it("picks the detection model with the model picker and stores its id", async () => {
     await render();
     const model = host.querySelector<HTMLInputElement>('input[name="ews-detection"][value="model"]')!;

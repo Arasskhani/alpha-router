@@ -572,8 +572,8 @@ export default function ExchangeSettingsTab({
           />
           <NumberField
             id="ews-max-mailboxes"
-            label="Mailboxes per person"
-            hint="Their own and the Full Access ones."
+            label="Full Access mailboxes per person"
+            hint="Besides their own mailbox, which is not counted."
             value={form.max_mailboxes}
             bounds={SETTING_BOUNDS.max_mailboxes}
             error={shown("max_mailboxes")}

@@ -460,7 +460,20 @@ describe("connected", () => {
     expect(switchFor("Notify about emails in finance@corp.example")?.getAttribute("aria-checked")).toBe("false");
     expect(button("Remove finance@corp.example")).toBeTruthy();
     expect(button("Remove ops@corp.example")).toBeTruthy();
-    expect(text()).toContain("3 of 10");
+    // The limit counts the Full Access mailboxes, not the person's own.
+    expect(document.querySelector('[data-testid="mail-full-access-count"]')?.textContent).toBe("2 of 10 Full Access");
+    expect(text()).toContain("up to 10 mailboxes you have Full Access to");
+  });
+
+  it("does not count mailboxes when the administrator allows only the person's own", async () => {
+    status = {
+      ...CONNECTED,
+      capabilities: { ...CAPS, full_access: false, manual_mailboxes: false },
+      connection: { ...CONNECTION, mailboxes: [OWN] },
+    };
+    await render();
+    expect(document.querySelector('[data-testid="mail-full-access-count"]')).toBeNull();
+    expect(text()).toContain("Your administrator has not allowed other mailboxes.");
   });
 
   it("asks for the password again when Exchange refused the saved one", async () => {
@@ -589,7 +602,7 @@ describe("mailboxes", () => {
   const refusals: [string, number, string][] = [
     ["invalid_address", 422, "That is not a valid email address."],
     ["already_added", 409, "This mailbox is already in your list."],
-    ["too_many_mailboxes", 422, "You can have at most 10 mailboxes. Remove one first."],
+    ["too_many_mailboxes", 422, "You can have at most 10 Full Access mailboxes. Remove one first."],
     ["exchange_access_denied", 403, "You do not have access to this mailbox. Ask your Exchange administrator for Full Access."],
     ["exchange_not_found", 404, "No mailbox was found at this address."],
     ["manual_mailboxes_off", 403, "Adding mailboxes yourself is turned off by your administrator."],

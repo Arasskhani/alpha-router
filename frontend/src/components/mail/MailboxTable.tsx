@@ -53,6 +53,8 @@ export default function MailboxTable({ connection, capabilities, readOnly, onCha
   const [address, setAddress] = useState("");
 
   const mailboxes = connection.mailboxes;
+  // The administrator's limit counts the Full Access mailboxes only, not the person's own.
+  const fullAccess = mailboxes.filter((m) => m.kind === "full_access").length;
   const canAdd = capabilities.full_access && capabilities.manual_mailboxes;
   const notifyColumn = capabilities.notifications;
   const locked = readOnly || busy !== null;
@@ -107,13 +109,15 @@ export default function MailboxTable({ connection, capabilities, readOnly, onCha
     <div className="mail-mailboxes">
       <div className="mail-section-head">
         <h3>Mailboxes</h3>
-        <span className="muted-text">
-          {mailboxes.length} of {capabilities.max_mailboxes}
-        </span>
+        {capabilities.full_access ? (
+          <span className="muted-text" data-testid="mail-full-access-count">
+            {fullAccess} of {capabilities.max_mailboxes} Full Access
+          </span>
+        ) : null}
       </div>
       <p className="smtp-hint mail-section-hint">
         {capabilities.full_access
-          ? "Your own mailbox, and the mailboxes you have Full Access to. The chat uses the ones turned on."
+          ? `Your own mailbox, and up to ${capabilities.max_mailboxes} ${capabilities.max_mailboxes === 1 ? "mailbox" : "mailboxes"} you have Full Access to. The chat uses the ones turned on.`
           : "Your own mailbox. Your administrator has not allowed other mailboxes."}
       </p>
 

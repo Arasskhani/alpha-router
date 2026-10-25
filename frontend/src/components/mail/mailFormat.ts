@@ -45,9 +45,10 @@ export function mailErrorText(err: unknown, context: MailErrorContext = "action"
     case "already_added":
       return "This mailbox is already in your list.";
     case "too_many_mailboxes":
+      // The limit counts Full Access mailboxes; the person's own is not one of them.
       return maxMailboxes
-        ? `You can have at most ${maxMailboxes} mailboxes. Remove one first.`
-        : "You have the most mailboxes allowed. Remove one first.";
+        ? `You can have at most ${maxMailboxes} Full Access ${maxMailboxes === 1 ? "mailbox" : "mailboxes"}. Remove one first.`
+        : "You have the most Full Access mailboxes allowed. Remove one first.";
     case "exchange_access_denied":
       return "You do not have access to this mailbox. Ask your Exchange administrator for Full Access.";
     case "exchange_not_found":

@@ -63,7 +63,6 @@ TESTS_PER_WINDOW = 10
 TEST_WINDOW_S = 15 * 60
 #: The opening of a draft kept for its card and the Review & send dialog's list view.
 PREVIEW_CHARS = 300
-ASK_SUBJECT_CHARS = 150
 ACTION_LIST_MAX = 200
 NOTIFIED_IDS_MAX = 200
 #: Where the needs-action check starts on a new connection: the last day, not the whole Inbox.
@@ -880,23 +879,20 @@ async def close_action_item(
     return item
 
 
-def _sender(item: MailActionItem) -> str:
-    name = " ".join(str(item.sender_name or "").split())
-    email = str(item.sender_email or "").strip()
-    if name and email and name.lower() != email.lower():
-        return f"{name} <{email}>"
-    return name or email or "an unknown sender"
-
-
 async def ask_prompt(db: AsyncSession, user: User, settings: em.ExchangeSettings, item_id: int) -> str:
-    """The composer text that starts a chat about one email, with a ref the chat's mail tools resolve."""
+    """The composer text that starts a chat about one email, with a ref the chat's mail tools resolve.
+
+    Only the ref: the subject and sender are written by whoever sent the
+    email, and the composer text reaches the model as the person's own
+    words. The model reads them fenced, as untrusted data, through
+    ``mail_read``.
+    """
     await require_eligible(db, user, settings)
     item = await own_action_item(db, int(user.id), item_id)
     if await em.usable_access(db, user, settings) is None:
         raise em.MailError("not_connected", "Connect your mailbox again on Connections to ask about this email.", 409)
     ref = await em.ref_for(db, int(user.id), str(item.mailbox_smtp), str(item.item_id))
-    subject = " ".join(str(item.subject or "").split())[:ASK_SUBJECT_CHARS] or "(no subject)"
-    return f'Help me with this email (ref {ref}): "{subject}" from {_sender(item)}.'
+    return f"Help me with the email that needs my action (ref {ref})."
 
 
 # --- drafts ---------------------------------------------------------------------------------------------------------

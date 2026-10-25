@@ -7289,6 +7289,11 @@ table.data-table--api-logs {
   gap: 0.4rem;
   margin-top: 0.2rem;
 }
+/* Open in Outlook is a link drawn as a button. */
+.mail-draft-card__actions a.btn,
+.mail-review__actions a.btn {
+  text-decoration: none;
+}
 
 /* Review & send (components/MailReviewDialog.tsx). */
 .modal-panel:where(.mail-review) {

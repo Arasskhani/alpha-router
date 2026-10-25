@@ -176,8 +176,16 @@ class MailClient(Protocol):
     (Full Access), never by impersonation.
     """
 
-    def whoami(self) -> MailboxInfo:
+    def whoami(self, hint_smtp: str = "") -> MailboxInfo:
         """The mailbox the login opens without naming one: its primary SMTP address and display name.
+
+        ``hint_smtp`` (callers give the account's email) is checked first, as
+        ``same_mailbox`` checks it: when it is the login's own mailbox, that is
+        the answer - with its display name from the address book, or a blank
+        one when the address book does not list it (people hidden from the
+        address book) - and the address book is never needed to find the login.
+        Otherwise, or without a hint, the address book is asked about the
+        login and each candidate's root folder compared.
 
         Raises ``auth`` for a refused password, ``unreachable`` / ``tls`` when
         Exchange cannot be reached.

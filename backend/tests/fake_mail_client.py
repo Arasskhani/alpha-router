@@ -8,9 +8,10 @@ the chat's mail tools and the needs-action check run against it unchanged.
 
 It follows the rules the real client promises: a wrong password raises
 ``auth``, a mailbox the login has no Full Access to raises ``access_denied``,
-a draft sent with an old change key raises ``conflict``. ``calls`` records
-every call (method name and mailbox), so a test can check that nothing
-reached Exchange.
+a draft sent with an old change key raises ``conflict``, and ``whoami`` of
+a login hidden from the address book works only from a hint (its email).
+``calls`` records every call (method name and mailbox, or the hint), so a
+test can check that nothing reached Exchange.
 """
 
 from __future__ import annotations
@@ -72,6 +73,8 @@ class FakeAccount:
     automapped: tuple[str, ...] = ()
     #: Mailboxes it may send as.
     send_as: tuple[str, ...] = ()
+    #: Hidden from the address book: ``whoami`` finds it only from a hint, and without its name.
+    hidden: bool = False
 
 
 class FakeExchange:
@@ -101,6 +104,7 @@ class FakeExchange:
         full_access: tuple[str, ...] = (),
         automapped: tuple[str, ...] | None = None,
         send_as: tuple[str, ...] = (),
+        hidden: bool = False,
     ) -> FakeAccount:
         account = FakeAccount(
             login=login.lower(),
@@ -110,6 +114,7 @@ class FakeExchange:
             full_access=tuple(s.lower() for s in full_access),
             automapped=tuple(s.lower() for s in (full_access if automapped is None else automapped)),
             send_as=tuple(s.lower() for s in send_as),
+            hidden=hidden,
         )
         self.accounts[account.login] = account
         self.mailboxes.setdefault(account.smtp, display_name)
@@ -202,8 +207,13 @@ class FakeMailClient:
 
     # --- MailClient ---
 
-    def whoami(self) -> MailboxInfo:
-        account = self._account("whoami")
+    def whoami(self, hint_smtp: str = "") -> MailboxInfo:
+        account = self._account("whoami", hint_smtp)
+        if hint_smtp and self._primary(hint_smtp) == account.smtp:
+            # The hint is the login's own mailbox: no address book needed (a hidden person has no name there).
+            return MailboxInfo(smtp=account.smtp, display_name="" if account.hidden else account.display_name)
+        if account.hidden:
+            raise EwsError("server", "Exchange accepted the login, but its address book did not say whose it is.")
         return MailboxInfo(smtp=account.smtp, display_name=account.display_name)
 
     def same_mailbox(self, smtp: str) -> bool:

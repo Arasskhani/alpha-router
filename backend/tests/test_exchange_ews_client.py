@@ -207,6 +207,45 @@ def test_whoami_without_an_address_book_entry_is_a_server_error(exchange: FakeEx
     _assert_clean(caught.value)
 
 
+def test_whoami_with_the_account_s_email_needs_no_address_book_search_for_the_login(
+    client: EwsClient, server: FakeEwsServer
+) -> None:
+    assert client.whoami(OWN) == MailboxInfo(smtp=OWN, display_name="Sara Karimi")
+    asked = [
+        r.body.split("<m:UnresolvedEntry>", 1)[1].split("<", 1)[0]
+        for r in server.requests
+        if r.operation == "ResolveNames"
+    ]
+    assert asked == [OWN], "only the hint's name is looked up, never the login"
+    checked = [r.anchor for r in server.requests if r.operation == "GetFolder" and r.anchor]
+    assert checked == [OWN]
+
+
+def test_whoami_finds_someone_hidden_from_the_address_book_from_the_hint(
+    exchange: FakeExchange, server: FakeEwsServer, tls: TlsMaterial
+) -> None:
+    exchange.people = []
+    c = EwsClient(config_for(server, tls))
+    try:
+        assert c.whoami(OWN) == MailboxInfo(smtp=OWN, display_name="")
+        # Later calls in the same session (Autodiscover) use it too.
+        assert c.whoami() == MailboxInfo(smtp=OWN, display_name="")
+    finally:
+        c.close()
+
+
+@pytest.mark.parametrize("hint", [FINANCE, CEO, "nobody@corp.example", "not an address"])
+def test_whoami_with_a_hint_of_another_mailbox_asks_the_address_book(
+    exchange: FakeExchange, server: FakeEwsServer, tls: TlsMaterial, hint: str
+) -> None:
+    c = EwsClient(config_for(server, tls))
+    try:
+        assert c.whoami(hint) == MailboxInfo(smtp=OWN, display_name="Sara Karimi")
+    finally:
+        c.close()
+    assert any(r.operation == "ResolveNames" and ">s.karimi<" in r.body for r in server.requests)
+
+
 def test_a_refused_password_is_auth_and_is_never_retried(server: FakeEwsServer, tls: TlsMaterial) -> None:
     c = EwsClient(config_for(server, tls, password="wrong-password"))
     try:

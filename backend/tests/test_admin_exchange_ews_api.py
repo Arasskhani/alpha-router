@@ -295,9 +295,30 @@ class TestConnectionTest:
         assert _steps(body) == [("endpoint", True), ("login", False)]
         assert body["steps"][1]["detail"] == "Exchange did not accept the user name or password."
         assert body["mailbox"] is None
-        assert exchange.calls == [("whoami", "")]
+        assert exchange.calls == [("whoami", "it.admin@corp.example")]
         (event,) = await _events(db_session, "exchange_ews_tested")
         assert json.loads(event.detail_json) == {"login": "CORP\\it.admin", "ok": False}
+
+    async def test_someone_hidden_from_the_address_book_is_found_from_the_email(
+        self, client, db_session, exchange, admin
+    ):
+        exchange.accounts["corp\\it.admin"].hidden = True
+        await _turn_on(db_session)
+        headers = sign_in(client, admin)
+        resp = await client.post(
+            f"{BASE}/test",
+            json={"login": "CORP\\it.admin", "password": "Admin-Pass-1", "email": "it.admin@corp.example"},
+            headers=headers,
+        )
+        body = resp.json()
+        assert body["ok"] is True, body
+        assert body["mailbox"] == {"smtp": "it.admin@corp.example", "display_name": ""}
+        assert len(body["full_access"]) == 2
+        # Without the email the address book must say who the login is, and here it cannot.
+        resp = await client.post(
+            f"{BASE}/test", json={"login": "CORP\\it.admin", "password": "Admin-Pass-1"}, headers=headers
+        )
+        assert _steps(resp.json()) == [("endpoint", True), ("login", False)]
 
     async def test_another_mailbox_fails_the_match(self, client, db_session, exchange, admin):
         await _turn_on(db_session)

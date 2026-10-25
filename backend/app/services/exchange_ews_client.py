@@ -33,7 +33,11 @@ How the less obvious parts work:
 - ``whoami``: EWS opens the login's own mailbox when a request names none.
   ``GetFolder`` of ``msgfolderroot`` without a mailbox (and without the
   ``X-AnchorMailbox`` header) gives that mailbox's root folder id. EWS has no
-  call that says whose mailbox that is, so ``ResolveNames`` is asked about
+  call that says whose mailbox that is. The caller's hint (the account's
+  email) is tried first: when its ``msgfolderroot`` has the same id, it is
+  the login's mailbox, and ``ResolveNames`` of that address only adds the
+  display name (a person hidden from the address book keeps a blank one).
+  Without a hint, or when it is another mailbox, ``ResolveNames`` is asked about
   the login (the user name of ``DOMAIN\\user``; the whole UPN and its user
   part otherwise), and each candidate's own ``msgfolderroot`` id is compared
   with the first one: the candidate with the same id is the login's mailbox
@@ -1127,14 +1131,18 @@ class EwsClient:
 
     # --- MailClient ---
 
-    def whoami(self) -> MailboxInfo:
+    def whoami(self, hint_smtp: str = "") -> MailboxInfo:
         with self._errors("whoami"):
-            return self._whoami()
+            return self._whoami(hint_smtp)
 
-    def _whoami(self) -> MailboxInfo:
+    def _whoami(self, hint_smtp: str = "") -> MailboxInfo:
         if self._own is not None:
             return self._own
         own_root = self._own_root()
+        hint = _smtp(hint_smtp)
+        if hint and self._root_of(hint) == own_root:
+            self._own = self._hinted(hint, own_root)
+            return self._own
         seen: set[str] = set()
         tries = 0
         for name in _identity_names(self.config.login):
@@ -1142,16 +1150,40 @@ class EwsClient:
                 if tries >= _IDENTITY_TRIES:
                     break
                 tries += 1
-                try:
-                    if self._mailbox_root(email) == own_root:
-                        self._own = MailboxInfo(smtp=email, display_name=display)
-                        return self._own
-                except (ErrorAccessDenied, ErrorNonExistentMailbox, ErrorFolderNotFound):
-                    continue
+                if self._root_of(email) == own_root:
+                    self._own = MailboxInfo(smtp=email, display_name=display)
+                    return self._own
         raise EwsError(
             "server",
             "Exchange accepted the login but its address book did not say which mailbox it opens.",
         )
+
+    def _root_of(self, smtp: str) -> str | None:
+        """The root folder id of a mailbox the login may open; ``None`` when it may not, or there is none."""
+        try:
+            return self._mailbox_root(smtp)
+        except (ErrorAccessDenied, ErrorNonExistentMailbox, ErrorFolderNotFound):
+            return None
+
+    def _hinted(self, address: str, own_root: str) -> MailboxInfo:
+        """The login's own mailbox, known to be ``address``: its primary address and name from the address book.
+
+        A person hidden from the address book is not found there: the address
+        is kept as given and the name left blank. Another address the address
+        book offers is taken only when its root folder is the login's too.
+        """
+        try:
+            found = self._resolve(address, scope="ActiveDirectory", full=False)
+        except (ResponseMessageError, TransportError):
+            found = []
+        boxes = [(_smtp(getattr(box, "email_address", "")), str(getattr(box, "name", "") or "")) for box, _c in found]
+        for email, name in boxes:
+            if email == address:
+                return MailboxInfo(smtp=email, display_name=name)
+        for email, name in boxes[:_IDENTITY_TRIES]:
+            if email and self._root_of(email) == own_root:
+                return MailboxInfo(smtp=email, display_name=name)
+        return MailboxInfo(smtp=address, display_name="")
 
     def _identity_candidates(self, name: str, seen: set[str]) -> list[tuple[str, str]]:
         """Mailboxes the address book finds for ``name`` (not in ``seen``), exact matches first: (smtp, name)."""
@@ -1174,11 +1206,7 @@ class EwsClient:
             address = _smtp(smtp)
             if not address:
                 return False
-            own_root = self._own_root()
-            try:
-                return self._mailbox_root(address) == own_root
-            except (ErrorAccessDenied, ErrorNonExistentMailbox, ErrorFolderNotFound):
-                return False
+            return self._root_of(address) == self._own_root()
 
     def discover_full_access(self) -> list[MailboxInfo]:
         with self._errors("discover_full_access"):

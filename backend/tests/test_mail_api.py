@@ -337,7 +337,7 @@ class TestConnect:
         assert await _count(db_session, MailConnection) == 0
         assert await _count(db_session, MailConnectionMailbox) == 0
         # One attempt reached Exchange, and nothing after it: never a retry.
-        assert exchange.calls == [("whoami", "")]
+        assert exchange.calls == [("whoami", OWN)]
         assert await _events(db_session) == []
 
     async def test_a_refused_password_stops_an_existing_connection(self, client, db_session, exchange, person):
@@ -350,11 +350,11 @@ class TestConnect:
         assert connection.status == "needs_password"
         # The stored password is kept (it is not used again until replaced); the typed one is not stored.
         assert em.connection_password(connection) == PASSWORD
-        assert exchange.calls == [("whoami", "")]
+        assert exchange.calls == [("whoami", OWN)]
         # Nothing reaches Exchange any more until the person types a password that works.
         resp = await client.post(f"{BASE}/mailboxes/rediscover", headers=headers)
         assert resp.status_code == 409 and _code(resp) == "needs_password"
-        assert exchange.calls == [("whoami", "")]
+        assert exchange.calls == [("whoami", OWN)]
         status = (await client.get(f"{BASE}/status", headers=headers)).json()
         assert status["connection"]["status"] == "needs_password"
         assert status["connection"]["last_error"]
@@ -380,6 +380,20 @@ class TestConnect:
         body = await _connected(client, db_session, headers, require_mailbox_match=False)
         assert body["primary_smtp"] == "sara@corp.example"
         assert ("same_mailbox", OWN) not in exchange.calls
+
+    async def test_someone_hidden_from_the_address_book_connects_with_their_email(
+        self, client, db_session, exchange, person
+    ):
+        exchange.accounts[LOGIN.lower()].hidden = True
+        body = await _connected(client, db_session, sign_in(client, person))
+        assert body["status"] == "connected" and body["primary_smtp"] == OWN
+        assert body["display_name"] == ""
+        assert exchange.calls[0] == ("whoami", OWN), "the account's email is the hint"
+        # Find again asks about the own mailbox the same way.
+        exchange.calls.clear()
+        resp = await client.post(f"{BASE}/mailboxes/rediscover", headers=sign_in(client, person))
+        assert resp.status_code == 200, resp.text
+        assert exchange.calls == [("whoami", OWN), ("discover_full_access", "")]
 
     async def test_without_full_access_autodiscover_is_not_asked(self, client, db_session, exchange, person):
         body = await _connected(client, db_session, sign_in(client, person), allow_full_access=False)

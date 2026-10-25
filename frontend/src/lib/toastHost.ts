@@ -18,6 +18,12 @@ const MAX_VISIBLE = 3;
 
 type ToastTone = "neutral" | "warning" | "danger";
 
+/** A button on a toast. Pressing one runs it and closes the toast. */
+export type ToastAction = {
+  label: string;
+  onClick: () => void;
+};
+
 export type ToastSpec = {
   /** Small kicker above the message. */
   eyebrow: string;
@@ -33,6 +39,11 @@ export type ToastSpec = {
    */
   dedupeKey?: string;
   onClick?: () => void;
+  /**
+   * Buttons under the message (an email that needs action: Ask, Dismiss). A
+   * toast with actions is not itself a button, so `onClick` is ignored.
+   */
+  actions?: ToastAction[];
 };
 
 let host: HTMLDivElement | null = null;
@@ -53,17 +64,29 @@ function dismiss(key: string, node: HTMLElement) {
   node.remove();
 }
 
-export function showToast(spec: ToastSpec): void {
-  if (typeof document === "undefined") return;
+/**
+ * Put a toast on screen. Returns a function that closes it early (a no-op once
+ * it is gone), for a caller whose message stops being true.
+ */
+export function showToast(spec: ToastSpec): () => void {
+  if (typeof document === "undefined") return () => {};
   const key = spec.dedupeKey || `${spec.eyebrow}::${spec.title}`;
-  if (live.has(key)) return;
+  const existing = live.get(key);
+  if (existing) return () => dismiss(key, existing);
 
   const root = ensureHost();
-  const interactive = typeof spec.onClick === "function";
+  const actions = spec.actions?.filter((a) => a.label) ?? [];
+  // A button cannot hold buttons: with actions the toast is a group and the actions are its buttons.
+  const interactive = actions.length === 0 && typeof spec.onClick === "function";
   const node = document.createElement(interactive ? "button" : "div");
   if (node instanceof HTMLButtonElement) node.type = "button";
   node.className = `app-toast app-toast--${spec.tone || "neutral"}`;
-  if (!interactive) node.setAttribute("role", "status");
+  if (actions.length > 0) {
+    node.setAttribute("role", "group");
+    node.setAttribute("aria-label", spec.title);
+  } else if (!interactive) {
+    node.setAttribute("role", "status");
+  }
 
   const eyebrow = document.createElement("span");
   eyebrow.className = "app-toast__eyebrow";
@@ -86,6 +109,23 @@ export function showToast(spec: ToastSpec): void {
     });
   }
 
+  if (actions.length > 0) {
+    const row = document.createElement("span");
+    row.className = "app-toast__actions";
+    for (const action of actions) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "app-toast__action";
+      button.textContent = action.label;
+      button.addEventListener("click", () => {
+        dismiss(key, node);
+        action.onClick();
+      });
+      row.append(button);
+    }
+    node.append(row);
+  }
+
   root.appendChild(node);
   live.set(key, node);
 
@@ -97,6 +137,7 @@ export function showToast(spec: ToastSpec): void {
   }
 
   window.setTimeout(() => dismiss(key, node), spec.ttlMs ?? DEFAULT_TTL_MS);
+  return () => dismiss(key, node);
 }
 
 /** Test seam: drop every toast and the host itself. */

@@ -14113,6 +14113,43 @@ button.app-toast:hover {
   font-size: 0.8rem;
   color: var(--muted);
   line-height: 1.35;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+/* Buttons under a toast's message (an email that needs action: Ask, Dismiss). */
+.app-toast__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.4rem;
+}
+
+.app-toast__action {
+  min-height: 2rem;
+  padding: 0.25rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 8px);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.app-toast__action:first-child {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.app-toast__action:hover {
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
+}
+
+.app-toast__action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .settings-row__trail input[type="checkbox"] {

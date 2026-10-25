@@ -19,6 +19,7 @@ from app.models.project import (
 )
 from app.models.user_media_prefs import UserMediaPreferences
 from app.services import object_storage_service as oss
+from app.services.exchange_mail import delete_user_mail
 from app.services.storage_service import user_storage_slug
 from app.services.support_tickets import delete_user_tickets
 from app.services.user_media_service import delete_all_user_media
@@ -173,6 +174,8 @@ async def purge_user_account_data(
     await db.execute(delete(ExtensionSession).where(ExtensionSession.user_id == user_id))
     # Their support tickets go too, for the same reason; the images leave storage after the commit.
     await delete_user_tickets(db, user_id)
+    # And their Exchange connection with everything the chat made of it (the password first of all).
+    await delete_user_mail(db, user_id)
 
     chat_deleted = 1
 

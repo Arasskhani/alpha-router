@@ -418,7 +418,7 @@ describe("connected", () => {
     await render();
     expect(document.querySelector(".mail-status")?.textContent).toBe("Password needed");
     expect(text()).toContain("Exchange did not accept your saved password.");
-    expect(byLabel<HTMLInputElement>("New password")).toBeTruthy();
+    expect(byLabel<HTMLInputElement>("Password")).toBeTruthy();
     expect(button("Cancel")).toBeUndefined();
     expect(button("Update password")).toBeUndefined();
   });
@@ -438,11 +438,11 @@ describe("connected", () => {
     await render();
     await click(button("Update password"));
     expect(button("Cancel")).toBeTruthy();
-    await type(byLabel<HTMLInputElement>("New password"), "n3w");
+    await type(byLabel<HTMLInputElement>("Password"), "n3w");
     await click(button("Save password"));
     expect(posts("/api/mail/connect")[0].body).toEqual({ password: "n3w" });
     expect(text()).toContain("Password saved. Your mailbox is connected.");
-    expect(byLabel<HTMLInputElement>("New password")).toBeNull();
+    expect(byLabel<HTMLInputElement>("Password")).toBeNull();
     expect(bootstrapSession).toHaveBeenCalledWith(true);
   });
 
@@ -450,7 +450,7 @@ describe("connected", () => {
     await render();
     await click(button("Update password"));
     await click(button("Cancel"));
-    expect(byLabel<HTMLInputElement>("New password")).toBeNull();
+    expect(byLabel<HTMLInputElement>("Password")).toBeNull();
     expect(posts("/api/mail/connect")).toHaveLength(0);
   });
 

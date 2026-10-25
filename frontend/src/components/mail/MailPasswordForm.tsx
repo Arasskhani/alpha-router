@@ -52,7 +52,7 @@ export default function MailPasswordForm({ login, mode, disabled, onConnected, o
           <input id={`${id}-login`} value={login} readOnly aria-readonly="true" className="mail-password__login" />
         </div>
         <div className="smtp-field">
-          <label htmlFor={`${id}-password`}>{mode === "connect" ? "Password" : "New password"}</label>
+          <label htmlFor={`${id}-password`}>Password</label>
           <input
             ref={passwordRef}
             id={`${id}-password`}

@@ -18039,6 +18039,9 @@ p.error,
   color: var(--muted);
   background: var(--bg);
 }
+.mail-password__row {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
 .mail-password__actions,
 .mail-card__actions {
   display: flex;
@@ -18050,6 +18053,7 @@ p.error,
 }
 .mail-alert {
   margin: 0 0 0.75rem;
+  font-size: 0.86rem;
 }
 .mail-identity {
   display: grid;
@@ -18231,6 +18235,9 @@ p.error,
   justify-content: flex-end;
   gap: 0.4rem;
 }
+.mail-action__buttons a.btn {
+  text-decoration: none;
+}
 .mail-important {
   display: inline-block;
   margin-inline-start: 0.5rem;
@@ -18249,11 +18256,22 @@ p.error,
   .mail-action {
     grid-template-columns: minmax(0, 1fr);
   }
+  /* Two by two on a phone: four finger-sized buttons in two tidy rows. */
   .mail-action__buttons {
-    justify-content: flex-start;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .mail-action__buttons .btn {
+    width: 100%;
+    justify-content: center;
   }
   .mail-mailbox-table td:first-child {
     min-width: 0;
+  }
+}
+@media (max-width: 560px) {
+  .mail-password__row {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

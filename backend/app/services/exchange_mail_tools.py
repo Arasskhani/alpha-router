@@ -1148,7 +1148,10 @@ class MailToolLoop:
             working_hours_only=_flag(args.get("working_hours_only"), True),
             max_results=_int(args.get("max_results"), 5, 1, 10),
         )
-        names = ", ".join(entry if entry == "you" else f"{entry} ({address})" for entry, address in people)
+        names = ", ".join(
+            entry if entry == "you" or exchange_mail.normalize_smtp(entry) == address else f"{entry} ({address})"
+            for entry, address in people
+        )
         span = f"{start_day:%a %d %b} to {end_day:%a %d %b %Y}"
         parts = [
             _plain(f"Times in {tz_name}, {span}, for {int(minutes)} minutes, when all of these are free: {names}.")

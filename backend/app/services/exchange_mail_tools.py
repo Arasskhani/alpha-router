@@ -690,26 +690,29 @@ class MailToolLoop:
         except EwsError as err:
             await self._failed(db, connection, err, mailbox=mailbox, scope=scope)
             raise
-        await exchange_mail.record_success(db, connection)
+        await exchange_mail.record_success(db, connection, tried=self.access.secret)
         return result
 
     async def _failed(
         self, db: AsyncSession, connection: MailConnection, err: EwsError, *, mailbox: str, scope: str
     ) -> None:
+        # The turn's access was built when it began: only the password it tried may be judged by the outcome.
+        tried = self.access.secret
         if err.kind == "auth":
-            # Never tried again by code: the connection waits for the person's new password.
-            await exchange_mail.record_failure(db, connection, err)
+            # Never tried again by code: the connection waits for the person's new password (unless they
+            # typed one meanwhile), and this turn makes no more calls with the refused one either way.
+            await exchange_mail.record_failure(db, connection, err, tried=tried)
             self.stopped = STOPPED_PASSWORD
             return
         if err.kind in ("invalid", "conflict") or (err.kind == "not_found" and scope == "item"):
             # Exchange answered; the request itself (or the email it named) was the trouble.
-            await exchange_mail.record_success(db, connection)
+            await exchange_mail.record_success(db, connection, tried=tried)
             return
         if err.kind in ("access_denied", "not_found") and mailbox and mailbox != self.access.own_smtp:
             if await exchange_mail.record_mailbox_failure(db, int(connection.id), mailbox, err):
                 self.dropped.add(mailbox)
             return
-        await exchange_mail.record_failure(db, connection, err)
+        await exchange_mail.record_failure(db, connection, err, tried=tried)
         if connection.status != "connected":
             self.stopped = STOPPED_GONE
 

@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import contextvars
 import datetime
 import functools
@@ -45,7 +46,8 @@ from dataclasses import dataclass, field, fields
 from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import case, delete, func, select, update
+from sqlalchemy.exc import InvalidRequestError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.auth_provider import AuthProviderConfig
@@ -558,6 +560,9 @@ class MailAccess:
     settings: ExchangeSettings
     #: The mailboxes whose Inbox the needs-action check reads.
     notify_mailboxes: tuple[str, ...] = field(default=())
+    #: The stored (encrypted) password this access was built with: what its calls try. Status writes after a
+    #: call are made only while the connection still holds it (``record_failure`` / ``record_success``).
+    secret: str = field(default="", repr=False)
 
     def allows(self, smtp: str) -> bool:
         wanted = normalize_smtp(smtp)
@@ -617,6 +622,7 @@ async def usable_access(db: AsyncSession, user: User, settings: ExchangeSettings
         mailboxes=boxes,
         settings=settings,
         notify_mailboxes=notify,
+        secret=str(connection.secret_encrypted or ""),
     )
 
 
@@ -625,33 +631,81 @@ def friendly_error(error: EwsError) -> str:
     return (error.message or "Exchange did not answer as expected.")[:500]
 
 
-async def record_success(db: AsyncSession, connection: MailConnection) -> None:
-    connection.consecutive_failures = 0  # type: ignore[assignment]
-    connection.last_error = None  # type: ignore[assignment]
-    connection.last_ok_at = _now()  # type: ignore[assignment]
-    if connection.status == "error":
-        connection.status = "connected"  # type: ignore[assignment]
+PASSWORD_REFUSED = "Exchange did not accept your password. If you changed it, type the new one on Connections."
+
+
+async def _write_if_current(
+    db: AsyncSession, connection: MailConnection, tried: str | None, values: dict[str, Any]
+) -> bool:
+    """Write how a call went, only while the connection still holds the password the call tried.
+
+    A call can take a while: meanwhile the person may type a new password
+    (or the administrator's change may ask for one). One conditional UPDATE -
+    the same row, the same stored secret, not waiting for a password - so a
+    stale outcome never overwrites the fresh state; then the object is read
+    again. ``tried`` defaults to the secret the object holds now (the caller
+    built the call from it). Returns whether it was written.
+    """
+    secret = str(connection.secret_encrypted or "") if tried is None else tried
     await db.flush()
+    result = await db.execute(
+        update(MailConnection)
+        .where(
+            MailConnection.id == connection.id,
+            MailConnection.secret_encrypted == secret,
+            MailConnection.status != "needs_password",
+        )
+        .values(**values)
+        .execution_options(synchronize_session=False)
+    )
+    # Gone meanwhile (disconnected): nothing to read again.
+    with contextlib.suppress(InvalidRequestError):
+        await db.refresh(connection)
+    return bool(getattr(result, "rowcount", 0))
 
 
-async def record_failure(db: AsyncSession, connection: MailConnection, error: EwsError) -> None:
+async def record_success(db: AsyncSession, connection: MailConnection, *, tried: str | None = None) -> None:
+    """A call worked: the failures are forgotten and a connection in ``error`` runs again.
+
+    Never one that waits for a password, and never when the password has
+    changed since the call was made (``tried``, see ``_write_if_current``).
+    """
+    await _write_if_current(
+        db,
+        connection,
+        tried,
+        {
+            "consecutive_failures": 0,
+            "last_error": None,
+            "last_ok_at": _now(),
+            "status": case((MailConnection.status == "error", "connected"), else_=MailConnection.status),
+        },
+    )
+
+
+async def record_failure(
+    db: AsyncSession, connection: MailConnection, error: EwsError, *, tried: str | None = None
+) -> None:
     """Note a failed call. A refused password stops the connection at once; a wrong mailbox stops it too.
 
     Anything else (Exchange down, a timeout, throttling) is counted and kept
     as ``last_error``, but leaves the status alone: it will likely pass by
     itself, and a stopped connection would make the person type their
     password again after an outage they had nothing to do with.
+
+    Only while the connection still holds the password the call tried
+    (``tried``: the stored secret it was built from): a refusal of an old
+    password, arriving after the person typed a new one, changes nothing.
     """
-    connection.last_error = friendly_error(error)  # type: ignore[assignment]
-    connection.consecutive_failures = int(connection.consecutive_failures or 0) + 1  # type: ignore[assignment]
+    values: dict[str, Any] = {
+        "last_error": friendly_error(error),
+        "consecutive_failures": MailConnection.consecutive_failures + 1,
+    }
     if error.kind == "auth":
-        connection.status = "needs_password"  # type: ignore[assignment]
-        connection.last_error = (  # type: ignore[assignment]
-            "Exchange did not accept your password. If you changed it, type the new one on Connections."
-        )
+        values.update(status="needs_password", last_error=PASSWORD_REFUSED)
     elif error.kind == "mailbox_mismatch":
-        connection.status = "error"  # type: ignore[assignment]
-    await db.flush()
+        values["status"] = "error"
+    await _write_if_current(db, connection, tried, values)
 
 
 async def record_mailbox_failure(db: AsyncSession, connection_id: int, smtp: str, error: EwsError) -> bool:

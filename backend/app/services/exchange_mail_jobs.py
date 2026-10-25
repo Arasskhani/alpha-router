@@ -455,7 +455,7 @@ async def check_connection(connection_id: int, settings: ExchangeSettings, now: 
                     await exchange_mail.record_mailbox_failure(db, int(connection.id), mailbox, err)
                     continue
                 # A refused password stops the connection; it is not checked again until the person types it.
-                await exchange_mail.record_failure(db, connection, err)
+                await exchange_mail.record_failure(db, connection, err, tried=access.secret)
                 failed = True
                 break
             latest = max((_naive(i.received) for i in items if i.received is not None), default=None)
@@ -471,7 +471,7 @@ async def check_connection(connection_id: int, settings: ExchangeSettings, now: 
         added = await _store(db, int(user.id), picks)
         if not failed:
             connection.poll_watermark = min(full_pages) if full_pages else newest  # type: ignore[assignment]
-            await exchange_mail.record_success(db, connection)
+            await exchange_mail.record_success(db, connection, tried=access.secret)
         await db.commit()
         return added
 

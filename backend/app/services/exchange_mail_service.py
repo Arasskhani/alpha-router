@@ -83,7 +83,6 @@ EWS_STATUS: dict[str, int] = {
 }
 #: Failures that will likely pass by themselves: a draft that met one is still in Drafts and can be sent again.
 _PASSING_KINDS = ("auth", "unreachable", "tls", "throttled")
-_PASSWORD_REFUSED = "Exchange did not accept your password. If you changed it, type the new one on Connections."
 _MISMATCH = "This password opens another mailbox than yours."
 _AUTODISCOVER_REFUSED = "Autodiscover refused the sign-in, although EWS accepted it."
 
@@ -325,12 +324,12 @@ async def _note_failure(
     if mailbox and em.normalize_smtp(mailbox) != own and error.kind in ("access_denied", "not_found"):
         await em.record_mailbox_failure(db, int(usable.connection.id), mailbox, error)
         return
-    await em.record_failure(db, usable.connection, error)
+    await em.record_failure(db, usable.connection, error, tried=usable.access.secret)
 
 
 def _refusal_after(error: EwsError) -> em.MailError:
     if error.kind == "auth":
-        return em.MailError("exchange_auth", _PASSWORD_REFUSED, EWS_STATUS["auth"])
+        return em.MailError("exchange_auth", em.PASSWORD_REFUSED, EWS_STATUS["auth"])
     return ews_refusal(error)
 
 
@@ -354,7 +353,7 @@ async def _ews[T](
     except EwsError as error:
         await _note_failure(db, usable, error, mailbox=mailbox, item_kinds=item_kinds)
         raise
-    await em.record_success(db, usable.connection)
+    await em.record_success(db, usable.connection, tried=usable.access.secret)
     return result
 
 

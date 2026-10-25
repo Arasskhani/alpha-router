@@ -451,6 +451,36 @@ class TestFailures:
         await em.record_success(db_session, connection)
         assert connection.status == "needs_password"
 
+    async def test_an_outcome_for_an_old_password_never_touches_a_fresh_one(self, db_session, session_factory):
+        """A slow call with the old password ends after the person typed a new one: the new one stands."""
+        person = await _ad_person(db_session)
+        connection = await _connect(db_session, person)
+        tried = str(connection.secret_encrypted)
+        async with session_factory() as other:
+            fresh = await other.get(MailConnection, connection.id)
+            fresh.secret_encrypted = em.encrypt_password("New-Pass-2")
+            await other.commit()
+        await em.record_failure(db_session, connection, EwsError("auth", "401"), tried=tried)
+        assert connection.status == "connected" and connection.last_error is None
+        assert connection.consecutive_failures == 0
+        assert em.connection_password(connection) == "New-Pass-2"
+        await em.record_failure(db_session, connection, EwsError("unreachable", "Down."), tried=tried)
+        assert connection.last_error is None
+        # With the password that is stored, the same refusal stops it.
+        await em.record_failure(db_session, connection, EwsError("auth", "401"))
+        assert connection.status == "needs_password"
+
+    async def test_a_connection_waiting_for_its_password_keeps_its_reason(self, db_session):
+        person = await _ad_person(db_session)
+        connection = await _connect(db_session, person, status="needs_password")
+        connection.last_error = "Your administrator changed the Exchange connection settings."
+        await db_session.commit()
+        await em.record_success(db_session, connection)
+        await em.record_failure(db_session, connection, EwsError("unreachable", "Down."))
+        await em.record_failure(db_session, connection, EwsError("mailbox_mismatch", "Another."))
+        assert connection.status == "needs_password"
+        assert connection.last_error == "Your administrator changed the Exchange connection settings."
+
     async def test_a_wrong_mailbox_stops_the_connection(self, db_session):
         person = await _ad_person(db_session)
         connection = await _connect(db_session, person)

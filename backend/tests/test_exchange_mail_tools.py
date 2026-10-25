@@ -439,6 +439,24 @@ class TestFailures:
         assert mailbox.exchange.calls == [("search", OWN)]
         assert loop.calls_log[-1]["result"] == "stopped"
 
+    async def test_a_new_password_typed_during_the_turn_is_not_stopped_by_the_old_one_s_refusal(
+        self, mailbox, session_factory
+    ):
+        loop = await mailbox.loop()
+        # The person changes the AD password and types it on Connections while the turn runs.
+        mailbox.exchange.accounts[LOGIN.lower()].password = "New-Pass-2"
+        async with session_factory() as db:
+            (await db.get(MailConnection, mailbox.connection.id)).secret_encrypted = em.encrypt_password("New-Pass-2")
+            await db.commit()
+        assert await loop.run(call("mail_search", query="x")) == STOPPED_PASSWORD
+        async with session_factory() as db:
+            row = await db.get(MailConnection, mailbox.connection.id)
+        assert row.status == "connected" and row.last_error is None
+        assert em.connection_password(row) == "New-Pass-2"
+        # The turn still never tries the refused password again.
+        assert await loop.run(call("mail_search", "c2", query="y")) == STOPPED_PASSWORD
+        assert mailbox.exchange.calls == [("search", OWN)]
+
     async def test_a_connection_stopped_elsewhere_is_not_used(self, mailbox, session_factory):
         loop = await mailbox.loop()
         async with session_factory() as db:

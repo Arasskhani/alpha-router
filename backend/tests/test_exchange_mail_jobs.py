@@ -239,6 +239,29 @@ class TestTheCheck:
         assert mail.exchange.calls == [("list_received", OWN)]
         assert await _items(session_factory) == []
 
+    async def test_a_refusal_of_the_old_password_leaves_a_new_one_alone(self, mail, session_factory, monkeypatch):
+        """The check reads with the password it found; the person types a new one before Exchange answers."""
+        from app.services import exchange_mail as em
+
+        real = em.usable_access
+
+        async def then_a_new_password(db, user, settings=None):
+            access = await real(db, user, settings)
+            mail.exchange.accounts[LOGIN.lower()].password = "New-Pass-2"
+            async with session_factory() as other:
+                (await other.get(MailConnection, mail.connection.id)).secret_encrypted = em.encrypt_password(
+                    "New-Pass-2"
+                )
+                await other.commit()
+            return access
+
+        monkeypatch.setattr(em, "usable_access", then_a_new_password)
+        await jobs.job_mail_needs_action()
+        connection = await _connection(session_factory, mail.connection.id)
+        assert connection.status == "connected" and connection.last_error is None
+        assert em.connection_password(connection) == "New-Pass-2"
+        assert mail.exchange.calls == [("list_received", OWN)]
+
     async def test_shared_mailboxes_the_person_is_notified_about_are_read_too(self, db_session, mail, session_factory):
         await db_session.execute(
             MailConnectionMailbox.__table__.update().where(MailConnectionMailbox.smtp == FINANCE).values(notify=True)

@@ -20,6 +20,7 @@ from app.api.chat import ChatToolsIn
 from app.services.chat_tool_registry import (
     CHAT_TOOLS,
     KNOWN_ICONS,
+    OFFERED_TOOL_KEYS,
     REQUEST_TOOL_KEYS,
     TOOL_BY_KEY,
     is_valid_key,
@@ -40,10 +41,15 @@ def _request_model_flags() -> set[str]:
 
 class TestEveryToggleIsGoverned:
     def test_the_request_model_and_the_registry_name_the_same_tools(self):
-        assert _request_model_flags() == set(REQUEST_TOOL_KEYS)
+        assert _request_model_flags() == set(REQUEST_TOOL_KEYS) | set(OFFERED_TOOL_KEYS)
 
     def test_every_request_key_is_a_registered_tool(self):
-        assert set(TOOL_BY_KEY) >= REQUEST_TOOL_KEYS
+        assert set(TOOL_BY_KEY) >= REQUEST_TOOL_KEYS | OFFERED_TOOL_KEYS
+
+    def test_a_tool_offered_by_its_own_rules_is_not_refused_at_the_door(self):
+        """Mail is governed where the turn offers it (the registry entry's access, through eligibility)."""
+        assert REQUEST_TOOL_KEYS.isdisjoint(OFFERED_TOOL_KEYS)
+        assert requested_tool_keys({"tools": {"exchange_mail": True}}) == frozenset()
 
     def test_the_execution_config_carries_no_tool_the_registry_omits(self):
         """``ChatToolsConfig`` is what the turn acts on. A field there with no

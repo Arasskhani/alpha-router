@@ -170,6 +170,11 @@ TOOL_BY_KEY: dict[str, ChatToolSpec] = {spec.key: spec for spec in CHAT_TOOLS}
 REQUEST_TOOL_KEYS: frozenset[str] = frozenset(
     {"web_search", "web_fetch", "image_generation", "video_generation", "speech_generation", "code_interpreter"}
 )
+#: Keys whose toggle also travels in the ``tools`` object but is never refused
+#: at the door: the turn offers the tool only where its own rules allow - for
+#: ``exchange_mail``, ``exchange_mail.eligibility``, which applies this
+#: registry entry's access - and otherwise goes without it.
+OFFERED_TOOL_KEYS: frozenset[str] = frozenset({"exchange_mail"})
 
 
 def is_valid_key(key: str) -> bool:

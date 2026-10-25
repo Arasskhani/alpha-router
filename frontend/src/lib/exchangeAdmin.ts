@@ -42,7 +42,7 @@ const DNS = /^(?=.{1,253}$)([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za
 const PEM_CERT = /-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g;
 
 /** An https address with a host and no user name in it, as the server accepts. */
-export function isHttpsUrl(value: string): boolean {
+function isHttpsUrl(value: string): boolean {
   try {
     const url = new URL(value.trim());
     return url.protocol === "https:" && Boolean(url.hostname) && !url.username && !url.password;

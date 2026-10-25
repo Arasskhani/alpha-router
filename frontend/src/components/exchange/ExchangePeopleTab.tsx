@@ -7,7 +7,7 @@ import { useTableCards } from "../../hooks/useTableCards";
 import { exchangeAdminApi, type AdminConnection, type AdminConnectionList, type ConnectionStatus } from "../../lib/exchangeMail";
 import { STATUS_FILTERS, ago, fullTime, plural } from "../../lib/exchangeAdmin";
 
-export const PEOPLE_PAGE_SIZE = 50;
+const PEOPLE_PAGE_SIZE = 50;
 
 function readStatus(value: string | null): ConnectionStatus | "" {
   return value === "connected" || value === "needs_password" || value === "error" ? value : "";

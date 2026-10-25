@@ -8,7 +8,7 @@ import {
 type GroupRow = { id: number; name: string; source?: string };
 type RoleRow = { slug: string; name: string };
 
-export type AccessBody = { access_type: "public" | "private"; grants: AccessGrantInput[] };
+type AccessBody = { access_type: "public" | "private"; grants: AccessGrantInput[] };
 
 /**
  * Where the access is read and saved: two paths the editor calls itself, or

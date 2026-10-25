@@ -13,7 +13,7 @@ import type {
 } from "../../lib/exchangeMail";
 
 const NOW = Date.now();
-export const minutesAgo = (n: number) => new Date(NOW - n * 60_000).toISOString().replace(/\.\d+Z$/, "Z");
+const minutesAgo = (n: number) => new Date(NOW - n * 60_000).toISOString().replace(/\.\d+Z$/, "Z");
 
 export function makeSettings(over: Partial<ExchangeSettingsResponse["settings"]> = {}): ExchangeSettingsResponse {
   return {
@@ -61,7 +61,7 @@ export const OVERVIEW: ExchangeOverview = {
   configured: true,
 };
 
-export const ACCESS: ToolAccess = {
+const ACCESS: ToolAccess = {
   tool_key: "exchange_mail",
   access_type: "public",
   acl_version: 2,
@@ -70,13 +70,13 @@ export const ACCESS: ToolAccess = {
   updated_by_user_id: null,
 };
 
-export const MODELS: CatalogModel[] = [
+const MODELS: CatalogModel[] = [
   { id: 7, external_id: "gpt-4o-mini", display_name: "GPT-4o mini", enabled: true, provider: "openai", kinds: ["text"] },
   { id: 8, external_id: "old-model", display_name: "Old model", enabled: false, provider: "openai", kinds: ["text"] },
   { id: 9, external_id: "text-embedding-3-small", display_name: null, enabled: true, provider: "openai", kinds: ["embeddings"] },
 ];
 
-export const TEST_OK: TestResult = {
+const TEST_OK: TestResult = {
   ok: true,
   steps: [
     { key: "endpoint", label: "EWS address", ok: true, detail: "https://mail.corp.example/EWS/Exchange.asmx" },
@@ -105,7 +105,7 @@ export const TEST_FAILED: TestResult = {
 const STATUSES = ["connected", "connected", "connected", "needs_password", "error"] as const;
 
 /** 120 people: Sara Karimi first, then "Person 2" … "Person 120". */
-export const CONNECTIONS: AdminConnection[] = Array.from({ length: 120 }, (_, i) => {
+const CONNECTIONS: AdminConnection[] = Array.from({ length: 120 }, (_, i) => {
   const n = i + 1;
   const first = n === 1;
   const status = first ? "connected" : STATUSES[n % STATUSES.length];

@@ -9,20 +9,20 @@
 
 import { authFetch } from "../api";
 
-export const MAIL_BASE = "/api/mail";
-export const EXCHANGE_ADMIN_BASE = "/api/admin/exchange-ews";
+const MAIL_BASE = "/api/mail";
+const EXCHANGE_ADMIN_BASE = "/api/admin/exchange-ews";
 
 /** Sent on `window` after the connection or its action items change; the indicator and the toasts read it. */
 export const MAIL_CHANGED_EVENT = "alpha-router:mail-changed";
 
 export type ConnectionStatus = "connected" | "needs_password" | "error";
-export type MailboxKind = "own" | "full_access";
+type MailboxKind = "own" | "full_access";
 export type MailboxSource = "own" | "autodiscover" | "manual";
 export type DraftKind = "new" | "reply" | "reply_all" | "forward";
 export type DraftStatus = "draft" | "sent" | "discarded" | "failed";
-export type ActionKind = "reply" | "schedule" | "review" | "approve" | "other";
-export type ActionStatus = "new" | "notified" | "dismissed" | "done";
-export type EligibilityReason =
+type ActionKind = "reply" | "schedule" | "review" | "approve" | "other";
+type ActionStatus = "new" | "notified" | "dismissed" | "done";
+type EligibilityReason =
   | ""
   | "feature_off"
   | "not_configured"
@@ -133,7 +133,7 @@ export type MailDraftCard = {
 // --- admin ---
 
 export type LoginFormat = "netbios" | "upn" | "email";
-export type DetectionMode = "rules" | "model";
+type DetectionMode = "rules" | "model";
 
 export type ExchangeSettings = {
   enabled: boolean;
@@ -262,13 +262,6 @@ export const DRAFT_KIND_LABELS: Record<DraftKind, string> = {
   forward: "Draft forward",
 };
 
-export const ACTION_LABELS: Record<ActionKind, string> = {
-  reply: "Reply",
-  schedule: "Schedule",
-  review: "Review",
-  approve: "Approve",
-  other: "Act",
-};
 
 // --- requests ---
 
@@ -313,7 +306,7 @@ async function readError(res: Response): Promise<MailApiError> {
 }
 
 /** JSON in, JSON out. Throws MailApiError. */
-export async function mailRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+async function mailRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   if (init.body != null && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   const res = await authFetch(path, { ...init, headers });

@@ -132,18 +132,6 @@ export function IconMailConnected({ className = "" }: IconProps) {
   );
 }
 
-/** The mailbox needs attention (the password, say): an envelope with an exclamation mark. */
-export function IconMailWarning({ className = "" }: IconProps) {
-  return (
-    <svg {...svgProps} className={className}>
-      <path d="M22 12V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h11" />
-      <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
-      <path d="M20 15v3" />
-      <path d="M20 21h.01" />
-    </svg>
-  );
-}
-
 /** Connections (the profile menu): a plug. */
 export function IconPlug({ className = "" }: IconProps) {
   return (

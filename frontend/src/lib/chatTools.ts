@@ -33,6 +33,12 @@ export type ChatToolsState = {
   speechFormat: SpeechFormat;
   speechSpeed: number;
   codeInterpreter: boolean;
+  /**
+   * The person turned their Exchange mailbox off for this chat (the envelope by
+   * the chat box). Absent means on: mail is not a Tools toggle, and a new chat
+   * starts with it on whenever the mailbox is connected (lib/mailChatSwitch.ts).
+   */
+  mailOff?: boolean;
 };
 
 /** All tools off — used for new chats and reset. */
@@ -190,6 +196,8 @@ export function normalizeChatTools(raw?: Partial<ChatToolsState> | null): ChatTo
     speechFormat: normalizeSpeechFormat(raw.speechFormat),
     speechSpeed: normalizeSpeechSpeed(raw.speechSpeed),
     codeInterpreter: raw.codeInterpreter ?? FRESH_CHAT_TOOLS.codeInterpreter,
+    // Kept only when set, so a chat that never touched it reads as before.
+    ...(raw.mailOff === true ? { mailOff: true } : {}),
   };
 
   // A chat's toggles are stored with the session on the server, and a project

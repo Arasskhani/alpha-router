@@ -326,6 +326,16 @@ import { contextFitLabel, contextFitNote, readContextFit, type ContextFit } from
 import { readRecalledChats, recalledChatsLabel, type RecalledChat } from "../lib/recalledChats";
 import { readWebSources, webActivityLabel, type WebSource } from "../lib/webSources";
 import WebSourceList from "./chat/WebSourceList";
+import MailIndicator from "./MailIndicator";
+import {
+  mailIndicatorShown,
+  mailOnForChat,
+  mailToolRequested,
+  toggleMailForChat,
+  useExchangeMailConnected,
+  withMailSwitchFrom,
+  withMailTool,
+} from "../lib/mailChatSwitch";
 import GuardrailNotices, { GuardrailRefusal } from "./chat/GuardrailNotices";
 import {
   GuardrailRefusalError,
@@ -853,6 +863,13 @@ export default function ChatPanel({
   const agentModeActive = activeAgentSelection !== NO_AGENT_SELECTION;
   const activeAgentName =
     agentCatalog.find((agent) => agent.slug === activeAgentSelection)?.name || "";
+  // The Exchange mailbox: the envelope by the chat box, in personal non-Agent chats only.
+  const exchangeMailConnected = useExchangeMailConnected();
+  const mailIndicatorVisible = mailIndicatorShown({
+    connected: exchangeMailConnected,
+    projectChat: isProjectChat,
+    agentMode: agentsPlatformEnabled && agentModeActive,
+  });
 
   const activeToolCount = useMemo(() => {
     let n = 0;
@@ -2606,7 +2623,7 @@ export default function ChatPanel({
     if (!userPrefsReady || !models.length) return;
     const m = resolveNewChatModel(models, undefined, defaultModel);
     if (!m) return;
-    const freshTools = copyFreshChatTools();
+    const freshTools = withMailSwitchFrom(copyFreshChatTools(), chatToolsRef.current);
     const s = createSession(m, "New chat", freshTools);
     persistSessions((prev) => [s, ...prev], { debounce: false, metadataSessionIds: [s.id] });
     activeIdRef.current = s.id;
@@ -2937,6 +2954,15 @@ export default function ChatPanel({
       !privateMode && sessionId
         ? agentRequestFields(agentSelectionForSession(sessionId))
         : {};
+    // Mail only where the envelope shows and is on, for the chat this turn belongs to.
+    const mailRequested = mailToolRequested(
+      {
+        connected: exchangeMailConnected,
+        projectChat: isProjectChat,
+        agentMode: !!sessionId && agentSelectionForSession(sessionId) !== NO_AGENT_SELECTION,
+      },
+      tools,
+    );
     // Where this history starts in the chat: the server puts anything older in front of it.
     const historyFrom = historyFromSequence(history, privateMode);
     return {
@@ -2946,7 +2972,7 @@ export default function ChatPanel({
       stream: true,
       private_mode: !!(privateMode && !isProjectChat),
       ...(isProjectChat && projectId ? { project_id: projectId } : {}),
-      ...toolsPayload,
+      ...withMailTool(toolsPayload, mailRequested),
       ...agentFields,
       ...(persist
         ? {
@@ -2973,7 +2999,7 @@ export default function ChatPanel({
     if (readOnly) return null;
     const m = resolveNewChatModel(models, model, defaultModel);
     if (!m) return null;
-    const freshTools = copyFreshChatTools();
+    const freshTools = withMailSwitchFrom(copyFreshChatTools(), chatToolsRef.current);
     const s = createSession(m, "New chat", freshTools);
     // flushSync so sessionsRef includes the new chat before the first send turn.
     flushSync(() => {
@@ -7570,6 +7596,12 @@ export default function ChatPanel({
                       onClose={() => setAgentMenuOpen(false)}
                     />
                   </div>
+                  ) : null}
+                  {mailIndicatorVisible ? (
+                    <MailIndicator
+                      on={mailOnForChat(chatTools)}
+                      onToggle={() => updateChatTools(toggleMailForChat(chatToolsRef.current))}
+                    />
                   ) : null}
                   <button
                     type="button"

@@ -15475,6 +15475,54 @@ button.app-toast:hover {
   cursor: not-allowed;
 }
 
+/* The Exchange mailbox by the chat box (components/MailIndicator.tsx): a bare
+   28px icon with the Agent control's colours, hover and focus ring; muted and
+   struck through while mail is off for this chat. */
+.alpha-router-mail-ctrl {
+  position: relative;
+  justify-content: center;
+  min-width: 1.75rem;
+  min-height: 1.75rem;
+  max-width: none;
+  padding: 0.2rem;
+  border: none;
+  background: transparent;
+  border-radius: 0;
+  overflow: visible;
+}
+
+.alpha-router-mail-ctrl:hover:not(:disabled) {
+  background: transparent;
+  border-color: transparent;
+}
+
+.alpha-router-mail-ctrl .alpha-router-composer-ctrl__icon {
+  position: relative;
+  color: var(--text);
+  opacity: 0.92;
+}
+
+.alpha-router-mail-ctrl.is-off .alpha-router-composer-ctrl__icon {
+  color: var(--muted);
+  opacity: 0.85;
+}
+
+.alpha-router-mail-ctrl:hover .alpha-router-composer-ctrl__icon {
+  color: var(--accent);
+  opacity: 1;
+}
+
+.alpha-router-mail-ctrl__strike {
+  position: absolute;
+  inset: 0;
+}
+
+.alpha-router-mail-ctrl:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  outline-offset: 2px;
+  border-radius: 0.4rem;
+}
+
 .alpha-router-agent-menu__empty {
   padding: 0.85rem 0.9rem;
   color: var(--muted);
@@ -19161,6 +19209,16 @@ p.error,
   .app-topbar .topbar-model-search__field::before,
   .app-topbar .topbar-model-search__add::before,
   .app-topbar .alpha-router-model-pill__remove::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: max(100%, 2.75rem);
+    height: max(100%, 2.75rem);
+    transform: translate(-50%, -50%);
+  }
+  /* The mailbox envelope beside Tools and Agent: the same 44px area. */
+  .alpha-router-composer-bar .alpha-router-mail-ctrl::before {
     content: "";
     position: absolute;
     top: 50%;

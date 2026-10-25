@@ -8,9 +8,10 @@ stay thin and every rule about a refused password is kept in one place:
   administrator wants it) ``same_mailbox`` with the account's email, then
   Autodiscover for Full Access mailboxes. A refused password stores nothing
   for a new connection and turns an existing one ``needs_password``; nothing
-  here ever tries a password a second time. Failed attempts are counted
-  (``CONNECT_ATTEMPTS`` in ``CONNECT_WINDOW_S``) so a person cannot lock their
-  own AD account through the form either.
+  here ever tries a password a second time. Every attempt is counted before
+  Exchange is asked (``CONNECT_ATTEMPTS`` in ``CONNECT_WINDOW_S``), so a
+  person cannot lock their own AD account through the form either, and one
+  person's connects run one at a time (``connect_lock``).
 - **Mailboxes.** The own mailbox, those Autodiscover lists, and those added by
   hand after a test read of their Inbox. ``max_mailboxes`` bounds the Full
   Access mailboxes of one person; the own mailbox is not counted.
@@ -29,9 +30,11 @@ subject or recipients' addresses beyond what the person's own screens show.
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 import json
 import logging
+import weakref
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
@@ -51,7 +54,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: Failed connect attempts one person may make in ``CONNECT_WINDOW_S`` (AD lockout is usually 5-10 in 15-30 min).
+#: Connect attempts one person may make in ``CONNECT_WINDOW_S`` (AD lockout is usually 5-10 in 15-30 min).
 CONNECT_ATTEMPTS = 5
 CONNECT_WINDOW_S = 15 * 60
 SENDS_PER_HOUR = 30
@@ -370,7 +373,31 @@ class ConnectOutcome:
 
 
 def connect_attempts_key(user_id: int) -> str:
-    return f"mail:connect-failures:{int(user_id)}"
+    return f"mail:connect-attempts:{int(user_id)}"
+
+
+_connect_locks: weakref.WeakValueDictionary[int, asyncio.Lock] = weakref.WeakValueDictionary()
+
+
+def connect_lock(user_id: int) -> asyncio.Lock:
+    """One connect at a time for a person, in this process: two tabs or a double click never race.
+
+    The second waits for the first to be stored (the API holds it until its
+    commit), then replaces that password instead of creating a second
+    connection. Across processes the database's unique key decides
+    (``connect_in_progress``). A lock nobody holds or waits for is forgotten.
+    """
+    lock = _connect_locks.get(int(user_id))
+    if lock is None:
+        lock = asyncio.Lock()
+        _connect_locks[int(user_id)] = lock
+    return lock
+
+
+def connect_in_progress() -> em.MailError:
+    return em.MailError(
+        "connect_in_progress", "Your mailbox is being connected in another window. Wait a moment and look again.", 409
+    )
 
 
 async def _sign_in(
@@ -402,8 +429,9 @@ async def _sign_in(
 async def connect(db: AsyncSession, user: User, password: str, settings: em.ExchangeSettings) -> ConnectOutcome:
     """Connect the person's mailbox, or replace the password (and login) of their connection.
 
-    Refusals: ``not_eligible`` (403), ``no_login`` (422), ``too_many_attempts``
-    (429), ``invalid_password`` (422), ``exchange_auth`` (400),
+    The caller holds ``connect_lock(user.id)`` until it has committed.
+    Refusals: ``not_eligible`` (403), ``no_login`` (422), ``invalid_password``
+    (422), ``too_many_attempts`` (429), ``exchange_auth`` (400),
     ``mailbox_mismatch`` (400), or another ``exchange_<kind>``.
     """
     await require_eligible(db, user, settings)
@@ -415,26 +443,23 @@ async def connect(db: AsyncSession, user: User, password: str, settings: em.Exch
             "on the Exchange EWS page.",
             422,
         )
-    key = connect_attempts_key(int(user.id))
-    if await rate_limit.failure_limit_reached(key, limit=CONNECT_ATTEMPTS, window_seconds=CONNECT_WINDOW_S):
-        raise em.MailError(
-            "too_many_attempts",
-            "Too many failed attempts. Wait 15 minutes before trying again, so your account is not locked.",
-            429,
-        )
     secret = em.encrypt_password(password)
+    # Counted (and checked, in one step) before Exchange is asked: every attempt, whatever comes of it, so
+    # attempts made at the same moment cannot all slip under the limit.
+    await _hit(
+        connect_attempts_key(int(user.id)),
+        limit=CONNECT_ATTEMPTS,
+        window_s=CONNECT_WINDOW_S,
+        message="Too many attempts to connect. Wait 15 minutes before trying again, so your account is not locked.",
+    )
     try:
         found, delegates = await _sign_in(settings, login, password, em.normalize_smtp(user.email))
     except EwsError as error:
-        await rate_limit.record_failure(key, window_seconds=CONNECT_WINDOW_S)
         existing = await em.get_connection(db, int(user.id))
         if existing is not None and error.kind == "auth":
             # The password the person typed is refused: the stored one is not used again either.
             await em.record_failure(db, existing, error)
         raise ews_refusal(error) from error
-    except em.MailError:
-        await rate_limit.record_failure(key, window_seconds=CONNECT_WINDOW_S)
-        raise
     return await _store_connection(db, user, login, secret, found, delegates, settings)
 
 

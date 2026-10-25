@@ -20,6 +20,7 @@ from typing import Annotated, Any, Literal, NoReturn
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
@@ -116,24 +117,34 @@ async def connect(
     settings: em.ExchangeSettings = Depends(_settings),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    """Connect the mailbox, or give the connection a new password. The password is tried once."""
-    try:
-        outcome = await svc.connect(db, user, body.password, settings)
-    except em.MailError as error:
-        await _answer(db, error)
-    connection = outcome.connection
-    await _audit(
-        db,
-        request,
-        user,
-        "mail_connected" if outcome.created else "mail_password_updated",
-        {
-            "login": str(connection.login),
-            "mailbox": str(connection.primary_smtp),
-            "full_access_count": outcome.full_access_count,
-        },
-    )
-    await db.commit()
+    """Connect the mailbox, or give the connection a new password. The password is tried once.
+
+    One at a time for the person, until committed (``connect_lock``); a first
+    connect that loses the race to another worker answers 409
+    ``connect_in_progress`` rather than failing on the unique key.
+    """
+    async with svc.connect_lock(int(user.id)):
+        try:
+            outcome = await svc.connect(db, user, body.password, settings)
+            connection = outcome.connection
+            await _audit(
+                db,
+                request,
+                user,
+                "mail_connected" if outcome.created else "mail_password_updated",
+                {
+                    "login": str(connection.login),
+                    "mailbox": str(connection.primary_smtp),
+                    "full_access_count": outcome.full_access_count,
+                },
+            )
+            await db.commit()
+        except em.MailError as error:
+            await _answer(db, error)
+        except IntegrityError:
+            # Another worker stored this person's connection meanwhile (uq_mail_connections_user).
+            await db.rollback()
+            await _answer(db, svc.connect_in_progress())
     return await svc.connection_out(db, connection)
 
 

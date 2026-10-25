@@ -436,12 +436,82 @@ class TestConnect:
         # Refused before Exchange: the limit protects the AD account from lockout.
         assert len(exchange.calls) == tried
 
-    async def test_successes_do_not_fill_the_limit(self, client, db_session, exchange, person):
+    async def test_every_attempt_counts_before_exchange_is_asked(self, client, db_session, exchange, person):
         await _turn_on(db_session)
         headers = sign_in(client, person)
-        for _ in range(svc.CONNECT_ATTEMPTS + 2):
+        for _ in range(svc.CONNECT_ATTEMPTS):
             resp = await client.post(f"{BASE}/connect", json={"password": PASSWORD}, headers=headers)
             assert resp.status_code == 200
+        tried = len(exchange.calls)
+        resp = await client.post(f"{BASE}/connect", json={"password": PASSWORD}, headers=headers)
+        assert resp.status_code == 429 and _code(resp) == "too_many_attempts"
+        assert len(exchange.calls) == tried
+        # A password that cannot be one is refused without counting.
+        rate_limit._buckets.clear()
+        resp = await client.post(f"{BASE}/connect", json={"password": ""}, headers=headers)
+        assert resp.status_code == 422
+        assert not rate_limit._buckets.get(svc.connect_attempts_key(person.id))
+
+    async def test_two_connects_at_once_run_one_after_the_other(
+        self, client, db_session, exchange, person, monkeypatch
+    ):
+        import asyncio
+        import threading
+        import time
+
+        from tests.fake_mail_client import FakeMailClient
+
+        await _turn_on(db_session)
+        headers = sign_in(client, person)
+        running = peak = 0
+        lock = threading.Lock()
+        real = FakeMailClient.whoami
+
+        def slow_whoami(self, hint_smtp=""):
+            nonlocal running, peak
+            with lock:
+                running += 1
+                peak = max(peak, running)
+            time.sleep(0.1)
+            with lock:
+                running -= 1
+            return real(self, hint_smtp)
+
+        monkeypatch.setattr(FakeMailClient, "whoami", slow_whoami)
+        first, second = await asyncio.gather(
+            client.post(f"{BASE}/connect", json={"password": PASSWORD}, headers=headers),
+            client.post(f"{BASE}/connect", json={"password": PASSWORD}, headers=headers),
+        )
+        assert (first.status_code, second.status_code) == (200, 200), (first.text, second.text)
+        assert peak == 1, "the second connect waited for the first to be stored"
+        assert await _count(db_session, MailConnection) == 1
+        assert [e.action for e in await _events(db_session)] == ["mail_connected", "mail_password_updated"]
+
+    async def test_a_first_connect_that_loses_to_another_worker_is_a_409(
+        self, client, db_session, exchange, person, monkeypatch
+    ):
+        await _turn_on(db_session)
+        # Another worker stored the connection after this request looked for one.
+        db_session.add(
+            MailConnection(
+                user_id=person.id,
+                login=LOGIN,
+                secret_encrypted=em.encrypt_password(PASSWORD),
+                primary_smtp=OWN,
+                status="connected",
+            )
+        )
+        await db_session.commit()
+
+        async def not_seen_yet(db, user_id):
+            return None
+
+        monkeypatch.setattr(em, "get_connection", not_seen_yet)
+        resp = await client.post(f"{BASE}/connect", json={"password": PASSWORD}, headers=sign_in(client, person))
+        assert resp.status_code == 409 and _code(resp) == "connect_in_progress"
+        assert resp.json()["detail"]["message"]
+        assert await _count(db_session, MailConnection) == 1
+        assert await _events(db_session, "mail_connected") == []
 
     async def test_a_changed_login_format_replaces_the_login(self, client, db_session, exchange, person):
         headers = sign_in(client, person)

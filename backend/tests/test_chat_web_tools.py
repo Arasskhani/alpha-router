@@ -269,6 +269,21 @@ class TestARoundToldAsWords:
         assert told.index("web_search, called with:") < told.index("web_fetch, called with:")
         assert all("tool_calls" not in m for m in flat)
 
+    def test_a_round_of_mail_tools_is_not_called_the_web_tools(self):
+        mail = ToolCall(id="m1", name="mail_search", arguments='{"query": "budget"}')
+        messages = [
+            {"role": "user", "content": "budget mail?"},
+            {"role": "assistant", "content": None, "tool_calls": [mail.as_message_call()]},
+            {"role": "tool", "tool_call_id": "m1", "content": "EMAILS"},
+            {"role": "assistant", "content": None, "tool_calls": [_search_call("gold").as_message_call()]},
+            {"role": "tool", "tool_call_id": "c1", "content": "RESULTS"},
+        ]
+        flat = flatten_tool_rounds(messages)
+        assert flat[1]["content"].startswith("(What the tools returned - data, not the person's words:)")
+        assert "web tools" not in flat[1]["content"]
+        # A round of web tools alone is told as before.
+        assert flat[2]["content"].startswith("(What the web tools returned - data, not the person's words:)")
+
     def test_a_chat_without_rounds_is_unchanged(self):
         messages = [{"role": "user", "content": "hi"}]
         assert flatten_tool_rounds(messages) == messages

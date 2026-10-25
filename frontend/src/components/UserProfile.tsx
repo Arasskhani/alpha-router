@@ -4,11 +4,13 @@ import { api } from "../api";
 import { presentBudgetNotice } from "../lib/budgetNotice";
 import { clearStoredImageGenerationForCurrentUser } from "../lib/chatStorage";
 import { formatSessionDuration, getMyActivityPath, getSessionUser, logout } from "../lib/session";
+import { getMyConnectionsPath } from "../lib/rbac";
+import { useCachedSession } from "../hooks/useCachedSession";
 import { MY_USAGE_AND_ACTIVITY_LABEL } from "../lib/usageActivityLabel";
 import type { CachedTheme } from "../lib/themeCache";
 import { promptInstall, useInstallState } from "../lib/pwa/installPrompt";
 import { markInstallDone } from "../lib/pwa/installSuggestion";
-import { IconActivity, IconLogout } from "./icons/navIcons";
+import { IconActivity, IconLogout, IconPlug } from "./icons/navIcons";
 import InstallInstructionsModal from "./InstallInstructionsModal";
 import SettingsModal from "./SettingsModal";
 import ThemePicker from "./ThemePicker";
@@ -79,6 +81,9 @@ export default function UserProfile({ theme, onThemeChange }: Props) {
   const [budgetLoading, setBudgetLoading] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
   const user = getSessionUser();
+  // Connections (an Exchange mailbox) only for accounts that may connect one.
+  const session = useCachedSession();
+  const showConnections = (session?.features as Record<string, unknown> | null | undefined)?.connections === true;
 
   useEffect(() => {
     if (!user) return;
@@ -180,6 +185,17 @@ export default function UserProfile({ theme, onThemeChange }: Props) {
             <span className="user-profile-menu-icon"><IconActivity /></span>
             <span>{MY_USAGE_AND_ACTIVITY_LABEL}</span>
           </Link>
+          {showConnections ? (
+            <Link
+              to={getMyConnectionsPath(user.role)}
+              className="user-profile-menu-item"
+              role="menuitem"
+              onClick={() => setOpen(false)}
+            >
+              <span className="user-profile-menu-icon"><IconPlug /></span>
+              <span>Connections</span>
+            </Link>
+          ) : null}
           <button
             type="button"
             className="user-profile-menu-item"

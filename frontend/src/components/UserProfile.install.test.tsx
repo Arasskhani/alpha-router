@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const install = vi.hoisted(() => ({ state: "can-prompt" as string, outcome: "accepted" as string }));
 
 vi.mock("../api", () => ({ api: () => new Promise(() => {}) }));
+vi.mock("../hooks/useCachedSession", () => ({ useCachedSession: () => null }));
 vi.mock("../lib/session", () => ({
   getSessionUser: () => ({ username: "sara", display_name: null, role: "user", loginAt: Date.now() }),
   formatSessionDuration: () => "1 min",

@@ -280,6 +280,7 @@ import {
   getComposerDraft,
   syncComposerDraft,
 } from "../lib/composerDrafts";
+import { useChatPrefill } from "../lib/chatPrefill";
 import { inputDirectionForText, textNeedsEnglishTranslation, type TextDirection } from "../lib/textDirection";
 import {
   isPrivateBlobRef,
@@ -3510,6 +3511,21 @@ export default function ChatPanel({
   function clearChatSelection() {
     setSelectedChatIds(new Set());
   }
+
+  // "Ask Alpharouter" on an email (Connections, the mail toasts): a new chat with the prompt in its composer, not sent.
+  useChatPrefill(chatsHydrated && userPrefsReady && models.length > 0 && !isProjectChat && !readOnly, (text) => {
+    const before = activeIdRef.current;
+    startNewChat();
+    const sid = activeIdRef.current;
+    if (!sid || sid === before) return;
+    const direction = inputDirectionForText(text);
+    // The composer takes the new chat's draft when it follows the chat; if it already has, fill it here.
+    syncComposerDraft(sid, text, direction);
+    if (prevComposerSessionRef.current === sid) {
+      setInput(text);
+      setInputDirection(direction);
+    }
+  });
 
   function selectAllVisibleChats() {
     setSelectedChatIds(new Set(filteredSessions.map((s) => s.id)));

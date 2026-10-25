@@ -1077,7 +1077,10 @@ def sent_audit_detail(draft: MailDraft) -> dict[str, Any]:
 
 
 async def discard_draft(db: AsyncSession, user: User, settings: em.ExchangeSettings, draft_id: int) -> MailDraft:
-    """Move the draft to Deleted Items and mark it ``discarded`` (a draft already gone is no error)."""
+    """Move the draft to Deleted Items and mark it ``discarded`` (a draft already gone is no error).
+
+    A ``failed`` draft too: its send was refused, but it is still in Drafts.
+    """
     await require_eligible(db, user, settings)
     draft = await own_draft(db, int(user.id), draft_id)
     settle_stale_sending(draft)
@@ -1085,7 +1088,7 @@ async def discard_draft(db: AsyncSession, user: User, settings: em.ExchangeSetti
         return draft
     if draft.status == "sending":
         raise _send_in_progress()
-    if draft.status != "draft":
+    if draft.status not in ("draft", "failed"):
         raise em.MailError("not_a_draft", "This draft was already sent.", 409)
     usable = await require_usable(db, user, settings)
     mailbox = _draft_mailbox(usable, draft)

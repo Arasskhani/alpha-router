@@ -1187,6 +1187,21 @@ class TestDrafts:
         resp = await client.post(f"{BASE}/drafts/{draft.id}/send", json={"change_key": "ck1"}, headers=headers)
         assert resp.status_code == 409 and _code(resp) == "not_a_draft"
 
+    async def test_a_failed_draft_can_be_discarded(self, client, db_session, exchange, person):
+        headers = sign_in(client, person)
+        await _connected(client, db_session, headers)
+        exchange.accounts[LOGIN.lower()].send_as = ()
+        draft = await _draft(db_session, exchange, person, mailbox="finance@corp.example")
+        resp = await client.post(f"{BASE}/drafts/{draft.id}/send", json={"change_key": "ck1"}, headers=headers)
+        assert resp.status_code == 403
+        (row,) = await _fresh(db_session, MailDraft)
+        assert row.status == "failed"
+        # Still in Drafts: Discard moves it to Deleted Items.
+        resp = await client.post(f"{BASE}/drafts/{draft.id}/discard", headers=headers)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["status"] == "discarded" and resp.json()["error"] is None
+        assert exchange.messages[draft.item_id].folder == "deleted"
+
     async def test_a_sent_draft_cannot_be_discarded(self, client, db_session, exchange, person):
         headers = sign_in(client, person)
         await _connected(client, db_session, headers)

@@ -134,7 +134,7 @@ export default function RequestLogCostDetailsModal({
                 {memoryRows.map((row) => (
                   <div key={row.label} className="api-log-cost-event__full">
                     <dt>{row.label}</dt>
-                    <dd className={row.label.startsWith("Earlier chats") ? "api-log-cost-details__mono" : undefined}>
+                    <dd className={row.mono ? "api-log-cost-details__mono" : undefined}>
                       {row.value}
                     </dd>
                   </div>

@@ -83,15 +83,75 @@ export type MemoryContext = {
     tokens_after?: number;
     summary?: { up_to?: number | null; version?: string | null; tokens?: number } | null;
   } | null;
+  /**
+   * The mail tool calls of the turn (`exchange_mail_tools.MailToolLoop.calls_log`): the tool, its arguments as
+   * the logs may keep them (no body, subject or recipient address: counts and the mailbox only) and the outcome.
+   */
+  mail_tools?: MailToolCall[] | null;
 };
+
+type MailToolCall = { tool: string; args?: Record<string, unknown> | null; result?: string | null };
+
+/** A memory-context row: one label and value, in a fixed-width font when it holds ids or arguments. */
+type ContextRow = { label: string; value: string; mono?: boolean };
+
+const MAIL_RESULT_LABELS: Record<string, string> = {
+  ok: "OK",
+  refused: "Refused",
+  invalid: "Invalid arguments",
+  timeout: "Timed out",
+  stopped: "Stopped",
+  off: "Turned off",
+  unknown: "No such tool",
+  error: "Failed",
+  mailbox_not_allowed: "Mailbox not allowed",
+};
+
+/** "OK", "Timed out", "Exchange: auth"… for a mail tool call's outcome; unknown ones pass through readably. */
+function mailResultLabel(result: string | null | undefined): string {
+  const key = (result || "").trim();
+  if (!key) return "—";
+  if (MAIL_RESULT_LABELS[key]) return MAIL_RESULT_LABELS[key];
+  if (key.startsWith("exchange_")) return `Exchange: ${key.slice("exchange_".length).replace(/_/g, " ")}`;
+  return key.replace(/_/g, " ");
+}
+
+const MAX_ARG_CHARS = 80;
+
+/** "folder: inbox, query: budget, limit: 10": the logged arguments, each cut short. */
+function mailArgsText(args: Record<string, unknown> | null | undefined): string {
+  if (!args || typeof args !== "object" || Array.isArray(args)) return "";
+  return Object.entries(args)
+    .filter(([, value]) => value !== null && value !== undefined && value !== "")
+    .map(([key, value]) => {
+      const text = Array.isArray(value) ? value.map(String).join(" ") : String(value);
+      return `${key}: ${text.length > MAX_ARG_CHARS ? `${text.slice(0, MAX_ARG_CHARS - 1)}…` : text}`;
+    })
+    .join(", ");
+}
+
+/** One row per mail tool call, in the order the model made them. Anything malformed is left out. */
+function mailToolRows(calls: unknown): ContextRow[] {
+  if (!Array.isArray(calls)) return [];
+  return calls
+    .filter((call): call is MailToolCall => !!call && typeof call === "object" && typeof (call as MailToolCall).tool === "string")
+    .map((call, index) => {
+      const args = mailArgsText(call.args);
+      return {
+        label: `Mail tool ${index + 1}`,
+        value: `${call.tool}${args ? ` (${args})` : ""} → ${mailResultLabel(call.result)}`,
+        mono: true,
+      };
+    });
+}
 
 /** The Memory and context rows of a request's details: one label and value each; none when nothing was given. */
 export function memoryContextRows(
   context: MemoryContext | null | undefined,
   formatTime: (iso: string) => string,
-): { label: string; value: string }[] {
+): ContextRow[] {
   if (!context) return [];
-  const rows: { label: string; value: string }[] = [];
+  const rows: ContextRow[] = [];
   const memories = [
     context.memories ? `${context.memories} personal` : "",
     context.project_memories ? `${context.project_memories} project` : "",
@@ -99,7 +159,7 @@ export function memoryContextRows(
   if (memories.length) rows.push({ label: "Memories", value: memories.join(" · ") });
   const chats = context.recalled_chats ?? [];
   if (chats.length) {
-    rows.push({ label: `Earlier chats read (${chats.length})`, value: chats.join(", ") });
+    rows.push({ label: `Earlier chats read (${chats.length})`, value: chats.join(", "), mono: true });
   }
   const fit = context.context_fit;
   if (fit && fit.dropped) {
@@ -122,6 +182,7 @@ export function memoryContextRows(
       rows.push({ label: "Summary used", value: about.join(" · ") || "Yes" });
     }
   }
+  rows.push(...mailToolRows(context.mail_tools));
   return rows;
 }
 

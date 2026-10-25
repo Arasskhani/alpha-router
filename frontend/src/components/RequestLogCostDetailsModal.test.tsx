@@ -87,6 +87,26 @@ describe("the Memory and context section of a request's details", () => {
     expect(shown?.textContent).toContain("4 older messages");
   });
 
+  it("lists the mail tools the turn called, each with its arguments and outcome", () => {
+    render(
+      details({
+        mail_tools: [
+          { tool: "mail_search", args: { folder: "inbox", query: "budget" }, result: "ok" },
+          { tool: "mail_read", args: { refs: ["m7Q2xY"] }, result: "exchange_auth" },
+        ],
+      }),
+    );
+    const rows = [...(section()?.querySelectorAll("dl > div") ?? [])].map((row) => [
+      row.querySelector("dt")?.textContent,
+      row.querySelector("dd")?.textContent,
+      row.querySelector("dd")?.className,
+    ]);
+    expect(rows).toEqual([
+      ["Mail tool 1", "mail_search (folder: inbox, query: budget) → OK", "api-log-cost-details__mono"],
+      ["Mail tool 2", "mail_read (refs: m7Q2xY) → Exchange: auth", "api-log-cost-details__mono"],
+    ]);
+  });
+
   it("is not there for a request that was given nothing, nor for the person's own view, nor while loading", () => {
     render(details(null));
     expect(section()).toBeNull();

@@ -506,6 +506,20 @@ class TestFailures:
             db_session, connection.id, person.email, EwsError("access_denied", "No access.")
         )
 
+    async def test_ews_refused_for_the_login_drops_no_mailbox_and_stops_nothing(self, db_session):
+        person = await _ad_person(db_session)
+        connection = await _connect(db_session, person, boxes=(("finance@corp.example", True),))
+        blocked = EwsError("blocked", "Exchange refused EWS for this login.")
+        assert not await em.record_mailbox_failure(db_session, connection.id, "finance@corp.example", blocked)
+        await em.record_failure(db_session, connection, blocked)
+        assert connection.status == "connected" and connection.consecutive_failures == 1
+        row = (
+            await db_session.execute(
+                select(MailConnectionMailbox).where(MailConnectionMailbox.smtp == "finance@corp.example")
+            )
+        ).scalar_one()
+        assert row.enabled is True and row.last_error is None
+
 
 class TestRefs:
     def test_a_ref_is_short_stable_and_alphanumeric(self):

@@ -239,6 +239,11 @@ _POX_REQUEST = (
     "</AcceptableResponseSchema></Request></Autodiscover>"
 )
 
+BLOCKED_MESSAGE = (
+    "Exchange refused EWS for this login: EWS may be turned off for the mailbox, or Alpharouter is not on the "
+    "EWS allow list."
+)
+
 _SMTP = re.compile(r"^[^@\s<>\"]{1,64}@[^@\s<>\"]{1,255}$")
 _HTTP_CODE = re.compile(r"Code: (\d{3})")
 
@@ -918,9 +923,8 @@ def _http_error(exc: BaseException, where: str) -> EwsError:
     """What is left: an HTTP answer EWS did not wrap in SOAP, or something unexpected."""
     if isinstance(exc, _HttpStatusError):
         if exc.status == 403:
-            return EwsError(
-                "access_denied", "Exchange refused EWS for this login (HTTP 403). EWS may be turned off for it."
-            )
+            # About the login, not one mailbox: no Full Access mailbox may be dropped for it.
+            return EwsError("blocked", BLOCKED_MESSAGE)
         return EwsError("server", f"There is no EWS service{where} (HTTP 404). Check the EWS address.")
     if isinstance(exc, RedirectError):
         return EwsError("server", "Exchange redirected the request. Check the EWS address (.../EWS/Exchange.asmx).")

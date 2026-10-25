@@ -74,6 +74,7 @@ EWS_STATUS: dict[str, int] = {
     "unreachable": 502,
     "tls": 502,
     "access_denied": 403,
+    "blocked": 403,
     "not_found": 404,
     "throttled": 503,
     "mailbox_mismatch": 400,
@@ -81,8 +82,9 @@ EWS_STATUS: dict[str, int] = {
     "conflict": 409,
     "server": 502,
 }
-#: Failures that will likely pass by themselves: a draft that met one is still in Drafts and can be sent again.
-_PASSING_KINDS = ("auth", "unreachable", "tls", "throttled")
+#: Failures that will likely pass by themselves (or are about the login, not the draft): a draft that met one is
+#: still in Drafts and can be sent again.
+_PASSING_KINDS = ("auth", "unreachable", "tls", "throttled", "blocked")
 _MISMATCH = "This password opens another mailbox than yours."
 _AUTODISCOVER_REFUSED = "Autodiscover refused the sign-in, although EWS accepted it."
 

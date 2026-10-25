@@ -24,6 +24,7 @@ ErrorKind = Literal[
     "unreachable",  # DNS, connection refused, timeout
     "tls",  # the certificate could not be verified
     "access_denied",  # logged in, but that mailbox or item is not this login's to read
+    "blocked",  # HTTP 403 for the login itself: EWS turned off for the mailbox, or not on the EWS allow list
     "not_found",  # the item, folder or mailbox does not exist (any more)
     "throttled",  # Exchange asked to slow down
     "mailbox_mismatch",  # the login opens a mailbox other than the account's own

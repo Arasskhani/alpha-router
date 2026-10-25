@@ -347,7 +347,7 @@ def test_an_unset_address_is_invalid_without_a_request() -> None:
     [
         ("fault_code", "ErrorServerBusy", "throttled"),
         ("http_status", 404, "server"),
-        ("http_status", 403, "access_denied"),
+        ("http_status", 403, "blocked"),
     ],
 )
 def test_exchange_answers_that_are_not_mail(

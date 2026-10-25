@@ -524,6 +524,18 @@ class TestMailboxes:
         # A mailbox the login cannot open says nothing about the connection itself.
         assert connection.status == "connected" and connection.consecutive_failures == 0
 
+    async def test_ews_refused_for_the_login_is_exchange_blocked(self, client, db_session, exchange, person):
+        headers = sign_in(client, person)
+        await _connected(client, db_session, headers)
+        exchange.fail_with = EwsError("blocked", "Exchange refused EWS for this login.")
+        resp = await client.post(f"{BASE}/mailboxes", json={"smtp": "hr@corp.example"}, headers=headers)
+        assert resp.status_code == 403 and _code(resp) == "exchange_blocked"
+        (connection,) = await _fresh(db_session, MailConnection)
+        # About the login: counted like other passing failures, the connection keeps running.
+        assert connection.status == "connected" and connection.consecutive_failures == 1
+        boxes = await _fresh(db_session, MailConnectionMailbox, MailConnectionMailbox.smtp == "finance@corp.example")
+        assert boxes[0].enabled is True and boxes[0].last_error is None
+
     async def test_add_is_capped(self, client, db_session, exchange, person):
         headers = sign_in(client, person)
         await _connected(client, db_session, headers, max_mailboxes=1)
@@ -984,6 +996,18 @@ class TestDrafts:
         resp = await client.post(f"{BASE}/drafts/{draft.id}/send", json={"change_key": "ck1"}, headers=headers)
         assert resp.status_code == 409 and _code(resp) == "needs_password"
         assert _calls(exchange, "send_draft") == 1
+
+    async def test_ews_refused_for_the_login_on_send_keeps_the_draft(self, client, db_session, exchange, person):
+        headers = sign_in(client, person)
+        await _connected(client, db_session, headers)
+        draft = await _draft(db_session, exchange, person, mailbox="finance@corp.example")
+        exchange.fail_with = EwsError("blocked", "Exchange refused EWS for this login.")
+        resp = await client.post(f"{BASE}/drafts/{draft.id}/send", json={"change_key": "ck1"}, headers=headers)
+        assert resp.status_code == 403 and _code(resp) == "exchange_blocked"
+        (row,) = await _fresh(db_session, MailDraft)
+        assert row.status == "draft" and row.error
+        boxes = await _fresh(db_session, MailConnectionMailbox, MailConnectionMailbox.smtp == "finance@corp.example")
+        assert boxes[0].enabled is True
 
     async def test_send_off(self, client, db_session, exchange, person):
         headers = sign_in(client, person)

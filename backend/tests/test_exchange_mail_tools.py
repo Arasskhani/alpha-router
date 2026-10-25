@@ -479,6 +479,23 @@ class TestFailures:
         assert FINANCE not in await loop.run(call("mail_list_mailboxes", "c2"))
         assert "is not one of the mailboxes" in await loop.run(call("mail_search", "c3", mailbox=FINANCE))
 
+    async def test_ews_refused_for_the_login_drops_no_shared_mailbox(self, mailbox, session_factory):
+        from app.services.exchange_ews_types import EwsError
+
+        mailbox.exchange.fail_with = EwsError("blocked", "Exchange refused EWS for this login.")
+        loop = await mailbox.loop()
+        text = await loop.run(call("mail_search", mailbox=FINANCE))
+        assert "Exchange refused EWS for this login." in text
+        assert loop.calls_log[-1]["result"] == "exchange_blocked"
+        async with session_factory() as db:
+            row = (
+                await db.execute(select(MailConnectionMailbox).where(MailConnectionMailbox.smtp == FINANCE))
+            ).scalar_one()
+            connection = await db.get(MailConnection, mailbox.connection.id)
+        assert row.enabled is True and row.last_error is None
+        assert connection.status == "connected" and connection.consecutive_failures == 1
+        assert FINANCE in await loop.run(call("mail_list_mailboxes", "c2"))
+
     async def test_exchange_down_is_told_and_counted(self, mailbox, session_factory):
         from app.services.exchange_ews_types import EwsError
 

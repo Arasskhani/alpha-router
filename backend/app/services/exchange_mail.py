@@ -712,7 +712,9 @@ async def record_mailbox_failure(db: AsyncSession, connection_id: int, smtp: str
     """A Full Access mailbox the login can no longer open drops out (turned off, with the reason).
 
     Returns whether it dropped out. The own mailbox never does: its failures
-    are the connection's (``record_failure``).
+    are the connection's (``record_failure``). Only a refusal about that
+    mailbox counts (``access_denied``, ``not_found``): ``blocked`` (HTTP 403,
+    EWS refused for the login) says nothing about it.
     """
     if error.kind not in ("access_denied", "not_found"):
         return False

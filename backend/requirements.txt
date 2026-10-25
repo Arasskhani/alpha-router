@@ -43,6 +43,8 @@ python-multipart>=0.0.17
 ddgs>=9.16.0,<10
 # Guardrails: administrators' patterns run in linear time (RE2), never a catastrophic backtrack.
 google-re2>=1.1.20251105,<2
+# Exchange EWS: a person's own (and Full Access) mailboxes on Exchange Server 2019 / SE, over NTLM.
+exchangelib>=5.6.0,<6
 boto3>=1.35.0
 Pillow>=11.0.0
 pypdf>=5.1.0

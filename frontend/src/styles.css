@@ -17427,8 +17427,10 @@ p.error,
   line-height: 1.45;
 }
 
-/* The primary action of a card never wraps onto a second line. */
+/* The primary action of a card never wraps onto a second line, nor shrinks
+   under its own words beside a long title on a phone. */
 .resource-access-editor__head .btn {
+  flex: none;
   white-space: nowrap;
 }
 
@@ -17965,6 +17967,610 @@ p.error,
 .smtp-actions-hint {
   margin: 0.5rem 0 0;
   text-align: right;
+}
+
+/* ── Exchange EWS admin page (Integrations › Exchange EWS) ──
+   Cards, switch and save bar as on Tickets › Settings; the People table is a
+   data-table that turns into cards on a phone. */
+.ews-admin-intro {
+  margin: 0 0 0.9rem;
+}
+.ews-admin-intro a,
+.ews-admin-card a {
+  color: var(--accent);
+}
+.ews-admin-off {
+  margin-bottom: 0.9rem;
+}
+.ews-admin-off a {
+  color: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.ews-admin-panel {
+  min-width: 0;
+  margin-top: 1rem;
+}
+.ews-admin-load-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+.ews-admin-card {
+  display: grid;
+  align-content: start;
+  gap: 0.8rem;
+  min-width: 0;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+}
+.ews-admin-card h3 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin: 0;
+  font-size: 1rem;
+}
+.ews-admin-card p {
+  margin: 0;
+}
+.ews-admin-card code,
+.ews-admin-example code {
+  font-size: 0.85em;
+  overflow-wrap: anywhere;
+}
+/* The tall Connection card on the left beside Test connection and
+   Notifications; on a narrow screen one column in reading order. */
+.ews-admin-settings {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-areas:
+    "connection test"
+    "connection notify"
+    "chat limits";
+  /* Connection's extra height goes to the second row, not under Test connection. */
+  grid-template-rows: auto 1fr auto;
+  gap: 1rem;
+  align-items: start;
+}
+.ews-admin-card--connection { grid-area: connection; }
+.ews-admin-test { grid-area: test; }
+.ews-admin-card--notify { grid-area: notify; }
+.ews-admin-card--chat { grid-area: chat; }
+.ews-admin-card--limits { grid-area: limits; }
+.ews-admin-panel .input-block {
+  margin-bottom: 0;
+}
+.ews-admin-readonly {
+  margin: 0 0 1rem;
+}
+.ews-admin-field {
+  display: grid;
+  gap: var(--label-gap);
+  min-width: 0;
+}
+.ews-admin-field > label {
+  font-size: var(--label-font);
+  font-weight: 600;
+  color: var(--text);
+}
+.ews-admin-field .input-block,
+.ews-admin-field .admin-model-combobox {
+  width: 100%;
+  min-width: 0;
+}
+.ews-admin-card .input-block.is-invalid {
+  border-color: var(--danger);
+}
+.ews-admin-hint {
+  display: block;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 400;
+  line-height: 1.45;
+}
+.ews-admin-hint--warn {
+  color: #92400e;
+}
+[data-scheme="dark"] .ews-admin-hint--warn {
+  color: #fbbf24;
+}
+.ews-admin-field-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 0.78rem;
+}
+.ews-admin-number {
+  display: grid;
+  gap: 0.25rem;
+}
+.ews-admin-number__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 120px;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.88rem;
+}
+.ews-admin-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  font-size: 0.86rem;
+  line-height: 1.4;
+  cursor: pointer;
+}
+.ews-admin-check input {
+  flex: none;
+  margin-top: 0.2rem;
+}
+.ews-admin-check.is-disabled {
+  cursor: default;
+}
+.ews-admin-check__title {
+  display: block;
+  font-weight: 500;
+}
+/* A disabled radio barely shows its dot in the dark theme: for a read-only
+   administrator the chosen option reads by its words instead. */
+.ews-admin-check input[type="radio"]:disabled:checked + span .ews-admin-check__title {
+  font-weight: 650;
+}
+.ews-admin-check input[type="radio"]:disabled:not(:checked) + span .ews-admin-check__title {
+  color: var(--muted);
+}
+.ews-admin-radios {
+  display: grid;
+  gap: 0.5rem;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.ews-admin-radios legend {
+  margin-bottom: 0.45rem;
+  padding: 0;
+  font-size: var(--label-font);
+  font-weight: 600;
+}
+.ews-admin-example {
+  margin: 0.15rem 0 0;
+  font-size: 0.82rem;
+}
+.ews-admin-warning {
+  margin: 0;
+  font-size: 0.82rem;
+}
+.ews-admin-pem.input-block {
+  min-height: 5.5rem;
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  resize: vertical;
+}
+.ews-admin-switch {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  width: 36px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted) 45%, transparent);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.ews-admin-switch.is-on {
+  background: var(--accent);
+}
+.ews-admin-switch:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+.ews-admin-switch__knob {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.15s ease;
+}
+.ews-admin-switch.is-on .ews-admin-switch__knob {
+  transform: translateX(16px);
+}
+.ews-admin-savebar {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  backdrop-filter: blur(6px);
+}
+.ews-admin-savebar__state {
+  margin-right: auto;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+.ews-admin-savebar__state.is-saved {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* Test connection */
+.ews-admin-test__form {
+  display: grid;
+  gap: 0.75rem;
+}
+.ews-admin-test__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+.ews-admin-test__actions .ews-admin-hint {
+  flex: 1 1 12rem;
+}
+.ews-admin-test__error,
+.ews-admin-test__result .alert {
+  margin: 0;
+}
+.ews-admin-test__result {
+  display: grid;
+  gap: 0.75rem;
+}
+.ews-admin-steps {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ews-admin-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  font-size: 0.86rem;
+}
+.ews-admin-step__icon {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+}
+.ews-admin-step--ok .ews-admin-step__icon {
+  color: #047857;
+  background: color-mix(in srgb, #34d399 20%, transparent);
+}
+.ews-admin-step--fail .ews-admin-step__icon {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 13%, transparent);
+}
+.ews-admin-step--warn .ews-admin-step__icon {
+  color: #b45309;
+  background: color-mix(in srgb, #f59e0b 18%, transparent);
+}
+[data-scheme="dark"] .ews-admin-step--ok .ews-admin-step__icon {
+  color: #34d399;
+}
+[data-scheme="dark"] .ews-admin-step--warn .ews-admin-step__icon {
+  color: #fbbf24;
+}
+.ews-admin-step__text {
+  display: grid;
+  gap: 0.1rem;
+  min-width: 0;
+  padding-top: 0.1rem;
+}
+.ews-admin-step__label {
+  font-weight: 600;
+}
+.ews-admin-step__detail {
+  color: var(--muted);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+.ews-admin-test__found h4 {
+  margin: 0 0 0.3rem;
+  font-size: 0.86rem;
+}
+.ews-admin-test__found p,
+.ews-admin-test__mailboxes {
+  margin: 0;
+  font-size: 0.86rem;
+  overflow-wrap: anywhere;
+}
+.ews-admin-test__mailboxes {
+  display: grid;
+  gap: 0.2rem;
+  padding-left: 1.1rem;
+}
+
+/* Status pills */
+.ews-admin-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.15rem 0.6rem;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.ews-admin-badge i {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.ews-admin-badge--connected { color: #047857; border-color: color-mix(in srgb, #34d399 55%, transparent); }
+.ews-admin-badge--needs_password { color: #a16207; border-color: color-mix(in srgb, #fbbf24 60%, transparent); }
+.ews-admin-badge--error { color: #b91c1c; border-color: color-mix(in srgb, #f87171 55%, transparent); }
+[data-scheme="dark"] .ews-admin-badge--connected { color: #34d399; }
+[data-scheme="dark"] .ews-admin-badge--needs_password { color: #fbbf24; }
+[data-scheme="dark"] .ews-admin-badge--error { color: #f87171; }
+
+/* Overview */
+.ews-admin-stats {
+  margin-bottom: 0.75rem;
+}
+.ews-admin-stats--last {
+  margin-bottom: 1rem;
+}
+.ews-admin-stat__link {
+  display: inline-block;
+  color: inherit;
+  text-decoration: none;
+}
+.ews-admin-stat__link:hover,
+.ews-admin-stat__link:focus-visible {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.ews-admin-checklist {
+  max-width: 52rem;
+}
+.ews-admin-checklist__list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ews-admin-checklist__item {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.65rem;
+  padding: 0.65rem 0;
+  border-top: 1px solid var(--border);
+}
+.ews-admin-checklist__item:first-child {
+  border-top: 0;
+  padding-top: 0.2rem;
+}
+.ews-admin-checklist__mark {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 1.5px solid var(--border);
+  border-radius: 50%;
+  box-sizing: border-box;
+}
+.ews-admin-checklist__item.is-done .ews-admin-checklist__mark {
+  border-color: transparent;
+  color: #047857;
+  background: color-mix(in srgb, #34d399 20%, transparent);
+}
+[data-scheme="dark"] .ews-admin-checklist__item.is-done .ews-admin-checklist__mark {
+  color: #34d399;
+}
+.ews-admin-checklist__item.is-todo .ews-admin-checklist__mark {
+  border-color: color-mix(in srgb, #f59e0b 70%, var(--border));
+}
+.ews-admin-checklist__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.ews-admin-checklist__item.is-todo .ews-admin-checklist__dot {
+  background: transparent;
+}
+.ews-admin-checklist__text {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+}
+.ews-admin-checklist__title {
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+.ews-admin-checklist__action {
+  font-size: 0.84rem;
+  white-space: nowrap;
+}
+.ews-admin-checklist__guide {
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--border);
+}
+
+/* People */
+.ews-admin-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.9rem;
+}
+.ews-admin-search.input-block {
+  width: 280px;
+  max-width: 100%;
+}
+.ews-admin-status-filter.input-block {
+  width: 160px;
+  max-width: 100%;
+}
+.ews-admin-toolbar__count {
+  margin-left: auto;
+}
+.ews-admin-people__card {
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+}
+.ews-admin-people__card.is-loading {
+  opacity: 0.6;
+}
+.ews-admin-people__scroll.table-wrap {
+  margin-bottom: 0;
+}
+.ews-admin-people__table.data-table td {
+  vertical-align: top;
+}
+.ews-admin-person {
+  display: grid;
+  gap: 0.1rem;
+}
+.ews-admin-person__name {
+  font-weight: 600;
+}
+.ews-admin-person .muted-text,
+.ews-admin-people__error {
+  font-size: 0.8rem;
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+.ews-admin-people__error {
+  max-width: 18rem;
+}
+/* On a wide screen a login or an address stays on one line (the table
+   scrolls inside its card when it must); a phone card wraps them. */
+@media (min-width: 769px) {
+  .ews-admin-people__table.data-table td.ews-admin-nowrap {
+    white-space: nowrap;
+    word-break: normal;
+    overflow-wrap: normal;
+  }
+  .ews-admin-person,
+  .ews-admin-people__error {
+    min-width: 9rem;
+  }
+}
+.ews-admin-people__actions {
+  text-align: right;
+  white-space: nowrap;
+}
+.ews-admin-people__empty {
+  margin: 0;
+  padding: 1.25rem 1rem;
+  text-align: center;
+}
+.ews-admin-pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  padding: 0.6rem 0.75rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.84rem;
+}
+.ews-admin-pager > span:first-child {
+  margin-right: auto;
+}
+.ews-admin-danger-ghost.btn {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+}
+
+/* Access */
+.ews-admin-access__note {
+  margin: 0 0 0.75rem;
+}
+.ews-admin-access a {
+  color: var(--accent);
+}
+.ews-admin-access__editor {
+  max-width: 60rem;
+  margin-top: 0.75rem;
+}
+
+@media (max-width: 900px) {
+  .ews-admin-settings {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: none;
+    grid-template-rows: none;
+  }
+  .ews-admin-settings > .ews-admin-card {
+    grid-area: auto;
+  }
+}
+@media (max-width: 768px) {
+  .ews-admin-number__row {
+    grid-template-columns: minmax(0, 1fr) 96px;
+  }
+  .ews-admin-checklist__item {
+    grid-template-columns: 22px minmax(0, 1fr);
+  }
+  .ews-admin-checklist__action {
+    grid-column: 2;
+  }
+  .ews-admin-search.input-block,
+  .ews-admin-status-filter.input-block {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+  .ews-admin-toolbar__count {
+    margin-left: 0;
+  }
+  /* The rows are cards of their own on a phone: no frame around them. */
+  .ews-admin-people__card {
+    overflow: visible;
+    border: 0;
+    background: transparent;
+  }
+  .ews-admin-people__table.data-table.data-table--cards tr:has(> td[data-card-role="actions"]) > td[data-card-role="title"] {
+    padding-inline-end: 0;
+  }
+  .ews-admin-people__table.data-table.data-table--cards td[data-card-role="actions"] {
+    padding-top: 0.35rem;
+    text-align: end;
+  }
+  .ews-admin-people__error {
+    max-width: none;
+  }
+  /* A card says nothing about an error it does not have. */
+  .ews-admin-people__table.data-table--cards td.ews-admin-people__error--none {
+    display: none;
+  }
+  .ews-admin-pager {
+    padding-inline: 0;
+  }
+  /* The state on a line of its own, the two buttons together under it. */
+  .ews-admin-savebar__state {
+    flex: 1 1 100%;
+  }
 }
 
 /* ── Connections (the person's Exchange mailbox) ── */

@@ -440,6 +440,15 @@ def _working_days_on(first: datetime.date, count: int) -> datetime.date:
         day += datetime.timedelta(days=1)
 
 
+def _log_fault(what: str, exc: BaseException) -> None:
+    """A fault, logged by its kind: its message may quote an email (a database error lists the values it had).
+
+    The whole traceback goes to DEBUG only, where subjects may appear.
+    """
+    logger.error("%s: %s", what, type(exc).__name__)
+    logger.debug("%s", what, exc_info=exc)
+
+
 class _Answer(Exception):
     """A call that ends early with something to tell the model (a wrong argument, an allowance used up)."""
 
@@ -570,16 +579,16 @@ class MailToolLoop:
                 outcome = "ok"
             except _Answer as answer:
                 parts, outcome = [_plain(answer.text)], answer.outcome
-            except Exception:  # noqa: BLE001 -- a fault of ours: the model is told, the turn goes on
+            except Exception as exc:  # noqa: BLE001 -- a fault of ours: the model is told, the turn goes on
                 await db.rollback()
-                logger.exception("Mail tool %s failed for user %s", call.name, self.access.user_id)
+                _log_fault(f"Mail tool {call.name} failed for user {self.access.user_id}", exc)
                 return f"The {call.name} call failed unexpectedly. Tell the user it did not work.", "error"
             # What the call changed (refs, a draft's row, the connection's state) is kept whatever the check says.
             await db.commit()
             try:
                 text = await self._finish(db, parts)
-            except Exception:  # noqa: BLE001 -- unchecked, the result is withheld; the turn goes on
-                logger.exception("A mail tool result could not be checked for user %s", self.access.user_id)
+            except Exception as exc:  # noqa: BLE001 -- unchecked, the result is withheld; the turn goes on
+                _log_fault(f"A mail tool result could not be checked for user {self.access.user_id}", exc)
                 return WITHHELD.format(reason="it could not be checked."), "error"
         return text, outcome
 

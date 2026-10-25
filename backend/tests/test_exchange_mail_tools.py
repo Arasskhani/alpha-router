@@ -486,6 +486,20 @@ class TestFailures:
         assert "did not finish within" in text and "timed out" in text
         assert loop.calls_log[-1]["result"] == "timeout"
 
+    async def test_a_fault_of_ours_is_told_and_logged_by_its_kind_only(self, mailbox, monkeypatch, caplog):
+        loop = await mailbox.loop()
+
+        async def broken(db, args):
+            raise RuntimeError("Subject: Salary review for Ali")
+
+        monkeypatch.setattr(loop, "_search", broken)
+        with caplog.at_level(logging.INFO, logger="app.services.exchange_mail_tools"):
+            text = await loop.run(call("mail_search"))
+        assert text == "The mail_search call failed unexpectedly. Tell the user it did not work."
+        logged = "\n".join(r.getMessage() for r in caplog.records)
+        assert "RuntimeError" in logged and "Salary review" not in logged
+        assert loop.calls_log[-1]["result"] == "error"
+
 
 # --- people and free time ------------------------------------------------------------------------------------------
 

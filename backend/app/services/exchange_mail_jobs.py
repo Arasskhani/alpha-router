@@ -514,8 +514,10 @@ async def job_mail_needs_action() -> None:
         async with slots:
             try:
                 return await check_connection(connection_id, settings, now)
-            except Exception:  # noqa: BLE001 -- one connection's fault does not hold the others back
-                logger.exception("Mail needs-action: checking connection %s failed", connection_id)
+            except Exception as exc:  # noqa: BLE001 -- one connection's fault does not hold the others back
+                # By its kind only: a database error's message lists the values it had (a subject, a sender).
+                logger.error("Mail needs-action: checking connection %s failed: %s", connection_id, type(exc).__name__)
+                logger.debug("Mail needs-action: connection %s", connection_id, exc_info=exc)
                 return 0
 
     added = await asyncio.gather(*(one(connection_id) for connection_id in due))

@@ -17967,6 +17967,296 @@ p.error,
   text-align: right;
 }
 
+/* ── Connections (the person's Exchange mailbox) ── */
+.mail-card {
+  max-width: 60rem;
+  padding: 1rem 1.1rem;
+}
+.mail-card__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.85rem;
+}
+.mail-card__head h2,
+.mail-section-head h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+.mail-card__icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+.mail-card__icon svg {
+  width: 16px;
+  height: 16px;
+}
+.mail-status {
+  margin-inline-start: auto;
+}
+.support-badge.mail-status--connected {
+  --support-tone: #34d399;
+}
+.support-badge.mail-status--needs_password {
+  --support-tone: #fbbf24;
+}
+.support-badge.mail-status--error {
+  --support-tone: #f87171;
+}
+.mail-ineligible {
+  margin: 0;
+  color: var(--muted);
+}
+.mail-connect > p {
+  margin: 0 0 0.5rem;
+}
+.mail-capabilities {
+  display: grid;
+  gap: 0.2rem;
+  margin: 0 0 0.75rem;
+  padding-inline-start: 1.25rem;
+}
+.mail-connect > .mail-promise {
+  margin-bottom: 0.25rem;
+  font-weight: 600;
+}
+.mail-password {
+  max-width: 46rem;
+  margin: 0.85rem 0 0;
+}
+.mail-connected .mail-password {
+  margin: 0 0 1rem;
+}
+.mail-password__login {
+  color: var(--muted);
+  background: var(--bg);
+}
+.mail-password__actions,
+.mail-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.mail-card__actions {
+  margin: 0 0 1rem;
+}
+.mail-alert {
+  margin: 0 0 0.75rem;
+}
+.mail-identity {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+  margin-bottom: 0.85rem;
+}
+.mail-identity__smtp {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.mail-identity__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 1rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+.mail-danger-ghost.btn {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+}
+.mail-setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0 0 1rem;
+  padding: 0.75rem 0;
+  border-block: 1px solid var(--border);
+}
+.mail-setting__text {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+}
+.mail-setting__label {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+.mail-setting .smtp-hint {
+  margin: 0;
+}
+.mail-setting .alpha-router-toggle {
+  flex: none;
+}
+.mail-section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.6rem;
+  margin-bottom: 0.35rem;
+}
+.mail-section-head h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+.mail-section-hint {
+  margin: 0 0 0.6rem;
+}
+.mail-mailbox-table thead th {
+  border-bottom: 1px solid var(--border);
+}
+.mail-mailbox-table td:first-child {
+  min-width: 12rem;
+}
+.mail-mailbox__smtp {
+  display: block;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.mail-mailbox__name {
+  display: block;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+.mail-mailbox__error {
+  display: block;
+  margin-top: 0.15rem;
+  color: var(--danger);
+  font-size: 0.8rem;
+  font-weight: 400;
+}
+.mail-mailbox-tools {
+  display: grid;
+  gap: 0.85rem;
+  margin-top: 0.85rem;
+}
+.mail-add {
+  max-width: 34rem;
+}
+.mail-add > label {
+  display: block;
+  margin-bottom: var(--label-gap);
+  font-size: var(--label-font);
+  font-weight: 600;
+}
+.mail-add__row {
+  display: flex;
+  gap: 0.5rem;
+}
+.mail-add__row .input-block {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-bottom: 0;
+}
+.mail-add .smtp-hint {
+  margin: 0.35rem 0 0;
+}
+.mail-find {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.75rem;
+}
+.mail-find .smtp-hint {
+  margin: 0;
+}
+.mail-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.4rem;
+  height: 1.4rem;
+  padding: 0 0.4rem;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font-size: 0.75rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.mail-actions .mail-section-head {
+  margin-bottom: 0.75rem;
+}
+.mail-action-list {
+  display: grid;
+  gap: 0.6rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.mail-action {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.6rem 1rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.mail-action__main {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+}
+.mail-action__subject {
+  font-weight: 600;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.mail-action__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.75rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+.mail-action__reason {
+  font-size: 0.86rem;
+}
+.mail-action__buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+.mail-important {
+  display: inline-block;
+  margin-inline-start: 0.5rem;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, #f59e0b 16%, transparent);
+  color: color-mix(in srgb, #f59e0b 60%, var(--text));
+  font-size: 0.72rem;
+  font-weight: 700;
+  vertical-align: 0.1em;
+}
+@media (max-width: 768px) {
+  .mail-card {
+    padding: 0.85rem 0.9rem;
+  }
+  .mail-action {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .mail-action__buttons {
+    justify-content: flex-start;
+  }
+  .mail-mailbox-table td:first-child {
+    min-width: 0;
+  }
+}
+
 /* ── Phone layout (≤768px; usePhoneLayout() in the code uses the same query) ──
    Placed last on purpose: an earlier attempt at these rules sat above the
    base rules it meant to override and never applied. Side panels become

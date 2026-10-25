@@ -6,6 +6,7 @@ import Modal from "./Modal";
 import { useConfirm } from "../context/ConfirmContext";
 import { PRODUCT_NAME } from "../lib/brand";
 import { formatLocalDateTime } from "../lib/dateTime";
+import { EXCHANGE_BLOCKED_TEXT } from "./mail/mailFormat";
 import {
   MailApiError,
   isLiveDraft,
@@ -20,6 +21,7 @@ import {
 
 export const CONFLICT_NOTICE = "The draft changed in Outlook; check it again";
 export const SEND_OFF_NOTICE = `Sending from ${PRODUCT_NAME} is turned off by your administrator. Open the draft in Outlook to send it.`;
+export const SENDING_ELSEWHERE_NOTICE = "This draft is already being sent from another window. Check again in a moment.";
 
 type Notice = { tone: "info" | "warning"; text: string };
 
@@ -34,7 +36,7 @@ type Props = {
 };
 
 /** Codes that mean the mailbox itself is out of reach: the draft is not the problem. */
-const MAILBOX_CODES = new Set(["needs_password", "exchange_auth", "not_connected", "not_eligible"]);
+const MAILBOX_CODES = new Set(["needs_password", "exchange_auth", "connection_error", "not_connected", "not_eligible"]);
 
 function serverText(err: unknown, fallback: string): string {
   return err instanceof MailApiError && err.serverMessage ? err.message : fallback;
@@ -48,6 +50,17 @@ function problemFor(err: unknown): Problem {
         connections: true,
         retry: false,
       };
+    }
+    if (err.code === "connection_error") {
+      // Stopped after repeated failures: typing the password again in Connections restarts it. No retry here.
+      return {
+        message: "The connection to your mailbox stopped. Enter your password again in Connections to reconnect, then try again.",
+        connections: true,
+        retry: false,
+      };
+    }
+    if (err.code === "exchange_blocked") {
+      return { message: EXCHANGE_BLOCKED_TEXT, connections: false, retry: true };
     }
     if (err.code === "not_connected") {
       return { message: "Your mailbox is not connected. Connect it in Connections first.", connections: true, retry: false };
@@ -90,6 +103,13 @@ function StatusNote({ draft }: { draft: MailDraft }) {
     return (
       <p className="alert alert-error" role="alert">
         The email was not sent{draft.error ? `: ${draft.error}` : "."}
+      </p>
+    );
+  }
+  if (draft.status === "sending") {
+    return (
+      <p className="alert alert-info" role="status">
+        This email is being sent right now.
       </p>
     );
   }
@@ -167,6 +187,16 @@ export default function MailReviewDialog({ card, onDraft, onClose }: Props) {
     }
     if (code && MAILBOX_CODES.has(code)) {
       setProblem(problemFor(err));
+      return;
+    }
+    if (code === "send_in_progress") {
+      // Another window claimed it: show where it stands now, with why.
+      readAgain({ tone: "info", text: SENDING_ELSEWHERE_NOTICE });
+      return;
+    }
+    if (code === "exchange_blocked") {
+      // About the login, not this draft: reading it again would be refused the same way.
+      setActionError(EXCHANGE_BLOCKED_TEXT);
       return;
     }
     if (err instanceof MailApiError && err.status === 429) {

@@ -20,7 +20,7 @@ vi.mock("../context/ConfirmContext", () => ({ useConfirm: () => dialogs }));
 
 import { authFetch } from "../api";
 import type { MailDraft, MailDraftCard, MailDraftLive } from "../lib/exchangeMail";
-import MailReviewDialog, { CONFLICT_NOTICE, SEND_OFF_NOTICE } from "./MailReviewDialog";
+import MailReviewDialog, { CONFLICT_NOTICE, SEND_OFF_NOTICE, SENDING_ELSEWHERE_NOTICE } from "./MailReviewDialog";
 
 const CARD: MailDraftCard = {
   id: 12,
@@ -361,6 +361,66 @@ describe("MailReviewDialog", () => {
     await click(button("Send"));
     expect(text()).toContain("Exchange no longer accepts the saved password.");
     expect(button("Send")).toBeUndefined();
+  });
+
+  it("sends a stopped connection to Connections, without a retry that would only loop", async () => {
+    handler = (url) => (url === "/api/mail/drafts/12" ? refusal(409, "connection_error", "Stopped.") : undefined);
+    await render();
+    expect(text()).toContain("The connection to your mailbox stopped. Enter your password again in Connections");
+    expect(button("Try again")).toBeUndefined();
+    expect(button("Send")).toBeUndefined();
+    expect(link("Open Connections")).toBeTruthy();
+    expect(reads()).toHaveLength(1);
+
+    act(() => root.unmount());
+    root = createRoot(host);
+    handler = (url) => (url === "/api/mail/drafts/12/send" ? refusal(409, "connection_error", "Stopped.") : undefined);
+    await render();
+    await click(button("Send"));
+    expect(text()).toContain("The connection to your mailbox stopped.");
+    expect(link("Open Connections")).toBeTruthy();
+    expect(reads()).toHaveLength(2);
+  });
+
+  it("says a send from another window is under way and shows the draft as it is now", async () => {
+    let read = 0;
+    handler = (url, method) => {
+      if (url === "/api/mail/drafts/12" && method === "GET") {
+        read += 1;
+        return read === 1 ? json(LIVE) : json({ ...SENT, status: "sending", sent_at: null });
+      }
+      if (url === "/api/mail/drafts/12/send") return refusal(409, "send_in_progress", "Being sent.");
+      return undefined;
+    };
+    await render();
+    await click(button("Send"));
+    expect(reads()).toHaveLength(2);
+    expect(text()).toContain(SENDING_ELSEWHERE_NOTICE);
+    expect(text()).toContain("This email is being sent right now.");
+    expect(button("Send")).toBeUndefined();
+    expect(button("Discard")).toBeUndefined();
+    expect(onDraft).toHaveBeenLastCalledWith(expect.objectContaining({ status: "sending" }));
+  });
+
+  it("says plainly when Exchange refuses EWS for the login", async () => {
+    let read = 0;
+    handler = (url, method) => {
+      if (url !== "/api/mail/drafts/12" || method !== "GET") return undefined;
+      read += 1;
+      return read === 1 ? refusal(403, "exchange_blocked", "blocked") : json(LIVE);
+    };
+    await render();
+    expect(text()).toContain("Exchange refused EWS for your login");
+    expect(link("Open Connections")).toBeUndefined();
+    await click(button("Try again"));
+    expect(button("Send")).toBeTruthy();
+
+    handler = (url) => (url === "/api/mail/drafts/12/send" ? refusal(403, "exchange_blocked", "blocked") : undefined);
+    const before = reads().length;
+    await click(button("Send"));
+    expect(text()).toContain("Exchange refused EWS for your login");
+    expect(reads()).toHaveLength(before);
+    expect(button("Send")?.disabled).toBe(false);
   });
 
   it("says a draft that is not the person's was not found", async () => {

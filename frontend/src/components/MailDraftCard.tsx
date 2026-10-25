@@ -41,7 +41,8 @@ export default function MailDraftCard({ card }: { card: DraftCard }) {
   const onDraft = useCallback((draft: MailDraft | MailDraftLive) => {
     if (isLiveDraft(draft)) setOwaUrl(safeOwaUrl(draft.owa_url));
     rememberDraftOutcome(draft);
-    setOutcome(draft.status === "draft" ? null : { status: draft.status, error: draft.error });
+    // Still a draft, or being sent from another window: not an outcome yet, Review & send still opens it.
+    setOutcome(draft.status === "draft" || draft.status === "sending" ? null : { status: draft.status, error: draft.error });
   }, []);
 
   const closeReview = () => {

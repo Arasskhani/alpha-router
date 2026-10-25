@@ -19,7 +19,8 @@ export type ConnectionStatus = "connected" | "needs_password" | "error";
 type MailboxKind = "own" | "full_access";
 export type MailboxSource = "own" | "autodiscover" | "manual";
 export type DraftKind = "new" | "reply" | "reply_all" | "forward";
-export type DraftStatus = "draft" | "sent" | "discarded" | "failed";
+/** `sending`: another request is sending it right now (the server holds that claim for up to 10 minutes). */
+export type DraftStatus = "draft" | "sending" | "sent" | "discarded" | "failed";
 type ActionKind = "reply" | "schedule" | "review" | "approve" | "other";
 type ActionStatus = "new" | "notified" | "dismissed" | "done";
 type EligibilityReason =

@@ -43,7 +43,8 @@ export function readStreamMailDrafts(
   return mergeMailDraftCards(previous, readMailDraftCards((alphaRouter as Record<string, unknown>).mail_drafts));
 }
 
-export type FinishedDraftStatus = Exclude<DraftStatus, "draft">;
+/** What cannot change again. `sending` can: it ends sent, or failed, or (a stale claim) back in Drafts. */
+export type FinishedDraftStatus = Exclude<DraftStatus, "draft" | "sending">;
 export type DraftOutcome = { status: FinishedDraftStatus; error: string | null };
 
 const OUTCOMES_KEY = "alpha_router_mail_draft_outcomes";

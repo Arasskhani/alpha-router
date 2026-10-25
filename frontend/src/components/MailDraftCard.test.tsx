@@ -171,6 +171,15 @@ describe("MailDraftCard", () => {
     expect(link("Open in Outlook", card())?.href).toBe(LIVE.owa_url);
   });
 
+  it("keeps Review & send for a draft being sent from another window: it is not an outcome yet", async () => {
+    responses["GET /api/mail/drafts/12"] = () => json({ ...LIVE, status: "sending", change_key: undefined });
+    await render(<MailDraftCard card={CARD} />);
+    await click(button("Review & send", card()));
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain("This email is being sent right now.");
+    expect(card().querySelector(".mail-draft-card__status")).toBeNull();
+    expect(button("Review & send", card())).toBeTruthy();
+  });
+
   it("shows a draft the dialog found gone from Drafts as discarded, with the server's reason", async () => {
     responses["GET /api/mail/drafts/12"] = () =>
       json({

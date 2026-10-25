@@ -8,7 +8,18 @@ import { MailApiError, type ActionItem } from "../../lib/exchangeMail";
 export type MailErrorContext = "connect" | "mailbox" | "action";
 
 /** The codes after which the page's picture of the connection is out of date: read it again. */
-export const STALE_CODES = new Set(["not_eligible", "not_connected", "needs_password", "exchange_auth"]);
+export const STALE_CODES = new Set([
+  "not_eligible",
+  "not_connected",
+  "needs_password",
+  "exchange_auth",
+  "connection_error",
+  "connect_in_progress",
+]);
+
+/** What a person reads when Exchange refuses EWS for their login (HTTP 403): only an administrator can fix it. */
+export const EXCHANGE_BLOCKED_TEXT =
+  "Exchange refused EWS for your login: EWS may be turned off for your mailbox, or Alpharouter is not on the EWS allow list. Tell your administrator.";
 
 export function mailErrorCode(err: unknown): string | null {
   return err instanceof MailApiError ? err.code : null;
@@ -40,6 +51,14 @@ export function mailErrorText(err: unknown, context: MailErrorContext = "action"
       return "Your mailbox is not connected.";
     case "needs_password":
       return "Your password is needed again. Enter it under Update password.";
+    case "connection_error":
+      return "The connection to your mailbox stopped after repeated failures. Enter your password under Update password to reconnect.";
+    case "exchange_blocked":
+      return EXCHANGE_BLOCKED_TEXT;
+    case "connect_in_progress":
+      return "Your mailbox is being connected in another window. Wait a moment, then try again.";
+    case "send_in_progress":
+      return "This draft is already being sent from another window.";
     case "invalid_address":
       return "That is not a valid email address.";
     case "already_added":

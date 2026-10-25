@@ -392,7 +392,11 @@ describe("not connected", () => {
     ["exchange_unreachable", 502, "Alpharouter cannot reach the Exchange server."],
     ["exchange_tls", 502, "The Exchange server's certificate is not trusted. Tell your administrator."],
     ["not_eligible", 403, "Your administrator has not allowed you to connect a mailbox."],
+    ["exchange_blocked", 403, "Exchange refused EWS for your login: EWS may be turned off for your mailbox"],
+    ["connect_in_progress", 409, "Your mailbox is being connected in another window. Wait a moment, then try again."],
   ];
+  /** The refusals after which the page's picture of the connection may be out of date. */
+  const staleOnes = new Set(["exchange_auth", "not_eligible", "connect_in_progress"]);
 
   it.each(refusals)("shows %s inline and clears the password", async (code, httpStatus, expected) => {
     handler = (url, method) =>
@@ -406,7 +410,7 @@ describe("not connected", () => {
     expect(alerts().join(" ")).toContain(expected);
     expect(byLabel<HTMLInputElement>("Password").value).toBe("");
     // Only a refusal that may have changed the connection re-reads the session.
-    expect(vi.mocked(bootstrapSession).mock.calls.length > 0).toBe(code === "exchange_auth" || code === "not_eligible");
+    expect(vi.mocked(bootstrapSession).mock.calls.length > 0).toBe(staleOnes.has(code));
     expect(text()).not.toContain("Your mailbox is connected.");
   });
 
@@ -607,6 +611,8 @@ describe("mailboxes", () => {
     ["exchange_not_found", 404, "No mailbox was found at this address."],
     ["manual_mailboxes_off", 403, "Adding mailboxes yourself is turned off by your administrator."],
     ["exchange_auth", 400, "Exchange no longer accepts your saved password."],
+    ["connection_error", 409, "The connection to your mailbox stopped after repeated failures."],
+    ["exchange_blocked", 403, "Exchange refused EWS for your login"],
   ];
 
   it.each(refusals)("shows %s when adding", async (code, httpStatus, expected) => {
@@ -617,6 +623,16 @@ describe("mailboxes", () => {
     expect(alerts().join(" ")).toContain(expected);
     // The address stays for the person to fix.
     expect(byLabel<HTMLInputElement>("Add a mailbox").value).toBe("x@corp.example");
+  });
+
+  it("reads the status again when the connection stopped (connection_error)", async () => {
+    handler = (url, method) =>
+      url === "/api/mail/mailboxes" && method === "POST" ? refusal(409, "connection_error") : undefined;
+    await render();
+    const before = calls.filter((c) => c.url === "/api/mail/status").length;
+    await type(byLabel<HTMLInputElement>("Add a mailbox"), "x@corp.example");
+    await click(button("Add"));
+    expect(calls.filter((c) => c.url === "/api/mail/status").length).toBe(before + 1);
   });
 
   it("reads the status again after the saved password was refused", async () => {

@@ -99,7 +99,11 @@ export default function MailActionList({
                   <span className="mail-action__meta">
                     <span dir="auto">{senderLabel(item)}</span>
                     {when ? <span title={formatLocalDateTime(when)}>{agoText(when)}</span> : null}
-                    {other ? <span className="support-cat">{item.mailbox}</span> : null}
+                    {other ? (
+                      <span className="support-cat mail-action__mailbox" title={item.mailbox}>
+                        {item.mailbox}
+                      </span>
+                    ) : null}
                   </span>
                   {item.reason ? (
                     <span className="mail-action__reason" dir="auto">

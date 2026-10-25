@@ -8,6 +8,8 @@
  * Find again, the notification switch, what the administrator's switches hide,
  * and the "Waiting for your action" list with its four buttons.
  */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
@@ -805,5 +807,35 @@ describe("waiting for your action", () => {
     } finally {
       HTMLElement.prototype.scrollIntoView = original;
     }
+  });
+});
+
+describe("an email's row on a narrow screen", () => {
+  const css = readFileSync(join(__dirname, "../../styles.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  /** The declarations of the rule whose selector is exactly `selector`. */
+  const rule = (selector: string) => {
+    const re = /([^{}]+)\{([^{}]*)\}/g;
+    let m: RegExpExecArray | null;
+    let found = "";
+    while ((m = re.exec(css))) if (m[1].trim() === selector) found += m[2];
+    return found.replace(/\s+/g, " ");
+  };
+
+  it("keeps the subject and the mailbox within the card", () => {
+    expect(rule(".mail-action__main")).toContain("grid-template-columns: minmax(0, 1fr)");
+    expect(rule(".mail-action__main")).toContain("min-width: 0");
+    expect(rule(".mail-action__subject")).toContain("overflow-wrap: anywhere");
+    const chip = rule(".mail-action__meta > .mail-action__mailbox");
+    expect(chip).toContain("max-width: 100%");
+    expect(chip).toContain("overflow: hidden");
+    expect(chip).toContain("text-overflow: ellipsis");
+  });
+
+  it("names another mailbox in full in the chip's tooltip", async () => {
+    openItems = [{ ...ITEM_2, mailbox: "a-very-long-shared-mailbox-name-for-the-finance-department@corp.example" }];
+    await render();
+    const chip = document.querySelector<HTMLElement>(".mail-action__mailbox")!;
+    expect(chip.textContent).toBe("a-very-long-shared-mailbox-name-for-the-finance-department@corp.example");
+    expect(chip.title).toBe(chip.textContent);
   });
 });

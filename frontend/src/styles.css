@@ -19061,12 +19061,16 @@ p.error,
   border-radius: 12px;
   background: var(--surface);
 }
+/* One column no wider than the card: a long subject or mailbox address wraps
+   or ends in an ellipsis instead of widening the grid past a phone's edge. */
 .mail-action__main {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 0.2rem;
   min-width: 0;
 }
 .mail-action__subject {
+  min-width: 0;
   font-weight: 600;
   line-height: 1.4;
   overflow-wrap: anywhere;
@@ -19079,6 +19083,14 @@ p.error,
   color: var(--muted);
   font-size: 0.82rem;
   overflow-wrap: anywhere;
+}
+.mail-action__meta > span {
+  min-width: 0;
+}
+.mail-action__meta > .mail-action__mailbox {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .mail-action__reason {
   font-size: 0.86rem;

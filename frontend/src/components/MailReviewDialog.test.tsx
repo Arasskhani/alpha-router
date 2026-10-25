@@ -296,6 +296,37 @@ describe("MailReviewDialog", () => {
     expect(onDraft).toHaveBeenLastCalledWith(expect.objectContaining({ status: "failed" }));
   });
 
+  it("says why a failed draft could not be discarded, and keeps Discard to try again", async () => {
+    const failed = { ...SENT, status: "failed" as const, sent_at: null, error: "You may not send as this mailbox." };
+    handler = (url, method) => {
+      if (url === "/api/mail/drafts/12" && method === "GET") return json(failed);
+      if (url === "/api/mail/drafts/12/discard") return refusal(502, "exchange_unreachable", "Exchange could not be reached.");
+      return undefined;
+    };
+    await render();
+    expect(text()).toContain("The email was not sent: You may not send as this mailbox.");
+    await click(button("Discard"));
+    expect(calls.filter((c) => c.url === "/api/mail/drafts/12/discard" && c.method === "POST")).toHaveLength(1);
+    const alerts = [...dialog()!.querySelectorAll('[role="alert"]')].map((a) => a.textContent);
+    expect(alerts).toContain("Exchange could not be reached.");
+    expect(button("Discard")?.disabled).toBe(false);
+  });
+
+  it("does not repeat a failed send's error once the draft shows it", async () => {
+    let read = 0;
+    handler = (url, method) => {
+      if (url === "/api/mail/drafts/12" && method === "GET") {
+        read += 1;
+        return read === 1 ? json(LIVE) : json({ ...SENT, status: "failed", sent_at: null, error: "You may not send as this mailbox." });
+      }
+      if (url === "/api/mail/drafts/12/send") return refusal(403, "exchange_access_denied", "You may not send as this mailbox.");
+      return undefined;
+    };
+    await render();
+    await click(button("Send"));
+    expect(text().split("You may not send as this mailbox.")).toHaveLength(2);
+  });
+
   it("says when too many emails were sent, without reading again", async () => {
     handler = (url) =>
       url === "/api/mail/drafts/12/send" ? refusal(429, "too_many_sends", "You sent 30 emails this hour.") : undefined;

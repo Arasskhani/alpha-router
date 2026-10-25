@@ -14,6 +14,7 @@ import {
   type MailAddress,
   type MailDraft,
   type MailDraftCard,
+  type DraftStatus,
   type MailDraftLive,
 } from "../lib/exchangeMail";
 
@@ -104,8 +105,13 @@ function StatusNote({ draft }: { draft: MailDraft }) {
 export default function MailReviewDialog({ card, onDraft, onClose }: Props) {
   const { confirm } = useConfirm();
   const [draft, setDraft] = useState<MailDraft | MailDraftLive | null>(null);
-  // Each read of the draft is a request; a notice can ride along to explain why it was read again.
-  const [request, setRequest] = useState<{ n: number; notice: Notice | null }>({ n: 0, notice: null });
+  // Each read of the draft is a request; a notice can ride along to explain why it was read again,
+  // and `after` is the state a refused send or discard found the draft in.
+  const [request, setRequest] = useState<{ n: number; notice: Notice | null; after: DraftStatus | null }>({
+    n: 0,
+    notice: null,
+    after: null,
+  });
   const [loaded, setLoaded] = useState(-1);
   const [problem, setProblem] = useState<Problem | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
@@ -123,6 +129,8 @@ export default function MailReviewDialog({ card, onDraft, onClose }: Props) {
         setDraft(next);
         setProblem(null);
         setNotice(request.notice);
+        // The draft moved on (sent, failed, gone): its own status says what happened, once.
+        if (request.after && next.status !== request.after) setActionError("");
         if (isLiveDraft(next)) setOwaUrl(safeOwaUrl(next.owa_url));
         onDraft(next);
       })
@@ -137,7 +145,8 @@ export default function MailReviewDialog({ card, onDraft, onClose }: Props) {
     };
   }, [card.id, request, onDraft]);
 
-  const readAgain = (withNotice: Notice | null) => setRequest((r) => ({ n: r.n + 1, notice: withNotice }));
+  const readAgain = (withNotice: Notice | null, after: DraftStatus | null = null) =>
+    setRequest((r) => ({ n: r.n + 1, notice: withNotice, after }));
 
   const finished = (next: MailDraft) => {
     setDraft(next);
@@ -166,8 +175,9 @@ export default function MailReviewDialog({ card, onDraft, onClose }: Props) {
     }
     setActionError(serverText(err, "That did not work. Try again in a moment."));
     // A failed send is kept on the draft (status "failed"), and "not_a_draft" means it moved on
-    // meanwhile: either way, show the draft as it is now.
-    readAgain(null);
+    // meanwhile: either way, show the draft as it is now. A discard refused for a failed draft
+    // leaves it failed, and the error stays shown under it.
+    readAgain(null, current.status);
   };
 
   const send = async () => {
@@ -269,7 +279,7 @@ export default function MailReviewDialog({ card, onDraft, onClose }: Props) {
           {live && !live.can_send && notice?.text !== SEND_OFF_NOTICE ? (
             <p className="muted-text mail-review__note">{SEND_OFF_NOTICE}</p>
           ) : null}
-          {live && actionError ? (
+          {actionError ? (
             <p className="alert alert-error" role="alert">
               {actionError}
             </p>

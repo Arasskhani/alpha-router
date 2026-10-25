@@ -384,6 +384,55 @@ def changed_keys(before: ExchangeSettings, after: ExchangeSettings) -> list[str]
     return [key for key in new if old.get(key) != new[key]]
 
 
+#: Where people's passwords are sent (and whom it is trusted to be): only a Super Admin may change these.
+DESTINATION_KEYS: tuple[str, ...] = ("ews_url", "autodiscover_url", "verify_tls", "ca_bundle_pem")
+#: The login each password is sent with.
+LOGIN_KEYS: tuple[str, ...] = ("login_format", "netbios_domain", "upn_suffix")
+SETTINGS_CHANGED = "Your administrator changed the Exchange connection settings. Type your password again."
+
+
+def _endpoint_host(url: str) -> str:
+    """``host`` or ``host:port`` of an address: never its path."""
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return ""
+    host = (parts.hostname or "").lower()
+    try:
+        port = parts.port
+    except ValueError:
+        port = None
+    return f"{host}:{port}" if host and port else host
+
+
+def destination_change(before: ExchangeSettings, after: ExchangeSettings) -> dict[str, Any]:
+    """What the Admin Logs row says about a change of where passwords go: hosts only, never the CA text."""
+    return {
+        "ews_host": {"old": _endpoint_host(before.ews_endpoint()), "new": _endpoint_host(after.ews_endpoint())},
+        "autodiscover_host": {
+            "old": _endpoint_host(before.autodiscover_endpoint()),
+            "new": _endpoint_host(after.autodiscover_endpoint()),
+        },
+        "verify_tls": {"old": before.verify_tls, "new": after.verify_tls},
+        "ca_changed": before.ca_bundle_pem != after.ca_bundle_pem,
+    }
+
+
+async def require_new_passwords(db: AsyncSession) -> int:
+    """Every connection waits for its owner's password again (one UPDATE); returns how many there are.
+
+    For a change of where passwords are sent or of the login they go with: a
+    stored password is never sent to a new place, or as a new login, without
+    its owner typing it again.
+    """
+    result = await db.execute(
+        update(MailConnection)
+        .values(status="needs_password", last_error=SETTINGS_CHANGED)
+        .execution_options(synchronize_session=False)
+    )
+    return int(getattr(result, "rowcount", 0) or 0)
+
+
 # --- the domain, from the LDAP settings --------------------------------------------------------------------------
 
 

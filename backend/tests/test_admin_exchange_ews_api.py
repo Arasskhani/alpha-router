@@ -201,7 +201,14 @@ class TestSettings:
         assert body["autodiscover_endpoint"] == "https://mail.corp.example/autodiscover/autodiscover.xml"
         assert (await em.load_settings(db_session)).poll_minutes == 10
         (event,) = await _events(db_session, "exchange_ews_settings_updated")
-        assert json.loads(event.detail_json) == {"changed": ["enabled", "ews_url", "poll_minutes"]}
+        assert json.loads(event.detail_json) == {
+            "changed": ["enabled", "ews_url", "poll_minutes"],
+            "ews_host": {"old": "", "new": "mail.corp.example"},
+            "autodiscover_host": {"old": "", "new": "mail.corp.example"},
+            "verify_tls": {"old": True, "new": True},
+            "ca_changed": False,
+            "connections_reset": 0,
+        }
         # The same again changes nothing and writes no row.
         await client.put(f"{BASE}/settings", json=body["settings"], headers=headers)
         assert len(await _events(db_session, "exchange_ews_settings_updated")) == 1
@@ -215,7 +222,8 @@ class TestSettings:
         resp = await client.put(f"{BASE}/settings", json={**current, "ca_bundle_pem": pem}, headers=headers)
         assert resp.status_code == 200
         (event,) = await _events(db_session, "exchange_ews_settings_updated")
-        assert json.loads(event.detail_json) == {"changed": ["ca_bundle_pem"]}
+        detail = json.loads(event.detail_json)
+        assert detail["changed"] == ["ca_bundle_pem"] and detail["ca_changed"] is True
         assert "CERTIFICATE" not in event.detail_json
 
     async def test_invalid_settings(self, client, db_session, admin):
@@ -226,6 +234,93 @@ class TestSettings:
             assert _code(resp) == "invalid_settings"
             assert resp.json()["detail"]["message"]
         assert await _events(db_session) == []
+
+    @pytest.mark.parametrize(
+        "change",
+        [
+            {"ews_url": "https://evil.example/EWS/Exchange.asmx"},
+            {"autodiscover_url": "https://evil.example/autodiscover/autodiscover.xml"},
+            {"verify_tls": False},
+        ],
+    )
+    async def test_where_passwords_go_is_a_super_admin_decision(
+        self, client, db_session, read_only, monkeypatch, change
+    ):
+        # A writer of the menu who is not a Super Admin (no built-in role is one yet: let the gate through).
+        monkeypatch.setattr("app.api.deps.user_can_write_menu", lambda slugs, menu=None: True)
+        await _turn_on(db_session)
+        someone = await _person(db_session, "s.karimi")
+        await _connection(db_session, someone)
+        headers = sign_in(client, read_only)
+        current = (await client.get(f"{BASE}/settings", headers=headers)).json()["settings"]
+        resp = await client.put(f"{BASE}/settings", json={**current, **change}, headers=headers)
+        assert resp.status_code == 403
+        assert resp.json()["detail"] == {
+            "code": "super_admin_only",
+            "message": "Only a Super Admin can change where Exchange passwords are sent.",
+        }
+        assert (await em.load_settings(db_session)).ews_url == EWS
+        (connection,) = (await db_session.execute(select(MailConnection))).scalars().all()
+        assert connection.status == "connected"
+        assert await _events(db_session, "exchange_ews_settings_updated") == []
+        # Everything else stays open to the menu's writers.
+        resp = await client.put(f"{BASE}/settings", json={**current, "poll_minutes": 15}, headers=headers)
+        assert resp.status_code == 200, resp.text
+        (event,) = await _events(db_session, "exchange_ews_settings_updated")
+        assert json.loads(event.detail_json) == {"changed": ["poll_minutes"]}
+
+    async def test_a_new_destination_makes_everyone_type_their_password_again(self, client, db_session, admin):
+        await _turn_on(db_session)
+        sara = await _connection(db_session, await _person(db_session, "s.karimi"))
+        ali = await _connection(db_session, await _person(db_session, "a.rad"), status="error")
+        headers = sign_in(client, admin)
+        current = (await client.get(f"{BASE}/settings", headers=headers)).json()["settings"]
+        wanted = {**current, "ews_url": "https://mail2.corp.example:8443/EWS/Exchange.asmx", "verify_tls": False}
+        resp = await client.put(f"{BASE}/settings", json=wanted, headers=headers)
+        assert resp.status_code == 200, resp.text
+        rows = (
+            (await db_session.execute(select(MailConnection).execution_options(populate_existing=True))).scalars().all()
+        )
+        assert {row.id for row in rows} == {sara.id, ali.id}
+        for row in rows:
+            assert row.status == "needs_password"
+            assert row.last_error == (
+                "Your administrator changed the Exchange connection settings. Type your password again."
+            )
+        (event,) = await _events(db_session, "exchange_ews_settings_updated")
+        detail = json.loads(event.detail_json)
+        assert detail["ews_host"] == {"old": "mail.corp.example", "new": "mail2.corp.example:8443"}
+        assert detail["autodiscover_host"] == {"old": "mail.corp.example", "new": "mail2.corp.example:8443"}
+        assert detail["verify_tls"] == {"old": True, "new": False}
+        assert detail["ca_changed"] is False and detail["connections_reset"] == 2
+        assert "EWS/Exchange.asmx" not in event.detail_json, "hosts only"
+
+    @pytest.mark.parametrize(
+        "change", [{"login_format": "upn", "upn_suffix": "corp.example"}, {"netbios_domain": "OTHER"}]
+    )
+    async def test_a_new_login_makes_everyone_type_their_password_again(self, client, db_session, admin, change):
+        await _turn_on(db_session)
+        await _connection(db_session, await _person(db_session, "s.karimi"))
+        headers = sign_in(client, admin)
+        current = (await client.get(f"{BASE}/settings", headers=headers)).json()["settings"]
+        resp = await client.put(f"{BASE}/settings", json={**current, **change}, headers=headers)
+        assert resp.status_code == 200, resp.text
+        (row,) = (
+            (await db_session.execute(select(MailConnection).execution_options(populate_existing=True))).scalars().all()
+        )
+        assert row.status == "needs_password"
+        (event,) = await _events(db_session, "exchange_ews_settings_updated")
+        assert json.loads(event.detail_json)["connections_reset"] == 1
+
+    async def test_other_changes_leave_the_connections_alone(self, client, db_session, admin):
+        await _turn_on(db_session)
+        await _connection(db_session, await _person(db_session, "s.karimi"))
+        headers = sign_in(client, admin)
+        current = (await client.get(f"{BASE}/settings", headers=headers)).json()["settings"]
+        resp = await client.put(f"{BASE}/settings", json={**current, "allow_send": False}, headers=headers)
+        assert resp.status_code == 200
+        (row,) = (await db_session.execute(select(MailConnection))).scalars().all()
+        assert row.status == "connected"
 
     async def test_turning_off_deletes_nothing(self, client, db_session, admin):
         await _turn_on(db_session)

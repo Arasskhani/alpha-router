@@ -3,7 +3,8 @@
 - Reading (settings, access, people, overview): the Exchange EWS menu
   (``require_exchange_ews``), so Read Only Super Admin sees everything.
 - Changing anything, and Test connection (it signs in to Exchange with a
-  typed password): the menu with write (``require_exchange_ews_write``).
+  typed password): the menu with write (``require_exchange_ews_write``);
+  where the passwords are sent, Super Admin on top.
 
 The work is in ``app.services.exchange_mail_service``. Every change commits
 with an Admin Logs row; the rows name the settings that changed (never the
@@ -28,7 +29,9 @@ from app.services import exchange_mail as em
 from app.services import exchange_mail_service as svc
 from app.services.chat_tool_access_service import get_chat_tool_access
 from app.services.client_ip import resolve_client_ip
+from app.services.rbac import user_has_super_admin_access
 from app.services.security_audit import log_security_event
+from app.services.user_role_service import get_user_role_slugs
 
 router = APIRouter(prefix="/api/admin/exchange-ews", tags=["exchange-ews"])
 
@@ -104,6 +107,14 @@ async def put_settings(
 ) -> dict[str, Any]:
     """Save the settings: what is sent is laid over what is saved, then checked as a whole.
 
+    Where people's passwords are sent (``DESTINATION_KEYS``: the EWS and
+    Autodiscover addresses, TLS verification, the extra CA) is a Super Admin
+    decision: anyone else changing one is refused with ``super_admin_only``
+    (403); the other settings stay open to the menu's writers. A change of
+    where passwords go, or of the login they go with (``LOGIN_KEYS``), makes
+    every connection wait for its owner's password again, and the Admin Logs
+    row says the hosts before and after and how many connections it reset.
+
     Turning the feature off deletes nothing: connections wait, unused, until it is on again.
     """
     current = await em.load_settings(db)
@@ -112,11 +123,17 @@ async def put_settings(
     except em.MailError as error:
         _answer(error)
     changed = em.changed_keys(current, saved)
+    if set(changed) & set(em.DESTINATION_KEYS) and not user_has_super_admin_access(
+        await get_user_role_slugs(db, int(actor.id))
+    ):
+        raise _refuse("super_admin_only", "Only a Super Admin can change where Exchange passwords are sent.", 403)
     await em.save_settings(db, saved)
     if changed:
-        await _audit(
-            db, request, actor, "exchange_ews_settings_updated", "exchange_ews", em.SETTINGS_KEY, {"changed": changed}
-        )
+        detail: dict[str, Any] = {"changed": changed}
+        if set(changed) & {*em.DESTINATION_KEYS, *em.LOGIN_KEYS}:
+            detail.update(em.destination_change(current, saved))
+            detail["connections_reset"] = await em.require_new_passwords(db)
+        await _audit(db, request, actor, "exchange_ews_settings_updated", "exchange_ews", em.SETTINGS_KEY, detail)
     await db.commit()
     return await _settings_answer(db, actor, saved)
 

@@ -237,6 +237,16 @@ export type ToolAccess = {
   updated_by_user_id: number | null;
 };
 
+/** A row of the model catalog (`/api/admin/models`), for the detection model picker. */
+export type CatalogModel = {
+  id: number;
+  external_id: string;
+  display_name?: string | null;
+  enabled: boolean;
+  provider: string;
+  kinds?: string[];
+};
+
 // --- labels ---
 
 export const CONNECTION_STATUS_LABELS: Record<ConnectionStatus, string> = {
@@ -370,6 +380,8 @@ export const exchangeAdminApi = {
   },
   disconnect: (id: number) => mailRequest<{ ok: true }>(`${EXCHANGE_ADMIN_BASE}/connections/${id}`, json("DELETE")),
   overview: () => mailRequest<ExchangeOverview>(`${EXCHANGE_ADMIN_BASE}/overview`),
+  /** The model catalog the Memory settings pick from too; `detection_model` holds a row's id as text. */
+  models: () => mailRequest<CatalogModel[]>("/api/admin/models"),
 };
 
 /** Only http(s) links from the server become links (an Outlook on the web address). */

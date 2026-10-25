@@ -25,9 +25,33 @@ export const PHONE_TOAST_TTL_MS = 20_000;
  */
 const announced = new Set<number>();
 
+type KeptItem = { item: ActionItem; until: number; close: () => void };
+type KeptCount = { ids: number[]; more: boolean; until: number; close: () => void };
+
+/**
+ * The mail toasts on screen, with the time each has left. Each panel's shell
+ * mounts its own copy of this component, so a switch between the user and
+ * admin panels unmounts one copy (its toasts go with it) and mounts the other,
+ * which puts them back for the time they had left: a toast is not lost by
+ * moving around the app. Only for the same person, and only while the mailbox
+ * works (a copy that finds it off forgets them).
+ */
+const kept: { owner: string; items: Map<number, KeptItem>; count: KeptCount | null } = {
+  owner: "",
+  items: new Map(),
+  count: null,
+};
+
+function forgetKept(owner = ""): void {
+  kept.owner = owner;
+  kept.items.clear();
+  kept.count = null;
+}
+
 /** Test seam: forget what this tab has shown. */
 export function resetMailActionToasts(): void {
   announced.clear();
+  forgetKept();
 }
 
 function failureToast(title: string, err: unknown) {
@@ -52,12 +76,15 @@ function countTitle(count: number, more: boolean): string {
  * Alpharouter, Dismiss), at most three, then tells the server they were shown.
  * On a phone one toast says how many need action instead (Open Connections),
  * for a shorter time. Every mail toast has a plain × that only closes it here.
+ * A toast still on screen when the person moves to the other panel shows
+ * again there (`kept`).
  */
 export default function MailActionToasts() {
   const session = useCachedSession();
   const features = session?.features as Record<string, unknown> | null | undefined;
   const on = features?.exchange_mail === true;
   const role = typeof session?.role === "string" ? session.role : "user";
+  const owner = typeof session?.username === "string" ? session.username : "";
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -72,29 +99,31 @@ export default function MailActionToasts() {
   });
 
   useEffect(() => {
-    if (!on) return undefined;
+    if (!on) {
+      // The mailbox stopped working (or the person changed): its toasts do not come back.
+      forgetKept();
+      return undefined;
+    }
+    if (kept.owner !== owner) forgetKept(owner);
     let live = true;
     let inFlight = false;
     let lastRead = 0;
-    /** Toasts on screen from this mount, by item id, with their close functions. */
-    const open = new Map<number, () => void>();
-    /** The one toast that counts emails ("N more…" under the others, or all of them on a phone). */
-    let count: { ids: number[]; more: boolean; until: number; close: () => void } | null = null;
 
-    function itemToast(item: ActionItem) {
+    function itemToast(item: ActionItem, ttlMs = TOAST_TTL_MS) {
+      const forget = () => kept.items.delete(item.id);
       const close = showToast({
         eyebrow: "Needs your action",
         title: subjectLabel(item.subject),
         detail: item.reason ? `${senderLabel(item)} · ${item.reason}` : senderLabel(item),
         dedupeKey: `mail-action::${item.id}`,
-        ttlMs: TOAST_TTL_MS,
+        ttlMs,
         closable: true,
-        onClose: () => open.delete(item.id),
+        onClose: forget,
         actions: [
           {
             label: "Ask Alpharouter",
             onClick: () => {
-              open.delete(item.id);
+              forget();
               askAlpharouter(item.id, (to) => navigateRef.current(to), pathRef.current).catch((err: unknown) =>
                 failureToast("This email could not be opened in a chat.", err),
               );
@@ -103,7 +132,7 @@ export default function MailActionToasts() {
           {
             label: "Dismiss",
             onClick: () => {
-              open.delete(item.id);
+              forget();
               mailApi
                 .dismissAction(item.id)
                 .then(() => announceMailChanged())
@@ -112,19 +141,19 @@ export default function MailActionToasts() {
           },
         ],
       });
-      open.set(item.id, close);
+      kept.items.set(item.id, { item, until: Date.now() + ttlMs, close });
     }
 
     /** The counting toast still on screen, if any (it may have gone by itself). */
     function liveCount() {
-      if (count && Date.now() >= count.until) count = null;
-      return count;
+      if (kept.count && Date.now() >= kept.count.until) kept.count = null;
+      return kept.count;
     }
 
     /** Put up (or redo, with a new number) the toast that counts `ids`. */
     function countToast(ids: number[], more: boolean, ttlMs: number) {
-      count?.close();
-      count = null;
+      kept.count?.close();
+      kept.count = null;
       if (ids.length === 0 || ttlMs <= 0) return;
       const close = showToast({
         eyebrow: "Email",
@@ -134,19 +163,19 @@ export default function MailActionToasts() {
         ttlMs,
         closable: true,
         onClose: () => {
-          count = null;
+          kept.count = null;
         },
         actions: [
           {
             label: "Open Connections",
             onClick: () => {
-              count = null;
+              kept.count = null;
               navigateRef.current(`${getMyConnectionsPath(roleRef.current)}#mail-actions`);
             },
           },
         ],
       });
-      count = { ids, more, until: Date.now() + ttlMs, close };
+      kept.count = { ids, more, until: Date.now() + ttlMs, close };
     }
 
     /** New emails as toasts: one each (at most three) on a wide screen, one for all on a phone. */
@@ -158,9 +187,20 @@ export default function MailActionToasts() {
         return;
       }
       const single = fresh.length <= MAX_MAIL_TOASTS ? fresh : fresh.slice(0, MAX_MAIL_TOASTS - 1);
-      single.forEach(itemToast);
+      single.forEach((item) => itemToast(item));
       const rest = fresh.slice(single.length).map((item) => item.id);
       if (rest.length) countToast([...(shown?.ids ?? []), ...rest], true, TOAST_TTL_MS);
+    }
+
+    /** The toasts the other panel's copy had on screen, for the time they had left. */
+    function showKept() {
+      const now = Date.now();
+      for (const { item, until } of [...kept.items.values()]) {
+        kept.items.delete(item.id);
+        if (until - now > 1000) itemToast(item, until - now);
+      }
+      const count = liveCount();
+      if (count) countToast(count.ids, count.more, count.until - now);
     }
 
     async function read(force: boolean) {
@@ -173,10 +213,10 @@ export default function MailActionToasts() {
         if (!live) return;
         // Handled elsewhere (the Connections page, another tab): its toast goes.
         const stillOpen = new Set(items.map((item) => item.id));
-        for (const [id, close] of open) {
+        for (const [id, toast] of [...kept.items]) {
           if (!stillOpen.has(id)) {
-            close();
-            open.delete(id);
+            toast.close();
+            kept.items.delete(id);
           }
         }
         const counted = liveCount();
@@ -204,6 +244,7 @@ export default function MailActionToasts() {
     };
     const onChanged = () => void read(true);
 
+    showKept();
     void read(true);
     const timer = window.setInterval(onTick, MAIL_POLL_MS);
     window.addEventListener("focus", onWake);
@@ -215,12 +256,11 @@ export default function MailActionToasts() {
       window.removeEventListener("focus", onWake);
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener(MAIL_CHANGED_EVENT, onChanged);
-      for (const close of open.values()) close();
-      open.clear();
-      count?.close();
-      count = null;
+      // Off the screen with this copy, but kept: the next copy (the other panel's shell) shows them again.
+      for (const toast of kept.items.values()) toast.close();
+      kept.count?.close();
     };
-  }, [on]);
+  }, [on, owner]);
 
   return null;
 }

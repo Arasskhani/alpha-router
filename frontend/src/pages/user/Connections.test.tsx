@@ -213,6 +213,7 @@ async function render(path = "/app/connections") {
           <Route path="/app/connections" element={<Connections />} />
           <Route path="/admin/my-connections" element={<Connections />} />
           <Route path="/app/chat" element={<p>chat page</p>} />
+          <Route path="/admin/chat" element={<p>admin chat page</p>} />
         </Routes>
         <Where />
       </MemoryRouter>,
@@ -702,6 +703,16 @@ describe("waiting for your action", () => {
     expect(where()).toBe("/app/chat");
     expect(text()).toContain("chat page");
     expect(takeChatPrefill()).toBe(prompt);
+  });
+
+  it("asks from the admin panel and opens the admin panel's chat", async () => {
+    handler = (url, method) =>
+      url === "/api/mail/action-items/7/ask" && method === "POST" ? json({ prompt: "Help me" }) : undefined;
+    await render("/admin/my-connections");
+    await click(button("Ask Alpharouter", list()[0]));
+    expect(where()).toBe("/admin/chat");
+    expect(text()).toContain("admin chat page");
+    expect(takeChatPrefill()).toBe("Help me");
   });
 
   it("says why Ask did not work and opens nothing", async () => {

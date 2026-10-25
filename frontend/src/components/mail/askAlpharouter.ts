@@ -6,9 +6,14 @@
 import { requestChatPrefill } from "../../lib/chatPrefill";
 import { mailApi } from "../../lib/exchangeMail";
 
-/** Where the chat opens. Mail is not offered in project chats, so this is the personal chat. */
-const PERSONAL_CHAT_PATH = "/app/chat";
-const CHAT_PATHS = new Set([PERSONAL_CHAT_PATH, "/admin/chat"]);
+/**
+ * Where the chat opens: the personal chat of the panel the person is in (Mail
+ * is not offered in project chats). An administrator asking from the admin
+ * panel stays in it.
+ */
+function chatPathFor(currentPath: string): string {
+  return currentPath === "/admin" || currentPath.startsWith("/admin/") ? "/admin/chat" : "/app/chat";
+}
 
 /**
  * Ask for the prompt, then open the chat with it. Throws the server's refusal
@@ -23,5 +28,6 @@ export async function askAlpharouter(
   requestChatPrefill(prompt);
   // A chat page already open takes the prompt where it is.
   const here = currentPath.replace(/\/$/, "");
-  if (!CHAT_PATHS.has(here)) navigate(PERSONAL_CHAT_PATH);
+  const chat = chatPathFor(here);
+  if (here !== chat) navigate(chat);
 }

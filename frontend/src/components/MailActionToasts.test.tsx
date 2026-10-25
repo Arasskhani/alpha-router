@@ -71,7 +71,7 @@ beforeEach(() => {
   resetToastHost();
   resetMailActionToasts();
   takeChatPrefill();
-  sessionState.value = { role: "user", features: { connections: true, exchange_mail: true } };
+  sessionState.value = { username: "s.karimi", role: "user", features: { connections: true, exchange_mail: true } };
   calls = [];
   announced = 0;
   openItems = [item(1), item(2, { status: "notified" })];
@@ -289,6 +289,15 @@ describe("the toasts", () => {
     expect(takeChatPrefill()).toBe(prompt);
   });
 
+  it("Ask Alpharouter from the admin panel opens the admin panel's chat", async () => {
+    handler = (url, method) =>
+      url === "/api/mail/action-items/1/ask" && method === "POST" ? json({ prompt: "Help me" }) : undefined;
+    await render("/admin/exchange-ews");
+    await press(action(toasts()[0], "Ask Alpharouter"));
+    expect(where()).toBe("/admin/chat");
+    expect(takeChatPrefill()).toBe("Help me");
+  });
+
   it("Ask Alpharouter on the chat page stays there", async () => {
     handler = (url, method) =>
       url === "/api/mail/action-items/1/ask" && method === "POST" ? json({ prompt: "Help me" }) : undefined;
@@ -390,7 +399,7 @@ describe("on a phone", () => {
     await render("/admin/chat");
     expect(titles()).toEqual(["1 email needs your action"]);
     expect(toasts()[0].textContent).toContain("Open Connections to see it.");
-    sessionState.value = { role: "full_administrator", features: { connections: true, exchange_mail: true } };
+    sessionState.value = { username: "s.karimi", role: "full_administrator", features: { connections: true, exchange_mail: true } };
     await render("/admin/chat");
     await press(action(toasts()[0], "Open Connections"));
     expect(where()).toBe("/admin/my-connections#mail-actions");
@@ -427,5 +436,64 @@ describe("on a phone", () => {
     await press(toasts()[0].querySelector<HTMLButtonElement>(".app-toast__close")!);
     expect(toasts()).toHaveLength(0);
     expect(calls.length).toBe(before);
+  });
+});
+
+describe("moving between the user and admin panels", () => {
+  /** Each panel's shell mounts its own copy: the old one goes, a new one comes. */
+  async function switchShell(path: string) {
+    act(() => root.unmount());
+    root = createRoot(host);
+    await render(path);
+  }
+
+  it("shows the toasts still on screen again in the other panel, for the time they had left", async () => {
+    openItems = [item(1), item(2), item(3), item(4)];
+    await render("/app/media");
+    expect(titles()).toEqual(["Email 1", "Email 2", "2 more emails need your action"]);
+    await act(async () => {
+      vi.advanceTimersByTime(30_000);
+    });
+    await switchShell("/admin");
+    expect(titles()).toEqual(["Email 1", "Email 2", "2 more emails need your action"]);
+    // Shown once: the server was told once, and nothing new was announced.
+    expect(posted("/api/mail/action-items/notified")).toHaveLength(1);
+    await act(async () => {
+      vi.advanceTimersByTime(16_000);
+    });
+    expect(toasts()).toHaveLength(0);
+  });
+
+  it("does not bring back a toast closed with ×, Dismiss or Ask", async () => {
+    openItems = [item(1), item(2), item(3)];
+    handler = (url, method) =>
+      url === "/api/mail/action-items/3/ask" && method === "POST" ? json({ prompt: "Help me" }) : undefined;
+    await render("/app/media");
+    await press(toasts()[0].querySelector<HTMLButtonElement>(".app-toast__close")!);
+    await press(action(toasts().find((t) => t.textContent?.includes("Email 2"))!, "Dismiss"));
+    openItems = openItems.filter((i) => i.id !== 2);
+    await press(action(toasts().find((t) => t.textContent?.includes("Email 3"))!, "Ask Alpharouter"));
+    await switchShell("/admin");
+    expect(toasts()).toHaveLength(0);
+  });
+
+  it("never shows one person's toasts to the next one signed in", async () => {
+    await render("/app/media");
+    expect(titles()).toEqual(["Email 1"]);
+    sessionState.value = { username: "a.rezaei", role: "user", features: { connections: true, exchange_mail: true } };
+    openItems = [];
+    await switchShell("/app/media");
+    expect(toasts()).toHaveLength(0);
+  });
+
+  it("forgets them once the mailbox stops working", async () => {
+    await render("/app/media");
+    expect(titles()).toEqual(["Email 1"]);
+    sessionState.value = { username: "s.karimi", role: "user", features: { connections: true, exchange_mail: false } };
+    await render("/app/media");
+    expect(toasts()).toHaveLength(0);
+    sessionState.value = { username: "s.karimi", role: "user", features: { connections: true, exchange_mail: true } };
+    await switchShell("/admin");
+    expect(toasts()).toHaveLength(0);
   });
 });

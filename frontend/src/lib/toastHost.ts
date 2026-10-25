@@ -19,7 +19,7 @@ const MAX_VISIBLE = 3;
 type ToastTone = "neutral" | "warning" | "danger";
 
 /** A button on a toast. Pressing one runs it and closes the toast. */
-export type ToastAction = {
+type ToastAction = {
   label: string;
   onClick: () => void;
 };

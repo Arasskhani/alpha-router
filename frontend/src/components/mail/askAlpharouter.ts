@@ -7,7 +7,7 @@ import { requestChatPrefill } from "../../lib/chatPrefill";
 import { mailApi } from "../../lib/exchangeMail";
 
 /** Where the chat opens. Mail is not offered in project chats, so this is the personal chat. */
-export const PERSONAL_CHAT_PATH = "/app/chat";
+const PERSONAL_CHAT_PATH = "/app/chat";
 const CHAT_PATHS = new Set([PERSONAL_CHAT_PATH, "/admin/chat"]);
 
 /**

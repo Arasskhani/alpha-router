@@ -12,7 +12,7 @@ export const MAIL_POLL_MS = 2 * 60_000;
 /** Focus and "tab visible again" often fire together: one read for both. */
 const MIN_GAP_MS = 5_000;
 /** At most this many toasts from one read; past it, the last one says how many more. */
-export const MAX_MAIL_TOASTS = 3;
+const MAX_MAIL_TOASTS = 3;
 const TOAST_TTL_MS = 45_000;
 
 /**

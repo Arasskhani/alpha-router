@@ -10,7 +10,13 @@ import { StrictMode, act, useEffect, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { CHAT_PREFILL_MAX_AGE_MS, requestChatPrefill, takeChatPrefill, useChatPrefill } from "./chatPrefill";
+import {
+  CHAT_PREFILL_EVENT,
+  CHAT_PREFILL_MAX_AGE_MS,
+  requestChatPrefill,
+  takeChatPrefill,
+  useChatPrefill,
+} from "./chatPrefill";
 
 const KEY = "alpha-router:chat-prefill";
 
@@ -42,9 +48,9 @@ describe("requestChatPrefill / takeChatPrefill", () => {
 
   it("tells an open chat page through a window event", () => {
     const heard = vi.fn();
-    window.addEventListener("alpha-router:chat-prefill", heard);
+    window.addEventListener(CHAT_PREFILL_EVENT, heard);
     requestChatPrefill("hello");
-    window.removeEventListener("alpha-router:chat-prefill", heard);
+    window.removeEventListener(CHAT_PREFILL_EVENT, heard);
     expect(heard).toHaveBeenCalledTimes(1);
   });
 

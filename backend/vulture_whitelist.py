@@ -7,3 +7,6 @@ reason per entry; CI runs `vulture app vulture_whitelist.py --min-confidence 80`
 # Protocol method parameters: implementers must accept them by keyword.
 calls_per_minute  # ToolRateLimiter.consume protocol
 calls_per_user_per_minute  # ToolRateLimiter.consume protocol
+unread_only  # exchange_ews_types.MailClient.search protocol
+body_chars  # exchange_ews_types.MailClient.read protocol
+source_item_id  # exchange_ews_types.MailClient.create_draft protocol

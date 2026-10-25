@@ -425,6 +425,22 @@ class TestReadOnlySuperAdmin:
         assert expand_legacy_role_slug(FULL_ADMIN_SLUG) == [SUPER_ADMIN_SLUG]
 
 
+class TestExchangeEwsMenu:
+    """Integrations › Exchange EWS: a menu of its own after SMTP; the person's Connections page is the chat's."""
+
+    def test_it_follows_smtp_under_integrations_and_owns_its_page(self):
+        assert MENU_LABELS["exchange_ews"] == "Exchange EWS"
+        assert MENU_GROUP_KEYS["exchange_ews"] == "integrations"
+        integrations = MENUS_BY_CATEGORY["integrations"]
+        assert integrations.index("exchange_ews") == integrations.index("smtp") + 1
+        assert path_to_menu("/admin/exchange-ews") == "exchange_ews"
+        assert MENU_PATH_PREFIXES["exchange_ews"] == ("/admin/exchange-ews",)
+
+    def test_the_own_connections_page_belongs_to_the_chat(self):
+        assert path_to_menu("/admin/my-connections") == "chat"
+        assert "chat" in USER_APP_MENUS
+
+
 class TestSupportRole:
     """Support works the Tickets menu and nothing else; Tickets is the last item under Overview."""
 

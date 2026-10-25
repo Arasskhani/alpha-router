@@ -56,6 +56,7 @@ from app.services.saml_state import (
     remember_authn_request,
 )
 from app.services.session_cookie import clear_session_cookies, new_csrf_token, set_session_cookies
+from app.services.exchange_mail import session_features as mail_session_features
 from app.services.support_tickets import load_settings as load_ticket_settings
 from app.services.user_chat_storage_service import ensure_user_chat_store
 from app.services.user_lifecycle_service import record_user_login
@@ -115,6 +116,9 @@ async def auth_session(user: User = Depends(get_current_user), db: AsyncSession 
             "extension": sections["extension"].allowed,
             # Tickets: whether the user panel offers Support (the administrator's on/off switch).
             "support": (await load_ticket_settings(db)).enabled,
+            # Exchange EWS: "connections" offers Connections in the profile menu; "exchange_mail" shows the
+            # mailbox sign by the chat box (connected and working).
+            **(await mail_session_features(db, user)),
         },
     }
 

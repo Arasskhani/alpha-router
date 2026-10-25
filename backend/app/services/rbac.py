@@ -33,6 +33,7 @@ MenuKey = Literal[
     "security_settings",
     "guardrails",
     "tickets",
+    "exchange_ews",
 ]
 
 # Nav group label shown in the Roles table Category column.
@@ -96,6 +97,7 @@ MENU_DEFINITIONS: tuple[tuple[MenuKey, str, CategoryKey], ...] = (
     ("plans", "Plans", "people_access"),
     ("authentication", "Authentication", "people_access"),
     ("smtp", "SMTP Server", "integrations"),
+    ("exchange_ews", "Exchange EWS", "integrations"),
     ("storage", "Storage", "data_reports"),
     ("reports", "Reports", "data_reports"),
     ("api_logs", "API Logs", "data_reports"),
@@ -183,7 +185,8 @@ CATEGORY_LABELS: dict[CategoryKey, str] = {
 
 MENU_PATH_PREFIXES: dict[MenuKey, tuple[str, ...]] = {
     "dashboard": ("/admin", "/admin/my-activity"),
-    "chat": ("/admin/chat",),
+    # The person's own Connections page (their Exchange mailbox) is part of the chat, for every admin role.
+    "chat": ("/admin/chat", "/admin/my-connections"),
     "media": ("/admin/media",),
     "connections": ("/admin/connections",),
     "models": ("/admin/models",),
@@ -195,6 +198,9 @@ MENU_PATH_PREFIXES: dict[MenuKey, tuple[str, ...]] = {
     "plans": ("/admin/plans",),
     "authentication": ("/admin/authentication",),
     "smtp": ("/admin/smtp",),
+    # Its own key rather than folded into smtp: it holds no server password but decides who may connect their
+    # mailbox and what the chat may do with it, and it must stay separable the day a scoped role is wanted.
+    "exchange_ews": ("/admin/exchange-ews",),
     "storage": ("/admin/storage-management", "/admin/retention-policy", "/admin/storage"),
     "reports": ("/admin/reports", "/admin/project-usage"),
     "api_logs": (

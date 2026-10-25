@@ -44,6 +44,7 @@ KNOWN_ICONS = frozenset(
         "lock",
         "puzzle",
         "cursor",
+        "mail",
     }
 )
 
@@ -149,6 +150,15 @@ CHAT_TOOLS: tuple[ChatToolSpec, ...] = (
         description="Let the extension's agent use a real mouse and keyboard, and see the page",
         icon="cursor",
         default_access=ACCESS_PRIVATE,
+    ),
+    # A person's Exchange mailbox in the chat: read, search, summarise, draft, find a meeting time. Connected
+    # from Connections, never from the composer's tools menu, and only for accounts that sign in with Active
+    # Directory; the Exchange EWS page decides the rest. Public: the feature itself is off until turned on.
+    ChatToolSpec(
+        key="exchange_mail",
+        title="Exchange Mail",
+        description="Read, search and draft email in your Exchange mailbox",
+        icon="mail",
     ),
 )
 

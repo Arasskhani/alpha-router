@@ -90,6 +90,13 @@ export default function ChatToolIcon({ name, size = 16 }: { name: string; size?:
           <path d="m13 12 5 5" />
         </svg>
       );
+    case "mail":
+      return (
+        <svg {...common}>
+          <rect x="2" y="4" width="20" height="16" rx="2" />
+          <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+        </svg>
+      );
     default:
       // A tool registered with an icon this client has not learned yet still
       // needs a row on the page.

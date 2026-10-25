@@ -10,8 +10,10 @@ import ExchangePeopleTab from "../../components/exchange/ExchangePeopleTab";
 import ExchangeSettingsTab from "../../components/exchange/ExchangeSettingsTab";
 import { bootstrapSession } from "../../api";
 import { useReadOnly } from "../../context/ReadOnlyContext";
+import { useCachedSession } from "../../hooks/useCachedSession";
 import { exchangeAdminApi, type ExchangeSettingsResponse } from "../../lib/exchangeMail";
 import { GUIDE_HREF } from "../../lib/exchangeAdmin";
+import { userHasSuperAdminAccess } from "../../lib/rbac";
 
 type TabId = "overview" | "settings" | "access" | "people";
 
@@ -35,6 +37,12 @@ function readTab(value: string | null): TabId {
  */
 export default function ExchangeEws() {
   const readOnly = useReadOnly();
+  const session = useCachedSession();
+  // Where Exchange passwords are sent is a Super Admin's decision (the server answers 403 super_admin_only).
+  const superAdmin = userHasSuperAdminAccess(
+    Array.isArray(session?.roles) ? (session.roles as string[]) : undefined,
+    session?.role,
+  );
   const [params, setParams] = useSearchParams();
   const tab = readTab(params.get("tab"));
   const [settings, setSettings] = useState<ExchangeSettingsResponse | null>(null);
@@ -93,6 +101,7 @@ export default function ExchangeEws() {
               void loadSettings();
             }}
             canEdit={!readOnly}
+            canEditEndpoint={!readOnly && superAdmin}
             focusTest={params.get("focus") === "test"}
             onTestPassed={() => setTestPassed(true)}
             onSaved={(next) => {

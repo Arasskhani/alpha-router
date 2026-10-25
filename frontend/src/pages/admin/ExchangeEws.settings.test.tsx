@@ -18,9 +18,13 @@ vi.mock("../../api", () => ({
   bootstrapSession: vi.fn(async () => ({})),
   formatApiError: (e: unknown) => String(e),
 }));
-vi.mock("../../context/ConfirmContext", () => ({
-  useConfirm: () => ({ confirm: async () => true, prompt: async () => null }),
+const dialogs = vi.hoisted(() => ({
+  confirm: vi.fn(async (_options: { title?: string; message: string }) => true as boolean | "secondary"),
+  prompt: vi.fn(async () => null as string | null),
 }));
+vi.mock("../../context/ConfirmContext", () => ({ useConfirm: () => dialogs }));
+const sessionState = vi.hoisted(() => ({ value: { role: "super_admin", roles: ["super_admin"] } as Record<string, unknown> }));
+vi.mock("../../hooks/useCachedSession", () => ({ useCachedSession: () => sessionState.value }));
 const readOnly = vi.hoisted(() => ({ value: false }));
 vi.mock("../../context/ReadOnlyContext", () => ({ useReadOnly: () => readOnly.value }));
 
@@ -39,6 +43,9 @@ function useApi(override?: Parameters<typeof fakeExchangeApi>[1], settings?: Par
 
 beforeEach(() => {
   readOnly.value = false;
+  sessionState.value = { role: "super_admin", roles: ["super_admin"] };
+  dialogs.confirm.mockReset();
+  dialogs.confirm.mockResolvedValue(true);
   calls = [];
   vi.mocked(authFetch).mockReset();
   vi.mocked(bootstrapSession).mockClear();
@@ -230,6 +237,83 @@ describe("Exchange EWS settings", () => {
     await act(async () => [...host.querySelectorAll<HTMLButtonElement>('[role="option"]')][1].click());
     await click(button("Save settings")!);
     expect(savedBody()).toMatchObject({ detection: "model", detection_model: "7" });
+  });
+});
+
+describe("where passwords are sent", () => {
+  const ENDPOINT = ["ews-url", "ews-autodiscover", "ews-ca"];
+
+  it("is read-only, with a note, for a writer who is not a Super Admin; the rest stays open", async () => {
+    sessionState.value = { role: "integrations_administrator", roles: ["integrations_administrator"] };
+    await render();
+    for (const id of ENDPOINT) {
+      expect(input(id).disabled, id).toBe(true);
+      expect(input(id).getAttribute("aria-describedby"), id).toContain("ews-endpoint-note");
+    }
+    expect(check("Verify the Exchange server's certificate").disabled).toBe(true);
+    expect(host.querySelector("#ews-endpoint-note")?.textContent).toContain(
+      "Only a Super Admin can change where Exchange passwords are sent.",
+    );
+    expect(input("ews-poll").disabled).toBe(false);
+    expect(check("Find meeting times").disabled).toBe(false);
+    await act(async () => check("Find meeting times").click());
+    await click(button("Save settings")!);
+    expect(dialogs.confirm).not.toHaveBeenCalled();
+    expect(savedBody()).toMatchObject({ allow_free_time: false });
+  });
+
+  it("is open to a Super Admin (and a full administrator), without the note", async () => {
+    for (const roles of [["super_admin"], ["full_administrator"]]) {
+      sessionState.value = { role: roles[0], roles };
+      await render();
+      for (const id of ENDPOINT) expect(input(id).disabled, `${roles[0]} ${id}`).toBe(false);
+      expect(host.querySelector("#ews-endpoint-note")).toBeNull();
+    }
+  });
+
+  it.each([
+    ["the EWS address", async () => type(input("ews-url"), "https://mail2.corp.example/EWS/Exchange.asmx")],
+    ["the login format", async () => act(async () => host.querySelector<HTMLInputElement>('input[name="ews-login-format"][value="upn"]')!.click())],
+    ["the NetBIOS domain", async () => type(input("ews-netbios"), "CORP2")],
+    ["certificate checks", async () => act(async () => check("Verify the Exchange server's certificate").click())],
+  ])("asks before saving a change to %s: everyone types their password again", async (_name, change) => {
+    await render();
+    await change();
+    dialogs.confirm.mockResolvedValueOnce(false);
+    await click(button("Save settings")!);
+    expect(dialogs.confirm).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "Everyone who connected a mailbox will have to type their password again." }),
+    );
+    expect(savedBody()).toBeUndefined();
+    await click(button("Save settings")!);
+    expect(dialogs.confirm).toHaveBeenCalledTimes(2);
+    expect(savedBody()).toBeTruthy();
+    expect(host.textContent).toContain("Settings saved.");
+  });
+
+  it("does not ask for a change that keeps the passwords working", async () => {
+    await render();
+    await type(input("ews-poll"), "10");
+    await click(button("Save settings")!);
+    expect(dialogs.confirm).not.toHaveBeenCalled();
+    expect(savedBody()).toMatchObject({ poll_minutes: 10 });
+  });
+
+  it("shows the server's super_admin_only refusal with the controls it is about", async () => {
+    useApi((url, method) =>
+      url.endsWith("/settings") && method === "PUT"
+        ? json(403, { detail: { code: "super_admin_only", message: "Only a Super Admin can change where Exchange passwords are sent." } })
+        : undefined,
+    );
+    await render();
+    await type(input("ews-url"), "https://mail2.corp.example/EWS/Exchange.asmx");
+    await click(button("Save settings")!);
+    const connection = host.querySelector(".ews-admin-card--connection")!;
+    const alert = connection.querySelector('[role="alert"]');
+    expect(alert?.textContent).toBe("Only a Super Admin can change where Exchange passwords are sent.");
+    expect(host.textContent).not.toContain("Settings saved.");
+    await click(button("Discard")!);
+    expect(connection.querySelector('[role="alert"]')).toBeNull();
   });
 });
 

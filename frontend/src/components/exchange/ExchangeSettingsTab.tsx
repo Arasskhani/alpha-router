@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import SearchableModelSelect from "../admin/SearchableModelSelect";
+import { useConfirm } from "../../context/ConfirmContext";
 import { CheckField, Field, FieldError, NumberField, Switch, describedBy, errorText } from "./ExchangeControls";
 import ExchangeTestPanel from "./ExchangeTestPanel";
 import {
@@ -14,9 +15,12 @@ import {
 import {
   EWS_URL_EXAMPLE,
   LOGIN_FORMAT_OPTIONS,
+  ONLY_SUPER_ADMIN_TEXT,
+  PASSWORDS_RESET_TEXT,
   countCertificates,
   exampleLogin,
   fieldForServerMessage,
+  resetsPasswords,
   validateExchangeSettings,
   type SettingsErrors,
   type SettingsField,
@@ -29,6 +33,11 @@ type Props = {
   onRetry?: () => void;
   /** Read-only administrators read the same page with every control disabled. */
   canEdit: boolean;
+  /**
+   * Where passwords are sent (EWS and Autodiscover addresses, certificate checks) is a Super Admin's decision:
+   * other writers see those four controls disabled, with a note.
+   */
+  canEditEndpoint: boolean;
   onSaved: (next: ExchangeSettingsResponse) => void;
   onTestPassed: () => void;
   /** Bring the Test connection panel into view (the Overview's checklist links here). */
@@ -76,15 +85,19 @@ export default function ExchangeSettingsTab({
   loadError,
   onRetry,
   canEdit,
+  canEditEndpoint,
   onSaved,
   onTestPassed,
   focusTest,
 }: Props) {
+  const { confirm } = useConfirm();
   const [form, setForm] = useState<ExchangeSettings | null>(data?.settings ?? null);
   const [serverErrors, setServerErrors] = useState<SettingsErrors>({});
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
+  /** The server's 403 `super_admin_only`, shown with the controls it is about. */
+  const [endpointError, setEndpointError] = useState("");
   const errors = useMemo(() => (form ? validateExchangeSettings(form) : {}), [form]);
   const dirty = useMemo(
     () => Boolean(form && data && JSON.stringify(form) !== JSON.stringify(data.settings)),
@@ -113,6 +126,10 @@ export default function ExchangeSettingsTab({
   }
 
   const locked = !canEdit;
+  const endpointLocked = locked || !canEditEndpoint;
+  // The note the four Super Admin controls point to, for a writer who may not change them.
+  const endpointNote = canEdit && !canEditEndpoint ? "ews-endpoint-note" : undefined;
+  const withNote = (ids: string | undefined) => [ids, endpointNote].filter(Boolean).join(" ") || undefined;
   const set = (patch: Partial<ExchangeSettings>) => {
     setForm({ ...form, ...patch });
     setNotice("");
@@ -125,9 +142,19 @@ export default function ExchangeSettingsTab({
   const shown = (key: SettingsField): string | undefined => errors[key] ?? serverErrors[key];
 
   async function save() {
-    if (!form || locked || Object.keys(errors).length) return;
+    if (!form || !data || locked || Object.keys(errors).length) return;
+    if (resetsPasswords(data.settings, form)) {
+      const ok = await confirm({
+        title: "Change the connection settings?",
+        message: PASSWORDS_RESET_TEXT,
+        confirmLabel: "Save settings",
+        danger: true,
+      });
+      if (ok !== true) return;
+    }
     setSaving(true);
     setError("");
+    setEndpointError("");
     setNotice("");
     try {
       const next = await exchangeAdminApi.saveSettings(form);
@@ -137,6 +164,10 @@ export default function ExchangeSettingsTab({
       onSaved(next);
     } catch (err) {
       const message = errorText(err);
+      if (err instanceof MailApiError && err.code === "super_admin_only") {
+        setEndpointError(err.serverMessage ? message : ONLY_SUPER_ADMIN_TEXT);
+        return;
+      }
       const field =
         err instanceof MailApiError && err.code === "invalid_settings"
           ? fieldForServerMessage(message, Object.keys(form) as SettingsField[])
@@ -153,6 +184,7 @@ export default function ExchangeSettingsTab({
     setForm(data.settings);
     setServerErrors({});
     setError("");
+    setEndpointError("");
     setNotice("");
   }
 
@@ -188,6 +220,18 @@ export default function ExchangeSettingsTab({
             On: people who sign in with Active Directory see <strong>Connections</strong> in their profile menu and can
             connect their mailbox. Off hides it again; nothing is deleted.
           </p>
+          {endpointNote ? (
+            <p className="alert alert-info ews-admin-warning" id={endpointNote}>
+              {ONLY_SUPER_ADMIN_TEXT} The EWS and Autodiscover addresses and the certificate settings are read-only for
+              your role.
+            </p>
+          ) : null}
+          {endpointError ? (
+            <p className="alert alert-error ews-admin-warning" role="alert">
+              {endpointError}
+            </p>
+          ) : null}
+
           <Field
             id="ews-url"
             label="EWS address"
@@ -214,9 +258,9 @@ export default function ExchangeSettingsTab({
               placeholder={EWS_URL_EXAMPLE}
               autoComplete="off"
               spellCheck={false}
-              disabled={locked}
+              disabled={endpointLocked}
               aria-invalid={Boolean(shown("ews_url"))}
-              aria-describedby={describedBy("ews-url", true, shown("ews_url"))}
+              aria-describedby={withNote(describedBy("ews-url", true, shown("ews_url")))}
               onChange={(e) => set({ ews_url: e.target.value })}
             />
           </Field>
@@ -244,9 +288,9 @@ export default function ExchangeSettingsTab({
               placeholder="https://mail.corp.example/autodiscover/autodiscover.xml"
               autoComplete="off"
               spellCheck={false}
-              disabled={locked}
+              disabled={endpointLocked}
               aria-invalid={Boolean(shown("autodiscover_url"))}
-              aria-describedby={describedBy("ews-autodiscover", true, shown("autodiscover_url"))}
+              aria-describedby={withNote(describedBy("ews-autodiscover", true, shown("autodiscover_url")))}
               onChange={(e) => set({ autodiscover_url: e.target.value })}
             />
           </Field>
@@ -367,7 +411,7 @@ export default function ExchangeSettingsTab({
             checked={form.verify_tls}
             title="Verify the Exchange server's certificate"
             hint="Recommended. For a certificate from an internal CA, paste the CA below rather than turning this off."
-            disabled={locked}
+            disabled={endpointLocked}
             onChange={(on) => set({ verify_tls: on })}
           />
           {!form.verify_tls ? (
@@ -398,9 +442,9 @@ export default function ExchangeSettingsTab({
               value={form.ca_bundle_pem}
               placeholder="-----BEGIN CERTIFICATE-----"
               spellCheck={false}
-              disabled={locked}
+              disabled={endpointLocked}
               aria-invalid={Boolean(shown("ca_bundle_pem"))}
-              aria-describedby={describedBy("ews-ca", true, shown("ca_bundle_pem"))}
+              aria-describedby={withNote(describedBy("ews-ca", true, shown("ca_bundle_pem")))}
               onChange={(e) => set({ ca_bundle_pem: e.target.value })}
             />
           </Field>

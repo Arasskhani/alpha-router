@@ -10,6 +10,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("../../hooks/useCachedSession", () => ({ useCachedSession: () => ({ role: "super_admin", roles: ["super_admin"] }) }));
 vi.mock("../../api", () => ({
   authFetch: vi.fn(),
   api: vi.fn(async () => []),

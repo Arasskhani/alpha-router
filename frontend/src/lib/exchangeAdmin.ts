@@ -37,6 +37,29 @@ export const STATUS_FILTERS: { value: ConnectionStatus | ""; label: string }[] =
   { value: "error", label: "Error" },
 ];
 
+/**
+ * Changing any of these makes every stored password unusable as it stands (another server or certificate
+ * check, or another login made from the account), so the server sets every connection to "password needed"
+ * on Save. The first four say where passwords are sent: only a Super Admin may change them (403
+ * `super_admin_only` otherwise).
+ */
+const PASSWORD_RESET_FIELDS: readonly SettingsField[] = [
+  "ews_url",
+  "autodiscover_url",
+  "verify_tls",
+  "ca_bundle_pem",
+  "login_format",
+  "netbios_domain",
+  "upn_suffix",
+];
+export const ONLY_SUPER_ADMIN_TEXT = "Only a Super Admin can change where Exchange passwords are sent.";
+export const PASSWORDS_RESET_TEXT = "Everyone who connected a mailbox will have to type their password again.";
+
+/** Whether saving `form` over `saved` makes everyone type their password again. */
+export function resetsPasswords(saved: ExchangeSettings, form: ExchangeSettings): boolean {
+  return PASSWORD_RESET_FIELDS.some((key) => saved[key] !== form[key]);
+}
+
 const NETBIOS = /^[A-Za-z0-9][A-Za-z0-9._-]{0,14}$/;
 const DNS = /^(?=.{1,253}$)([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z0-9-]{2,63}$/;
 const PEM_CERT = /-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g;

@@ -95,6 +95,8 @@ export default function Connections() {
   }, [tick]);
 
   const connection = status?.eligible ? status.connection : null;
+  // No longer allowed to connect, but the password is still stored: the person can remove it.
+  const storedConnection = status && !status.eligible ? status.connection : null;
   const listsActions = Boolean(connection && status?.capabilities.notifications);
 
   useEffect(() => {
@@ -222,9 +224,39 @@ export default function Connections() {
         </div>
 
         {!status.eligible ? (
-          <p className="mail-ineligible" role="status">
-            {status.message || "Your account cannot connect a mailbox."}
-          </p>
+          <>
+            <p className="mail-ineligible" role="status">
+              {status.message || "Your account cannot connect a mailbox."}
+            </p>
+            {notice ? (
+              <p className="alert alert-success mail-alert mail-ineligible__notice" role="status">
+                {notice}
+              </p>
+            ) : null}
+            {storedConnection ? (
+              <div className="mail-stored">
+                <p className="mail-stored__text">
+                  Your password for <span className="mail-identity__smtp">{storedConnection.primary_smtp}</span> is still
+                  stored, though the chat cannot use it now. Disconnect to remove it.
+                </p>
+                {error ? (
+                  <p className="alert alert-error mail-alert" role="alert">
+                    {error}
+                  </p>
+                ) : null}
+                <div className="mail-card__actions">
+                  <button
+                    type="button"
+                    className="btn btn-ghost mail-danger-ghost"
+                    disabled={readOnly || busy !== null}
+                    onClick={() => void disconnect()}
+                  >
+                    {busy === "disconnect" ? "Disconnecting…" : "Disconnect"}
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </>
         ) : !connection ? (
           <div className="mail-connect">
             <CapabilityList capabilities={caps} />

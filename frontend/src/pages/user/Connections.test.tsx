@@ -279,6 +279,53 @@ describe("not eligible", () => {
     expect(document.querySelector('input[type="password"]')).toBeNull();
     expect(button("Connect")).toBeUndefined();
     expect(calls.map((c) => c.url)).toEqual(["/api/mail/status"]);
+    expect(button("Disconnect")).toBeUndefined();
+  });
+
+  it("lets a person no longer allowed remove the password still stored", async () => {
+    status = {
+      ...BASE,
+      eligible: false,
+      reason: "not_permitted",
+      message: "Your administrator has not given you the Exchange mailbox.",
+      connection: CONNECTION,
+    };
+    await render();
+    expect(text()).toContain("Your administrator has not given you the Exchange mailbox.");
+    expect(text()).toContain("s.karimi@corp.example");
+    expect(document.querySelector('input[type="password"]')).toBeNull();
+    expect(document.querySelector(".mail-mailbox-table")).toBeNull();
+    expect(document.querySelector(".mail-actions")).toBeNull();
+
+    dialogs.confirm.mockResolvedValueOnce(false);
+    await click(button("Disconnect"));
+    expect(dialogs.confirm).toHaveBeenCalledWith(expect.objectContaining({ title: "Disconnect mailbox", danger: true }));
+    expect(posts("/api/mail/connection")).toHaveLength(0);
+
+    handler = (url, method) => (url === "/api/mail/connection" && method === "DELETE" ? json({ ok: true }) : undefined);
+    await click(button("Disconnect"));
+    expect(posts("/api/mail/connection")).toEqual([{ url: "/api/mail/connection", method: "DELETE", body: undefined }]);
+    expect(text()).toContain("Your mailbox is disconnected.");
+    expect(text()).not.toContain("still stored");
+    expect(button("Disconnect")).toBeUndefined();
+    expect(button("Connect")).toBeUndefined();
+  });
+
+  it("says why the stored password could not be removed", async () => {
+    status = { ...BASE, eligible: false, reason: "feature_off", message: "Exchange EWS is off.", connection: CONNECTION };
+    handler = (url, method) =>
+      url === "/api/mail/connection" && method === "DELETE" ? json({ detail: "Database busy" }, 503) : undefined;
+    await render();
+    await click(button("Disconnect"));
+    expect(alerts().join(" ")).toContain("Database busy");
+    expect(button("Disconnect")).toBeTruthy();
+  });
+
+  it("keeps Disconnect off for an inactive account", async () => {
+    readOnly.value = true;
+    status = { ...BASE, eligible: false, reason: "not_ad", message: "Not AD.", connection: CONNECTION };
+    await render();
+    expect(button("Disconnect")?.disabled).toBe(true);
   });
 });
 

@@ -5,8 +5,9 @@
  * the open items on start, every two minutes while the tab is visible and on
  * focus; a toast for each new email (at most three, then "N more"), the server
  * told which were shown, never the same email twice in a tab; Ask Alpharouter
- * and Dismiss on each toast; and a toast closed when its email is handled
- * elsewhere.
+ * and Dismiss on each toast, and a plain × that only closes it; a toast closed
+ * when its email is handled elsewhere; and on a phone, one toast that counts
+ * them instead, for a shorter time.
  */
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -22,8 +23,9 @@ vi.mock("../hooks/useCachedSession", () => ({ useCachedSession: () => sessionSta
 import { authFetch } from "../api";
 import { takeChatPrefill } from "../lib/chatPrefill";
 import { MAIL_CHANGED_EVENT, type ActionItem } from "../lib/exchangeMail";
+import { PHONE_QUERY } from "../hooks/useMediaQuery";
 import { resetToastHost } from "../lib/toastHost";
-import MailActionToasts, { MAIL_POLL_MS, resetMailActionToasts } from "./MailActionToasts";
+import MailActionToasts, { MAIL_POLL_MS, PHONE_TOAST_TTL_MS, resetMailActionToasts } from "./MailActionToasts";
 
 const LIST_URL = "/api/mail/action-items?state=open&limit=50";
 
@@ -54,6 +56,8 @@ let openItems: ActionItem[];
 let handler: (url: string, method: string) => Response | undefined;
 let hidden: boolean;
 let announced: number;
+let phone: boolean;
+const realMatchMedia = window.matchMedia;
 
 const json = (body: unknown, code = 200) =>
   new Response(JSON.stringify(body), { status: code, headers: { "Content-Type": "application/json" } });
@@ -73,6 +77,8 @@ beforeEach(() => {
   openItems = [item(1), item(2, { status: "notified" })];
   handler = () => undefined;
   hidden = false;
+  phone = false;
+  window.matchMedia = ((query: string) => ({ matches: phone && query === PHONE_QUERY, media: query })) as typeof window.matchMedia;
   Object.defineProperty(document, "hidden", { configurable: true, get: () => hidden });
   vi.mocked(authFetch).mockReset();
   vi.mocked(authFetch).mockImplementation(async (url: string, init: RequestInit = {}) => {
@@ -100,6 +106,7 @@ afterEach(() => {
   host.remove();
   window.removeEventListener(MAIL_CHANGED_EVENT, onAnnounce);
   resetToastHost();
+  window.matchMedia = realMatchMedia;
   vi.useRealTimers();
 });
 
@@ -255,7 +262,9 @@ describe("the toasts", () => {
   it("takes the N more toast to Connections, in the person's panel", async () => {
     openItems = [item(1), item(2), item(3), item(4)];
     await render();
-    await press(toasts().find((t) => t.textContent?.includes("more emails need your action")));
+    const more = toasts().find((t) => t.textContent?.includes("more emails need your action"))!;
+    expect(more.textContent).toContain("2 more emails need your action");
+    await press(action(more, "Open Connections"));
     expect(where()).toBe("/app/connections#mail-actions");
 
     act(() => root.unmount());
@@ -265,7 +274,7 @@ describe("the toasts", () => {
     openItems = [item(11), item(12), item(13), item(14)];
     sessionState.value = { role: "full_administrator", features: { connections: true, exchange_mail: true } };
     await render("/admin");
-    await press(toasts().find((t) => t.textContent?.includes("more emails need your action")));
+    await press(action(toasts().find((t) => t.textContent?.includes("more emails need your action"))!, "Open Connections"));
     expect(where()).toBe("/admin/my-connections#mail-actions");
   });
 
@@ -332,10 +341,91 @@ describe("the toasts", () => {
     expect(titles()).toEqual(["Email 2"]);
   });
 
+  it("has a plain × on every mail toast that only closes it, with no call to the server", async () => {
+    openItems = [item(1), item(2), item(3), item(4)];
+    await render();
+    expect(toasts().every((t) => t.querySelector(".app-toast__close")?.getAttribute("aria-label") === "Close")).toBe(true);
+    const before = calls.length;
+    await press(toasts()[0].querySelector<HTMLButtonElement>(".app-toast__close")!);
+    expect(titles()).toEqual(["Email 2", "2 more emails need your action"]);
+    await press(toasts()[1].querySelector<HTMLButtonElement>(".app-toast__close")!);
+    expect(titles()).toEqual(["Email 2"]);
+    expect(calls.length).toBe(before);
+    expect(announced).toBe(0);
+  });
+
   it("stays quiet when the list cannot be read", async () => {
     handler = (url) => (url === LIST_URL ? json({ detail: "down" }, 502) : undefined);
     await render();
     expect(toasts()).toHaveLength(0);
     expect(posted("/api/mail/action-items/notified")).toHaveLength(0);
+  });
+});
+
+describe("on a phone", () => {
+  beforeEach(() => {
+    phone = true;
+  });
+
+  it("shows one toast that counts the new emails, with Open Connections and ×, for twenty seconds", async () => {
+    openItems = [item(1), item(2), item(3, { status: "notified" })];
+    await render();
+    expect(titles()).toEqual(["2 emails need your action"]);
+    const [toast] = toasts();
+    expect([...toast.querySelectorAll(".app-toast__action")].map((b) => b.textContent)).toEqual(["Open Connections"]);
+    expect(toast.querySelector(".app-toast__close")).toBeTruthy();
+    expect(posted("/api/mail/action-items/notified")[0].body).toEqual({ ids: [1, 2] });
+    await act(async () => {
+      vi.advanceTimersByTime(PHONE_TOAST_TTL_MS - 500);
+    });
+    expect(toasts()).toHaveLength(1);
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(toasts()).toHaveLength(0);
+  });
+
+  it("says one email in the singular, and opens Connections in the person's panel", async () => {
+    openItems = [item(1)];
+    await render("/admin/chat");
+    expect(titles()).toEqual(["1 email needs your action"]);
+    expect(toasts()[0].textContent).toContain("Open Connections to see it.");
+    sessionState.value = { role: "full_administrator", features: { connections: true, exchange_mail: true } };
+    await render("/admin/chat");
+    await press(action(toasts()[0], "Open Connections"));
+    expect(where()).toBe("/admin/my-connections#mail-actions");
+  });
+
+  it("counts on when more arrive, and counts down when one is handled elsewhere", async () => {
+    openItems = [item(1), item(2)];
+    await render();
+    expect(titles()).toEqual(["2 emails need your action"]);
+    openItems = [...openItems, item(3)];
+    await act(async () => {
+      window.dispatchEvent(new Event(MAIL_CHANGED_EVENT));
+    });
+    await settle();
+    expect(titles()).toEqual(["3 emails need your action"]);
+    openItems = openItems.filter((i) => i.id !== 1);
+    await act(async () => {
+      window.dispatchEvent(new Event(MAIL_CHANGED_EVENT));
+    });
+    await settle();
+    expect(titles()).toEqual(["2 emails need your action"]);
+    openItems = [];
+    await act(async () => {
+      window.dispatchEvent(new Event(MAIL_CHANGED_EVENT));
+    });
+    await settle();
+    expect(toasts()).toHaveLength(0);
+  });
+
+  it("closes with × and calls nothing", async () => {
+    openItems = [item(1), item(2)];
+    await render();
+    const before = calls.length;
+    await press(toasts()[0].querySelector<HTMLButtonElement>(".app-toast__close")!);
+    expect(toasts()).toHaveLength(0);
+    expect(calls.length).toBe(before);
   });
 });

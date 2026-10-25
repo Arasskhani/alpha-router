@@ -14301,6 +14301,42 @@ button.app-toast:hover {
   outline-offset: 1px;
 }
 
+/* The plain × of a mail toast: closes it here, nothing else. */
+.app-toast--closable {
+  position: relative;
+  padding-inline-end: 2.4rem;
+}
+
+.app-toast__close {
+  position: absolute;
+  top: 0.3rem;
+  inset-inline-end: 0.3rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.app-toast__close:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.app-toast__close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .settings-row__trail input[type="checkbox"] {
   width: 1rem;
   height: 1rem;

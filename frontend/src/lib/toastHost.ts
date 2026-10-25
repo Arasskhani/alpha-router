@@ -44,6 +44,15 @@ export type ToastSpec = {
    * toast with actions is not itself a button, so `onClick` is ignored.
    */
   actions?: ToastAction[];
+  /**
+   * A plain × in the corner that only closes the toast, taking no action (a
+   * mail toast the person wants out of the way, on a phone especially). Drawn
+   * only on a toast that is not itself a button: one with actions, or without
+   * `onClick`.
+   */
+  closable?: boolean;
+  /** Hears the × being pressed (not the toast going away by itself, nor its actions). */
+  onClose?: () => void;
 };
 
 let host: HTMLDivElement | null = null;
@@ -107,6 +116,21 @@ export function showToast(spec: ToastSpec): () => void {
       spec.onClick?.();
       dismiss(key, node);
     });
+  }
+
+  if (spec.closable && !interactive) {
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "app-toast__close";
+    close.setAttribute("aria-label", "Close");
+    close.title = "Close";
+    close.textContent = "×";
+    close.addEventListener("click", () => {
+      dismiss(key, node);
+      spec.onClose?.();
+    });
+    node.classList.add("app-toast--closable");
+    node.append(close);
   }
 
   if (actions.length > 0) {

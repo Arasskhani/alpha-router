@@ -113,6 +113,48 @@ describe("showToast with actions", () => {
   });
 });
 
+describe("the plain ×", () => {
+  it("only closes the toast: no action runs, and onClose hears it", () => {
+    const ask = vi.fn();
+    const onClose = vi.fn();
+    showToast({
+      eyebrow: "Needs your action",
+      title: "Budget",
+      actions: [{ label: "Ask Alpharouter", onClick: ask }],
+      closable: true,
+      onClose,
+    });
+    const [toast] = toasts();
+    const close = toast.querySelector<HTMLButtonElement>(".app-toast__close")!;
+    expect(close.getAttribute("aria-label")).toBe("Close");
+    expect(close.type).toBe("button");
+    expect([...toast.querySelectorAll(".app-toast__action")].map((b) => b.textContent)).toEqual(["Ask Alpharouter"]);
+    close.click();
+    expect(toasts()).toHaveLength(0);
+    expect(ask).not.toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("is drawn on a plain toast, never inside a toast that is a button, nor unasked", () => {
+    showToast({ eyebrow: "A", title: "plain", closable: true });
+    showToast({ eyebrow: "A", title: "button", closable: true, onClick: () => undefined });
+    showToast({ eyebrow: "A", title: "unasked" });
+    const [plain, button, unasked] = toasts();
+    expect(plain.querySelector(".app-toast__close")).toBeTruthy();
+    expect(button.tagName).toBe("BUTTON");
+    expect(button.querySelector("button")).toBeNull();
+    expect(unasked.querySelector(".app-toast__close")).toBeNull();
+  });
+
+  it("is not heard when the toast goes away by itself", () => {
+    const onClose = vi.fn();
+    showToast({ eyebrow: "A", title: "x", closable: true, onClose, ttlMs: 1000 });
+    vi.advanceTimersByTime(1100);
+    expect(toasts()).toHaveLength(0);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+});
+
 describe("the close function", () => {
   it("closes the toast early and is harmless afterwards", () => {
     const close = showToast({ eyebrow: "E", title: "T", dedupeKey: "mail::1" });

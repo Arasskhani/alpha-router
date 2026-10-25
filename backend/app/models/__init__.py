@@ -85,6 +85,13 @@ from app.models.knowledge import (
     OutboxEvent,
 )
 from app.models.logging import ImageGenerationAttempt, RequestLog
+from app.models.mail_connection import (
+    MailActionItem,
+    MailConnection,
+    MailConnectionMailbox,
+    MailDraft,
+    MailItemRef,
+)
 from app.models.media import MediaAsset
 from app.models.model_catalog import (
     AIModel,
@@ -181,6 +188,11 @@ __all__ = [
     "KnowledgeReleaseDocument",
     "LedgerEntry",
     "LegalHold",
+    "MailActionItem",
+    "MailConnection",
+    "MailConnectionMailbox",
+    "MailDraft",
+    "MailItemRef",
     "MediaAsset",
     "ModelAccessAssignment",
     "ModelToolCompatibility",

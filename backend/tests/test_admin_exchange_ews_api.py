@@ -353,6 +353,36 @@ class TestConnectionTest:
         assert _steps(body)[-1] == ("autodiscover", False)
         assert body["full_access"] == []
 
+    async def test_autodiscover_s_reason_is_the_warning(self, client, db_session, exchange, admin):
+        exchange.autodiscover_problem = (
+            "Autodiscover at mail.corp.example refused the sign-in (HTTP 401) although EWS accepted it."
+        )
+        await _turn_on(db_session)
+        resp = await client.post(
+            f"{BASE}/test", json={"login": "CORP\\it.admin", "password": "Admin-Pass-1"}, headers=sign_in(client, admin)
+        )
+        body = resp.json()
+        assert body["ok"] is True
+        step = body["steps"][-1]
+        assert (step["key"], step["ok"]) == ("autodiscover", False)
+        assert "HTTP 401" in step["detail"] and "a warning" in step["detail"]
+
+    async def test_an_autodiscover_refusal_never_reads_as_a_wrong_password(
+        self, client, db_session, exchange, admin, monkeypatch
+    ):
+        def refused(self):
+            raise EwsError("auth", "Exchange did not accept the user name or password.")
+
+        monkeypatch.setattr(FakeMailClient, "discover_full_access", refused)
+        await _turn_on(db_session)
+        resp = await client.post(
+            f"{BASE}/test", json={"login": "CORP\\it.admin", "password": "Admin-Pass-1"}, headers=sign_in(client, admin)
+        )
+        body = resp.json()
+        assert body["ok"] is True and _steps(body)[-1] == ("autodiscover", False)
+        assert "user name or password" not in body["steps"][-1]["detail"]
+        assert body["steps"][-1]["detail"].startswith("Autodiscover refused the sign-in, although EWS accepted it.")
+
     async def test_unreachable(self, client, db_session, exchange, admin):
         await _turn_on(db_session)
         exchange.fail_with = EwsError("unreachable", "Exchange did not answer at mail.corp.example.")

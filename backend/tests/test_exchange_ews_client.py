@@ -797,15 +797,34 @@ def test_autodiscover_that_fails_gives_nothing(
     c = EwsClient(config_for(server, tls, **overrides))
     try:
         assert c.discover_full_access() == []
+        assert c.autodiscover_problem, "the admin's Test connection is told why"
+        assert "<" not in c.autodiscover_problem and PASSWORD not in c.autodiscover_problem
     finally:
         c.close()
 
 
-def test_autodiscover_refusing_the_password_is_auth(exchange: FakeExchange, client: EwsClient) -> None:
+@pytest.mark.parametrize("offer", ['Basic realm="fake"', "Negotiate", ""])
+def test_a_401_from_autodiscover_is_its_own_trouble_never_a_wrong_password(
+    exchange: FakeExchange, client: EwsClient, caplog: pytest.LogCaptureFixture, offer: str
+) -> None:
+    """Autodiscover is asked after EWS accepted the login: another host, a load balancer ending TLS, EPA."""
+    exchange.autodiscover_delegates["corp\\s.karimi"] = [(FINANCE, "Finance")]
     exchange.autodiscover_status = 401
-    with pytest.raises(EwsError) as caught:
-        client.discover_full_access()
-    assert caught.value.kind == "auth"
+    exchange.autodiscover_www_authenticate = offer
+    with caplog.at_level(logging.INFO, logger="app.services.exchange_ews_client"):
+        assert client.discover_full_access() == []
+    assert "HTTP 401" in client.autodiscover_problem
+    logged = "\n".join(record.getMessage() for record in caplog.records)
+    assert "401" in logged and PASSWORD not in logged and LOGIN not in logged
+
+
+def test_an_answer_says_nothing_went_wrong(exchange: FakeExchange, client: EwsClient) -> None:
+    exchange.autodiscover_delegates["corp\\s.karimi"] = [(FINANCE, "Finance")]
+    exchange.autodiscover_status = 500
+    assert client.discover_full_access() == []
+    exchange.autodiscover_status = 200
+    assert client.discover_full_access() == [MailboxInfo(smtp=FINANCE, display_name="Finance")]
+    assert client.autodiscover_problem == ""
 
 
 # --- the pieces without a network ---------------------------------------------------------------------------------

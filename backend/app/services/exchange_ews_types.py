@@ -196,11 +196,19 @@ class MailClient(Protocol):
         """Whether ``smtp`` (any of its addresses) is the login's own mailbox: the root folder ids compared."""
         ...
 
+    #: Why the last ``discover_full_access`` gave nothing although it was asked (Autodiscover failed): a short
+    #: text for the administrator's Test connection; ``""`` when it answered (or listed none).
+    autodiscover_problem: str
+
     def discover_full_access(self) -> list[MailboxInfo]:
         """The other mailboxes Autodiscover lists for the login (``AlternativeMailbox`` of type Delegate).
 
-        An Autodiscover that fails or is not set up gives ``[]``, not an error;
-        only ``auth`` is raised.
+        An Autodiscover that fails - not set up, unreachable, an answer that
+        cannot be read, even a 401: it is asked after EWS accepted the login,
+        so a refusal is Autodiscover's own trouble (another host, TLS ended by
+        a load balancer, Extended Protection), never a wrong password - gives
+        ``[]`` and says why in ``autodiscover_problem``. Raises only what
+        finding the login's own mailbox raises (``whoami``).
         """
         ...
 

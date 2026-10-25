@@ -66,9 +66,11 @@ How the less obvious parts work:
   by the standard offset, or left out when that window would cross midnight.
 - ``discover_full_access``: the Autodiscover POX request Outlook sends, with
   the same TLS and auth, parsed with ``defusedxml`` (no DTDs, no entities).
-  Anything that fails gives ``[]``; only a 401 whose server offered our auth
-  scheme (the password itself was refused) raises ``auth``. Redirects are
-  not followed.
+  Anything that fails gives ``[]`` and says why in ``autodiscover_problem``
+  (for the admin's Test connection) - a 401 too: it comes after EWS accepted
+  the password, so it is Autodiscover's own trouble (another host, TLS ended
+  by a load balancer, Extended Protection), never a refused password.
+  Redirects are not followed.
 - ``delete_draft`` uses ``DeleteItem`` with ``MoveToDeletedItems`` - what
   exchangelib's ``move_to_trash()`` sends - without its extra folder lookups.
 """
@@ -989,6 +991,7 @@ class EwsClient:
         self._roots: dict[str, Any] = {}
         self._own_root_id: str | None = None
         self._own: MailboxInfo | None = None
+        self.autodiscover_problem = ""
 
     # --- plumbing ---
 
@@ -1211,14 +1214,28 @@ class EwsClient:
     def discover_full_access(self) -> list[MailboxInfo]:
         with self._errors("discover_full_access"):
             own = self._whoami()
+            self.autodiscover_problem = ""
             url = (self.config.autodiscover_url or "").strip()
             if not url.lower().startswith("https://"):
+                self.autodiscover_problem = "No https Autodiscover address is set."
                 return []
             data = self._autodiscover(url, own.smtp)
-            return _alternative_mailboxes(data, own.smtp) if data else []
+            if not data:
+                return []
+            found = _alternative_mailboxes(data, own.smtp)
+            if found is None:
+                self.autodiscover_problem = f"Autodiscover at {_host(url)} answered with something that is not POX XML."
+                return []
+            return found
 
     def _autodiscover(self, url: str, email: str) -> bytes:
-        """The POX answer for ``email``, or ``b""`` when there is none; ``auth`` when the password was refused."""
+        """The POX answer for ``email``, or ``b""`` when there is none (``autodiscover_problem`` says why).
+
+        Never an error: it is asked after EWS accepted the login, so even a 401
+        is Autodiscover's own trouble (another host, TLS ended by a load
+        balancer, Extended Protection) - never a refused password.
+        """
+        host = _host(url)
         ntlm = self.config.auth != "basic"
         session = requests.Session()
         session.mount("https://", _adapter(self._verify))
@@ -1237,21 +1254,27 @@ class EwsClient:
                 stream=True,
             ) as response:
                 if response.status_code == 401:
-                    offered = response.headers.get("WWW-Authenticate", "").lower()
-                    ours = ("ntlm" in offered or "negotiate" in offered) if ntlm else "basic" in offered
-                    if ours:
-                        raise EwsError("auth", "Exchange did not accept the user name or password.")
+                    logger.info(
+                        "Autodiscover at %s answered 401 after EWS accepted the login: no Full Access list", host
+                    )
+                    self.autodiscover_problem = (
+                        f"Autodiscover at {host} refused the sign-in (HTTP 401) although EWS accepted it. Reach it "
+                        "directly over TLS (no proxy that ends TLS before Exchange), with Windows authentication on."
+                    )
                     return b""
                 if response.status_code != 200:
+                    self.autodiscover_problem = f"Autodiscover at {host} answered HTTP {response.status_code}."
                     return b""
                 data = bytearray()
                 for chunk in response.iter_content(64 * 1024):
                     data.extend(chunk)
                     if len(data) > _AUTODISCOVER_MAX_BYTES:
+                        self.autodiscover_problem = f"Autodiscover at {host} answered with too much to read."
                         return b""
                 return bytes(data)
         except requests.RequestException as exc:
             logger.info("Autodiscover failed: %s", type(exc).__name__)
+            self.autodiscover_problem = f"Autodiscover at {host} could not be reached ({type(exc).__name__})."
             return b""
         finally:
             session.close()
@@ -1606,12 +1629,19 @@ def _local_name(tag: Any) -> str:
     return text.rsplit("}", 1)[-1]
 
 
-def _alternative_mailboxes(data: bytes, own: str) -> list[MailboxInfo]:
-    """The ``Delegate`` mailboxes in an Autodiscover POX answer; ``[]`` for anything unreadable."""
+def _host(url: str) -> str:
+    try:
+        return (urlsplit(url).hostname or "").lower() or "the address given"
+    except ValueError:
+        return "the address given"
+
+
+def _alternative_mailboxes(data: bytes, own: str) -> list[MailboxInfo] | None:
+    """The ``Delegate`` mailboxes in an Autodiscover POX answer; ``None`` for anything unreadable."""
     try:
         root = defusedxml.ElementTree.fromstring(data, forbid_dtd=True)
     except (ParseError, defusedxml.DefusedXmlException, ValueError):
-        return []
+        return None
     out: list[MailboxInfo] = []
     seen = {own}
     for node in root.iter():

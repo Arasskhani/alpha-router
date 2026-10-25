@@ -85,6 +85,7 @@ EWS_STATUS: dict[str, int] = {
 _PASSING_KINDS = ("auth", "unreachable", "tls", "throttled")
 _PASSWORD_REFUSED = "Exchange did not accept your password. If you changed it, type the new one on Connections."
 _MISMATCH = "This password opens another mailbox than yours."
+_AUTODISCOVER_REFUSED = "Autodiscover refused the sign-in, although EWS accepted it."
 
 
 def _now() -> datetime.datetime:
@@ -389,13 +390,8 @@ async def _sign_in(
             raise em.MailError("mailbox_mismatch", _MISMATCH, 400)
         delegates: list[MailboxInfo] = []
         if settings.allow_full_access:
-            try:
-                delegates = list(client.discover_full_access())
-            except EwsError as error:
-                if error.kind == "auth":
-                    raise
-                # Autodiscover is a convenience: the connection works without it.
-                logger.info("Autodiscover failed for a new mail connection: %s", error.kind)
+            # Autodiscover is a convenience: the connection works without it, and nothing it says is recorded.
+            delegates, _problem = _ask_autodiscover(client)
         return found, delegates
 
     config = em.ews_config(settings, login, password)
@@ -741,21 +737,38 @@ async def rediscover(db: AsyncSession, user: User, settings: em.ExchangeSettings
     usable = await require_usable(db, user, settings)
     own = usable.access.own_smtp
     try:
-        listed = await _ews(db, usable, lambda c: _discover_for(c, own), steps=2)
+        # Only the own mailbox's lookup can fail the call (and be recorded): Autodiscover's trouble never is.
+        listed, _problem = await _ews(db, usable, lambda c: _discover_for(c, own), steps=2)
     except EwsError as error:
         raise _refusal_after(error) from error
     return await sync_discovered(db, usable.connection, listed, settings)
 
 
-def _discover_for(client: MailClient, own_smtp: str) -> list[MailboxInfo]:
-    """Autodiscover's Full Access list for the login, its own mailbox found from ``own_smtp``.
+def _ask_autodiscover(client: MailClient) -> tuple[list[MailboxInfo], str]:
+    """Autodiscover's Full Access list, and why it is empty when Autodiscover failed; never an error.
+
+    Asked after EWS accepted the login, so whatever Autodiscover answers - a
+    401 included - is Autodiscover's own trouble, never a refused password:
+    it is logged (its kind only) and told to the administrator's Test
+    connection, and never recorded on a connection.
+    """
+    try:
+        return list(client.discover_full_access()), client.autodiscover_problem
+    except EwsError as error:
+        logger.info("Autodiscover failed after EWS accepted the login: %s", error.kind)
+        return [], _AUTODISCOVER_REFUSED if error.kind == "auth" else em.friendly_error(error)
+
+
+def _discover_for(client: MailClient, own_smtp: str) -> tuple[list[MailboxInfo], str]:
+    """``_ask_autodiscover`` for the login whose own mailbox is ``own_smtp``.
 
     ``whoami`` with the own address as the hint first, in the same session:
     Autodiscover is asked about the login's own mailbox, and a person hidden
-    from the address book is found without it.
+    from the address book is found without it. That lookup is EWS, and its
+    failures are raised as usual.
     """
     client.whoami(own_smtp)
-    return client.discover_full_access()
+    return _ask_autodiscover(client)
 
 
 # --- action items ---------------------------------------------------------------------------------------------------
@@ -1064,9 +1077,11 @@ async def _autodiscover_step(
 ) -> None:
     label = "Full Access mailboxes (Autodiscover)"
     try:
-        listed = await em.call_ews(config, lambda client: _discover_for(client, smtp), timeout_s=timeout)
+        listed, problem = await em.call_ews(config, lambda client: _discover_for(client, smtp), timeout_s=timeout)
     except EwsError as error:
-        steps.append(_step("autodiscover", label, False, f"{_test_failure(error)} (a warning: mail works without it)"))
+        problem, listed = _test_failure(error), []
+    if problem and not listed:
+        steps.append(_step("autodiscover", label, False, f"{problem} (a warning: mail works without it)"))
         return
     boxes = [
         {"smtp": em.normalize_smtp(box.smtp), "display_name": box.display_name}

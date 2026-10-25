@@ -657,6 +657,37 @@ class TestMailboxes:
         assert resp.status_code == 200
         assert {m["smtp"] for m in resp.json()["mailboxes"]} == before
 
+    async def test_autodiscover_trouble_is_never_recorded_on_the_connection(
+        self, client, db_session, exchange, person, monkeypatch
+    ):
+        """Autodiscover is asked after EWS accepted the password: even its 401 is not a wrong password."""
+        from tests.fake_mail_client import FakeMailClient
+
+        def refused(self):
+            self._account("discover_full_access")
+            raise EwsError("auth", "Exchange did not accept the user name or password.")
+
+        headers = sign_in(client, person)
+        await _connected(client, db_session, headers)
+        monkeypatch.setattr(FakeMailClient, "discover_full_access", refused)
+        resp = await client.post(f"{BASE}/mailboxes/rediscover", headers=headers)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["status"] == "connected" and resp.json()["last_error"] is None
+        assert "finance@corp.example" in {m["smtp"] for m in resp.json()["mailboxes"]}
+        # A new password (connect again) and a first connect go ahead the same way.
+        resp = await client.post(f"{BASE}/connect", json={"password": PASSWORD}, headers=headers)
+        assert resp.status_code == 200 and resp.json()["status"] == "connected"
+        (connection,) = await _fresh(db_session, MailConnection)
+        assert connection.status == "connected" and connection.last_error is None
+        assert connection.consecutive_failures == 0
+        await client.delete(f"{BASE}/connection", headers=headers)
+        monkeypatch.undo()
+        install(monkeypatch, exchange)
+        exchange.autodiscover_problem = "Autodiscover at mail.corp.example refused the sign-in (HTTP 401)."
+        body = await _connected(client, db_session, headers)
+        assert body["status"] == "connected" and [m["kind"] for m in body["mailboxes"]] == ["own"]
+        assert await _events(db_session, "mail_connected")
+
     async def test_rediscover_needs_full_access(self, client, db_session, exchange, person):
         headers = sign_in(client, person)
         await _connected(client, db_session, headers)

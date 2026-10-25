@@ -90,6 +90,8 @@ class FakeExchange:
         self.calls: list[tuple[str, str]] = []
         #: Set to an ``EwsError`` to make every call fail with it (Exchange down, say).
         self.fail_with: EwsError | None = None
+        #: Set to make Autodiscover fail as the real client reports it: no mailboxes, and this reason.
+        self.autodiscover_problem = ""
         self._ids = itertools.count(1)
 
     # --- setting it up ---
@@ -146,6 +148,7 @@ class FakeMailClient:
         self.exchange = exchange
         self.config = config
         self.closed = False
+        self.autodiscover_problem = ""
 
     # --- helpers ---
 
@@ -222,6 +225,9 @@ class FakeMailClient:
 
     def discover_full_access(self) -> list[MailboxInfo]:
         account = self._account("discover_full_access")
+        self.autodiscover_problem = self.exchange.autodiscover_problem
+        if self.autodiscover_problem:
+            return []
         return [MailboxInfo(smtp=s, display_name=self.exchange.mailboxes.get(s, "")) for s in account.automapped]
 
     def check_mailbox(self, smtp: str) -> MailboxInfo:

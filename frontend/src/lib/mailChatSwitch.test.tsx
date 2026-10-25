@@ -34,6 +34,7 @@ import {
   mailToolRequested,
   toggleMailForChat,
   useExchangeMailConnected,
+  withMailOn,
   withMailSwitchFrom,
   withMailTool,
 } from "./mailChatSwitch";
@@ -80,6 +81,16 @@ describe("the per-chat switch", () => {
     expect("mailOff" in normalizeChatTools({ mailOff: false })).toBe(false);
     expect("mailOff" in normalizeChatTools({ webSearch: true })).toBe(false);
     expect("mailOff" in normalizeChatTools(null)).toBe(false);
+  });
+
+  it("is turned back on for the empty chat an email is asked about in", () => {
+    const fresh = copyFreshChatTools();
+    const off = { ...toggleMailForChat(fresh), webSearch: true };
+    const on = withMailOn(off);
+    expect(mailOnForChat(on)).toBe(true);
+    expect("mailOff" in on).toBe(false);
+    expect(on.webSearch).toBe(true);
+    expect(withMailOn(fresh)).toBe(fresh);
   });
 
   it("carries a choice made before the chat existed to the chat created for the first message", () => {

@@ -340,6 +340,7 @@ import {
   mailToolRequested,
   toggleMailForChat,
   useExchangeMailConnected,
+  withMailOn,
   withMailSwitchFrom,
   withMailTool,
 } from "../lib/mailChatSwitch";
@@ -3554,6 +3555,8 @@ export default function ChatPanel({
     if (!blank) startNewChat();
     const sid = activeIdRef.current;
     if (!sid || (!blank && sid === before)) return;
+    // The prompt asks about an email: an empty chat with mail turned off gets it back on (a new chat has it on).
+    if (blank && !mailOnForChat(chatToolsRef.current)) updateChatTools(withMailOn(chatToolsRef.current));
     const direction = inputDirectionForText(text);
     // The composer takes the new chat's draft when it follows the chat; if it already has, fill it here.
     syncComposerDraft(sid, text, direction);

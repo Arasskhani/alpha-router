@@ -79,6 +79,15 @@ export function toggleMailForChat(tools: ChatToolsState): ChatToolsState {
 }
 
 /**
+ * The chat's settings with mail on: "Ask Alpharouter" about an email puts its
+ * prompt in an empty chat, and with mail off there the model could not open
+ * the email it is asked about. Untouched when mail is already on.
+ */
+export function withMailOn(tools: ChatToolsState): ChatToolsState {
+  return tools.mailOff === true ? toggleMailForChat(tools) : tools;
+}
+
+/**
  * A chat created for the first message keeps what the person chose before it
  * existed: fresh tools, with the mail switch carried over.
  */

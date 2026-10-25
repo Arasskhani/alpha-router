@@ -22,7 +22,7 @@ from app.models.mail_connection import (
 from app.models.system import SystemSetting
 from app.models.user import User
 from app.services import exchange_mail as em
-from app.services.exchange_ews_types import EwsError
+from app.services.exchange_ews_types import EwsConfig, EwsError
 
 CA_PEM = """-----BEGIN CERTIFICATE-----
 MIIBkzCCATmgAwIBAgIUNaB7Hvd0lmzmmUZPzU6ocyvXqGEwCgYIKoZIzj0EAwIw
@@ -539,33 +539,85 @@ class TestDeleting:
         assert await em.connection_counts(db_session) == {"connected": 1, "needs_password": 1, "error": 0}
 
 
-class TestRunEws:
-    async def test_runs_in_a_thread_and_returns(self):
+class _ThreadClient:
+    """A client that notes the thread it was made, used and closed in."""
+
+    def __init__(self, log: list[tuple[str, int]]) -> None:
+        self.log = log
+        self.log.append(("made", threading.get_ident()))
+
+    def work(self, seconds: float = 0.0) -> int:
+        self.log.append(("work", threading.get_ident()))
+        time.sleep(seconds)
+        return threading.get_ident()
+
+    def close(self) -> None:
+        self.log.append(("closed", threading.get_ident()))
+
+
+CONFIG = EwsConfig(ews_url="https://mail.corp.example/EWS/Exchange.asmx", login="CORP\\s.karimi", password="x")
+
+
+class TestCallEws:
+    @pytest.fixture
+    def log(self, monkeypatch) -> list[tuple[str, int]]:
+        log: list[tuple[str, int]] = []
+        monkeypatch.setattr(em, "make_client", lambda config: _ThreadClient(log))
+        monkeypatch.setattr(em, "_ews_slots", None)
+        return log
+
+    async def test_the_client_is_made_used_and_closed_in_one_worker_thread(self, log):
         caller = threading.get_ident()
-        assert await em.run_ews(threading.get_ident) != caller
-        assert await em.run_ews(lambda a, b=0: a + b, 1, b=2) == 3
+        worker = await em.call_ews(CONFIG, lambda client: client.work(), timeout_s=5)
+        assert worker != caller
+        assert log == [("made", worker), ("work", worker), ("closed", worker)]
 
-    async def test_a_slow_call_times_out_as_unreachable(self):
+    async def test_a_slow_call_times_out_as_unreachable_and_holds_its_slot_until_the_thread_ends(
+        self, log, monkeypatch
+    ):
+        monkeypatch.setattr(em, "EWS_CONCURRENCY", 1)
         with pytest.raises(EwsError) as caught:
-            await em.run_ews(time.sleep, 0.5, timeout_s=0.05)
+            await em.call_ews(CONFIG, lambda client: client.work(0.4), timeout_s=0.05)
         assert caught.value.kind == "unreachable"
+        # The thread still runs: its client is not closed under it, and its slot is not free yet.
+        assert [what for what, _ in log] == ["made", "work"]
+        slots = em._slots()
+        assert slots.locked()
+        started = time.monotonic()
+        await em.call_ews(CONFIG, lambda client: client.work(), timeout_s=5)
+        assert time.monotonic() - started >= 0.2, "the next call waited for the slow thread to end"
+        assert [what for what, _ in log] == ["made", "work", "closed", "made", "work", "closed"]
+        assert not slots.locked()
 
-    async def test_errors_come_through(self):
-        def fail():
+    async def test_a_cancelled_wait_also_keeps_the_slot_until_the_thread_ends(self, log, monkeypatch):
+        monkeypatch.setattr(em, "EWS_CONCURRENCY", 1)
+        task = asyncio.ensure_future(em.call_ews(CONFIG, lambda client: client.work(0.3), timeout_s=5))
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert em._slots().locked()
+        await asyncio.sleep(0.5)
+        assert not em._slots().locked()
+        assert log[-1][0] == "closed"
+
+    async def test_errors_come_through_and_the_client_is_closed(self, log):
+        def fail(client):
             raise EwsError("auth", "no")
 
         with pytest.raises(EwsError) as caught:
-            await em.run_ews(fail)
+            await em.call_ews(CONFIG, fail, timeout_s=5)
         assert caught.value.kind == "auth"
+        assert [what for what, _ in log] == ["made", "closed"]
+        assert not em._slots().locked()
 
-    async def test_at_most_so_many_at_once(self, monkeypatch):
+    async def test_at_most_so_many_at_once(self, log, monkeypatch):
         monkeypatch.setattr(em, "EWS_CONCURRENCY", 2)
-        monkeypatch.setattr(em, "_ews_slots", None)
         running = 0
         peak = 0
         lock = threading.Lock()
 
-        def work():
+        def work(client):
             nonlocal running, peak
             with lock:
                 running += 1
@@ -574,8 +626,13 @@ class TestRunEws:
             with lock:
                 running -= 1
 
-        await asyncio.gather(*(em.run_ews(work) for _ in range(6)))
+        await asyncio.gather(*(em.call_ews(CONFIG, work, timeout_s=5) for _ in range(6)))
         assert peak == 2
+
+    def test_the_wait_follows_the_administrator_s_timeout(self):
+        settings = em.ExchangeSettings(timeout_s=30)
+        assert em.call_timeout(settings) == 35
+        assert em.call_timeout(settings, steps=3) == 105
 
 
 async def test_the_fake_client_follows_the_protocol(monkeypatch):

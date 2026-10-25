@@ -681,16 +681,15 @@ class MailToolLoop:
         failure of the mailbox), ``mailbox`` (the mailbox cannot be opened) or ``login`` (no mailbox named).
         """
         connection = await self._connection(db)
-        client = exchange_mail.make_client(self.access.config)
         try:
-            result = await exchange_mail.run_ews(
-                getattr(client, method), *args, timeout_s=self.settings.timeout_s + 5, **kwargs
+            result = await exchange_mail.call_ews(
+                self.access.config,
+                lambda client: getattr(client, method)(*args, **kwargs),
+                timeout_s=exchange_mail.call_timeout(self.settings),
             )
         except EwsError as err:
             await self._failed(db, connection, err, mailbox=mailbox, scope=scope)
             raise
-        finally:
-            client.close()
         await exchange_mail.record_success(db, connection)
         return result
 

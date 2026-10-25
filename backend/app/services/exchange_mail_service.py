@@ -47,7 +47,7 @@ from app.services import rate_limit
 from app.services.exchange_ews_types import DraftResult, EwsError, MailboxInfo
 
 if TYPE_CHECKING:
-    from app.services.exchange_ews_types import MailClient
+    from app.services.exchange_ews_types import EwsConfig, MailClient
 
 logger = logging.getLogger(__name__)
 
@@ -346,14 +346,11 @@ async def _ews[T](
     Raises the ``EwsError`` (already recorded); the caller decides how to
     answer it. A refused password is never tried again here or anywhere.
     """
-    client = em.make_client(usable.access.config)
     try:
-        result = await em.run_ews(call, client, timeout_s=usable.access.settings.timeout_s + 5)
+        result = await em.call_ews(usable.access.config, call, timeout_s=em.call_timeout(usable.access.settings))
     except EwsError as error:
         await _note_failure(db, usable, error, mailbox=mailbox, item_kinds=item_kinds)
         raise
-    finally:
-        client.close()
     await em.record_success(db, usable.connection)
     return result
 
@@ -378,27 +375,28 @@ async def _sign_in(
     """Try the password once: the mailbox it opens, that it is the account's own, and its Full Access list.
 
     Raises ``EwsError`` as the client does, or ``MailError("mailbox_mismatch")``.
+    The three steps share one Exchange session (one thread, one client).
     """
-    timeout = settings.timeout_s + 5
-    client = em.make_client(em.ews_config(settings, login, password))
-    try:
-        found = await em.run_ews(client.whoami, timeout_s=timeout)
+
+    def sign_in(client: MailClient) -> tuple[MailboxInfo, list[MailboxInfo]]:
+        found = client.whoami()
         if not em.normalize_smtp(found.smtp):
             raise EwsError("server", "Exchange did not say which mailbox this login opens.")
-        if settings.require_mailbox_match and not await em.run_ews(client.same_mailbox, email, timeout_s=timeout):
+        if settings.require_mailbox_match and not client.same_mailbox(email):
             raise em.MailError("mailbox_mismatch", _MISMATCH, 400)
         delegates: list[MailboxInfo] = []
         if settings.allow_full_access:
             try:
-                delegates = list(await em.run_ews(client.discover_full_access, timeout_s=timeout))
+                delegates = list(client.discover_full_access())
             except EwsError as error:
                 if error.kind == "auth":
                     raise
                 # Autodiscover is a convenience: the connection works without it.
                 logger.info("Autodiscover failed for a new mail connection: %s", error.kind)
         return found, delegates
-    finally:
-        client.close()
+
+    config = em.ews_config(settings, login, password)
+    return await em.call_ews(config, sign_in, timeout_s=em.call_timeout(settings, steps=3))
 
 
 async def connect(db: AsyncSession, user: User, password: str, settings: em.ExchangeSettings) -> ConnectOutcome:
@@ -1005,39 +1003,36 @@ async def run_test(settings: em.ExchangeSettings, *, login: str, password: str, 
         steps.append(_step("endpoint", "EWS address", False, "Give the EWS address and save the settings first."))
         return result
     steps.append(_step("endpoint", "EWS address", True, endpoint))
-    timeout = settings.timeout_s + 5
-    client = em.make_client(em.ews_config(settings, login, password))
+    config = em.ews_config(settings, login, password)
+    timeout = em.call_timeout(settings)
     try:
-        try:
-            found = await em.run_ews(client.whoami, timeout_s=timeout)
-        except EwsError as error:
-            steps.append(_step("login", "Sign in", False, _test_failure(error)))
-            return result
-        steps.append(_step("login", "Sign in", True, f"Exchange accepted {login}."))
-        smtp = em.normalize_smtp(found.smtp)
-        if not smtp:
-            steps.append(_step("mailbox", "Mailbox", False, "Exchange did not say which mailbox this login opens."))
-            return result
-        result["mailbox"] = {"smtp": smtp, "display_name": found.display_name}
-        name = f"{found.display_name} <{smtp}>" if found.display_name else smtp
-        steps.append(_step("mailbox", "Mailbox", True, f"The login opens {name}."))
-        if email and not await _match_step(client, steps, email, smtp, timeout):
-            return result
-        await _autodiscover_step(client, steps, result, timeout)
-    finally:
-        client.close()
+        found = await em.call_ews(config, lambda client: client.whoami(), timeout_s=timeout)
+    except EwsError as error:
+        steps.append(_step("login", "Sign in", False, _test_failure(error)))
+        return result
+    steps.append(_step("login", "Sign in", True, f"Exchange accepted {login}."))
+    smtp = em.normalize_smtp(found.smtp)
+    if not smtp:
+        steps.append(_step("mailbox", "Mailbox", False, "Exchange did not say which mailbox this login opens."))
+        return result
+    result["mailbox"] = {"smtp": smtp, "display_name": found.display_name}
+    name = f"{found.display_name} <{smtp}>" if found.display_name else smtp
+    steps.append(_step("mailbox", "Mailbox", True, f"The login opens {name}."))
+    if email and not await _match_step(config, steps, email, smtp, timeout):
+        return result
+    await _autodiscover_step(config, steps, result, timeout)
     result["ok"] = True
     return result
 
 
-async def _match_step(client: MailClient, steps: list[dict[str, Any]], email: str, smtp: str, timeout: int) -> bool:
+async def _match_step(config: EwsConfig, steps: list[dict[str, Any]], email: str, smtp: str, timeout: float) -> bool:
     label = "Mailbox matches the email"
     wanted = em.normalize_smtp(email)
     if not wanted:
         steps.append(_step("match", label, False, "That is not an email address."))
         return False
     try:
-        same = await em.run_ews(client.same_mailbox, wanted, timeout_s=timeout)
+        same = await em.call_ews(config, lambda client: client.same_mailbox(wanted), timeout_s=timeout)
     except EwsError as error:
         steps.append(_step("match", label, False, _test_failure(error)))
         return False
@@ -1049,11 +1044,11 @@ async def _match_step(client: MailClient, steps: list[dict[str, Any]], email: st
 
 
 async def _autodiscover_step(
-    client: MailClient, steps: list[dict[str, Any]], result: dict[str, Any], timeout: int
+    config: EwsConfig, steps: list[dict[str, Any]], result: dict[str, Any], timeout: float
 ) -> None:
     label = "Full Access mailboxes (Autodiscover)"
     try:
-        listed = await em.run_ews(client.discover_full_access, timeout_s=timeout)
+        listed = await em.call_ews(config, lambda client: client.discover_full_access(), timeout_s=timeout)
     except EwsError as error:
         steps.append(_step("autodiscover", label, False, f"{_test_failure(error)} (a warning: mail works without it)"))
         return

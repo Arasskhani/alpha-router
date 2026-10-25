@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import functools
 import hashlib
 import json
 import logging
@@ -59,6 +60,7 @@ from app.services.exchange_ews_types import EwsError, MessageSummary
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.services.exchange_ews_types import MailClient
     from app.services.exchange_mail import ExchangeSettings, MailAccess
 
 logger = logging.getLogger(__name__)
@@ -419,6 +421,10 @@ async def _store(db: AsyncSession, user_id: int, picks: list[Pick]) -> int:
     return added
 
 
+def _list_received(client: MailClient, *, mailbox: str, since: datetime.datetime) -> list[MessageSummary]:
+    return client.list_received(mailbox, since=since, limit=RECEIVED_LIMIT)
+
+
 async def check_connection(connection_id: int, settings: ExchangeSettings, now: datetime.datetime) -> int:
     """Check one connection's notify mailboxes; returns how many new action items it stored."""
     async with AsyncSessionLocal() as db:
@@ -436,15 +442,13 @@ async def check_connection(connection_id: int, settings: ExchangeSettings, now: 
         full_pages: list[datetime.datetime] = []
         seen: list[tuple[str, MessageSummary]] = []
         failed = False
+        start = since.replace(tzinfo=UTC)
         for mailbox in access.notify_mailboxes:
-            client = exchange_mail.make_client(access.config)
             try:
-                items: list[MessageSummary] = await exchange_mail.run_ews(
-                    client.list_received,
-                    mailbox,
-                    since=since.replace(tzinfo=UTC),
-                    limit=RECEIVED_LIMIT,
-                    timeout_s=settings.timeout_s + 5,
+                items: list[MessageSummary] = await exchange_mail.call_ews(
+                    access.config,
+                    functools.partial(_list_received, mailbox=mailbox, since=start),
+                    timeout_s=exchange_mail.call_timeout(settings),
                 )
             except EwsError as err:
                 if mailbox != access.own_smtp and err.kind in ("access_denied", "not_found"):
@@ -454,8 +458,6 @@ async def check_connection(connection_id: int, settings: ExchangeSettings, now: 
                 await exchange_mail.record_failure(db, connection, err)
                 failed = True
                 break
-            finally:
-                client.close()
             latest = max((_naive(i.received) for i in items if i.received is not None), default=None)
             if latest is not None:
                 newest = max(newest, latest)

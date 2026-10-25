@@ -3,7 +3,7 @@
 Everything else in Alpharouter sees only the plain values of
 ``exchange_ews_types``; this module is the one place that talks to Exchange
 (through ``exchangelib``, synchronous, run in a thread by
-``exchange_mail.run_ews``). The rules it keeps:
+``exchange_mail.call_ews``). The rules it keeps:
 
 - **One attempt, never a retry.** The version is pinned to Exchange 2019 /
   SE (build 15.2), so nothing is guessed; autodiscover inside exchangelib is

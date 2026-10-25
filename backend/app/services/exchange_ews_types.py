@@ -170,7 +170,7 @@ class MailClient(Protocol):
 
     ``exchange_ews_client.EwsClient`` is the real one; tests use
     ``tests/fake_mail_client.FakeMailClient``. Every method is synchronous and
-    blocking (callers go through ``exchange_mail.run_ews``) and raises only
+    blocking (callers go through ``exchange_mail.call_ews``) and raises only
     ``EwsError``. ``mailbox`` is a lower-case SMTP address the caller already
     checked against the connection's list; the client opens it as the login
     (Full Access), never by impersonation.

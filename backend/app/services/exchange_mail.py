@@ -26,14 +26,16 @@ used, or when a connection must stop.
 
 Functions here flush and never commit; the API commits with its audit row.
 The EWS calls themselves are in ``exchange_ews_client`` (synchronous, run in a
-thread through ``run_ews``); this module never imports ``exchangelib``.
+thread through ``call_ews``); this module never imports ``exchangelib``.
 """
 
 from __future__ import annotations
 
 import asyncio
 import base64
+import contextvars
 import datetime
+import functools
 import hashlib
 import json
 import logging
@@ -785,6 +787,9 @@ async def connection_counts(db: AsyncSession) -> dict[str, int]:
 
 # --- running EWS calls ------------------------------------------------------------------------------------------
 
+#: What a call's wait adds to the administrator's EWS timeout (the client's own HTTP timeout ends the thread).
+CALL_WAIT_EXTRA_S = 5
+
 _ews_slots: asyncio.Semaphore | None = None
 _ews_slots_loop: asyncio.AbstractEventLoop | None = None
 
@@ -798,20 +803,53 @@ def _slots() -> asyncio.Semaphore:
     return _ews_slots
 
 
-async def run_ews[T](fn: Callable[..., T], *args: Any, timeout_s: float | None = None, **kwargs: Any) -> T:
-    """Run one synchronous client call in a thread, at most ``EWS_CONCURRENCY`` at once.
+def call_timeout(settings: ExchangeSettings, steps: int = 1) -> float:
+    """How long to wait for a call of ``steps`` client methods: each within the EWS timeout and a little more."""
+    return float(max(1, steps) * (settings.timeout_s + CALL_WAIT_EXTRA_S))
 
-    ``timeout_s`` bounds the wait (the thread itself ends with the client's own
-    HTTP timeout); a wait that runs out raises ``EwsError("unreachable")``.
+
+def _thread_ended(done: asyncio.Future[Any], slots: asyncio.Semaphore) -> None:
+    """A thread whose wait was given up has ended: its slot is free now, and its outcome is dropped."""
+    slots.release()
+    if not done.cancelled():
+        done.exception()
+
+
+async def call_ews[T](config: EwsConfig, call: Callable[[MailClient], T], *, timeout_s: float) -> T:
+    """Make a client for ``config``, run ``call(client)`` and close the client, all in one worker thread.
+
+    At most ``EWS_CONCURRENCY`` of these threads run at once, and a slot is
+    held until its thread has really ended. A wait that runs out
+    (``timeout_s``: raised as ``EwsError("unreachable")``) or is cancelled
+    leaves the thread to finish by itself - the client's own HTTP timeout ends
+    it - and frees the slot only then, so a slow Exchange can never have more
+    threads at work than the limit, and the client is never closed under a
+    call still running in another thread.
+
+    ``call`` gets the client and may call several of its methods (one
+    Exchange session); it raises ``EwsError`` as the client does.
     """
-    async with _slots():
-        call = asyncio.to_thread(fn, *args, **kwargs)
-        if timeout_s is None:
-            return await call
+    slots = _slots()
+    await slots.acquire()
+
+    def work() -> T:
+        client = make_client(config)
         try:
-            return await asyncio.wait_for(call, timeout_s)
-        except TimeoutError as exc:
-            raise EwsError("unreachable", f"Exchange did not answer within {timeout_s:g} seconds.") from exc
+            return call(client)
+        finally:
+            client.close()
+
+    future = asyncio.get_running_loop().run_in_executor(None, contextvars.copy_context().run, work)
+    try:
+        # Shielded: a wait given up must not mark the thread's future done while the thread still runs.
+        return await asyncio.wait_for(asyncio.shield(future), timeout_s)
+    except TimeoutError as exc:
+        raise EwsError("unreachable", f"Exchange did not answer within {timeout_s:g} seconds.") from exc
+    finally:
+        if future.done():
+            slots.release()
+        else:
+            future.add_done_callback(functools.partial(_thread_ended, slots=slots))
 
 
 def make_client(config: EwsConfig) -> MailClient:
